@@ -13,6 +13,7 @@ open Microsoft.Extensions.Logging
 open Fogell.Domain
 open Fogell.Store
 open Fogell.Controller.Api
+open Fogell.Controller.Host
 
 let private connectionString =
     match Environment.GetEnvironmentVariable "FOGELL_TEST_DATABASE_URL" with
@@ -31,8 +32,9 @@ let private available =
 let private token = String.replicate 32 "k"
 
 let private store = Store(connectionString)
+let private maxPipelineBytes = 1024
 
-let private startServer () =
+let private startServer maxLogChunks =
     let auth =
         match Authorization.configure token with
         | Ok c -> c
@@ -40,13 +42,18 @@ let private startServer () =
 
     let builder = WebApplication.CreateBuilder()
     builder.WebHost.UseUrls "http://127.0.0.1:0" |> ignore
+    builder.WebHost.ConfigureKestrel(fun options ->
+        options.Limits.MaxRequestBodySize <- Nullable())
+    |> ignore
     builder.Logging.ClearProviders() |> ignore
     let app = builder.Build()
 
     Router.map
         { Store = store
           Auth = auth
-          DefaultTrustPool = "trusted-linux" }
+          TrustPool = "trusted-linux"
+          MaxPipelineBytes = maxPipelineBytes
+          MaxLogChunks = maxLogChunks }
         app
     |> ignore
 
@@ -68,6 +75,24 @@ let private pipeline =
 
 let private client = new HttpClient()
 
+/// ByteArrayContent can re-derive Content-Length while HttpClient prepares the
+/// request, even after the header was cleared. This fixture deliberately cannot
+/// report a length, so HTTP/1.1 must exercise real chunk framing and Kestrel's
+/// unknown-length body path.
+type private UnknownLengthContent(body: byte array) =
+    inherit HttpContent()
+
+    override _.SerializeToStream(stream, _context, cancellationToken) =
+        cancellationToken.ThrowIfCancellationRequested()
+        stream.Write(body, 0, body.Length)
+
+    override _.SerializeToStreamAsync(stream, _context) =
+        stream.WriteAsync(body, 0, body.Length)
+
+    override _.TryComputeLength(length: byref<int64>) =
+        length <- 0L
+        false
+
 let private send (method: HttpMethod) (url: string) (bearer: string option) (idem: string option) (body: string option) =
     let req = new HttpRequestMessage(method, url)
     bearer |> Option.iter (fun t -> req.Headers.TryAddWithoutValidation("authorization", $"Bearer {t}") |> ignore)
@@ -76,6 +101,106 @@ let private send (method: HttpMethod) (url: string) (bearer: string option) (ide
     let r = client.Send req
     let text = r.Content.ReadAsStringAsync().Result
     int r.StatusCode, text
+
+let private sendChunked (url: string) (idem: string) (body: byte array) =
+    use req = new HttpRequestMessage(HttpMethod.Post, url)
+    req.Headers.TryAddWithoutValidation("authorization", $"Bearer {token}") |> ignore
+    req.Headers.TryAddWithoutValidation("idempotency-key", idem) |> ignore
+    req.Headers.TransferEncodingChunked <- Nullable true
+    req.Content <- new UnknownLengthContent(body)
+    req.Content.Headers.TryAddWithoutValidation("content-type", "application/x-jenkinsfile") |> ignore
+    use response = client.Send req
+    int response.StatusCode, response.Content.ReadAsStringAsync().Result
+
+let private executionLauncherValidation =
+    let variables =
+        [ "FOGELL_DATABASE_URL"; "FOGELL_MAINTENANCE_DATABASE_URL"
+          "FOGELL_API_TOKEN_FILE"; "FOGELL_LISTEN_URL"; "FOGELL_STATE_ROOT"
+          "FOGELL_RUN_HOST_PATH"; "FOGELL_LOCAL_TRUST_POOL"
+          "FOGELL_MAX_PIPELINE_BYTES"; "FOGELL_MAX_LOG_CHUNKS"
+          "FOGELL_WORKER_POLL_MS"; "FOGELL_WORKER_LEASE_SECONDS" ]
+
+    let withConfiguration f =
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-setsid-validation-" + Guid.NewGuid().ToString("N"))
+        IO.Directory.CreateDirectory root |> ignore
+        let tokenFile = IO.Path.Combine(root, "token")
+        let runHost = IO.Path.Combine(root, "run-host")
+        IO.File.WriteAllText(tokenFile, String.replicate 32 "t")
+        IO.File.WriteAllText(runHost, "#!/bin/sh\nexit 0\n")
+        IO.File.SetUnixFileMode(runHost, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserExecute)
+        let previous = variables |> List.map (fun name -> name, Environment.GetEnvironmentVariable name)
+        let set name value = Environment.SetEnvironmentVariable(name, value)
+
+        set "FOGELL_DATABASE_URL" "Host=runtime;Database=fogell"
+        set "FOGELL_MAINTENANCE_DATABASE_URL" "Host=maintenance;Database=fogell"
+        set "FOGELL_API_TOKEN_FILE" tokenFile
+        set "FOGELL_LISTEN_URL" "http://127.0.0.1:18083"
+        set "FOGELL_STATE_ROOT" (IO.Path.Combine(root, "state"))
+        set "FOGELL_RUN_HOST_PATH" runHost
+        set "FOGELL_LOCAL_TRUST_POOL" "trusted-linux"
+        set "FOGELL_MAX_PIPELINE_BYTES" "1024"
+        set "FOGELL_MAX_LOG_CHUNKS" "100"
+        set "FOGELL_WORKER_POLL_MS" "50"
+        set "FOGELL_WORKER_LEASE_SECONDS" "60"
+
+        try f root runHost
+        finally
+            previous |> List.iter (fun (name, value) -> Environment.SetEnvironmentVariable(name, value))
+            IO.Directory.Delete(root, true)
+
+    testList
+        "FG-224 trusted setsid launcher"
+        [ test "the exact trusted launcher is shared into worker configuration" {
+              withConfiguration (fun _ _ ->
+                  match ControllerConfig.loadWithSetsidLauncher ControllerConfig.trustedSetsidLauncher with
+                  | Error error -> failtestf "trusted host launcher was refused: %s" error
+                  | Ok config ->
+                      Expect.equal config.SetsidPath "/usr/bin/setsid" "worker consumes the validated exact identity"
+                      Expect.isTrue (ControllerConfig.executionLaunchersReady config) "both configured launchers are executable")
+          }
+
+          test "a missing trusted launcher refuses startup" {
+              withConfiguration (fun root runHost ->
+                  let missing = IO.Path.Combine(root, "missing-setsid")
+                  Expect.isFalse
+                      (ControllerConfig.executionLaunchersReadyAt runHost missing)
+                      "readiness and the pre-claim guard reject the missing launcher"
+                  match ControllerConfig.loadWithSetsidLauncher missing with
+                  | Ok _ -> failtest "missing setsid launcher reached a configured controller"
+                  | Error error ->
+                      Expect.equal error "trusted setsid launcher does not name an executable file" "stable refusal")
+          }
+
+          test "a non-executable trusted launcher refuses startup" {
+              withConfiguration (fun root runHost ->
+                  let nonExecutable = IO.Path.Combine(root, "non-executable-setsid")
+                  IO.File.WriteAllText(nonExecutable, "not executable")
+                  IO.File.SetUnixFileMode(nonExecutable, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite)
+                  Expect.isFalse
+                      (ControllerConfig.executionLaunchersReadyAt runHost nonExecutable)
+                      "readiness and the pre-claim guard reject the non-executable launcher"
+                  match ControllerConfig.loadWithSetsidLauncher nonExecutable with
+                  | Ok _ -> failtest "non-executable setsid launcher reached a configured controller"
+                  | Error error ->
+                      Expect.equal error "trusted setsid launcher does not name an executable file" "stable refusal")
+
+              let mutable observed = None
+              let started =
+                  WorkerLaunch.tryStart
+                      (fun () -> raise (InvalidOperationException "simulated exec failure"))
+                      (fun error -> observed <- error)
+
+              Expect.isFalse started "a Process.Start exception is converted to launch failure"
+              match observed with
+              | Some (:? InvalidOperationException as error) ->
+                  Expect.equal error.Message "simulated exec failure" "the reconciliation callback receives the cause"
+              | other -> failtestf "launch exception did not reach the reconciliation callback: %A" other
+
+              let mutable falseCallbacks = 0
+              let returnedFalse = WorkerLaunch.tryStart (fun () -> false) (fun _ -> falseCallbacks <- falseCallbacks + 1)
+              Expect.isFalse returnedFalse "a false Process.Start result is a launch failure"
+              Expect.equal falseCallbacks 1 "the false result invokes reconciliation exactly once"
+          } ]
 
 /// FG-060. Authorization is proven BEFORE anything else, because every other
 /// test would otherwise be running against an open endpoint.
@@ -117,7 +242,7 @@ let authorization =
           } ]
 
 let endpoints =
-    let app, baseUrl = startServer ()
+    let app, baseUrl = startServer 1000
 
     testList
         "FG-060 endpoints"
@@ -150,6 +275,107 @@ let endpoints =
               let code2, body2 = send HttpMethod.Post url (Some token) (Some "api-1") (Some pipeline)
               Expect.equal code2 200 "replay is 200, not a second 201"
               Expect.stringContains body2 "\"was_existing\":true" "recognised as existing"
+          }
+
+          test "execution preflight refuses before build and idempotency admission" {
+              let org, project = freshProject ()
+              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              let unsupported =
+                  "pipeline { agent any tools { maven 'm3' } stages { stage('Build') { steps { echo 'hi' } } } }"
+
+              let buildCount () =
+                  use connection = new Npgsql.NpgsqlConnection(connectionString)
+                  connection.Open()
+                  use command = connection.CreateCommand()
+                  command.CommandText <-
+                      "SELECT count(*) FROM builds WHERE organization_id=@organization AND project_id=@project"
+                  command.Parameters.AddWithValue("organization", org.Value) |> ignore
+                  command.Parameters.AddWithValue("project", project.Value) |> ignore
+                  Convert.ToInt32(command.ExecuteScalar())
+
+              Expect.equal (buildCount ()) 0 "fixture begins without a build"
+
+              for attempt in 1..2 do
+                  let code, body =
+                      send HttpMethod.Post url (Some token) (Some "unsupported-retry") (Some unsupported)
+                  Expect.equal code 422 $"unsupported attempt {attempt} is not durably admitted"
+                  use payload = JsonDocument.Parse body
+                  Expect.equal
+                      (payload.RootElement.GetProperty("code").GetString())
+                      "execution_unsupported"
+                      $"unsupported attempt {attempt} has the stable API code"
+                  Expect.stringContains
+                      (payload.RootElement.GetProperty("message").GetString())
+                      "unsupported_tools"
+                      $"unsupported attempt {attempt} preserves the shared preflight reason"
+                  Expect.equal (buildCount ()) 0 $"unsupported attempt {attempt} creates no build"
+
+              let supportedCode, supportedBody =
+                  send HttpMethod.Post url (Some token) (Some "unsupported-retry") (Some pipeline)
+              Expect.equal supportedCode 201 "the rejected key remains available to supported source"
+              Expect.stringContains supportedBody "\"was_existing\":false" "supported source is a fresh admission"
+              Expect.equal (buildCount ()) 1 "only the supported request creates a build"
+
+              let replayCode, replayBody =
+                  send HttpMethod.Post url (Some token) (Some "unsupported-retry") (Some pipeline)
+              Expect.equal replayCode 200 "the supported admission still replays normally"
+              Expect.stringContains replayBody "\"was_existing\":true" "the replay finds the one supported build"
+              Expect.equal (buildCount ()) 1 "replay creates no second build"
+          }
+
+          test "one idempotency key cannot substitute different Jenkinsfile bytes" {
+              let org, project = freshProject ()
+              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              let firstCode, _ = send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some pipeline)
+              Expect.equal firstCode 201 "control admitted"
+              let changed = pipeline.Replace("echo 'hi'", "echo 'different'")
+              let conflictCode, conflict =
+                  send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some changed)
+              Expect.equal conflictCode 409 "substitution conflicts"
+              Expect.stringContains conflict "idempotency_conflict" "stable conflict code"
+          }
+
+          test "request placement override and oversized source both fail before admission" {
+              let org, project = freshProject ()
+              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              use request = new HttpRequestMessage(HttpMethod.Post, url)
+              request.Headers.TryAddWithoutValidation("authorization", $"Bearer {token}") |> ignore
+              request.Headers.TryAddWithoutValidation("idempotency-key", "placement-denied") |> ignore
+              request.Headers.TryAddWithoutValidation("fogell-trust-pool", "privileged") |> ignore
+              request.Content <- new StringContent(pipeline, Encoding.UTF8, "application/x-jenkinsfile")
+              use response = client.Send request
+              let denied = response.Content.ReadAsStringAsync().Result
+              Expect.equal (int response.StatusCode) 400 "placement header denied"
+              Expect.stringContains denied "placement_override_forbidden" "stable placement code"
+
+              let oversized = String('x', maxPipelineBytes + 1)
+              let tooLargeCode, tooLarge =
+                  send HttpMethod.Post url (Some token) (Some "oversized") (Some oversized)
+              Expect.equal tooLargeCode 413 "raw byte limit enforced"
+              Expect.stringContains tooLarge "pipeline_too_large" "stable size code"
+          }
+
+          test "chunked bodies retain the exact source limit and classify the sentinel byte as 413" {
+              let org, project = freshProject ()
+              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              let padding = String(' ', maxPipelineBytes - Encoding.UTF8.GetByteCount pipeline)
+              let exact = Encoding.UTF8.GetBytes(pipeline + padding)
+
+              Expect.equal exact.Length maxPipelineBytes "fixture reaches the byte boundary exactly"
+              let exactCode, exactBody = sendChunked url "chunked-exact" exact
+              Expect.equal
+                  exactCode
+                  201
+                  $"an unknown-length body at the public limit is admitted; response={exactBody}"
+              Expect.stringContains exactBody "\"was_existing\":false" "exact-limit source reached admission"
+
+              let overflow = Array.append exact [| byte ' ' |]
+              let overflowCode, overflowBody = sendChunked url "chunked-overflow" overflow
+              Expect.equal
+                  overflowCode
+                  413
+                  $"the one-byte sentinel is classified by the router, not faulted by Kestrel; response={overflowBody}"
+              Expect.stringContains overflowBody "pipeline_too_large" "chunked overflow keeps the stable error code"
           }
 
           test "a missing idempotency key is refused with a named code" {
@@ -257,6 +483,16 @@ let endpoints =
               Expect.stringContains missingBody "not_found" "unknown build is named"
           }
 
+          test "a malformed log cursor is refused instead of silently reading from zero" {
+              let org, project = freshProject ()
+              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              let _, body = send HttpMethod.Post url (Some token) (Some "bad-cursor-api") (Some pipeline)
+              let buildId = Text.RegularExpressions.Regex.Match(body, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
+              let code, response = send HttpMethod.Get $"{url}/{buildId}/logs?from=banana" (Some token) None None
+              Expect.equal code 400 "invalid cursor"
+              Expect.stringContains response "invalid_log_cursor" "stable cursor code"
+          }
+
           test "an unknown build is 404, not 500" {
               let org, project = freshProject ()
               let code, body =
@@ -314,6 +550,76 @@ let endpoints =
               Expect.isFalse (tail.Contains "line-0") "offset respected"
           }
 
+          test "one-chunk pages cross retry attempts without duplicate or skipped local sequence ties" {
+              let smallApp, smallBaseUrl = startServer 1
+
+              try
+                  let org, project = freshProject ()
+                  let url = $"{smallBaseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+                  let _, body = send HttpMethod.Post url (Some token) (Some "log-retry-api") (Some pipeline)
+                  use admission = JsonDocument.Parse body
+                  let buildId = BuildId(Guid.Parse(admission.RootElement.GetProperty("build_id").GetString()))
+                  let parent = AttemptId(Guid.Parse(admission.RootElement.GetProperty("attempt_id").GetString()))
+
+                  Expect.isTrue (store.AppendLog(org, buildId, parent, 0, "parent-zero")) "parent log appended"
+
+                  let owner = "log-retry-api-owner"
+                  let fence =
+                      match store.OfferAttempt(org, parent, owner, 60) with
+                      | Ok fence -> fence
+                      | Error error -> failtestf "offer failed: %s" error
+
+                  Expect.isTrue (store.AcceptAttempt(org, parent, fence, owner)) "parent accepted"
+
+                  match store.PublishTerminal(org, parent, fence, owner, Failure) with
+                  | Error error -> failtestf "terminal publication failed: %s" error
+                  | Ok () -> ()
+
+                  let child = AttemptId(Guid.NewGuid())
+
+                  match store.DecideRetry(org, parent, 2, child) with
+                  | Error error -> failtestf "retry decision failed: %A" error
+                  | Ok _ -> ()
+
+                  let stateRoot = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-worker-path-proof")
+                  let parentJournal = WorkerPaths.journalPath stateRoot org parent
+                  let childJournal = WorkerPaths.journalPath stateRoot org child
+                  let restartedChildJournal = WorkerPaths.journalPath stateRoot org child
+                  let legacyBuildJournal =
+                      IO.Path.Combine(
+                          stateRoot,
+                          "journals",
+                          org.Value.ToString "N",
+                          buildId.Value.ToString "N" + ".journal")
+
+                  Expect.notEqual childJournal parentJournal "retry child cannot reopen its failed parent's journal"
+                  Expect.equal restartedChildJournal childJournal "the same child resumes its own deterministic journal"
+                  Expect.notEqual childJournal legacyBuildJournal "attempt namespace cannot ambiguously adopt a legacy build journal"
+
+                  Expect.isTrue (store.AppendLog(org, buildId, child, 0, "child-zero")) "retry log appended"
+
+                  let page from =
+                      let code, response = send HttpMethod.Get $"{url}/{buildId.Value}/logs?from={from}" (Some token) None None
+                      Expect.equal code 200 $"page {from} is readable"
+                      JsonDocument.Parse response
+
+                  use first = page 0
+                  Expect.equal (first.RootElement.GetProperty("next_sequence").GetInt32()) 1 "first cursor advances once"
+                  Expect.equal (first.RootElement.GetProperty("chunks").GetArrayLength()) 1 "limit is exact"
+                  Expect.equal (first.RootElement.GetProperty("chunks").[0].GetProperty("body").GetString()) "parent-zero" "first attempt appears once"
+
+                  use second = page 1
+                  Expect.equal (second.RootElement.GetProperty("next_sequence").GetInt32()) 2 "retry cursor advances once"
+                  Expect.equal (second.RootElement.GetProperty("chunks").GetArrayLength()) 1 "limit remains exact"
+                  Expect.equal (second.RootElement.GetProperty("chunks").[0].GetProperty("body").GetString()) "child-zero" "retry appears once"
+
+                  use exhausted = page 2
+                  Expect.equal (exhausted.RootElement.GetProperty("next_sequence").GetInt32()) 2 "empty page retains cursor"
+                  Expect.equal (exhausted.RootElement.GetProperty("chunks").GetArrayLength()) 0 "both chunks were consumed exactly once"
+              finally
+                  smallApp.StopAsync() |> Async.AwaitTask |> Async.RunSynchronously
+          }
+
           // Corrected expectation: my first version asserted 409 on a repeat
           // cancel. That is wrong — a retried cancellation after a client timeout
           // must not look like an error, since the requested state is already the
@@ -323,6 +629,7 @@ let endpoints =
               let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
               let _, body = send HttpMethod.Post url (Some token) (Some "can-1") (Some pipeline)
               let buildId = Text.RegularExpressions.Regex.Match(body, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
+              let attemptId = Text.RegularExpressions.Regex.Match(body, "\"attempt_id\":\"([^\"]+)\"").Groups[1].Value
 
               let code1, b1 = send HttpMethod.Post $"{url}/{buildId}/cancel" (Some token) None None
               Expect.equal code1 202 "accepted"
@@ -332,16 +639,16 @@ let endpoints =
               Expect.equal code2 202 "a retry is idempotent, not an error"
               Expect.stringContains b2 "\"already_requested\":true" "reports that it was already requested"
 
-              use conn = new Npgsql.NpgsqlConnection(connectionString)
-              conn.Open()
-              use terminal = conn.CreateCommand()
-              terminal.CommandText <-
-                  "UPDATE builds SET status = 'succeeded', cancellation_requested = false
-                    WHERE organization_id = @o AND project_id = @p AND id = @b"
-              terminal.Parameters.AddWithValue("o", org.Value) |> ignore
-              terminal.Parameters.AddWithValue("p", project.Value) |> ignore
-              terminal.Parameters.AddWithValue("b", Guid.Parse buildId) |> ignore
-              Expect.equal (terminal.ExecuteNonQuery()) 1 "terminal control updates the exact build"
+              let fence =
+                  match store.OfferAttempt(org, AttemptId(Guid.Parse attemptId), "api-terminal", 60) with
+                  | Ok value -> value
+                  | Error error -> failtestf "offer failed: %s" error
+              Expect.isTrue
+                  (store.AcceptAttempt(org, AttemptId(Guid.Parse attemptId), fence, "api-terminal"))
+                  "accepted"
+              match store.PublishTerminal(org, AttemptId(Guid.Parse attemptId), fence, "api-terminal", Success) with
+              | Ok _ -> ()
+              | Error error -> failtestf "terminal roll-up failed: %s" error
 
               let terminalCode, terminalBody =
                   send HttpMethod.Post $"{url}/{buildId}/cancel" (Some token) None None
@@ -384,4 +691,4 @@ let main argv =
             eprintfn $"migrate failed: {e}"
             1
         | Ok _ ->
-            runTestsWithCLIArgs [] argv (testSequenced (testList "Fogell.Controller.Api" [ authorization; endpoints ]))
+            runTestsWithCLIArgs [] argv (testSequenced (testList "Fogell.Controller.Api" [ executionLauncherValidation; authorization; endpoints ]))

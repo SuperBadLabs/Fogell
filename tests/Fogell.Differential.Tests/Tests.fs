@@ -1,11 +1,917 @@
 module Fogell.Differential.Tests
 
 open System
+open System.Runtime.InteropServices
 open Expecto
+open Fogell.Controller.Host
 open Fogell.Differential
+open Fogell.Domain
 open Fogell.Execution
 open Fogell.Groovy.Interpreter
 open Fogell.Ir
+
+[<DllImport("libc")>]
+extern uint32 private geteuid()
+
+let private effectiveIdentityIsRoot () = geteuid() = 0u
+
+/// FG-224. Progressive output leaves the engine at WalkerCtx.Emit, which is
+/// also the one run-scoped masking and ordering boundary.  These tests pin the
+/// publication contract directly so a future transport cannot accidentally
+/// publish raw bytes, reorder parallel lines, or replay the terminal snapshot.
+let progressiveOutputPublication =
+    let binding =
+        { ValueVariable = "TOKEN"
+          PathVariable = "TOKEN_FILE"
+          FilePath = "/not-used-by-this-test"
+          Value = "s3cr3t-value"
+          ValueVariableCarriesPath = false }
+
+    testList
+        "FG-224 progressive output publication"
+        [ test "OnOutput receives each safe line once, in trace order, after masking" {
+              let published = ResizeArray<string>()
+              let ctx = WalkerCtx.create 0L false (Some published.Add)
+
+              ctx.Emit "before"
+              ctx.BindSecrets [ binding ]
+              ctx.Emit "token=s3cr3t-value"
+              ctx.Emit "after"
+
+              let expected = [ "before"; "token=****"; "after" ]
+              Expect.equal (ctx.Output()) expected "the terminal trace stores the masked lines"
+              Expect.equal (List.ofSeq published) expected "progress is masked, ordered, and not replayed"
+          }
+
+          test "parallel publication has exactly the terminal trace order and cardinality" {
+              let published = ResizeArray<string>()
+              let ctx = WalkerCtx.create 0L false (Some published.Add)
+
+              System.Threading.Tasks.Parallel.For(
+                  0,
+                  256,
+                  Action<int>(fun i -> ctx.Emit $"parallel-{i}"))
+              |> ignore
+
+              let terminal = ctx.Output()
+              ctx.FlushOutput()
+              let progressive = List.ofSeq published
+              Expect.equal progressive terminal "the callback is ordered by the same lock as the trace"
+              Expect.equal progressive.Length 256 "every emission is published once"
+              Expect.equal
+                  (progressive |> Set.ofList |> Set.count)
+                  256
+                  "no emission is duplicated or lost"
+          }
+
+          test "a transformed secret is retained for terminal refusal but never published" {
+              let published = ResizeArray<string>()
+              let ctx = WalkerCtx.create 0L false (Some published.Add)
+              ctx.BindSecrets [ binding ]
+
+              ctx.Emit "eulav-t3rc3s"
+
+              Expect.equal
+                  (ctx.Output())
+                  [ "eulav-t3rc3s" ]
+                  "the terminal leak guard still receives the evidence"
+              Expect.isEmpty published "unsafe transformed bytes never cross the progressive boundary"
+          }
+
+          test "a slow callback cannot hold the output lock or block a later emitter" {
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let published = ResizeArray<string>()
+
+              let ctx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          published.Add line
+
+                          if line = "slow" then
+                              callbackEntered.Set()
+                              releaseCallback.Wait()))
+
+              let first = Threading.Tasks.Task.Run(fun () -> ctx.Emit "slow")
+
+              try
+                  Expect.isTrue (callbackEntered.Wait 2000) "the first callback started"
+                  let second = Threading.Tasks.Task.Run(fun () -> ctx.Emit "fast")
+                  Expect.isTrue (second.Wait 500) "a second Emit does not wait for the slow callback"
+                  Expect.equal (ctx.Output()) [ "slow"; "fast" ] "trace state remains independently readable"
+              finally
+                  releaseCallback.Set()
+
+              first.GetAwaiter().GetResult()
+              ctx.FlushOutput()
+              Expect.equal (List.ofSeq published) [ "slow"; "fast" ] "one consumer retains FIFO order"
+          }
+
+          test "a callback may synchronously wait for a reentrant emission without deadlock" {
+              let published = ResizeArray<string>()
+              let mutable emit = ignore
+
+              let ctx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          published.Add line
+
+                          if line = "outer" then
+                              let nested = Threading.Tasks.Task.Run(fun () -> emit "inner")
+                              if not (nested.Wait 500) then
+                                  failwith "reentrant emission was blocked by callback publication"))
+
+              emit <- ctx.Emit
+              let outer = Threading.Tasks.Task.Run(fun () -> emit "outer")
+              Expect.isTrue
+                  (Threading.SpinWait.SpinUntil((fun () -> outer.IsCompleted), 2000))
+                  "the outer callback and nested emitter complete"
+              outer.GetAwaiter().GetResult()
+              ctx.FlushOutput()
+              Expect.equal (ctx.Output()) [ "outer"; "inner" ] "reentrant trace order is stable"
+              Expect.equal (List.ofSeq published) [ "outer"; "inner" ] "reentrant publication is exact"
+          }
+
+          test "publisher failure is typed, sticky, and never retried as build output" {
+              let mutable attempts = 0
+
+              let ctx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun _ ->
+                          attempts <- attempts + 1
+                          raise (IO.IOException "event sink unavailable")))
+
+              Expect.throwsT<OutputPublicationException>
+                  (fun () -> ctx.Emit "one")
+                  "the publisher infrastructure failure escapes Emit"
+              Expect.throwsT<OutputPublicationException>
+                  (fun () -> ctx.FlushOutput())
+                  "terminal publication observes the same stored failure"
+              Expect.throwsT<OutputPublicationException>
+                  (fun () -> ctx.Emit "two")
+                  "later output cannot continue beyond a broken event stream"
+              Expect.equal attempts 1 "a failed callback is never retried or duplicated"
+          }
+
+          test "runPersisted preserves publisher failure for host reconciliation" {
+              let hooks =
+                  { OnOutput = fun _ -> raise (IO.IOException "event sink unavailable")
+                    IsRestartedRun = false
+                    ShouldExecute = fun _ _ -> true
+                    StageWasCommitted = fun _ -> false
+                    SkippedStatus = fun _ _ -> None
+                    SkippedStageWarning = fun _ _ -> None
+                    OnStepStarted = fun _ _ _ -> ()
+                    OnStepStageWarning = fun _ _ _ -> ()
+                    OnStepFinished = fun _ _ _ _ -> ()
+                    OnStageCommitted = fun _ -> ()
+                    OnRetryAttempt = fun _ _ -> ()
+                    RetryAttemptsSoFar = fun _ -> 1
+                    PollInputAnswer = None
+                    OnInputClosed = fun _ _ _ -> ()
+                    OnInputAnswerVoided = fun _ _ _ -> () }
+
+              let root =
+                  IO.Path.Combine(
+                      IO.Path.GetTempPath(),
+                      $"fogell-output-publication-{Guid.NewGuid():N}")
+
+              IO.Directory.CreateDirectory root |> ignore
+
+              try
+                  Expect.throwsT<OutputPublicationException>
+                      (fun () ->
+                          FogellSide.runPersisted
+                              []
+                              root
+                              "publisher-failure"
+                              2
+                              true
+                              hooks
+                              """pipeline {
+    agent any
+    stages {
+        stage('Build') {
+            steps {
+                echo 'hello'
+            }
+        }
+    }
+}
+"""
+                          |> ignore)
+                      "the persisted boundary must not collapse event transport into Result.Error"
+              finally
+                  IO.Directory.Delete(root, true)
+          } ]
+
+let controllerEventDrainBudgets =
+    let frame (value: string) =
+        Text.Encoding.ASCII.GetBytes(Convert.ToBase64String(Text.Encoding.UTF8.GetBytes value) + "\n")
+
+    let state () =
+        { Offset = 0L
+          Tail = Array.empty
+          DiscardingOversizedFrame = false }
+
+    testList
+        "FG-224 controller event drain budgets"
+        [ test "a fixed backlog is consumed in bounded, exactly-once batches" {
+              let expected = [ for i in 0 .. 99 -> $"line-{i}" ]
+              let bytes = expected |> List.collect (frame >> Array.toList) |> Array.ofList
+              use stream = new IO.MemoryStream(bytes)
+              let cursor = state ()
+              let observed = ResizeArray<string>()
+              let mutable batches = 0
+              let mutable reachedEof = false
+
+              while not reachedEof do
+                  let result =
+                      EventStream.drainBatch stream cursor 1024 4096 3 (function
+                          | Encoded value ->
+                              value
+                              |> Text.Encoding.ASCII.GetString
+                              |> Convert.FromBase64String
+                              |> Text.Encoding.UTF8.GetString
+                              |> observed.Add
+                              true
+                          | Oversized -> false)
+
+                  batches <- batches + 1
+                  Expect.isTrue (result.FramesProcessed <= 3) "one poll never exceeds its frame budget"
+                  Expect.isTrue (result.BytesProcessed <= 4096) "one poll never exceeds its byte budget"
+                  reachedEof <- result.ReachedEof
+
+              Expect.isGreaterThan batches 1 "the backlog cannot be drained by one unbounded poll"
+              Expect.equal (List.ofSeq observed) expected "offset and tail preserve exact order without replay"
+          }
+
+          test "a producer extending the stream during every callback cannot extend one poll forever" {
+              use stream = new IO.MemoryStream()
+              let seed = frame "seed"
+              stream.Write(seed, 0, seed.Length)
+              stream.Position <- 0L
+              let cursor = state ()
+              let mutable published = 0
+
+              let result =
+                  EventStream.drainBatch stream cursor 1024 4096 5 (fun _ ->
+                      published <- published + 1
+
+                      if published <= 100 then
+                          let position = stream.Position
+                          stream.Position <- stream.Length
+                          stream.Write(seed, 0, seed.Length)
+                          stream.Position <- position
+
+                      true)
+
+              Expect.equal published 5 "the frame budget returns control while output is still arriving"
+              Expect.equal result.FramesProcessed 5 "exactly the configured work was performed"
+              Expect.isFalse result.ReachedEof "new backlog is left for the next control-plane turn"
+          }
+
+          test "a byte budget split inside a frame preserves its tail for the next poll" {
+              let encoded = frame (String('x', 200))
+              use stream = new IO.MemoryStream(encoded)
+              let cursor = state ()
+              let observed = ResizeArray<byte array>()
+              let first = EventStream.drainBatch stream cursor 1024 17 10 (fun value ->
+                  match value with Encoded bytes -> observed.Add bytes | Oversized -> ()
+                  true)
+
+              Expect.equal first.FramesProcessed 0 "an incomplete frame is not published"
+              Expect.equal cursor.Tail.Length 17 "only the inspected prefix is retained"
+
+              let mutable reachedEof = first.ReachedEof
+              while not reachedEof do
+                  let next = EventStream.drainBatch stream cursor 1024 17 10 (fun value ->
+                      match value with Encoded bytes -> observed.Add bytes | Oversized -> ()
+                      true)
+                  reachedEof <- next.ReachedEof
+
+              Expect.equal observed.Count 1 "the completed frame is published once"
+              Expect.equal observed[0] encoded[.. encoded.Length - 2] "the carried bytes are exact"
+          }
+
+          test "an oversized frame spanning slices emits one refusal marker" {
+              let bytes = Array.append (Array.create 40 (byte 'A')) [| byte '\n' |]
+              use stream = new IO.MemoryStream(bytes)
+              let cursor = state ()
+              let mutable markers = 0
+              let mutable encoded = 0
+              let mutable reachedEof = false
+
+              while not reachedEof do
+                  let result = EventStream.drainBatch stream cursor 10 7 4 (function
+                      | Oversized -> markers <- markers + 1; true
+                      | Encoded _ -> encoded <- encoded + 1; true)
+                  reachedEof <- result.ReachedEof
+
+              Expect.equal markers 1 "discard mode ends with exactly one named marker"
+              Expect.equal encoded 0 "no oversized payload fragment is mispublished as a frame"
+          }
+
+          test "a refused fenced append leaves its newline and every later frame unconsumed" {
+              let first = frame "first"
+              let second = frame "second"
+              let third = frame "third"
+              let bytes = Array.concat [ first; second; third ]
+              use stream = new IO.MemoryStream(bytes)
+              let cursor = state ()
+              let observed = ResizeArray<string>()
+
+              let result = EventStream.drainBatch stream cursor 1024 4096 10 (function
+                  | Oversized -> false
+                  | Encoded value ->
+                      let text =
+                          value
+                          |> Text.Encoding.ASCII.GetString
+                          |> Convert.FromBase64String
+                          |> Text.Encoding.UTF8.GetString
+                      observed.Add text
+                      text = "first")
+
+              Expect.isTrue result.AuthorityLost "publication refusal is surfaced immediately"
+              Expect.equal (List.ofSeq observed) [ "first"; "second" ] "the later third frame was never attempted"
+              Expect.equal
+                  cursor.Offset
+                  (int64 (first.Length + second.Length - 1))
+                  "the refused frame's newline is not consumed"
+              Expect.equal cursor.Tail second[.. second.Length - 2] "the refused frame remains an exact retry boundary"
+          }
+
+          test "an extinct producer's finite tail beyond the former 16 MiB cap is published exactly once" {
+              let expected = [ for i in 0 .. 1539 -> $"{i:D4}:{String('x', 8192)}" ]
+              let backing = expected |> List.collect (frame >> Array.toList) |> Array.ofList
+              Expect.isGreaterThan backing.Length (16 * 1024 * 1024) "the regression crosses the removed aggregate cap"
+              let cursor = state ()
+              let observed = ResizeArray<int>()
+              let mutable controlChecks = 0
+
+              let openStream () =
+                  Some(new IO.MemoryStream(backing) :> IO.Stream)
+
+              let completion =
+                  EventStream.drainExtinguishedBoundary
+                      openStream
+                      cursor
+                      (16 * 1024)
+                      (256 * 1024)
+                      16
+                      (fun () -> controlChecks <- controlChecks + 1; true)
+                      (function
+                      | Encoded value ->
+                          let text =
+                              value
+                              |> Text.Encoding.ASCII.GetString
+                              |> Convert.FromBase64String
+                              |> Text.Encoding.UTF8.GetString
+                          let index = observed.Count
+                          Expect.isLessThan index expected.Length "no extra frame is published"
+                          Expect.equal text expected[index] "each frame retains every byte and its exact position"
+                          observed.Add index
+                          true
+                      | Oversized -> false)
+
+              Expect.equal completion.Stop EndOfStream "the complete frozen boundary authorizes terminal truth"
+              Expect.isTrue (EventStream.terminalPublicationAllowed completion) "complete EOF is terminal-safe"
+              Expect.equal (List.ofSeq observed) [ 0 .. 1539 ] "every tail frame is published once in order"
+              Expect.isGreaterThan controlChecks 1 "control is interleaved between bounded slices"
+          }
+
+          test "growth after the extinction snapshot fails closed" {
+              let seed = frame "hot"
+              let stream = new IO.MemoryStream()
+              stream.Write(seed, 0, seed.Length)
+              stream.Position <- 0L
+              let cursor = state ()
+
+              let completion =
+                  EventStream.drainExtinguishedBoundary
+                      (fun () -> Some(stream :> IO.Stream))
+                      cursor
+                      1024
+                      4096
+                      1
+                      (fun () -> true)
+                      (fun _ -> stream.Write(seed, 0, seed.Length); true)
+
+              Expect.equal completion.Stop StreamChangedAfterExtinction "new bytes contradict producer extinction"
+              Expect.isFalse (EventStream.terminalPublicationAllowed completion) "unsafe growth cannot authorize terminal truth"
+          }
+
+          test "an incomplete final frame fails closed" {
+              let backing = Text.Encoding.ASCII.GetBytes(Convert.ToBase64String(Text.Encoding.UTF8.GetBytes "partial"))
+              let cursor = state ()
+
+              let completion =
+                  EventStream.drainExtinguishedBoundary
+                      (fun () -> Some(new IO.MemoryStream(backing) :> IO.Stream))
+                      cursor
+                      1024
+                      4096
+                      16
+                      (fun () -> true)
+                      (fun _ -> true)
+
+              Expect.equal completion.Stop IncompleteFrameAtEndOfStream "unterminated evidence is named"
+              Expect.isFalse (EventStream.terminalPublicationAllowed completion) "truncated evidence cannot authorize terminal truth"
+          } ]
+
+let controllerWorkerScheduling =
+    let organization suffix =
+        OrganizationId(Guid.Parse $"00000000-0000-0000-0000-{suffix}")
+
+    testList
+        "FG-224 controller worker scheduling"
+        [ test "busy organizations rotate while empty organizations do not block claims" {
+              let low = organization "000000000001"
+              let empty = organization "000000000002"
+              let later = organization "000000000003"
+              let mutable cursor = None
+              let attempts = ResizeArray<OrganizationId list>()
+
+              let scan () =
+                  let probed = ResizeArray<OrganizationId>()
+
+                  let claimed =
+                      [ later; empty; low; low ]
+                      |> WorkerScheduling.organizationsAfter cursor
+                      |> Array.tryFind (fun candidate ->
+                          probed.Add candidate
+                          candidate = low || candidate = later)
+
+                  cursor <- claimed
+                  attempts.Add(List.ofSeq probed)
+                  claimed
+
+              let claims = [ for _ in 1..6 -> scan () ]
+
+              Expect.equal
+                  claims
+                  [ Some low; Some later; Some low; Some later; Some low; Some later ]
+                  "a continuously busy low UUID cannot starve a later organization"
+              Expect.equal
+                  (List.ofSeq attempts)
+                  [ [ low ]; [ empty; later ]; [ low ]; [ empty; later ]; [ low ]; [ empty; later ] ]
+                  "ineligible organizations are skipped and rotation remains bounded to two claim cycles"
+          }
+
+          test "a removed cursor and newly inserted organizations retain deterministic rotation" {
+              let low = organization "000000000010"
+              let removed = organization "000000000020"
+              let inserted = organization "000000000030"
+              let high = organization "000000000040"
+
+              Expect.equal
+                  ([ high; low; inserted ]
+                   |> WorkerScheduling.organizationsAfter (Some removed)
+                   |> Array.toList)
+                  [ inserted; high; low ]
+                  "a missing cursor resumes at its sorted successor and wraps exactly once"
+
+              Expect.equal
+                  ([ inserted; low ]
+                   |> WorkerScheduling.organizationsAfter (Some high)
+                   |> Array.toList)
+                  [ low; inserted ]
+                  "removing the final organization wraps to the first current organization"
+          } ]
+
+let controllerWorkerTiming =
+    testList
+        "FG-224 controller worker timing"
+        [ test "a poll at the one-third lease boundary is accepted" {
+              Expect.equal
+                  (ControllerConfig.validateWorkerTiming 3333 10)
+                  (Ok())
+                  "the integer boundary retains a full final-third renewal margin"
+          }
+
+          test "a poll one millisecond beyond the one-third lease boundary is rejected" {
+              Expect.equal
+                  (ControllerConfig.validateWorkerTiming 3334 10)
+                  (Error
+                      "FOGELL_WORKER_POLL_MS must be no more than one third of FOGELL_WORKER_LEASE_SECONDS (3333 ms for 10 s)")
+                  "startup names both variables and the exact safe bound"
+          }
+
+          test "a longer lease admits a proportionally longer poll" {
+              Expect.equal
+                  (ControllerConfig.validateWorkerTiming 60000 180)
+                  (Ok())
+                  "the configured poll maximum remains usable with a sufficient lease"
+          } ]
+
+let controllerStateRoot =
+    let variables =
+        [ "FOGELL_DATABASE_URL"
+          "FOGELL_MAINTENANCE_DATABASE_URL"
+          "FOGELL_API_TOKEN_FILE"
+          "FOGELL_LISTEN_URL"
+          "FOGELL_STATE_ROOT"
+          "FOGELL_RUN_HOST_PATH"
+          "FOGELL_LOCAL_TRUST_POOL"
+          "FOGELL_MAX_PIPELINE_BYTES"
+          "FOGELL_MAX_LOG_CHUNKS"
+          "FOGELL_WORKER_POLL_MS"
+          "FOGELL_WORKER_LEASE_SECONDS" ]
+
+    let withConfig stateRoot configure assertion =
+        let previous =
+            variables
+            |> List.map (fun name -> name, Environment.GetEnvironmentVariable name)
+
+        let fixtureRoot =
+            IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-config-{Guid.NewGuid():N}")
+
+        let tokenPath = IO.Path.Combine(fixtureRoot, "api-token")
+        let runHostPath = IO.Path.Combine(fixtureRoot, "Fogell.Run.Host")
+
+        try
+            IO.Directory.CreateDirectory fixtureRoot |> ignore
+            IO.File.WriteAllText(tokenPath, String('t', 32))
+            IO.File.WriteAllText(runHostPath, "test host placeholder")
+            IO.File.SetUnixFileMode(
+                runHostPath,
+                IO.UnixFileMode.UserRead
+                ||| IO.UnixFileMode.UserWrite
+                ||| IO.UnixFileMode.UserExecute)
+
+            Environment.SetEnvironmentVariable("FOGELL_DATABASE_URL", "postgres://runtime")
+            Environment.SetEnvironmentVariable("FOGELL_MAINTENANCE_DATABASE_URL", "postgres://maintenance")
+            Environment.SetEnvironmentVariable("FOGELL_API_TOKEN_FILE", tokenPath)
+            Environment.SetEnvironmentVariable("FOGELL_LISTEN_URL", "http://127.0.0.1:8080")
+            Environment.SetEnvironmentVariable("FOGELL_STATE_ROOT", stateRoot)
+            Environment.SetEnvironmentVariable("FOGELL_RUN_HOST_PATH", runHostPath)
+            Environment.SetEnvironmentVariable("FOGELL_LOCAL_TRUST_POOL", "local")
+            Environment.SetEnvironmentVariable("FOGELL_MAX_PIPELINE_BYTES", "1024")
+            Environment.SetEnvironmentVariable("FOGELL_MAX_LOG_CHUNKS", "100")
+            Environment.SetEnvironmentVariable("FOGELL_WORKER_POLL_MS", "1000")
+            Environment.SetEnvironmentVariable("FOGELL_WORKER_LEASE_SECONDS", "10")
+            configure fixtureRoot tokenPath runHostPath
+            assertion (ControllerConfig.load ())
+        finally
+            for name, value in previous do
+                Environment.SetEnvironmentVariable(name, value)
+
+            if IO.Directory.Exists fixtureRoot then
+                IO.Directory.Delete(fixtureRoot, true)
+
+    testSequenced
+        (testList
+            "FG-224 controller state root"
+            [ test "a missing state root remains required rather than defaulting to the cwd" {
+                  withConfig null (fun _ _ _ -> ()) (fun result ->
+                      Expect.equal
+                          result
+                          (Error "FOGELL_STATE_ROOT is required")
+                          "startup remains fail-closed when no durable root is configured")
+              }
+
+              test "a relative state root is refused before normalization" {
+                  let relative = $".fogell-relative-state-{Guid.NewGuid():N}"
+                  let accidentallyNormalized = IO.Path.GetFullPath relative
+
+                  try
+                      withConfig relative (fun _ _ _ -> ()) (fun result ->
+                          Expect.equal
+                              result
+                              (Error "FOGELL_STATE_ROOT must be absolute")
+                              "the configured relative path is rejected rather than bound to the process cwd")
+                      Expect.isFalse
+                          (IO.Directory.Exists accidentallyNormalized)
+                          "validation does not create the normalized relative directory"
+                  finally
+                      if IO.Directory.Exists accidentallyNormalized then
+                          IO.Directory.Delete(accidentallyNormalized, true)
+              }
+
+              test "a relative API token path is refused before normalization or state creation" {
+                  let stateRoot =
+                      IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-token-state-{Guid.NewGuid():N}")
+
+                  try
+                      withConfig
+                          stateRoot
+                          (fun _ tokenPath _ ->
+                              Environment.SetEnvironmentVariable(
+                                  "FOGELL_API_TOKEN_FILE",
+                                  IO.Path.GetFileName tokenPath))
+                          (fun result ->
+                              Expect.equal
+                                  result
+                                  (Error "FOGELL_API_TOKEN_FILE must be absolute")
+                                  "the raw relative token path is rejected before GetFullPath can bind it to the cwd")
+
+                      Expect.isFalse
+                          (IO.Directory.Exists stateRoot)
+                          "invalid token configuration cannot create durable state"
+                  finally
+                      if IO.Directory.Exists stateRoot then
+                          IO.Directory.Delete(stateRoot, true)
+              }
+
+              test "a non-executable run host is refused before state creation" {
+                  let stateRoot =
+                      IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-run-host-state-{Guid.NewGuid():N}")
+
+                  try
+                      withConfig
+                          stateRoot
+                          (fun _ _ runHostPath ->
+                              IO.File.SetUnixFileMode(
+                                  runHostPath,
+                                  IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite))
+                          (fun result ->
+                              Expect.equal
+                                  result
+                                  (Error "FOGELL_RUN_HOST_PATH does not name an executable file")
+                                  "an existing regular file without an execute bit is not launchable")
+
+                      Expect.isFalse
+                          (IO.Directory.Exists stateRoot)
+                          "an unlaunchable run host cannot create durable state"
+                  finally
+                      if IO.Directory.Exists stateRoot then
+                          IO.Directory.Delete(stateRoot, true)
+              }
+
+              test "run host execute permissions are evaluated for the effective identity" {
+                  let stateRoot =
+                      IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-other-execute-state-{Guid.NewGuid():N}")
+
+                  try
+                      withConfig
+                          stateRoot
+                          (fun _ _ runHostPath ->
+                              // The fixture belongs to this process. For an unprivileged owner,
+                              // the kernel selects the owner class and ignores OtherExecute;
+                              // Linux root may execute because at least one execute bit exists.
+                              IO.File.SetUnixFileMode(
+                                  runHostPath,
+                                  IO.UnixFileMode.UserRead
+                                  ||| IO.UnixFileMode.UserWrite
+                                  ||| IO.UnixFileMode.OtherExecute))
+                          (fun result ->
+                              if effectiveIdentityIsRoot () then
+                                  match result with
+                                  | Ok _ -> ()
+                                  | Error error ->
+                                      failtestf "root's effective execute access was refused: %s" error
+                              else
+                                  Expect.equal
+                                      result
+                                      (Error "FOGELL_RUN_HOST_PATH does not name an executable file")
+                                      "an other-only bit does not grant the owning unprivileged identity execute access")
+
+                      if effectiveIdentityIsRoot () then
+                          Expect.isTrue
+                              (IO.Directory.Exists stateRoot)
+                              "Linux root may execute a regular file when any execute bit is present"
+                          Expect.isEmpty
+                              (IO.Directory.GetFileSystemEntries stateRoot)
+                              "the successful root readiness probe is removed"
+                      else
+                          Expect.isFalse
+                              (IO.Directory.Exists stateRoot)
+                              "a run host inaccessible to the unprivileged identity cannot create durable state"
+                  finally
+                      if IO.Directory.Exists stateRoot then
+                          IO.Directory.Delete(stateRoot, true)
+              }
+
+              test "state root write access follows the effective identity without changing existing contents" {
+                  let stateRoot =
+                      IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-readonly-state-{Guid.NewGuid():N}")
+
+                  let sentinel = IO.Path.Combine(stateRoot, "operator-data")
+
+                  try
+                      IO.Directory.CreateDirectory stateRoot |> ignore
+                      IO.File.WriteAllText(sentinel, "preserve me")
+
+                      IO.File.SetUnixFileMode(
+                          stateRoot,
+                          IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserExecute)
+
+                      withConfig stateRoot (fun _ _ _ -> ()) (fun result ->
+                          if effectiveIdentityIsRoot () then
+                              match result with
+                              | Ok _ -> ()
+                              | Error error ->
+                                  failtestf "root's effective write access was refused: %s" error
+                          else
+                              Expect.equal
+                                  result
+                                  (Error "FOGELL_STATE_ROOT cannot be created and written by the service identity")
+                                  "an unprivileged identity is refused when the real create/write probe fails")
+
+                      Expect.sequenceEqual
+                          (IO.Directory.GetFileSystemEntries stateRoot)
+                          [| sentinel |]
+                          "neither the failed unprivileged probe nor the successful root probe leaves an artifact"
+                      Expect.equal
+                          (IO.File.ReadAllText sentinel)
+                          "preserve me"
+                          "the failed probe does not modify existing data"
+                  finally
+                      if IO.Directory.Exists stateRoot then
+                          IO.File.SetUnixFileMode(
+                              stateRoot,
+                              IO.UnixFileMode.UserRead
+                              ||| IO.UnixFileMode.UserWrite
+                              ||| IO.UnixFileMode.UserExecute)
+                          IO.Directory.Delete(stateRoot, true)
+              }
+
+              test "an absolute state root is accepted and normalized without changing other settings" {
+                  let stateFixtureRoot =
+                      IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-state-{Guid.NewGuid():N}")
+
+                  let fixture =
+                      IO.Path.Combine(
+                          stateFixtureRoot,
+                          "parent",
+                          "..",
+                          "state")
+
+                  let expected = IO.Path.GetFullPath fixture
+
+                  try
+                      withConfig fixture (fun _ _ _ -> ()) (function
+                          | Error error -> failtestf "absolute state root was refused: %s" error
+                          | Ok config ->
+                              Expect.equal config.StateRoot expected "accepted roots retain canonical normalization"
+                              Expect.equal config.MaxPipelineBytes 1024 "pipeline limit parsing is unchanged"
+                              Expect.equal config.MaxLogChunks 100 "log limit parsing is unchanged"
+                              Expect.equal config.PollMilliseconds 1000 "poll parsing is unchanged"
+                              Expect.equal config.LeaseSeconds 10 "lease parsing is unchanged"
+                              Expect.isTrue (IO.Directory.Exists expected) "the accepted state directory is created"
+                              Expect.isEmpty
+                                  (IO.Directory.GetFileSystemEntries expected)
+                                  "a successful readiness probe is removed before startup continues")
+                  finally
+                      if IO.Directory.Exists stateFixtureRoot then
+                          IO.Directory.Delete(stateFixtureRoot, true)
+              } ])
+
+let controllerProcessGroupExtinction =
+    let delivered _ = ProcessSignalResult.Delivered
+    let noPause () = ()
+
+    testList
+        "FG-224 controller process-group extinction"
+        [ test "Linux probe errno distinguishes absence, presence, and uncertainty" {
+              Expect.equal
+                  (ProcessGroup.classifyProbe -1 3)
+                  ProcessPresence.Absent
+                  "ESRCH is the only absent process-group result"
+              Expect.equal
+                  (ProcessGroup.classifyProbe -1 1)
+                  ProcessPresence.Present
+                  "EPERM proves a target exists even though it cannot be signalled"
+              Expect.equal
+                  (ProcessGroup.classifyProbe -1 22)
+                  ProcessPresence.Uncertain
+                  "unexpected errno cannot authorize a handoff"
+          }
+
+          test "an already absent leader and group need no signals" {
+              let mutable signals = 0
+              let signal _ = signals <- signals + 1; ProcessSignalResult.Delivered
+
+              let result =
+                  ProcessGroup.ensureExtinguished
+                      1
+                      1
+                      (fun () -> ProcessPresence.Absent)
+                      (fun () -> ProcessPresence.Absent)
+                      signal
+                      signal
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.Extinguished "absence is verified directly"
+              Expect.equal signals 0 "a dead process group is never signalled"
+          }
+
+          test "outer cleanup is executed exactly once" {
+              let mutable cleanups = 0
+              let cleanup =
+                  ProcessGroup.once (fun () ->
+                      cleanups <- cleanups + 1
+                      ProcessGroupStopResult.Extinguished)
+
+              Expect.equal (cleanup ()) ProcessGroupStopResult.Extinguished "first caller performs cleanup"
+              Expect.equal (cleanup ()) ProcessGroupStopResult.Extinguished "finally receives the cached result"
+              Expect.equal cleanups 1 "a reused numeric process-group id is never signalled twice"
+          }
+
+          test "the pre-setsid race terminates the leader even before its group exists" {
+              let mutable leader = ProcessPresence.Present
+              let mutable leaderSignals = []
+
+              let signalLeader signal =
+                  leaderSignals <- leaderSignals @ [ signal ]
+                  leader <- ProcessPresence.Absent
+                  ProcessSignalResult.Delivered
+
+              let result =
+                  ProcessGroup.ensureExtinguished
+                      1
+                      1
+                      (fun () -> leader)
+                      (fun () -> ProcessPresence.Absent)
+                      (fun _ -> ProcessSignalResult.TargetAbsent)
+                      signalLeader
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.Extinguished "leader and not-yet-created group are both absent"
+              Expect.equal leaderSignals [ 15 ] "TERM reaches the launcher directly"
+          }
+
+          test "a descendant surviving its leader is killed before extinction succeeds" {
+              let mutable group = ProcessPresence.Present
+              let mutable groupSignals = []
+
+              let signalGroup signal =
+                  groupSignals <- groupSignals @ [ signal ]
+
+                  if signal = 9 then
+                      group <- ProcessPresence.Absent
+
+                  ProcessSignalResult.Delivered
+
+              let result =
+                  ProcessGroup.ensureExtinguished
+                      1
+                      1
+                      (fun () -> ProcessPresence.Absent)
+                      (fun () -> group)
+                      signalGroup
+                      delivered
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.Extinguished "KILL is followed by a verified absent probe"
+              Expect.equal groupSignals [ 15; 9 ] "the whole group receives TERM then KILL"
+          }
+
+          test "a persistent group fails closed" {
+              let result =
+                  ProcessGroup.ensureExtinguished
+                      0
+                      0
+                      (fun () -> ProcessPresence.Absent)
+                      (fun () -> ProcessPresence.Present)
+                      delivered
+                      delivered
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.Persisted "persistence cannot authorize handoff"
+          }
+
+          test "an ambiguous final probe fails closed" {
+              let result =
+                  ProcessGroup.ensureExtinguished
+                      0
+                      0
+                      (fun () -> ProcessPresence.Absent)
+                      (fun () -> ProcessPresence.Uncertain)
+                      delivered
+                      delivered
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.StatusUncertain "unknown status cannot authorize handoff"
+          }
+
+          test "outer extinction permits only natural terminal publication" {
+              Expect.equal
+                  (ProcessGroup.handoff ChildExitKind.Natural ProcessGroupStopResult.Extinguished)
+                  ChildHandoff.NaturalTerminalAllowed
+                  "a naturally completed Run.Host may publish its journal terminal"
+              Expect.equal
+                  (ProcessGroup.handoff ChildExitKind.Forced ProcessGroupStopResult.Extinguished)
+                  ChildHandoff.ReconciliationRequired
+                  "outer extinction cannot prove nested step sessions ended after a forced stop"
+          }
+
+          test "natural exit still fails closed when outer cleanup is not certain" {
+              Expect.equal
+                  (ProcessGroup.handoff ChildExitKind.Natural ProcessGroupStopResult.Persisted)
+                  ChildHandoff.ReconciliationRequired
+                  "a persistent outer group blocks terminal publication"
+              Expect.equal
+                  (ProcessGroup.handoff ChildExitKind.Natural ProcessGroupStopResult.StatusUncertain)
+                  ChildHandoff.ReconciliationRequired
+                  "an uncertain outer probe blocks terminal publication"
+          } ]
 
 /// FG-002f. The acceptance this ticket actually demanded: emit each look-alike FROM A
 /// BUILD and assert it survives normalisation.
@@ -4581,20 +5487,21 @@ fi
                   | Ok trace -> Expect.equal trace.Result "success" "the SCM-defined build completed"
 
                   let workspace = IO.Path.Combine(workspaceRoot, "job")
+                  let buildHome = FogellSide.agentHome workspaceRoot "job" 1
                   Expect.equal
                       (IO.File.ReadAllText(IO.Path.Combine(workspace, "payload.txt")))
                       "controller/build boundary\n"
                       "explicit checkout obtained the committed workspace"
 
                   Expect.equal
-                      (IO.File.GetUnixFileMode(FogellSide.agentHome workspaceRoot))
+                      (IO.File.GetUnixFileMode buildHome)
                       (IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute)
                       "the run-scoped build HOME is private"
 
                   let buildEnvironment = IO.File.ReadAllText(IO.Path.Combine(workspace, "build.env"))
                   Expect.stringContains
                       buildEnvironment
-                      $"HOME={FogellSide.agentHome workspaceRoot}"
+                      $"HOME={buildHome}"
                       "the build sees only its run-scoped HOME"
                   for name in [ "SSH_AUTH_SOCK"; "GIT_ASKPASS"; "FG222_LOG" ] do
                       Expect.isFalse
@@ -4634,19 +5541,155 @@ fi
                   try IO.Directory.Delete(root, true) with _ -> ()
           }
 
-          test "run-scoped build HOME refuses a pre-existing symlink" {
+          test "build-scoped HOME refuses a pre-existing symlink" {
               let root =
                   IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg222-home-link-" + Guid.NewGuid().ToString("N"))
 
               let target = IO.Path.Combine(root, "controller-home")
               IO.Directory.CreateDirectory target |> ignore
-              IO.Directory.CreateSymbolicLink(FogellSide.agentHome root, target) |> ignore
+              let buildHome = FogellSide.agentHome root "job" 1
+              IO.Directory.CreateDirectory(IO.Path.GetDirectoryName buildHome) |> ignore
+              IO.Directory.CreateSymbolicLink(buildHome, target) |> ignore
 
               try
                   let source = "pipeline { agent any stages { stage('S') { steps { echo 'unreachable' } } } }"
                   match FogellSide.run [] root "job" source with
                   | Ok _ -> failtest "symlinked build HOME was accepted"
                   | Error why -> Expect.stringContains why "symlinked private directory" "the unsafe HOME is named"
+              finally
+                  try IO.Directory.Delete(root, true) with _ -> ()
+          }
+
+          test "build-scoped HOME refuses a symlinked identity root" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg224-home-root-link-" + Guid.NewGuid().ToString("N"))
+
+              let target = IO.Path.Combine(root, "controller-home")
+              IO.Directory.CreateDirectory target |> ignore
+              IO.Directory.CreateSymbolicLink(IO.Path.Combine(root, "_agent_home"), target) |> ignore
+
+              try
+                  let source = "pipeline { agent any stages { stage('S') { steps { echo 'unreachable' } } } }"
+                  match FogellSide.run [] root "job" source with
+                  | Ok _ -> failtest "symlinked build HOME identity root was accepted"
+                  | Error why -> Expect.stringContains why "symlinked private directory" "the unsafe HOME root is named"
+              finally
+                  try IO.Directory.Delete(root, true) with _ -> ()
+          }
+
+          test "retained builds receive isolated stable HOME identities" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg224-home-isolation-" + Guid.NewGuid().ToString("N"))
+
+              let first =
+                  "pipeline { agent any stages { stage('S') { steps { sh 'printf first > \"$HOME/fogell-state\"' } } } }"
+
+              let second =
+                  "pipeline { agent any stages { stage('S') { steps { sh 'test ! -e \"$HOME/fogell-state\" && printf clean > home-check.txt' } } } }"
+
+              try
+                  match FogellSide.runMany [] root "job" [ first; second ] with
+                  | [ Ok firstTrace; Ok secondTrace ] ->
+                      Expect.equal firstTrace.Result "success" "the first retained build completed"
+                      Expect.equal secondTrace.Result "success" "the second retained build saw an isolated HOME"
+                  | results -> failtestf "retained HOME isolation run failed: %A" results
+
+                  let firstHome = FogellSide.agentHome root "job" 1
+                  let secondHome = FogellSide.agentHome root "job" 2
+                  Expect.notEqual firstHome secondHome "different build identities cannot share HOME"
+                  Expect.equal
+                      (FogellSide.agentHome root "job" 1)
+                      firstHome
+                      "the same job/build identity is restart-stable"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(firstHome, "fogell-state")))
+                      "the first build wrote only its own HOME"
+                  Expect.isFalse
+                      (IO.File.Exists(IO.Path.Combine(secondHome, "fogell-state")))
+                      "the second build did not inherit the first build's state"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(root, "job", "home-check.txt")))
+                      "clean"
+                      "the second build proved isolation through the real shell environment"
+              finally
+                  try IO.Directory.Delete(root, true) with _ -> ()
+          }
+
+          test "build-scoped HOME folds ordinary output into a stable receipt" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg224-home-receipt-" + Guid.NewGuid().ToString("N"))
+
+              let job = "home-output"
+              let scripts =
+                  [ "pipeline { agent any stages { stage('S') { steps { sh 'printenv HOME' } } } }"
+                    "pipeline { agent any stages { stage('S') { steps { sh 'printenv HOME' } } } }" ]
+
+              let jenkinsHome = "/var/jenkins_home"
+              Expect.isEmpty
+                  (FogellSide.coordinatedAgentHomeReplacement [] root job 1)
+                  "without a coordinated Jenkins HOME fold no one-sided Fogell mapping is introduced"
+
+              let coordinated = [ jenkinsHome, "${HOME}" ]
+
+              try
+                  let runs = FogellSide.runMany coordinated root job scripts
+
+                  runs
+                  |> List.iteri (fun index run ->
+                      let fogell =
+                          match run with
+                          | Ok trace -> trace
+                          | Error why -> failtestf "HOME output build %d failed: %s" (index + 1) why
+
+                      let buildHome = FogellSide.agentHome root job (index + 1)
+                      let firstHome = FogellSide.agentHome root job 1
+                      let replacements =
+                          coordinated
+                          @ FogellSide.coordinatedAgentHomeReplacement
+                              coordinated
+                              root
+                              job
+                              (index + 1)
+
+                      let jenkins =
+                          { fogell with
+                              Output = fogell.Output |> List.map (fun line -> line.Replace(buildHome, jenkinsHome)) }
+
+                      let receipt =
+                          Compare.receiptWithStableEnvironment
+                              replacements
+                              $"home-output.b{index + 1}.Jenkinsfile"
+                              (Text.Encoding.UTF8.GetBytes(List.item index scripts))
+                              "2.568.1"
+                              replacements
+                              (Ok jenkins)
+                              (Ok fogell)
+
+                      Expect.equal receipt.Verdict Proven "ordinary HOME output compares canonically"
+                      Expect.isFalse
+                          (receipt.Fogell.Value.Output |> List.exists (fun line -> line.Contains buildHome))
+                          "the build-specific hash does not churn the stored receipt"
+                      Expect.contains receipt.Fogell.Value.Output "${HOME}" "the deciding output is sealed canonically"
+
+                      if index = 1 then
+                          let staleFogell =
+                              { fogell with
+                                  Output = fogell.Output |> List.map (fun line -> line.Replace(buildHome, firstHome)) }
+
+                          let staleReceipt =
+                              Compare.receiptWithStableEnvironment
+                                  replacements
+                                  "home-output-stale.b2.Jenkinsfile"
+                                  (Text.Encoding.UTF8.GetBytes(List.item index scripts))
+                                  "2.568.1"
+                                  replacements
+                                  (Ok jenkins)
+                                  (Ok staleFogell)
+
+                          Expect.notEqual
+                              staleReceipt.Verdict
+                              Proven
+                              "build two cannot hide a leaked build-one HOME behind canonicalization")
               finally
                   try IO.Directory.Delete(root, true) with _ -> ()
           }
@@ -6470,7 +7513,13 @@ let main argv =
         argv
         (testList
             "Fogell.Differential"
-            [ hostedSignatures
+            [ progressiveOutputPublication
+              controllerEventDrainBudgets
+              controllerWorkerScheduling
+              controllerWorkerTiming
+              controllerStateRoot
+              controllerProcessGroupExtinction
+              hostedSignatures
               stepDescriptorValidation
               genuineNullRuntime
               liveEnvAliasRestoration

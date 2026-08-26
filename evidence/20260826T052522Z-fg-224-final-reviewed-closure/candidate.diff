@@ -1,0 +1,2486 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 7dba147..cec9254 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -740,7 +740,7 @@ before their no-effect validation refusal. Compatibility counts are unchanged.
+ | FG-062 | P1 | TODO | `Fogell.Agent.Protocol` + `Runtime` (`adr/0008`): mTLS, versioned, agent-local durable log, offset recovery | **network partition ≥ 45 s costs zero log lines** — the Jenkins parity bar |
+ | FG-063 | P1 | TODO | Agent death handling: announce reconnect grace with a budget, then ABORTED with a named cause | matches Jenkins' behavior, which is exemplary here |
+ | FG-064 | P1 | **DONE** | Progressive console over the API (`adr/0005` match) | `GET …/logs?from=N` returns chunks plus a `next_sequence` cursor, so a client tails a running build rather than waiting for completion |
+-| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Technical acceptance is complete locally: the fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth. Hosted gate, exact-head review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
++| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Local exact-tree acceptance closes the three prior review findings: engine-created inner step groups are registered before release and reaped across Run.Host death; progressive publication is FIFO-serialized outside the output lock and fails closed to reconciliation; invalid FIFO definitions are durably quarantined before scanning later work. The fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth. A replacement exact-head hosted gate, Copilot/Codex review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
+ | FG-065 | P2 | TODO | Jenkins-shaped REST compatibility shim, **off by default**, explicitly bounded | enabled only via env var; limitations documented |
+ | FG-066 | P2 | TODO | `Fogell.Cli`: validate / plan / run / build / resume / list / history | each subcommand has a golden-output test |
+ | FG-067 | P3 | TODO | `Fogell.Web` read-only build UI | renders a build's stages and log |
+diff --git a/docs/runbooks/controller-host.md b/docs/runbooks/controller-host.md
+index 89bfbb6..211f3d3 100644
+--- a/docs/runbooks/controller-host.md
++++ b/docs/runbooks/controller-host.md
+@@ -48,9 +48,10 @@ for the configured lease.
+ 
+ Keep the token file and both database strings out of command arguments and logs.
+ The runtime state root holds immutable definitions, journals, event frames,
+-workspaces, a neutral child home, and temporary files. Put it on storage whose
+-loss/recovery policy matches the PostgreSQL database; an incomplete journal is a
+-reconciliation event, not permission to guess success.
++identity-bound inner process-group registry records, workspaces, a neutral child
++home, and temporary files. Put it on storage whose loss/recovery policy matches
++the PostgreSQL database; an incomplete journal is a reconciliation event, not
++permission to guess success.
+ 
+ ## Start and observe
+ 
+@@ -61,12 +62,19 @@ src/Fogell.Controller.Host/bin/Release/net10.0/Fogell.Controller.Host
+ ```
+ 
+ Use `/health/live` for process liveness and `/health/ready` for runtime database
+-reachability. Do not send traffic until readiness returns 200. A graceful stop
+-performs bounded outer process-group cleanup and moves started work to
+-`reconciliation_required`. It never requeues a started execution automatically:
+-steps may create nested sessions that an outer process-group probe cannot prove
+-extinct. After an ungraceful stop, an expired never-started offer may be queued
+-again, while any expired started lease also enters reconciliation.
++reachability. Do not send traffic until readiness returns 200. Before an
++engine-created inner `setsid` step may execute user code, Run.Host records its
++pid and Linux start ticks and observes the same process stopped. An EOF watchdog
++bound to Run.Host liveness and the controller's outer-plus-registered-inner
++cleanup then provide two bounded descendant-reaping paths, including when the
++inner leader has already exited. Start-time validation prevents a stale record
++from authorizing a signal to a reused pid.
++
++A graceful or ungraceful forced stop still moves started work to
++`reconciliation_required`: proving every process extinct does not prove whether
++an external effect or journal write completed. It never requeues a started
++execution automatically. An expired never-started offer may be queued again,
++while any expired started lease also enters reconciliation.
+ 
+ ## Acceptance and recovery checks
+ 
+@@ -81,7 +89,12 @@ FOGELL_BUILD_CONFIGURATION=Release \
+ 
+ Expected final line begins `FG-224 PROOF PASS`. The script owns a uniquely named
+ scratch database, role, state directory, and listener, and removes them on exit.
+-If an attempt becomes `reconciliation_required`, inspect its durable journal and
+-effect checkpoints before deciding recovery. Never edit `build_definitions` or
+-force a terminal status directly: both bypass the evidence the controller uses
+-to refuse duplicate or substituted work.
++If progressive event publication fails, Run.Host emits no terminal journal
++record; the failure remains infrastructure truth and the controller requires
++reconciliation instead of inventing a build failure. If an attempt becomes
++`reconciliation_required`, inspect its durable journal, reason event, and effect
++checkpoints before deciding recovery. Invalid queued definitions are quarantined
++as attempt/node/build reconciliation and claim scanning continues; never repair
++them by editing immutable `build_definitions` or force a terminal status directly.
++Both bypass the evidence the controller uses to refuse duplicate or substituted
++work.
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index eea5e79..68c9091 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -1,6 +1,8 @@
+ # FG-224 — Runnable, restart-discovered controller
+ 
+-Status: **Implementation complete; publication remains owner-controlled**.
++Status: **PARTIAL**. The implementation and local acceptance are complete; a
++fresh exact-head hosted gate, exact-head Copilot/Codex review coverage,
++publication, and merge remain owner-controlled.
+ 
+ ## Problem
+ 
+@@ -24,26 +26,39 @@ The local worker discovers organization UUID roots after restart, claims one
+ whole-pipeline execution unit, materializes the exact durable source, and starts
+ `Fogell.Run.Host` in its own process group with a cleared environment. The child
+ sets a Linux parent-death signal, writes machine log frames outside the workspace,
+-and retains its existing journal as terminal authority. The controller renews
+-its fenced lease, polls cancellation, and performs bounded outer process-group
+-cleanup on loss of authority. After an unforced natural child exit it atomically
+-rolls attempt, node, build, terminal event, and outbox to one result. Starting
++and retains its existing journal as terminal authority. Every engine-created
++inner `setsid` step group is identity-bound by Linux pid plus process start ticks
++and registered before user code is released. A Run.Host-liveness EOF watchdog
++and the controller's combined outer/registered-inner cleanup reap descendants,
++including after the inner leader exits, without authorizing a signal to a reused
++pid. The controller renews its fenced lease and polls cancellation. After an
++unforced natural child exit it atomically rolls attempt, node, build, terminal
++event, and outbox to one result. Starting
+ execution refreshes the lease in the same transaction;
+ queued cancellation cannot launch a child, and cancellation races with terminal
+ publication are serialized to one durable outcome. Diagnostic drains and event
+ frame tails are bounded even when descendants retain inherited file descriptors.
+ Expired never-started offers may be reclaimed, while expired started work enters
+ reconciliation instead of risking duplicate effects. A forced stop after child
+-launch also enters reconciliation even when the child leader and its outer Linux
+-process group are gone: individual steps may establish nested sessions that the
+-outer supervisor cannot observe or prove extinct. Only an unforced natural
+-`Run.Host` exit may publish its journal terminal result.
++launch also enters reconciliation even after every registered process group is
++proved extinct: process extinction cannot prove whether an external effect or
++journal write completed. Only an unforced natural `Run.Host` exit may publish its
++journal terminal result.
++
++Progressive output is masked, leak-screened, assigned FIFO order under the
++walker's output lock, and delivered by one publisher outside that lock. Slow or
++reentrant callbacks cannot freeze concurrent emitters. The first callback
++failure is typed, sticky, and never retried; `Run.Host` withholds terminal journal
++truth so the controller requires reconciliation instead of converting transport
++failure into build semantics.
+ 
+ Forced tenant RLS remains the data boundary. The only global runtime relation is
+ `organization_work_roots`, containing UUIDs and no tenant slug or record; every
+ claim after discovery still opens a transaction-local tenant scope. A queued
+-legacy multi-node build or missing/corrupt definition is named and refused rather
+-than silently skipped or executed under invented semantics.
++legacy multi-node build or missing/corrupt definition cannot poison later tenant
++work: the selected attempt, node, and build atomically become
++`reconciliation_required`, exactly one reason-specific event is emitted, and the
++same claim transaction continues scanning the FIFO queue.
+ 
+ ## Acceptance
+ 
+@@ -59,16 +74,18 @@ definition enforcement, and absence of configured token/password text in host
+ logs. Unsafe worker poll/lease combinations are refused at startup. The hosted
+ gate runs this proof against its PostgreSQL service.
+ 
+-Focused HeMan acceptance on fresh databases:
++Exact-tree HeMan acceptance on fresh databases:
+ 
+-- Store: 74/74 passed;
++- Store: 73/73 passed;
+ - Controller API: 22/22 passed;
+-- Differential: 247/247 passed; and
++- Differential: 251/251 passed;
++- Execution: 94/94 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-exact-head repository gate and signed local commit identity are recorded at
+-closure rather than predicted here.
++locked repository gate also passes all 849 main-suite tests and every blocking
++proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
++recorded at publication rather than predicted here.
+ 
+ ## Boundary
+ 
+diff --git a/src/Fogell.Controller.Host/ProcessGroup.fs b/src/Fogell.Controller.Host/ProcessGroup.fs
+index 7e4f874..aad0643 100644
+--- a/src/Fogell.Controller.Host/ProcessGroup.fs
++++ b/src/Fogell.Controller.Host/ProcessGroup.fs
+@@ -69,6 +69,14 @@ module internal ProcessGroup =
+                 cached <- Some value
+                 value
+ 
++    let combineStopResults results =
++        if results |> Seq.exists ((=) ProcessGroupStopResult.Persisted) then
++            ProcessGroupStopResult.Persisted
++        elif results |> Seq.exists ((=) ProcessGroupStopResult.StatusUncertain) then
++            ProcessGroupStopResult.StatusUncertain
++        else
++            ProcessGroupStopResult.Extinguished
++
+     /// An outer setsid group is sufficient evidence only for a Run.Host that
+     /// exited naturally. Individual steps may establish nested sessions, so no
+     /// successful outer-group probe can make a forced stop safe to replay.
+@@ -149,3 +157,98 @@ module internal ProcessGroup =
+                     ProcessGroupStopResult.Extinguished
+                 else
+                     classifyFinal ()
++
++    type private RecordedIdentity =
++        | IdentityMatches
++        | IdentityAbsent
++        | IdentityUncertain
++
++    let private recordedIdentity pid expectedStartTime expectedProcessGroup =
++        try
++            let value = IO.File.ReadAllText($"/proc/{pid}/stat")
++            let close = value.LastIndexOf ')'
++
++            if close < 0 || close + 2 >= value.Length then
++                IdentityUncertain
++            else
++                let fields =
++                    value.Substring(close + 2).Split(' ', StringSplitOptions.RemoveEmptyEntries)
++
++                if fields.Length <= 19 then
++                    IdentityUncertain
++                elif
++                    fields[19] = expectedStartTime
++                    && fields[2] = string expectedProcessGroup
++                then
++                    IdentityMatches
++                else
++                    // The numeric pid has been reused. Never signal the new owner.
++                    IdentityUncertain
++        with
++        | :? IO.FileNotFoundException
++        | :? IO.DirectoryNotFoundException -> IdentityAbsent
++        | _ -> IdentityUncertain
++
++    /// Stop every inner setsid group durably registered before its user code was
++    /// released. Records include Linux process start time, so a stale record can
++    /// never authorize signalling a reused numeric pid/process-group id.
++    let stopRegisteredGroups termChecks killChecks (directory: string) pause =
++        if not (OperatingSystem.IsLinux()) then
++            ProcessGroupStopResult.StatusUncertain
++        elif not (IO.Directory.Exists directory) then
++            ProcessGroupStopResult.Extinguished
++        else
++            IO.Directory.EnumerateFiles(directory, "*.group")
++            |> Seq.map (fun record ->
++                try
++                    let fields =
++                        IO.File.ReadAllText(record).Split(
++                            [| ' '; '\t'; '\r'; '\n' |],
++                            StringSplitOptions.RemoveEmptyEntries)
++
++                    match fields with
++                    | [| rawPid; leaderStartTime; rawAnchor; anchorStartTime |] ->
++                        match Int32.TryParse rawPid, Int32.TryParse rawAnchor with
++                        | (true, pid), (true, anchor) when pid > 1 && anchor > 1 ->
++                            let stopThrough identityPid identityStartTime =
++                                let result =
++                                    ensureExtinguished
++                                        termChecks
++                                        killChecks
++                                        (fun () ->
++                                            match recordedIdentity identityPid identityStartTime pid with
++                                            | IdentityMatches -> ProcessPresence.Present
++                                            | IdentityAbsent -> ProcessPresence.Absent
++                                            | IdentityUncertain -> ProcessPresence.Uncertain)
++                                        (fun () -> probeGroup pid)
++                                        (signalGroup pid)
++                                        (signalLeader identityPid)
++                                        pause
++
++                                if result = ProcessGroupStopResult.Extinguished then
++                                    try IO.File.Delete record with _ -> ()
++
++                                result
++
++                            match recordedIdentity anchor anchorStartTime pid with
++                            | IdentityMatches -> stopThrough anchor anchorStartTime
++                            | IdentityAbsent ->
++                                // Before leader exit its own identity remains a
++                                // safe fallback. After leader exit the anchor is
++                                // the only continuous provenance; without either,
++                                // a populated numeric group is ambiguous with reuse.
++                                match recordedIdentity pid leaderStartTime pid with
++                                | IdentityMatches -> stopThrough pid leaderStartTime
++                                | IdentityAbsent ->
++                                    match probeGroup pid with
++                                    | ProcessPresence.Absent ->
++                                        try IO.File.Delete record with _ -> ()
++                                        ProcessGroupStopResult.Extinguished
++                                    | _ -> ProcessGroupStopResult.StatusUncertain
++                                | IdentityUncertain -> ProcessGroupStopResult.StatusUncertain
++                            | IdentityUncertain -> ProcessGroupStopResult.StatusUncertain
++                        | _ -> ProcessGroupStopResult.StatusUncertain
++                    | _ -> ProcessGroupStopResult.StatusUncertain
++                with _ ->
++                    ProcessGroupStopResult.StatusUncertain)
++            |> combineStopResults
+diff --git a/src/Fogell.Controller.Host/Worker.fs b/src/Fogell.Controller.Host/Worker.fs
+index 8a94e13..689e1c3 100644
+--- a/src/Fogell.Controller.Host/Worker.fs
++++ b/src/Fogell.Controller.Host/Worker.fs
+@@ -219,6 +219,12 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                     "events",
+                     orgKey,
+                     $"{claim.AttemptId.Value:N}-{claim.Fence.Value}.events")
++            let containmentPath =
++                Path.Combine(
++                    config.StateRoot,
++                    "containment",
++                    orgKey,
++                    $"{claim.AttemptId.Value:N}-{claim.Fence.Value}")
+             let workspaceRoot = Path.Combine(config.StateRoot, "workspaces", orgKey)
+             let neutralHome = Path.Combine(config.StateRoot, "neutral-home")
+             let tempRoot = Path.Combine(config.StateRoot, "tmp")
+@@ -227,6 +233,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+             Directory.CreateDirectory workspaceRoot |> ignore
+             Directory.CreateDirectory neutralHome |> ignore
+             Directory.CreateDirectory tempRoot |> ignore
++            Directory.CreateDirectory containmentPath |> ignore
+             atomicDefinition definitionPath claim.PipelineSource
+ 
+             match
+@@ -273,6 +280,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                 start.Environment["TMPDIR"] <- tempRoot
+                 start.Environment["FOGELL_EVENT_FILE"] <- eventPath
+                 start.Environment["FOGELL_EXPECTED_PARENT_PID"] <- string Environment.ProcessId
++                start.Environment["FOGELL_PROCESS_GROUP_REGISTRY"] <- containmentPath
+                 // Project-scoped numbering is durable admission truth. Passing
+                 // only the build UUID made the child fall back to build 1 for
+                 // every run, so BUILD_NUMBER/BUILD_ID could select or overwrite
+@@ -286,12 +294,27 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                 else
+                     let mutable dispositionRecorded = false
+ 
+-                    let cleanupOuterGroup =
++                    let cleanupExecution =
+                         ProcessGroup.once (fun () ->
+-                            // Memoize the one bounded TERM/KILL pass. Signalling
+-                            // this numeric PGID again from finally could hit a
+-                            // subsequently reused process id.
+-                            stopGroup child)
++                            // Stop the outer Run.Host group first. Its inherited
++                            // stdin writers close, waking per-step watchdogs that
++                            // survive their inner setsid boundary. Then verify and
++                            // finish every identity-bound registry entry. Memoize
++                            // the entire pass: signalling numeric ids again from
++                            // finally could target later pid reuse.
++                            let outer = stopGroup child
++                            let inner =
++                                ProcessGroup.stopRegisteredGroups
++                                    processGroupTermChecks
++                                    processGroupKillChecks
++                                    containmentPath
++                                    (fun () -> Thread.Sleep processGroupProbeMilliseconds)
++                            let result = ProcessGroup.combineStopResults [ outer; inner ]
++
++                            if result = ProcessGroupStopResult.Extinguished then
++                                try Directory.Delete(containmentPath, false) with _ -> ()
++
++                            result)
+ 
+                     let requireReconciliation () =
+                         if not dispositionRecorded then
+@@ -364,7 +387,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                         // This proves only the outer Run.Host group. Step runners
+                         // may have made nested sessions, so extinction permits a
+                         // terminal result only on the unforced natural-exit path.
+-                        let groupStop = cleanupOuterGroup ()
++                        let groupStop = cleanupExecution ()
+ 
+                         do! completeDiagnosticDrains child drainCancellation drains
+ 
+@@ -447,7 +470,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                         if not dispositionRecorded then
+                             // Exceptions after child start are forced stops. The
+                             // memoized cleanup prevents a second signal pass.
+-                            cleanupOuterGroup () |> ignore
++                            cleanupExecution () |> ignore
+                             requireReconciliation ()
+         }
+ 
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index b5d9fdb..756cc00 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -1190,6 +1190,12 @@ module FogellSide =
+ 
+             announcePipelineExceeded ()
+ 
++            // The callback is an ordered infrastructure stream.  A slow
++            // publisher may still be draining lines emitted by a parallel
++            // branch; no terminal trace may overtake it, and any publisher
++            // failure must escape runPersisted for controller reconciliation.
++            runCtx.FlushOutput()
++
+             let workspaceHash, files = Trace.hashWorkspace workspace
+ 
+             // Fail CLOSED on a leaked secret, checked over the RAW output — before
+@@ -1349,8 +1355,9 @@ module FogellSide =
+                     )
+ 
+             runWith envReplacements workspaceRoot jobName buildNumber None freshWorkspace None (Some hooks) script
+-        with ex ->
+-            Result.Error ex.Message
++        with
++        | :? OutputPublicationException -> reraise ()
++        | ex -> Result.Error ex.Message
+ 
+     /// FG-052. Run one build of an SCM-DEFINED job: the script is what the
+     /// harness pushed to the SCM (the same bytes Jenkins obtains), and the spec
+diff --git a/src/Fogell.Differential/WalkerCtx.fs b/src/Fogell.Differential/WalkerCtx.fs
+index d2690e3..b8fbfae 100644
+--- a/src/Fogell.Differential/WalkerCtx.fs
++++ b/src/Fogell.Differential/WalkerCtx.fs
+@@ -4,6 +4,12 @@ open System
+ open Fogell.Domain
+ open Fogell.Execution
+ 
++/// Progressive output is controller infrastructure, not build semantics.  Keep
++/// its failure typed across the walker/Run.Host boundary so the host can leave
++/// the journal non-terminal and force reconciliation.
++type OutputPublicationException(message: string, inner: exn) =
++    inherit Exception(message, inner)
++
+ /// FG-105. The walker's run-scoped mutable state — one value constructed per
+ /// build, passed explicitly where the 2,000-line closure used to capture it.
+ ///
+@@ -60,6 +66,9 @@ type WalkerCtx =
+       BindSecrets: SecretBinding list -> unit
+       /// Locked snapshot of the raw output lines, in emission order.
+       Output: unit -> string list
++      /// Wait for the ordered external publisher and surface its first failure.
++      /// Persisted hosts call this before constructing terminal truth.
++      FlushOutput: unit -> unit
+       /// Locked snapshot pairing each line with the secrets that were already
+       /// bound when it was emitted — the leak scan's exact input.
+       OutputWithActiveSecrets: unit -> (string * SecretBinding list) list
+@@ -161,6 +170,73 @@ module WalkerCtx =
+         // also orders output against secret registration and the fired-set.
+         let outputLock = obj ()
+ 
++        // Emit assigns publication order while holding outputLock, then one
++        // drainer invokes the external callback without that lock.  A callback
++        // may therefore block or re-enter Emit without freezing masking, trace
++        // reads, or parallel writers. Monitor re-entrancy lets a nested Emit
++        // enqueue and return; the outer drain publishes it next.
++        let publicationLock = obj ()
++        let publications = System.Collections.Generic.Queue<int64 * string>()
++        let mutable nextPublicationOrder = 0L
++        let mutable publicationActive = false
++        let mutable publicationFailure: OutputPublicationException option = None
++
++        let drainPublications publish =
++            let mutable draining = true
++
++            while draining do
++                let next =
++                    lock publicationLock (fun () ->
++                        if publications.Count = 0 then
++                            publicationActive <- false
++                            System.Threading.Monitor.PulseAll publicationLock
++                            None
++                        else
++                            Some(publications.Dequeue()))
++
++                match next with
++                | None -> draining <- false
++                | Some(_, line) ->
++                    try
++                        // External code runs with neither WalkerCtx lock held.
++                        publish line
++                    with ex ->
++                        let failure =
++                            match ex with
++                            | :? OutputPublicationException as typed -> typed
++                            | _ -> OutputPublicationException("progressive output publication failed", ex)
++
++                        lock publicationLock (fun () ->
++                            publicationFailure <- Some failure
++                            publications.Clear()
++                            publicationActive <- false
++                            System.Threading.Monitor.PulseAll publicationLock)
++                        raise failure
++
++        let flushPublications () =
++            match onOutput with
++            | None -> ()
++            | Some publish ->
++                let mutable complete = false
++
++                while not complete do
++                    let shouldDrain =
++                        lock publicationLock (fun () ->
++                            match publicationFailure with
++                            | Some failure -> raise failure
++                            | None when not publicationActive && publications.Count > 0 ->
++                                publicationActive <- true
++                                true
++                            | None when publicationActive ->
++                                System.Threading.Monitor.Wait publicationLock |> ignore
++                                false
++                            | None ->
++                                complete <- true
++                                false)
++
++                    if shouldDrain then
++                        drainPublications publish
++
+         let firedDeadlines = System.Collections.Generic.HashSet<int>()
+ 
+         // FG-046b: how many `input` prompts have run under each durability key
+@@ -196,51 +272,69 @@ module WalkerCtx =
+ 
+         { Emit =
+             fun line ->
+-                lock outputLock (fun () ->
+-                    let safe =
+-                        if boundSecrets.Count = 0 then
+-                            line
++                let shouldDrain =
++                    lock outputLock (fun () ->
++                        let safe =
++                            if boundSecrets.Count = 0 then
++                                line
++                            else
++                                Secrets.mask (boundSecrets |> Seq.map fst |> List.ofSeq) line
++
++                        // A transformed secret can survive the ordinary masker.
++                        // The terminal trace refuses those lines later, but a
++                        // progressive callback happens NOW and must not publish the
++                        // bytes first. Executor emits the safe warning separately;
++                        // retain the line for the terminal leak guard and suppress
++                        // only its external publication.
++                        let safeToPublish =
++                            boundSecrets.Count = 0
++                            || (Secrets.detectLeaks (boundSecrets |> Seq.map fst |> List.ofSeq) safe
++                                |> List.isEmpty)
++
++                        // AFTER masking, deliberately. The prefix carries no secret,
++                        // and masking a line whose start has already moved would let
++                        // an offset-based masker act on the wrong span.
++                        let stamped =
++                            if timestamps then
++                                // INVARIANT CULTURE. `ToString(format)` uses the
++                                // CURRENT culture, whose time separator is not always
++                                // `:` — a process running under one of those would
++                                // emit `T03.54.07.729Z`, which `Trace.timestampPrefix`
++                                // does not match, so Fogell would neither strip nor
++                                // count its own prefix. The engine's output would
++                                // depend on the operator's locale.
++                                let now =
++                                    System.DateTime.UtcNow.ToString(
++                                        "yyyy-MM-ddTHH:mm:ss.fffZ",
++                                        System.Globalization.CultureInfo.InvariantCulture)
++                                $"[{now}] {safe}"
++                            else
++                                safe
++
++                        output.Add stamped
++                        // Enqueue under the trace lock, after masking/leak screening,
++                        // so the assigned monotonic order is exactly Output() order.
++                        // The single callback consumer runs below, outside this lock.
++                        if safeToPublish && Option.isSome onOutput then
++                            lock publicationLock (fun () ->
++                                match publicationFailure with
++                                | Some failure -> raise failure
++                                | None ->
++                                    let order = nextPublicationOrder
++                                    nextPublicationOrder <- nextPublicationOrder + 1L
++                                    publications.Enqueue(order, stamped)
++
++                                    if publicationActive then
++                                        false
++                                    else
++                                        publicationActive <- true
++                                        true)
+                         else
+-                            Secrets.mask (boundSecrets |> Seq.map fst |> List.ofSeq) line
++                            false)
+ 
+-                    // A transformed secret can survive the ordinary masker.
+-                    // The terminal trace refuses those lines later, but a
+-                    // progressive callback happens NOW and must not publish the
+-                    // bytes first. Executor emits the safe warning separately;
+-                    // retain the line for the terminal leak guard and suppress
+-                    // only its external publication.
+-                    let safeToPublish =
+-                        boundSecrets.Count = 0
+-                        || (Secrets.detectLeaks (boundSecrets |> Seq.map fst |> List.ofSeq) safe
+-                            |> List.isEmpty)
+-
+-                    // AFTER masking, deliberately. The prefix carries no secret,
+-                    // and masking a line whose start has already moved would let
+-                    // an offset-based masker act on the wrong span.
+-                    let stamped =
+-                        if timestamps then
+-                            // INVARIANT CULTURE. `ToString(format)` uses the
+-                            // CURRENT culture, whose time separator is not always
+-                            // `:` — a process running under one of those would
+-                            // emit `T03.54.07.729Z`, which `Trace.timestampPrefix`
+-                            // does not match, so Fogell would neither strip nor
+-                            // count its own prefix. The engine's output would
+-                            // depend on the operator's locale.
+-                            let now =
+-                                System.DateTime.UtcNow.ToString(
+-                                    "yyyy-MM-ddTHH:mm:ss.fffZ",
+-                                    System.Globalization.CultureInfo.InvariantCulture)
+-                            $"[{now}] {safe}"
+-                        else
+-                            safe
+-
+-                    output.Add stamped
+-                    // Keep the external stream under the same lock as the
+-                    // in-memory trace so parallel branches cannot publish in a
+-                    // different order from Output(). The line is already masked,
+-                    // leak-screened and timestamped at this boundary.
+-                    if safeToPublish then
+-                        onOutput |> Option.iter (fun publish -> publish stamped))
++                match shouldDrain, onOutput with
++                | true, Some publish -> drainPublications publish
++                | _ -> ()
+           EnableTimestamps = fun () -> lock outputLock (fun () -> timestamps <- true)
+           BindSecrets =
+             fun bindings ->
+@@ -248,6 +342,7 @@ module WalkerCtx =
+                     for b in bindings do
+                         boundSecrets.Add(b, output.Count))
+           Output = fun () -> lock outputLock (fun () -> List.ofSeq output)
++          FlushOutput = flushPublications
+           OutputWithActiveSecrets =
+             fun () ->
+                 lock outputLock (fun () ->
+diff --git a/src/Fogell.Differential/WalkerOrchestration.fs b/src/Fogell.Differential/WalkerOrchestration.fs
+index a589b4c..5de7dfb 100644
+--- a/src/Fogell.Differential/WalkerOrchestration.fs
++++ b/src/Fogell.Differential/WalkerOrchestration.fs
+@@ -38,10 +38,13 @@ type InputAnswer =
+ /// re-selection story (the arms select against a status resume must
+ /// reconstruct); it is FG-046b/FG-082 territory, not silently claimed here.
+ type PersistenceHooks =
+-    { /// A masked and leak-screened build-console line, delivered at the same
+-      /// point it enters the run's ordered output buffer. Persisted hosts use
+-      /// this to publish progressive console without waiting for the terminal
+-      /// Trace snapshot.
++    { /// A masked and leak-screened build-console line. It is assigned its
++      /// monotonic publication order at the same point it enters the run's
++      /// ordered output buffer, then delivered by one serialized publisher
++      /// outside the output-state lock. Persisted hosts use this to publish
++      /// progressive console without waiting for the terminal Trace snapshot.
++      /// Throwing is an infrastructure failure: it is surfaced as
++      /// OutputPublicationException and must not become build semantics.
+       OnOutput: string -> unit
+       /// True when this attempt RESUMES an interrupted journal — what
+       /// `when { isRestartedRun() }` evaluates to.
+diff --git a/src/Fogell.Execution/Native.fs b/src/Fogell.Execution/Native.fs
+index 84d4c99..269dcc0 100644
+--- a/src/Fogell.Execution/Native.fs
++++ b/src/Fogell.Execution/Native.fs
+@@ -14,6 +14,9 @@ module internal Native =
+     [<Literal>]
+     let SIGKILL = 9
+ 
++    [<Literal>]
++    let SIGCONT = 18
++
+     [<Literal>]
+     let ESRCH = 3 // no such process
+ 
+diff --git a/src/Fogell.Execution/ProcessGroup.fs b/src/Fogell.Execution/ProcessGroup.fs
+index cc8a6a7..961fcc6 100644
+--- a/src/Fogell.Execution/ProcessGroup.fs
++++ b/src/Fogell.Execution/ProcessGroup.fs
+@@ -264,6 +264,78 @@ type RunRequest =
+ 
+ module ProcessGroup =
+ 
++    [<RequireQualifiedAccess>]
++    type internal ProcessIdentityState =
++        | Matching of char
++        | Absent
++        | Changed
++        | Uncertain
++
++    /// The marker write happens before the child stops itself. A SIGCONT sent
++    /// merely because the marker arrived can therefore be lost while the child
++    /// is still running, after which it executes SIGSTOP and wedges forever.
++    /// Wait for the identity-bound /proc state transition under one strict bound.
++    let internal waitForIdentityStop
++        maxRunningChecks
++        (observe: unit -> ProcessIdentityState)
++        (pause: unit -> unit)
++        =
++        if maxRunningChecks < 0 then
++            invalidArg (nameof maxRunningChecks) "running-state check count cannot be negative"
++
++        let rec wait remaining =
++            match observe () with
++            | ProcessIdentityState.Matching('T' | 't') -> true
++            | ProcessIdentityState.Matching _ when remaining > 0 ->
++                pause ()
++                wait (remaining - 1)
++            | _ -> false
++
++        wait maxRunningChecks
++
++    [<RequireQualifiedAccess>]
++    type internal LauncherFormationState =
++        | SameIdentity of processGroup: int
++        | Absent
++        | Changed
++        | Uncertain
++
++    [<RequireQualifiedAccess>]
++    type internal LauncherFormationDecision =
++        | GroupFormed
++        | Disappeared
++        | TerminateLauncher
++        | Refused
++
++    /// The EOF guard can wake after fork but before the child has executed
++    /// `setsid`. Its numeric pid is not yet a safe negative-pgid signal target at
++    /// that instant. Keep the SAME start-time-bound identity under observation
++    /// until it becomes its own group, disappears, or the bounded proof fails.
++    /// The out-of-process shell guard below mirrors this decision table because
++    /// it must survive the managed owner being SIGKILLed.
++    let internal waitForIdentityGroup
++        pid
++        maxPendingChecks
++        (observe: unit -> LauncherFormationState)
++        (pause: unit -> unit)
++        =
++        if maxPendingChecks < 0 then
++            invalidArg (nameof maxPendingChecks) "pending-state check count cannot be negative"
++
++        let rec wait remaining =
++            match observe () with
++            | LauncherFormationState.SameIdentity processGroup when processGroup = pid ->
++                LauncherFormationDecision.GroupFormed
++            | LauncherFormationState.SameIdentity _ when remaining > 0 ->
++                pause ()
++                wait (remaining - 1)
++            | LauncherFormationState.SameIdentity _ ->
++                LauncherFormationDecision.TerminateLauncher
++            | LauncherFormationState.Absent -> LauncherFormationDecision.Disappeared
++            | _ -> LauncherFormationDecision.Refused
++
++        wait maxPendingChecks
++
+     /// Count processes still in the group. Reads /proc directly rather than
+     /// shelling out, so the check cannot itself spawn something.
+     /// -1 means UNKNOWN: the /proc read itself failed. FG-103 — returning 0 there
+@@ -289,13 +361,6 @@ module ProcessGroup =
+             -1
+ 
+     /// Wait until the group is EMPTY, up to `budgetMs`.
+-    ///
+-    /// This deliberately counts group membership rather than asking whether the
+-    /// leader pid still exists. The leader is usually the first to exit — a step
+-    /// that backgrounds a daemon leaves the group populated while the leader is
+-    /// long gone — so a leader-existence check reports success and leaves the
+-    /// daemon running. That is exactly the Jenkins behaviour FG-032 exists to
+-    /// beat, and the first version of this function reproduced it.
+     let private waitForGroupExit (pgid: int) (budgetMs: int) : bool =
+         let sw = Stopwatch.StartNew()
+         let mutable gone = survivorsIn pgid = 0
+@@ -306,6 +371,61 @@ module ProcessGroup =
+ 
+         gone
+ 
++    let private survivorsInExcept (pgid: int) (excludedPid: int) : int =
++        try
++            IO.Directory.GetDirectories "/proc"
++            |> Array.choose (fun d ->
++                match Int32.TryParse(IO.Path.GetFileName d) with
++                | true, pid when pid <> excludedPid -> Some pid
++                | _ -> None)
++            |> Array.filter (fun pid -> Native.processGroupOf pid = Some pgid)
++            |> Array.length
++        with _ ->
++            -1
++
++    let private waitForGroupExitExcept pgid excludedPid budgetMs =
++        let sw = Stopwatch.StartNew()
++        let mutable gone = survivorsInExcept pgid excludedPid = 0
++
++        while not gone && sw.ElapsedMilliseconds < int64 budgetMs do
++            Thread.Sleep 20
++            gone <- survivorsInExcept pgid excludedPid = 0
++
++        gone
++
++    let private releaseIdentityAnchor pgid anchor =
++        // The anchor is SIGSTOPped before registration. TERM remains pending
++        // while stopped, so CONT lets it take the default TERM action without
++        // introducing another long-lived helper or inherited descriptor.
++        Native.signalProcess anchor Native.SIGTERM |> ignore
++        Native.signalProcess anchor Native.SIGCONT |> ignore
++        waitForGroupExit pgid 2_000
++
++    let private terminateGroupWithAnchor pgid anchor graceMs =
++        let termDelivered = Native.signalGroup pgid Native.SIGTERM
++        let usersExited = termDelivered && waitForGroupExitExcept pgid anchor graceMs
++        let exitedOnTerm = usersExited && releaseIdentityAnchor pgid anchor
++
++        let escalated =
++            if exitedOnTerm then
++                false
++            else
++                Native.signalGroup pgid Native.SIGKILL |> ignore
++                waitForGroupExit pgid 2_000 |> ignore
++                true
++
++        { GracefulExit = exitedOnTerm
++          Escalated = escalated
++          LeakedProcesses = survivorsIn pgid }
++
++    let private reapWithAnchor pgid anchor graceMs =
++        if survivorsInExcept pgid anchor = 0 && releaseIdentityAnchor pgid anchor then
++            { GracefulExit = true
++              Escalated = false
++              LeakedProcesses = 0 }
++        else
++            terminateGroupWithAnchor pgid anchor graceMs
++
+     /// SIGTERM the group, wait out the grace period, then SIGKILL. This is the
+     /// contract measured on Jenkins (JB-FAIL-003): the interrupt is a trappable
+     /// TERM with a grace window, and scripts install handlers expecting it.
+@@ -363,6 +483,63 @@ module ProcessGroup =
+     let run (request: RunRequest) : RunResult =
+         let sw = Stopwatch.StartNew()
+ 
++        let containmentDirectory =
++            match Environment.GetEnvironmentVariable "FOGELL_PROCESS_GROUP_REGISTRY" with
++            | null
++            | "" -> None
++            | value when OperatingSystem.IsLinux() -> Some(IO.Path.GetFullPath value)
++            | _ -> invalidOp "process-group registry containment is supported only on Linux"
++
++        let processStateAndStartTime pid =
++            try
++                let value = IO.File.ReadAllText($"/proc/{pid}/stat")
++                let close = value.LastIndexOf ')'
++
++                if close < 0 || close + 2 >= value.Length then
++                    ProcessIdentityState.Uncertain, None
++                else
++                    let fields =
++                        value.Substring(close + 2).Split(' ', StringSplitOptions.RemoveEmptyEntries)
++
++                    // fields begins at /proc/<pid>/stat field 3 after removing
++                    // the parenthesized comm. State is index 0 and starttime
++                    // (field 22) is index 19.
++                    if fields.Length > 19 && fields[0].Length = 1 then
++                        ProcessIdentityState.Matching fields.[0].[0], Some fields.[19]
++                    else
++                        ProcessIdentityState.Uncertain, None
++            with
++            | :? IO.FileNotFoundException
++            | :? IO.DirectoryNotFoundException -> ProcessIdentityState.Absent, None
++            | _ -> ProcessIdentityState.Uncertain, None
++
++        let observeIdentity pid expectedStartTime =
++            match processStateAndStartTime pid with
++            | ProcessIdentityState.Matching state, Some actual when actual = expectedStartTime ->
++                ProcessIdentityState.Matching state
++            | ProcessIdentityState.Matching _, Some _ -> ProcessIdentityState.Changed
++            | observation, _ -> observation
++
++        let groupRecordPath pgid =
++            containmentDirectory
++            |> Option.map (fun directory -> IO.Path.Combine(directory, $"{pgid}.group"))
++
++        let persistGroup pgid startTime anchor anchorStartTime =
++            match containmentDirectory with
++            | None -> ()
++            | Some directory ->
++                IO.Directory.CreateDirectory directory |> ignore
++                let target = IO.Path.Combine(directory, $"{pgid}.group")
++                let temporary = target + $".{Guid.NewGuid():N}.tmp"
++                IO.File.WriteAllText(temporary, $"{pgid} {startTime} {anchor} {anchorStartTime}\n")
++                IO.File.Move(temporary, target)
++
++        let forgetExtinguishedGroup pgid =
++            if survivorsIn pgid = 0 then
++                groupRecordPath pgid
++                |> Option.iter (fun path ->
++                    try IO.File.Delete path with _ -> ())
++
+         // `setsid --wait` keeps a parent around to collect the exit status, but
+         // that parent is what .NET reports as the process id — and ITS group is
+         // ours, not the child's. So the session leader reports its own pid on
+@@ -375,8 +552,84 @@ module ProcessGroup =
+         // not the session leader) without `setsid --fork --wait`: util-linux maps
+         // a signal-killed child to the bare signal number, whereas the shell's
+         // wait status preserves the established 128+signal diagnostic contract.
++        // fd 9 explicitly carries the controller-owned liveness pipe into the
++        // async guard: POSIX shells otherwise replace an asynchronous command's
++        // stdin with /dev/null. The inner session closes it before user code, so
++        // only Run.Host can keep the guard armed.
+         psi.ArgumentList.Add "-c"
+-        psi.ArgumentList.Add "/usr/bin/setsid /bin/sh -c \"$1\" \"$2\" \"$3\"; exit $?"
++        psi.ArgumentList.Add(
++            "fogell_registry=$4; fogell_launch_gate=$5; fogell_launch_ready=$6; fogell_guard_observed=$7; "
++            + "fogell_guard_stopped=$8; fogell_cleanup_release=$9; exec 9<&0; "
++            + "(if [ -n \"$fogell_launch_gate\" ]; then while [ ! -e \"$fogell_launch_gate\" ]; do /bin/sleep 0.01; done; fi; "
++            + "exec /usr/bin/setsid /bin/sh -c \"$1\" \"$2\" \"$3\" \"$fogell_registry\" 9<&- </dev/null) & "
++            + "fogell_inner=$!; "
++            + "fogell_launcher_start=; fogell_capture_checks=200; "
++            + "while [ -z \"$fogell_launcher_start\" ] && [ \"$fogell_capture_checks\" -ge 0 ]; do "
++            + "if [ -r \"/proc/$fogell_inner/stat\" ] && IFS= read -r fogell_launcher_stat < \"/proc/$fogell_inner/stat\"; then "
++            + "fogell_launcher_tail=${fogell_launcher_stat##*) }; set -- $fogell_launcher_tail; "
++            + "if [ \"$#\" -gt 19 ]; then shift 19; fogell_launcher_start=$1; fi; "
++            + "elif [ ! -e \"/proc/$fogell_inner\" ]; then break; fi; "
++            + "if [ -z \"$fogell_launcher_start\" ]; then fogell_capture_checks=$((fogell_capture_checks - 1)); /bin/sleep 0.01; fi; "
++            + "done; "
++            + "if [ -z \"$fogell_launcher_start\" ] && [ -e \"/proc/$fogell_inner\" ]; then "
++            // The outer shell has not entered wait(1), so its direct child PID
++            // cannot be reaped/reused between these two signals. Killing that
++            // child first prevents a later setsid transition; the negative-pgid
++            // kill then catches a group that formed just before the direct kill.
++            + "/bin/kill -STOP \"$fogell_inner\" 2>/dev/null || true; "
++            + "/bin/kill -KILL \"$fogell_inner\" 2>/dev/null || true; "
++            + "/bin/kill -KILL -- -$fogell_inner 2>/dev/null || true; "
++            + "fi; "
++            + "(trap '' HUP INT TERM; "
++            + "if ! IFS= read -r fogell_guard_command || [ \"$fogell_guard_command\" != disarm ]; then "
++            + "fogell_record=\"$fogell_registry/$fogell_inner.group\"; fogell_safe=0; fogell_kill_launcher=0; "
++            + "if [ -n \"$fogell_registry\" ] && [ -r \"$fogell_record\" ] "
++            + "&& IFS=' ' read -r fogell_record_pgid fogell_leader_start fogell_anchor fogell_anchor_start < \"$fogell_record\" "
++            + "&& [ \"$fogell_record_pgid\" = \"$fogell_inner\" ] && [ \"$fogell_anchor\" -gt 1 ] 2>/dev/null "
++            + "&& [ -r \"/proc/$fogell_anchor/stat\" ]; then "
++            + "fogell_stat=$(/bin/cat \"/proc/$fogell_anchor/stat\" 2>/dev/null) || fogell_stat=; "
++            + "fogell_tail=${fogell_stat##*) }; set -- $fogell_tail; "
++            + "if [ \"$3\" = \"$fogell_inner\" ]; then shift 19; [ \"$1\" = \"$fogell_anchor_start\" ] && fogell_safe=1; fi; "
++            + "elif [ -n \"$fogell_launcher_start\" ]; then "
++            + "fogell_checks=200; fogell_polling=1; "
++            + "while [ \"$fogell_polling\" -eq 1 ]; do "
++            + "if [ ! -r \"/proc/$fogell_inner/stat\" ] || ! IFS= read -r fogell_stat < \"/proc/$fogell_inner/stat\"; then break; fi; "
++            + "fogell_tail=${fogell_stat##*) }; set -- $fogell_tail; "
++            + "if [ \"$#\" -le 19 ]; then break; fi; "
++            + "fogell_pgrp=$3; shift 19; fogell_actual_start=$1; "
++            + "if [ \"$fogell_actual_start\" != \"$fogell_launcher_start\" ]; then break; fi; "
++            + "if [ \"$fogell_pgrp\" = \"$fogell_inner\" ]; then fogell_safe=1; break; fi; "
++            + "if [ -n \"$fogell_guard_observed\" ]; then printf observed > \"$fogell_guard_observed\"; fogell_guard_observed=; fi; "
++            + "if [ \"$fogell_checks\" -le 0 ]; then "
++            + "if /bin/kill -STOP \"$fogell_inner\" 2>/dev/null; then "
++            + "fogell_stop_checks=200; "
++            + "while [ \"$fogell_stop_checks\" -ge 0 ]; do "
++            + "if [ ! -r \"/proc/$fogell_inner/stat\" ] || ! IFS= read -r fogell_frozen_stat < \"/proc/$fogell_inner/stat\"; then break; fi; "
++            + "fogell_frozen_tail=${fogell_frozen_stat##*) }; set -- $fogell_frozen_tail; "
++            + "if [ \"$#\" -le 19 ]; then break; fi; "
++            + "fogell_frozen_state=$1; fogell_frozen_pgrp=$3; shift 19; fogell_frozen_start=$1; "
++            + "if [ \"$fogell_frozen_start\" != \"$fogell_launcher_start\" ]; then break; fi; "
++            + "if [ \"$fogell_frozen_state\" = T ] || [ \"$fogell_frozen_state\" = t ]; then "
++            + "if [ \"$fogell_frozen_pgrp\" = \"$fogell_inner\" ]; then fogell_safe=1; else fogell_kill_launcher=1; fi; "
++            + "if [ -n \"$fogell_guard_stopped\" ]; then printf '%s' \"$fogell_frozen_pgrp\" > \"$fogell_guard_stopped\"; fi; "
++            + "if [ -n \"$fogell_cleanup_release\" ]; then while [ ! -e \"$fogell_cleanup_release\" ]; do /bin/sleep 0.01; done; fi; "
++            + "break; fi; "
++            + "fogell_stop_checks=$((fogell_stop_checks - 1)); /bin/sleep 0.01; "
++            + "done; fi; break; fi; "
++            + "fogell_checks=$((fogell_checks - 1)); /bin/sleep 0.01; "
++            + "done; "
++            + "fi; "
++            + "if [ \"$fogell_safe\" -eq 1 ]; then "
++            + "/bin/kill -TERM -- -$fogell_inner 2>/dev/null || true; sleep 0.2; "
++            + "/bin/kill -KILL -- -$fogell_inner 2>/dev/null || true; sleep 0.2; "
++            + "elif [ \"$fogell_kill_launcher\" -eq 1 ]; then "
++            + "/bin/kill -KILL \"$fogell_inner\" 2>/dev/null || true; sleep 0.2; "
++            + "fi; "
++            + "fi) <&9 >/dev/null 2>&1 & fogell_guard=$!; "
++            + "if [ -n \"$fogell_launch_ready\" ]; then printf '%s' \"$fogell_inner\" > \"$fogell_launch_ready\"; fi; "
++            + "exec 9<&-; "
++            + "wait $fogell_inner; fogell_rc=$?; "
++            + "exit $fogell_rc")
+         psi.ArgumentList.Add "fogell-wait-wrapper" // $0 for the outer waiter
+         // `-xe`, exactly as Jenkins' durable-task runs a shell step: `-x` makes the
+         // trace an EMITTED, COMPARED artifact on both engines (retiring the last
+@@ -483,19 +736,37 @@ module ProcessGroup =
+         // still prints, the program's own output does not — and leaves every other step
+         // byte-identical, which is what keeps the receipts valid.
+         let mergeStderr = if request.SuppressStdoutEcho then "" else " 2>&1"
++        let registeredPrelude =
++            "fogell_anchor=0; "
++            + "if [ -n \"$2\" ]; then /bin/sleep 2147483647 </dev/null >/dev/null 2>&1 & fogell_anchor=$!; kill -STOP \"$fogell_anchor\"; fi; "
++            + $"printf '%%s%%s %%s\n' '{pgidMarker}' \"$$\" \"$fogell_anchor\" >&2; kill -STOP \"$$\"; "
+ 
+         (match request.Command.StartsWith "#!" with
+-         | true -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"$1\"{mergeStderr}"
+-         | false -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -xe \"$1\"{mergeStderr}")
++         | true ->
++             psi.ArgumentList.Add
++                 $"{registeredPrelude}exec \"$1\"{mergeStderr}"
++         | false ->
++             psi.ArgumentList.Add
++                 $"{registeredPrelude}exec /bin/sh -xe \"$1\"{mergeStderr}")
+ 
+-        // These are $1..$3 of the outer waiter, and therefore command/$0/$1 of
+-        // the inner shell launched by setsid.
++        // These are $1..$4 of the outer waiter, and therefore command/$0/$1/$2
++        // of the inner shell launched by setsid.
+         psi.ArgumentList.Add "fogell-launcher"
+         psi.ArgumentList.Add(defaultArg shebangFile request.Command)
++        psi.ArgumentList.Add(defaultArg containmentDirectory "")
++        // Test-only controller seams. They are read before the child environment
++        // is cleared and travel positionally, so a build cannot set them through
++        // withEnv/environment. Production leaves both empty.
++        psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_RELEASE_FILE")) "")
++        psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_READY_FILE")) "")
++        psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_OBSERVED_FILE")) "")
++        psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_STOPPED_FILE")) "")
++        psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_CLEANUP_RELEASE_FILE")) "")
+ 
+         psi.WorkingDirectory <- request.WorkingDirectory
+         psi.RedirectStandardOutput <- true
+         psi.RedirectStandardError <- true
++        psi.RedirectStandardInput <- true
+         psi.UseShellExecute <- false
+ 
+         LaunchEnvironment.applyBuildTo psi request.Environment
+@@ -507,7 +778,7 @@ module ProcessGroup =
+         let stdout = Text.StringBuilder()
+         let stderr = Text.StringBuilder()
+         let completionOptions = Tasks.TaskCreationOptions.RunContinuationsAsynchronously
+-        let reportedPgid = Tasks.TaskCompletionSource<int>(completionOptions)
++        let reportedPgid = Tasks.TaskCompletionSource<int * int>(completionOptions)
+         let stdoutClosed = Tasks.TaskCompletionSource<unit>(completionOptions)
+         let stderrClosed = Tasks.TaskCompletionSource<unit>(completionOptions)
+         let processExited = Tasks.TaskCompletionSource<unit>(completionOptions)
+@@ -557,8 +828,15 @@ module ProcessGroup =
+                 | line when line.StartsWith pgidMarker ->
+                     // the leader's own pid: the real group id. Never surfaced to the
+                     // caller as build output.
+-                    match Int32.TryParse(line.Substring(pgidMarker.Length).Trim()) with
+-                    | true, pid -> reportedPgid.TrySetResult pid |> ignore
++                    match
++                        line.Substring(pgidMarker.Length).Split(
++                            ' ',
++                            StringSplitOptions.RemoveEmptyEntries)
++                    with
++                    | [| rawPid; rawAnchor |] ->
++                        match Int32.TryParse rawPid, Int32.TryParse rawAnchor with
++                        | (true, pid), (true, anchor) -> reportedPgid.TrySetResult(pid, anchor) |> ignore
++                        | _ -> ()
+                     | _ -> ()
+                 | line -> emit stderr line))
+ 
+@@ -619,6 +897,8 @@ module ProcessGroup =
+         let allReadersCompleted =
+             Tasks.Task.WhenAll [| stdoutReaderCompleted; stderrClosed.Task :> Tasks.Task |]
+ 
++        let mutable identityAnchor: int option = None
++
+         // Wait for the leader marker or definitive stderr EOF, with the same
+         // two-second upper bound as before. Deriving it from proc.Id is WRONG:
+         // that is setsid's pid, in our own group. EOF is load-bearing for a
+@@ -634,8 +914,64 @@ module ProcessGroup =
+             |> ignore
+ 
+             if reportedPgid.Task.IsCompletedSuccessfully then
+-                Some reportedPgid.Task.Result
++                let group, anchor = reportedPgid.Task.Result
++
++                try
++                    let startTime =
++                        match processStateAndStartTime group with
++                        | ProcessIdentityState.Matching _, Some value -> value
++                        | _ -> invalidOp $"could not bind process group {group} to its Linux start time"
++
++                    let anchorStartTime =
++                        match containmentDirectory with
++                        | None when anchor = 0 -> "-"
++                        | Some _ when anchor > 1 && Native.processGroupOf anchor = Some group ->
++                            match processStateAndStartTime anchor with
++                            | ProcessIdentityState.Matching _, Some value -> value
++                            | _ -> invalidOp $"could not bind process-group anchor {anchor} to its Linux start time"
++                        | _ -> invalidOp $"process group {group} did not report a valid containment anchor"
++
++                    persistGroup group startTime anchor anchorStartTime
++
++                    match containmentDirectory with
++                    | Some _ ->
++                        let anchorStopped =
++                            waitForIdentityStop
++                                200
++                                (fun () -> observeIdentity anchor anchorStartTime)
++                                (fun () -> Thread.Sleep 10)
++
++                        if not anchorStopped then
++                            invalidOp $"process-group anchor {anchor} did not reach its identity-bound stopped state"
++
++                        identityAnchor <- Some anchor
++                    | None -> ()
++
++                    let stopped =
++                        waitForIdentityStop
++                            200
++                            (fun () -> observeIdentity group startTime)
++                            (fun () -> Thread.Sleep 10)
++
++                    if not stopped then
++                        invalidOp $"process group {group} did not reach an identity-bound stopped state"
++
++                    // Release only the identity-checked leader. The stopped
++                    // anchor must remain stopped so a later group TERM stays
++                    // pending on it throughout the user's grace window.
++                    if not (Native.signalProcess group Native.SIGCONT) then
++                        invalidOp $"could not release registered process group {group}"
++
++                    Some group
++                with _ ->
++                    // Closing the sole writer wakes the out-of-group watchdog;
++                    // the stopped child cannot execute user code before cleanup.
++                    proc.StandardInput.Close()
++                    reraise ()
+             else
++                // A missing marker cannot leave a stopped, unregistered child.
++                // EOF delegates cleanup to the wrapper's watchdog.
++                proc.StandardInput.Close()
+                 None
+ 
+         // NOTE: never use the parameterless WaitForExit() with redirected
+@@ -777,7 +1113,11 @@ module ProcessGroup =
+ 
+                 let t =
+                     if request.ReapGroup then
+-                        pgid |> Option.map (fun g -> reap g request.GraceMs)
++                        pgid
++                        |> Option.map (fun g ->
++                            match identityAnchor with
++                            | Some anchor -> reapWithAnchor g anchor request.GraceMs
++                            | None -> reap g request.GraceMs)
+                     else
+                         None
+ 
+@@ -812,7 +1152,12 @@ module ProcessGroup =
+                 settleBeforeSignal 300
+                 let outputBeforeSignal = lock stdout (fun () -> stdout.ToString())
+                 let stderrBeforeSignal = lock stderr (fun () -> stderr.ToString())
+-                let t = pgid |> Option.map (fun g -> terminateGroup g request.GraceMs)
++                let t =
++                    pgid
++                    |> Option.map (fun g ->
++                        match identityAnchor with
++                        | Some anchor -> terminateGroupWithAnchor g anchor request.GraceMs
++                        | None -> terminateGroup g request.GraceMs)
+                 waitForReaderCompletion 300
+ 
+                 // On Jenkins the wrapper shell survives to print `Terminated` for its
+@@ -835,6 +1180,35 @@ module ProcessGroup =
+                 // the same signal path; only the reported cause differs.
+                 (if waitEnd = WaitEnd.Interrupted then Cancelled else TimedOut), t
+ 
++        // The guard outlives the inner leader. This closes the interval between
++        // leader exit and group reaping: if Run.Host dies there, stdin reaches
++        // EOF and the guard kills surviving descendants. Disarm only after
++        // extinction is verified. Outside controller containment, ReapGroup=false
++        // retains its historical opt-out by explicitly disarming the guard.
++        let mayDisarmGuard =
++            match containmentDirectory, pgid with
++            | None, _ -> true
++            | Some _, Some group -> survivorsIn group = 0
++            | Some _, None -> false
++
++        let mutable guardDisarmed = false
++
++        try
++            if mayDisarmGuard then
++                proc.StandardInput.WriteLine "disarm"
++                proc.StandardInput.Flush()
++                guardDisarmed <- true
++
++            proc.StandardInput.Close()
++        with _ ->
++            ()
++
++        // Keep the anchor-bound record available until the disarm command is in
++        // the pipe. If Run.Host dies before that point, the guard still has the
++        // provenance it needs; after the flush it will read `disarm`, not EOF.
++        if guardDisarmed then
++            pgid |> Option.iter forgetExtinguishedGroup
++
+         sw.Stop()
+ 
+         shebangFile |> Option.iter deleteShebang
+diff --git a/src/Fogell.Store/Store.fs b/src/Fogell.Store/Store.fs
+index 2259625..786422c 100644
+--- a/src/Fogell.Store/Store.fs
++++ b/src/Fogell.Store/Store.fs
+@@ -1710,86 +1710,202 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+             lock.Parameters.AddWithValue("o", org.Value.ToString()) |> ignore
+             lock.ExecuteNonQuery() |> ignore
+ 
+-            use pick = conn.CreateCommand()
+-            pick.Transaction <- tx
+-            pick.CommandText <-
+-                "SELECT a.id, n.id, n.build_id, b.project_id, b.number,
+-                        d.source_bytes, d.source_digest, n.ordinal,
+-                        (SELECT count(*) FROM nodes all_nodes
+-                          WHERE all_nodes.organization_id = b.organization_id
+-                            AND all_nodes.build_id = b.id) AS node_count
+-                   FROM attempts a
+-                   JOIN nodes n
+-                     ON n.id = a.node_id AND n.organization_id = a.organization_id
+-                   JOIN builds b
+-                     ON b.id = n.build_id AND b.organization_id = n.organization_id
+-                   LEFT JOIN build_definitions d
+-                     ON d.build_id = b.id AND d.organization_id = b.organization_id
+-                  WHERE a.organization_id = @o
+-                    AND a.state = 'queued'
+-                    AND n.required_trust_pool = @pool
+-                    AND n.required_capabilities <@ @caps
+-                  ORDER BY a.created_at, a.id
+-                  FOR UPDATE OF a SKIP LOCKED
+-                  LIMIT 1"
+-            pick.Parameters.AddWithValue("o", org.Value) |> ignore
+-            pick.Parameters.AddWithValue("pool", trustPool) |> ignore
+-            pick.Parameters.AddWithValue("caps", List.toArray capabilities) |> ignore
+-            use reader = pick.ExecuteReader()
++            let quarantine attemptId nodeId buildId reason =
++                // The attempt was locked by the FIFO pick. Complete the same
++                // attempt -> node -> build lock order used by every execution
++                // roll-up before publishing the durable refusal.
++                use nodeLock = conn.CreateCommand()
++                nodeLock.Transaction <- tx
++                nodeLock.CommandText <-
++                    "SELECT build_id FROM nodes
++                      WHERE organization_id = @o AND id = @n
++                      FOR UPDATE"
++                nodeLock.Parameters.AddWithValue("o", org.Value) |> ignore
++                nodeLock.Parameters.AddWithValue("n", nodeId) |> ignore
+ 
+-            if not (reader.Read()) then
+-                reader.Close()
+-                tx.Commit()
+-                Ok None
+-            else
+-                let attemptId = reader.GetGuid 0
+-                let nodeId = reader.GetGuid 1
+-                let buildId = reader.GetGuid 2
+-                let projectId = reader.GetGuid 3
+-                let buildNumber = reader.GetInt32 4
+-                let hasDefinition = not (reader.IsDBNull 5) && not (reader.IsDBNull 6)
+-                let source = if hasDefinition then reader.GetFieldValue<byte array> 5 else Array.empty
+-                let sourceDigest = if hasDefinition then reader.GetFieldValue<byte array> 6 else Array.empty
+-                let nodeOrdinal = reader.GetInt32 7
+-                let nodeCount = reader.GetInt64 8
+-                reader.Close()
++                match nodeLock.ExecuteScalar() with
++                | :? Guid as lockedBuildId when lockedBuildId = buildId -> ()
++                | _ -> failwith "invalid execution claim has no node lineage"
+ 
+-                if not hasDefinition then
+-                    tx.Rollback()
+-                    Error "queued build has no immutable pipeline definition; migration or reconciliation is required"
+-                elif nodeOrdinal <> 0 || nodeCount <> 1L then
+-                    tx.Rollback()
+-                    Error "queued build is not a single whole-pipeline execution; migration or reconciliation is required"
+-                elif not (CryptographicOperations.FixedTimeEquals(payloadDigest source, sourceDigest)) then
+-                    tx.Rollback()
+-                    Error "stored pipeline source digest mismatch; refusing execution"
++                use buildLock = conn.CreateCommand()
++                buildLock.Transaction <- tx
++                buildLock.CommandText <-
++                    "SELECT id FROM builds
++                      WHERE organization_id = @o AND id = @b
++                      FOR UPDATE"
++                buildLock.Parameters.AddWithValue("o", org.Value) |> ignore
++                buildLock.Parameters.AddWithValue("b", buildId) |> ignore
++
++                if isNull (buildLock.ExecuteScalar()) then
++                    failwith "invalid execution claim has no build lineage"
++
++                use rejectAttempt = conn.CreateCommand()
++                rejectAttempt.Transaction <- tx
++                rejectAttempt.CommandText <-
++                    "UPDATE attempts
++                        SET state = 'reconciliation_required',
++                            lease_owner = NULL,
++                            lease_expires_at = NULL
++                      WHERE organization_id = @o AND id = @a AND state = 'queued'"
++                rejectAttempt.Parameters.AddWithValue("o", org.Value) |> ignore
++                rejectAttempt.Parameters.AddWithValue("a", attemptId) |> ignore
++
++                if rejectAttempt.ExecuteNonQuery() <> 1 then
++                    failwith "invalid execution claim changed after FIFO arbitration"
++
++                use rejectNode = conn.CreateCommand()
++                rejectNode.Transaction <- tx
++                rejectNode.CommandText <-
++                    "UPDATE nodes SET status = 'reconciliation_required'
++                      WHERE organization_id = @o AND id = @n AND build_id = @b"
++                rejectNode.Parameters.AddWithValue("o", org.Value) |> ignore
++                rejectNode.Parameters.AddWithValue("n", nodeId) |> ignore
++                rejectNode.Parameters.AddWithValue("b", buildId) |> ignore
++
++                if rejectNode.ExecuteNonQuery() <> 1 then
++                    failwith "invalid execution claim has no node to quarantine"
++
++                use rejectBuild = conn.CreateCommand()
++                rejectBuild.Transaction <- tx
++                rejectBuild.CommandText <-
++                    "UPDATE builds SET status = 'reconciliation_required'
++                      WHERE organization_id = @o AND id = @b"
++                rejectBuild.Parameters.AddWithValue("o", org.Value) |> ignore
++                rejectBuild.Parameters.AddWithValue("b", buildId) |> ignore
++
++                if rejectBuild.ExecuteNonQuery() <> 1 then
++                    failwith "invalid execution claim has no build to quarantine"
++
++                use refusal = conn.CreateCommand()
++                refusal.Transaction <- tx
++                refusal.CommandText <-
++                    "INSERT INTO events (organization_id, build_id, attempt_id, kind, payload)
++                     VALUES (@o, @b, @a, 'attempt.reconciliation_required', @payload)"
++                refusal.Parameters.AddWithValue("o", org.Value) |> ignore
++                refusal.Parameters.AddWithValue("b", buildId) |> ignore
++                refusal.Parameters.AddWithValue("a", attemptId) |> ignore
++                refusal.Parameters.Add(
++                    NpgsqlParameter(
++                        "payload",
++                        NpgsqlTypes.NpgsqlDbType.Jsonb,
++                        Value = $"{{\"reason\":\"{reason}\"}}"))
++                |> ignore
++                refusal.ExecuteNonQuery() |> ignore
++
++            let readCandidate () =
++                use pick = conn.CreateCommand()
++                pick.Transaction <- tx
++                pick.CommandText <-
++                    "SELECT a.id, n.id, n.build_id, b.project_id, b.number,
++                            d.source_bytes, d.source_digest, n.ordinal,
++                            (SELECT count(*) FROM nodes all_nodes
++                              WHERE all_nodes.organization_id = b.organization_id
++                                AND all_nodes.build_id = b.id) AS node_count
++                       FROM attempts a
++                       JOIN nodes n
++                         ON n.id = a.node_id AND n.organization_id = a.organization_id
++                       JOIN builds b
++                         ON b.id = n.build_id AND b.organization_id = n.organization_id
++                       LEFT JOIN build_definitions d
++                         ON d.build_id = b.id AND d.organization_id = b.organization_id
++                      WHERE a.organization_id = @o
++                        AND a.state = 'queued'
++                        AND n.required_trust_pool = @pool
++                        AND n.required_capabilities <@ @caps
++                      ORDER BY a.created_at, a.id
++                      FOR UPDATE OF a SKIP LOCKED
++                      LIMIT 1"
++                pick.Parameters.AddWithValue("o", org.Value) |> ignore
++                pick.Parameters.AddWithValue("pool", trustPool) |> ignore
++                pick.Parameters.AddWithValue("caps", List.toArray capabilities) |> ignore
++                use reader = pick.ExecuteReader()
++
++                if not (reader.Read()) then
++                    None
+                 else
+-                    use offer = conn.CreateCommand()
+-                    offer.Transaction <- tx
+-                    offer.CommandText <-
+-                        "UPDATE attempts
+-                            SET fence = fence + 1, state = 'offered', lease_owner = @agent,
+-                                lease_expires_at = clock_timestamp() + make_interval(secs => @secs)
+-                          WHERE organization_id = @o AND id = @a
+-                          RETURNING fence"
+-                    offer.Parameters.AddWithValue("o", org.Value) |> ignore
+-                    offer.Parameters.AddWithValue("a", attemptId) |> ignore
+-                    offer.Parameters.AddWithValue("agent", agentId) |> ignore
+-                    offer.Parameters.AddWithValue("secs", float leaseSeconds) |> ignore
+-                    let fence = offer.ExecuteScalar() :?> int64
+-                    tx.Commit()
++                    let attemptId = reader.GetGuid 0
++                    let nodeId = reader.GetGuid 1
++                    let buildId = reader.GetGuid 2
++                    let projectId = reader.GetGuid 3
++                    let buildNumber = reader.GetInt32 4
++                    let hasDefinition = not (reader.IsDBNull 5) && not (reader.IsDBNull 6)
++                    let source = if hasDefinition then reader.GetFieldValue<byte array> 5 else Array.empty
++                    let sourceDigest = if hasDefinition then reader.GetFieldValue<byte array> 6 else Array.empty
++                    let nodeOrdinal = reader.GetInt32 7
++                    let nodeCount = reader.GetInt64 8
+ 
+-                    Ok
+-                        (Some
+-                            { OrganizationId = org
+-                              ProjectId = ProjectId projectId
+-                              BuildId = BuildId buildId
+-                              BuildNumber = buildNumber
+-                              NodeId = NodeId nodeId
+-                              AttemptId = AttemptId attemptId
+-                              Fence = Fence fence
+-                              PipelineSource = source
+-                              PipelineSha256 = digestHex sourceDigest })
++                    Some(
++                        attemptId,
++                        nodeId,
++                        buildId,
++                        projectId,
++                        buildNumber,
++                        hasDefinition,
++                        source,
++                        sourceDigest,
++                        nodeOrdinal,
++                        nodeCount)
++
++            let rec claimNext () =
++                match readCandidate () with
++                | None -> None
++                | Some(
++                    attemptId,
++                    nodeId,
++                    buildId,
++                    projectId,
++                    buildNumber,
++                    hasDefinition,
++                    source,
++                    sourceDigest,
++                    nodeOrdinal,
++                    nodeCount) ->
++
++                    let refusalReason =
++                        if not hasDefinition then
++                            Some "missing_definition"
++                        elif nodeOrdinal <> 0 || nodeCount <> 1L then
++                            Some "legacy_multi_node"
++                        elif not (CryptographicOperations.FixedTimeEquals(payloadDigest source, sourceDigest)) then
++                            Some "definition_digest_mismatch"
++                        else
++                            None
++
++                    match refusalReason with
++                    | Some reason ->
++                        quarantine attemptId nodeId buildId reason
++                        claimNext ()
++                    | None ->
++                        use offer = conn.CreateCommand()
++                        offer.Transaction <- tx
++                        offer.CommandText <-
++                            "UPDATE attempts
++                                SET fence = fence + 1, state = 'offered', lease_owner = @agent,
++                                    lease_expires_at = clock_timestamp() + make_interval(secs => @secs)
++                              WHERE organization_id = @o AND id = @a AND state = 'queued'
++                              RETURNING fence"
++                        offer.Parameters.AddWithValue("o", org.Value) |> ignore
++                        offer.Parameters.AddWithValue("a", attemptId) |> ignore
++                        offer.Parameters.AddWithValue("agent", agentId) |> ignore
++                        offer.Parameters.AddWithValue("secs", float leaseSeconds) |> ignore
++
++                        match offer.ExecuteScalar() with
++                        | null -> failwith "execution candidate changed after FIFO arbitration"
++                        | value ->
++                            Some
++                                { OrganizationId = org
++                                  ProjectId = ProjectId projectId
++                                  BuildId = BuildId buildId
++                                  BuildNumber = buildNumber
++                                  NodeId = NodeId nodeId
++                                  AttemptId = AttemptId attemptId
++                                  Fence = Fence(value :?> int64)
++                                  PipelineSource = source
++                                  PipelineSha256 = digestHex sourceDigest }
++
++            let claimed = claimNext ()
++            tx.Commit()
++            Ok claimed
+         with ex ->
+             (try tx.Rollback() with _ -> ())
+             Error ex.Message
+diff --git a/tests/Fogell.Differential.Tests/Tests.fs b/tests/Fogell.Differential.Tests/Tests.fs
+index 738b4b1..5729141 100644
+--- a/tests/Fogell.Differential.Tests/Tests.fs
++++ b/tests/Fogell.Differential.Tests/Tests.fs
+@@ -47,6 +47,7 @@ let progressiveOutputPublication =
+               |> ignore
+ 
+               let terminal = ctx.Output()
++              ctx.FlushOutput()
+               let progressive = List.ofSeq published
+               Expect.equal progressive terminal "the callback is ordered by the same lock as the trace"
+               Expect.equal progressive.Length 256 "every emission is published once"
+@@ -68,6 +69,139 @@ let progressiveOutputPublication =
+                   [ "eulav-t3rc3s" ]
+                   "the terminal leak guard still receives the evidence"
+               Expect.isEmpty published "unsafe transformed bytes never cross the progressive boundary"
++          }
++
++          test "a slow callback cannot hold the output lock or block a later emitter" {
++              use callbackEntered = new Threading.ManualResetEventSlim(false)
++              use releaseCallback = new Threading.ManualResetEventSlim(false)
++              let published = ResizeArray<string>()
++
++              let ctx =
++                  WalkerCtx.create
++                      0L
++                      false
++                      (Some(fun line ->
++                          published.Add line
++
++                          if line = "slow" then
++                              callbackEntered.Set()
++                              releaseCallback.Wait()))
++
++              let first = Threading.Tasks.Task.Run(fun () -> ctx.Emit "slow")
++
++              try
++                  Expect.isTrue (callbackEntered.Wait 2000) "the first callback started"
++                  let second = Threading.Tasks.Task.Run(fun () -> ctx.Emit "fast")
++                  Expect.isTrue (second.Wait 500) "a second Emit does not wait for the slow callback"
++                  Expect.equal (ctx.Output()) [ "slow"; "fast" ] "trace state remains independently readable"
++              finally
++                  releaseCallback.Set()
++
++              first.GetAwaiter().GetResult()
++              ctx.FlushOutput()
++              Expect.equal (List.ofSeq published) [ "slow"; "fast" ] "one consumer retains FIFO order"
++          }
++
++          test "a callback may synchronously wait for a reentrant emission without deadlock" {
++              let published = ResizeArray<string>()
++              let mutable emit = ignore
++
++              let ctx =
++                  WalkerCtx.create
++                      0L
++                      false
++                      (Some(fun line ->
++                          published.Add line
++
++                          if line = "outer" then
++                              let nested = Threading.Tasks.Task.Run(fun () -> emit "inner")
++                              if not (nested.Wait 500) then
++                                  failwith "reentrant emission was blocked by callback publication"))
++
++              emit <- ctx.Emit
++              let outer = Threading.Tasks.Task.Run(fun () -> emit "outer")
++              Expect.isTrue
++                  (Threading.SpinWait.SpinUntil((fun () -> outer.IsCompleted), 2000))
++                  "the outer callback and nested emitter complete"
++              outer.GetAwaiter().GetResult()
++              ctx.FlushOutput()
++              Expect.equal (ctx.Output()) [ "outer"; "inner" ] "reentrant trace order is stable"
++              Expect.equal (List.ofSeq published) [ "outer"; "inner" ] "reentrant publication is exact"
++          }
++
++          test "publisher failure is typed, sticky, and never retried as build output" {
++              let mutable attempts = 0
++
++              let ctx =
++                  WalkerCtx.create
++                      0L
++                      false
++                      (Some(fun _ ->
++                          attempts <- attempts + 1
++                          raise (IO.IOException "event sink unavailable")))
++
++              Expect.throwsT<OutputPublicationException>
++                  (fun () -> ctx.Emit "one")
++                  "the publisher infrastructure failure escapes Emit"
++              Expect.throwsT<OutputPublicationException>
++                  (fun () -> ctx.FlushOutput())
++                  "terminal publication observes the same stored failure"
++              Expect.throwsT<OutputPublicationException>
++                  (fun () -> ctx.Emit "two")
++                  "later output cannot continue beyond a broken event stream"
++              Expect.equal attempts 1 "a failed callback is never retried or duplicated"
++          }
++
++          test "runPersisted preserves publisher failure for host reconciliation" {
++              let hooks =
++                  { OnOutput = fun _ -> raise (IO.IOException "event sink unavailable")
++                    IsRestartedRun = false
++                    ShouldExecute = fun _ _ -> true
++                    StageWasCommitted = fun _ -> false
++                    SkippedStatus = fun _ _ -> None
++                    SkippedStageWarning = fun _ _ -> None
++                    OnStepStarted = fun _ _ _ -> ()
++                    OnStepStageWarning = fun _ _ _ -> ()
++                    OnStepFinished = fun _ _ _ _ -> ()
++                    OnStageCommitted = fun _ -> ()
++                    OnRetryAttempt = fun _ _ -> ()
++                    RetryAttemptsSoFar = fun _ -> 1
++                    PollInputAnswer = None
++                    OnInputClosed = fun _ _ _ -> ()
++                    OnInputAnswerVoided = fun _ _ _ -> () }
++
++              let root =
++                  IO.Path.Combine(
++                      IO.Path.GetTempPath(),
++                      $"fogell-output-publication-{Guid.NewGuid():N}")
++
++              IO.Directory.CreateDirectory root |> ignore
++
++              try
++                  Expect.throwsT<OutputPublicationException>
++                      (fun () ->
++                          FogellSide.runPersisted
++                              []
++                              root
++                              "publisher-failure"
++                              2
++                              true
++                              hooks
++                              """pipeline {
++    agent any
++    stages {
++        stage('Build') {
++            steps {
++                echo 'hello'
++            }
++        }
++    }
++}
++"""
++                          |> ignore)
++                      "the persisted boundary must not collapse event transport into Result.Error"
++              finally
++                  IO.Directory.Delete(root, true)
+           } ]
+ 
+ let controllerEventDrainBudgets =
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index 2786bf3..d59b8c7 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -70,10 +70,97 @@ let private waitForPidFile (pidFile: string) =
+     else
+         None
+ 
++let private runContainmentChild registry pidFile readyFile =
++    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
++
++    let script =
++        $"sleep 600 & fogell_effect=$!; printf '%%s' \"$fogell_effect\" > '{pidFile}'; printf ready > '{readyFile}'; wait \"$fogell_effect\""
++
++    ProcessGroup.run
++        { RunRequest.create (script, tempRoot ()) with
++            ReapGroup = false }
++    |> ignore
++
++    0
++
++let private runExitedLeaderContainmentChild registry pidFile readyFile =
++    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
++
++    let script =
++        $"sleep 600 & fogell_effect=$!; printf '%%s' \"$fogell_effect\" > '{pidFile}'; printf ready > '{readyFile}'; exit 0"
++
++    ProcessGroup.run
++        { RunRequest.create (script, tempRoot ()) with
++            ReapGroup = false }
++    |> ignore
++    0
++
++let private runTermGraceContainmentChild registry pidFile termFile =
++    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
++
++    let script =
++        $"/bin/sh -c 'trap \"\" TERM; exec /bin/sleep 600' & fogell_effect=$!; printf '%%s' \"$fogell_effect\" > '{pidFile}'; trap 'printf term > \"{termFile}\"' TERM; wait \"$fogell_effect\""
++
++    ProcessGroup.run
++        { RunRequest.create (script, tempRoot ()) with
++            TimeoutMs = Some 200L
++            GraceMs = 5_000 }
++    |> ignore
++    0
++
++let private runPreSetsidContainmentChild
++    registry
++    effectFile
++    releaseFile
++    readyFile
++    observedFile
++    stoppedFile
++    cleanupReleaseFile
++    =
++    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
++    Environment.SetEnvironmentVariable("FOGELL_TEST_PRE_SETSID_RELEASE_FILE", releaseFile)
++    Environment.SetEnvironmentVariable("FOGELL_TEST_PRE_SETSID_READY_FILE", readyFile)
++    Environment.SetEnvironmentVariable("FOGELL_TEST_PRE_SETSID_OBSERVED_FILE", observedFile)
++    Environment.SetEnvironmentVariable("FOGELL_TEST_PRE_SETSID_STOPPED_FILE", stoppedFile)
++    Environment.SetEnvironmentVariable("FOGELL_TEST_PRE_SETSID_CLEANUP_RELEASE_FILE", cleanupReleaseFile)
++
++    ProcessGroup.run
++        { RunRequest.create ($"printf ran > '{effectFile}'; sleep 600", tempRoot ()) with
++            ReapGroup = false }
++    |> ignore
++    0
++
+ /// Alive per /proc, which needs no signal and cannot be confused by reuse
+ /// within a single test.
+ let private pidAlive (pid: int) = Directory.Exists $"/proc/{pid}"
+ 
++let private containmentAnchorPids () =
++    if not (OperatingSystem.IsLinux()) then
++        Set.empty
++    else
++        Directory.GetDirectories "/proc"
++        |> Array.choose (fun directory ->
++            match Int32.TryParse(Path.GetFileName directory) with
++            | true, pid ->
++                try
++                    let arguments =
++                        File.ReadAllText(Path.Combine(directory, "cmdline"))
++                            .Split('\000', StringSplitOptions.RemoveEmptyEntries)
++
++                    // Match argv, not a substring: the outer wait wrapper has
++                    // the anchor command in its shell-program argument and is
++                    // deliberately alive during STOP-boundary tests.
++                    if arguments.Length >= 2
++                       && arguments.[0] = "/bin/sleep"
++                       && arguments.[1] = "2147483647" then
++                        Some pid
++                    else
++                        None
++                with _ ->
++                    None
++            | _ -> None)
++        |> Set.ofArray
++
+ /// Reaping is asynchronous, so the assertion has to WAIT for it rather than
+ /// sample once. Both call sites slept a flat 300ms and asserted — which passes
+ /// or fails by how loaded the machine is, and CI proved it: PR #36 ran the same
+@@ -91,6 +178,14 @@ let private waitForReap (pid: int) =
+ 
+     not (pidAlive pid)
+ 
++let private waitForFile path budgetMs =
++    let clock = Diagnostics.Stopwatch.StartNew()
++
++    while not (File.Exists path) && clock.ElapsedMilliseconds < int64 budgetMs do
++        Threading.Thread.Sleep 10
++
++    File.Exists path
++
+ let workspaceHygiene =
+     testList
+         "FG-030 workspace hygiene"
+@@ -440,7 +535,459 @@ let environmentIsolation =
+ let containment =
+     testList
+         "FG-031/032 process group containment"
+-        [ test "the step leads its own process group" {
++        [ test "a running registered leader is released only after its stopped state is observed" {
++              let states =
++                  Collections.Generic.Queue(
++                      [ ProcessGroup.ProcessIdentityState.Matching 'R'
++                        ProcessGroup.ProcessIdentityState.Matching 'S'
++                        ProcessGroup.ProcessIdentityState.Matching 'T' ])
++              let mutable pauses = 0
++
++              let stopped =
++                  ProcessGroup.waitForIdentityStop
++                      3
++                      (fun () -> states.Dequeue())
++                      (fun () -> pauses <- pauses + 1)
++
++              Expect.isTrue stopped "SIGCONT is authorized only by the observed stopped state"
++              Expect.equal pauses 2 "running states consume the bounded polling budget"
++
++              let launcherStates =
++                  Collections.Generic.Queue(
++                      [ ProcessGroup.LauncherFormationState.SameIdentity 17
++                        ProcessGroup.LauncherFormationState.SameIdentity 42 ])
++
++              let formed =
++                  ProcessGroup.waitForIdentityGroup
++                      42
++                      1
++                      (fun () -> launcherStates.Dequeue())
++                      ignore
++
++              Expect.equal
++                  formed
++                  ProcessGroup.LauncherFormationDecision.GroupFormed
++                  "the EOF guard follows the same launcher identity across setsid"
++
++              let timedOut =
++                  ProcessGroup.waitForIdentityGroup
++                      42
++                      0
++                      (fun () -> ProcessGroup.LauncherFormationState.SameIdentity 17)
++                      ignore
++
++              Expect.equal
++                  timedOut
++                  ProcessGroup.LauncherFormationDecision.TerminateLauncher
++                  "the bound kills a still-pre-setsid launcher instead of abandoning it"
++
++              let drifted =
++                  ProcessGroup.waitForIdentityGroup
++                      42
++                      20
++                      (fun () -> ProcessGroup.LauncherFormationState.Changed)
++                      ignore
++
++              Expect.equal
++                  drifted
++                  ProcessGroup.LauncherFormationDecision.Refused
++                  "numeric pid reuse never authorizes either group or launcher signalling"
++
++              let disappeared =
++                  ProcessGroup.waitForIdentityGroup
++                      42
++                      20
++                      (fun () -> ProcessGroup.LauncherFormationState.Absent)
++                      ignore
++
++              Expect.equal
++                  disappeared
++                  ProcessGroup.LauncherFormationDecision.Disappeared
++                  "a launcher that vanished before session formation needs no signal"
++          }
++
++          test "a leader that never stops is refused at the exact polling bound" {
++              let mutable observations = 0
++              let mutable pauses = 0
++
++              let stopped =
++                  ProcessGroup.waitForIdentityStop
++                      2
++                      (fun () ->
++                          observations <- observations + 1
++                          ProcessGroup.ProcessIdentityState.Matching 'R')
++                      (fun () -> pauses <- pauses + 1)
++
++              Expect.isFalse stopped "a marker alone can never authorize SIGCONT"
++              Expect.equal observations 3 "the initial observation plus two bounded retries were made"
++              Expect.equal pauses 2 "the timeout has no hidden extra sleep"
++          }
++
++          test "leader identity drift refuses release immediately" {
++              let states =
++                  Collections.Generic.Queue(
++                      [ ProcessGroup.ProcessIdentityState.Matching 'R'
++                        ProcessGroup.ProcessIdentityState.Changed ])
++              let mutable pauses = 0
++
++              let stopped =
++                  ProcessGroup.waitForIdentityStop
++                      20
++                      (fun () -> states.Dequeue())
++                      (fun () -> pauses <- pauses + 1)
++
++              Expect.isFalse stopped "a reused numeric pid cannot authorize SIGCONT"
++              Expect.equal pauses 1 "identity drift fails closed without spending the remaining budget"
++          }
++
++          test "pre-registration owner failures never release or leak the launcher" {
++              let root = tempRoot ()
++              let invalidRegistry = Path.Combine(root, "registry-is-a-file")
++              let userEffect = Path.Combine(root, "user-effect")
++              let previousRegistry = Environment.GetEnvironmentVariable "FOGELL_PROCESS_GROUP_REGISTRY"
++              let anchorsBefore = containmentAnchorPids ()
++              File.WriteAllText(invalidRegistry, "not a directory")
++              Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", invalidRegistry)
++
++              try
++                  Expect.throws
++                      (fun () ->
++                          ProcessGroup.run
++                              (RunRequest.create ($"printf ran > '{userEffect}'", root))
++                          |> ignore)
++                      "registration failure is surfaced rather than releasing unregistered code"
++              finally
++                  Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", previousRegistry)
++
++              let clock = Stopwatch.StartNew()
++              let mutable leaked = Set.difference (containmentAnchorPids ()) anchorsBefore
++
++              while not leaked.IsEmpty && clock.ElapsedMilliseconds < 3_000L do
++                  Threading.Thread.Sleep 25
++                  leaked <- Set.difference (containmentAnchorPids ()) anchorsBefore
++
++              Expect.isFalse (File.Exists userEffect) "the stopped user leader never executed its command"
++              Expect.isEmpty leaked "the no-record guard reaped the anchor under the bounded fallback"
++
++              // Exercise the still-earlier window: the owner dies while the
++              // direct child has been forked but has not executed setsid or
++              // emitted its marker. A release-file gate makes the boundary
++              // exact; the guard acknowledgement proves EOF was observed while
++              // pid and pgrp were still different.
++              let earlyRoot = tempRoot ()
++              let registry = Path.Combine(earlyRoot, "registry")
++              let effect = Path.Combine(earlyRoot, "effect")
++              let release = Path.Combine(earlyRoot, "release")
++              let ready = Path.Combine(earlyRoot, "launcher.pid")
++              let observed = Path.Combine(earlyRoot, "guard.observed")
++              let earlyAnchorsBefore = containmentAnchorPids ()
++              Directory.CreateDirectory registry |> ignore
++
++              let start = ProcessStartInfo(Environment.ProcessPath)
++
++              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
++                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
++
++              start.ArgumentList.Add "--containment-pre-setsid-child"
++              start.ArgumentList.Add registry
++              start.ArgumentList.Add effect
++              start.ArgumentList.Add release
++              start.ArgumentList.Add ready
++              start.ArgumentList.Add observed
++              start.ArgumentList.Add ""
++              start.ArgumentList.Add ""
++              start.UseShellExecute <- false
++              start.RedirectStandardOutput <- true
++              start.RedirectStandardError <- true
++              use host = Process.Start start
++
++              if not (waitForFile ready 5_000) then
++                  host.Kill(true)
++                  failtest "pre-setsid launcher did not establish the deterministic gate"
++
++              let launcherPid = Int32.Parse((File.ReadAllText ready).Trim())
++              Expect.isTrue (pidAlive launcherPid) "the delayed launcher was alive before owner death"
++              Expect.notEqual
++                  (Native.processGroupOf launcherPid)
++                  (Some launcherPid)
++                  "the test kills the owner before setsid, not after group formation"
++              Expect.isTrue
++                  (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty)
++                  "no marker or durable registration existed at the failure boundary"
++
++              host.Kill()
++              host.WaitForExit 3_000 |> ignore
++
++              if not (waitForFile observed 3_000) then
++                  File.WriteAllText(release, "release")
++                  failtest "EOF guard did not observe the identity-bound pre-setsid launcher"
++
++              File.WriteAllText(release, "release")
++              Expect.isTrue (waitForReap launcherPid) "the guard followed setsid and reaped the formed group"
++              Expect.isFalse (File.Exists effect) "user code remained gated across abrupt owner death"
++
++              let anchorClock = Stopwatch.StartNew()
++              let mutable earlyLeaked = Set.difference (containmentAnchorPids ()) earlyAnchorsBefore
++
++              while not earlyLeaked.IsEmpty && anchorClock.ElapsedMilliseconds < 3_000L do
++                  Threading.Thread.Sleep 25
++                  earlyLeaked <- Set.difference (containmentAnchorPids ()) earlyAnchorsBefore
++
++              Expect.isEmpty earlyLeaked "the earliest owner-death window left no identity anchor"
++              Expect.isTrue
++                  (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty)
++                  "the pre-marker failure did not manufacture registration evidence"
++              Directory.Delete(earlyRoot, true)
++
++              // The polling bound is itself fail-closed. If setsid has not yet
++              // arrived, the guard freezes and identity-checks the direct
++              // launcher before classifying it. The test then releases the
++              // launch gate while cleanup is deliberately paused: acknowledged
++              // T/t, not signal delivery alone, is what prevents transition.
++              let timeoutRoot = tempRoot ()
++              let timeoutRegistry = Path.Combine(timeoutRoot, "registry")
++              let timeoutEffect = Path.Combine(timeoutRoot, "effect")
++              let timeoutRelease = Path.Combine(timeoutRoot, "never-release")
++              let timeoutReady = Path.Combine(timeoutRoot, "launcher.pid")
++              let timeoutObserved = Path.Combine(timeoutRoot, "guard.observed")
++              let timeoutStopped = Path.Combine(timeoutRoot, "guard.stopped")
++              let timeoutCleanupRelease = Path.Combine(timeoutRoot, "cleanup.release")
++              Directory.CreateDirectory timeoutRegistry |> ignore
++
++              let timeoutStart = ProcessStartInfo(Environment.ProcessPath)
++
++              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
++                  timeoutStart.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
++
++              timeoutStart.ArgumentList.Add "--containment-pre-setsid-child"
++              timeoutStart.ArgumentList.Add timeoutRegistry
++              timeoutStart.ArgumentList.Add timeoutEffect
++              timeoutStart.ArgumentList.Add timeoutRelease
++              timeoutStart.ArgumentList.Add timeoutReady
++              timeoutStart.ArgumentList.Add timeoutObserved
++              timeoutStart.ArgumentList.Add timeoutStopped
++              timeoutStart.ArgumentList.Add timeoutCleanupRelease
++              timeoutStart.UseShellExecute <- false
++              timeoutStart.RedirectStandardOutput <- true
++              timeoutStart.RedirectStandardError <- true
++              use timeoutHost = Process.Start timeoutStart
++
++              if not (waitForFile timeoutReady 5_000) then
++                  timeoutHost.Kill(true)
++                  failtest "bounded pre-setsid launcher did not establish its gate"
++
++              let timeoutLauncher = Int32.Parse((File.ReadAllText timeoutReady).Trim())
++              timeoutHost.Kill()
++              timeoutHost.WaitForExit 3_000 |> ignore
++              Expect.isTrue
++                  (waitForFile timeoutObserved 3_000)
++                  "the timeout case non-vacuously entered pre-setsid polling"
++              Expect.isTrue
++                  (waitForFile timeoutStopped 3_000)
++                  "the guard acknowledged the exact launcher identity in T/t before classifying it"
++              let frozenPgrp = Int32.Parse((File.ReadAllText timeoutStopped).Trim())
++              Expect.isGreaterThan
++                  frozenPgrp
++                  1
++                  (if frozenPgrp = timeoutLauncher then
++                       "STOP acknowledgement classified an already-formed inner group"
++                   else
++                       "STOP acknowledgement classified the direct pre-setsid launcher")
++              File.WriteAllText(timeoutRelease, "release")
++              Threading.Thread.Sleep 50
++              Expect.isTrue (pidAlive timeoutLauncher) "cleanup remained paused with the launcher frozen"
++              Expect.equal
++                  (Native.processGroupOf timeoutLauncher)
++                  (Some frozenPgrp)
++                  "the acknowledged frozen classification remained stable after gate release"
++              Expect.isFalse (File.Exists timeoutEffect) "a released gate cannot advance a stopped launcher"
++              File.WriteAllText(timeoutCleanupRelease, "cleanup")
++              Expect.isTrue
++                  (waitForReap timeoutLauncher)
++                  "the polling bound killed the frozen same-identity launcher"
++              Expect.isFalse (File.Exists timeoutEffect) "timeout never released user code"
++
++              let timeoutAnchorClock = Stopwatch.StartNew()
++              let mutable timeoutAnchors = Set.difference (containmentAnchorPids ()) earlyAnchorsBefore
++
++              while not timeoutAnchors.IsEmpty && timeoutAnchorClock.ElapsedMilliseconds < 3_000L do
++                  Threading.Thread.Sleep 25
++                  timeoutAnchors <- Set.difference (containmentAnchorPids ()) earlyAnchorsBefore
++
++              Expect.isEmpty
++                  timeoutAnchors
++                  $"cleanup reaped every anchor after frozen pgrp {frozenPgrp} was classified"
++              Expect.isTrue
++                  (Directory.EnumerateFiles(timeoutRegistry, "*.group") |> Seq.isEmpty)
++                  "timeout before setsid created no false registration"
++              Directory.Delete(timeoutRoot, true)
++          }
++
++          test "an abrupt Run.Host death reaps a registered inner step group" {
++              let root = tempRoot ()
++              let registry = Path.Combine(root, "registry")
++              let pidFile = Path.Combine(root, "effect.pid")
++              let readyFile = Path.Combine(root, "effect.ready")
++              Directory.CreateDirectory registry |> ignore
++
++              let start = ProcessStartInfo(Environment.ProcessPath)
++
++              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
++                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
++
++              start.ArgumentList.Add "--containment-child"
++              start.ArgumentList.Add registry
++              start.ArgumentList.Add pidFile
++              start.ArgumentList.Add readyFile
++              start.UseShellExecute <- false
++              start.RedirectStandardOutput <- true
++              start.RedirectStandardError <- true
++              use host = Process.Start start
++
++              let clock = Stopwatch.StartNew()
++
++              while ((not (File.Exists readyFile)
++                      || (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty))
++                     && clock.ElapsedMilliseconds < 5_000L) do
++                  Threading.Thread.Sleep 25
++
++              let effectPid =
++                  match waitForPidFile pidFile with
++                  | Some pid -> pid
++                  | None ->
++                      host.Kill(true)
++                      failtest "inner effect never established its non-vacuous pid precondition"
++
++              let record = Directory.EnumerateFiles(registry, "*.group") |> Seq.exactlyOne
++              let recordFields =
++                  File.ReadAllText(record).Split(' ', StringSplitOptions.RemoveEmptyEntries)
++              Expect.equal recordFields.Length 4 "the registry binds both leader and identity anchor"
++              let anchorPid = Int32.Parse recordFields.[2]
++
++              Expect.isTrue (pidAlive effectPid) "the background effect was alive before abrupt host death"
++              Expect.isTrue (pidAlive anchorPid) "the anchor continuously reserved the inner PGID"
++              Expect.isFalse
++                  (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty)
++                  "the inner group was durably registered before effects ran"
++
++              host.Kill()
++              host.WaitForExit 3_000 |> ignore
++              Expect.isTrue (waitForReap effectPid) "stdin-EOF watchdog reaped the inner group after SIGKILL"
++              Expect.isTrue (waitForReap anchorPid) "the watchdog reaped its continuous identity anchor"
++              Expect.isTrue
++                  (File.Exists record)
++                  "the watchdog leaves durable cleanup evidence for the controller verifier"
++              Directory.Delete(root, true)
++          }
++
++          test "owner death during TERM grace retains anchor provenance through KILL" {
++              let root = tempRoot ()
++              let registry = Path.Combine(root, "registry")
++              let pidFile = Path.Combine(root, "effect.pid")
++              let termFile = Path.Combine(root, "term.seen")
++              Directory.CreateDirectory registry |> ignore
++
++              let start = ProcessStartInfo(Environment.ProcessPath)
++
++              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
++                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
++
++              start.ArgumentList.Add "--containment-term-grace-child"
++              start.ArgumentList.Add registry
++              start.ArgumentList.Add pidFile
++              start.ArgumentList.Add termFile
++              start.UseShellExecute <- false
++              start.RedirectStandardOutput <- true
++              start.RedirectStandardError <- true
++              use host = Process.Start start
++
++              let clock = Stopwatch.StartNew()
++
++              while ((not (File.Exists termFile)
++                      || (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty))
++                     && clock.ElapsedMilliseconds < 5_000L) do
++                  Threading.Thread.Sleep 10
++
++              let effectPid =
++                  match waitForPidFile pidFile with
++                  | Some pid -> pid
++                  | None ->
++                      host.Kill(true)
++                      failtest "TERM-resistant effect never established its pid precondition"
++
++              let record = Directory.EnumerateFiles(registry, "*.group") |> Seq.exactlyOne
++              let recordFields =
++                  File.ReadAllText(record).Split(' ', StringSplitOptions.RemoveEmptyEntries)
++              let anchorPid = Int32.Parse recordFields.[2]
++
++              Expect.isTrue (File.Exists termFile) "the timeout entered TERM grace before owner death"
++              Expect.isTrue (pidAlive effectPid) "the effect deliberately survived TERM"
++              Expect.isTrue (pidAlive anchorPid) "the stopped anchor survived TERM as continuous provenance"
++
++              host.Kill()
++              host.WaitForExit 3_000 |> ignore
++              Expect.isTrue (waitForReap effectPid) "EOF escalation killed the TERM-resistant effect"
++              Expect.isTrue (waitForReap anchorPid) "EOF escalation killed the provenance anchor last"
++              Directory.Delete(root, true)
++          }
++
++          test "owner death after the inner leader exits still reaps its background group" {
++              let root = tempRoot ()
++              let registry = Path.Combine(root, "registry")
++              let pidFile = Path.Combine(root, "effect.pid")
++              let readyFile = Path.Combine(root, "effect.ready")
++              Directory.CreateDirectory registry |> ignore
++
++              let start = ProcessStartInfo(Environment.ProcessPath)
++
++              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
++                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
++
++              start.ArgumentList.Add "--containment-exited-leader-child"
++              start.ArgumentList.Add registry
++              start.ArgumentList.Add pidFile
++              start.ArgumentList.Add readyFile
++              start.UseShellExecute <- false
++              start.RedirectStandardOutput <- true
++              start.RedirectStandardError <- true
++              use host = Process.Start start
++
++              let clock = Stopwatch.StartNew()
++
++              while ((not (File.Exists readyFile)
++                      || (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty))
++                     && clock.ElapsedMilliseconds < 5_000L) do
++                  Threading.Thread.Sleep 10
++
++              let effectPid =
++                  match waitForPidFile pidFile with
++                  | Some pid -> pid
++                  | None ->
++                      host.Kill(true)
++                      failtest "background effect never established its non-vacuous pid precondition"
++
++              let record = Directory.EnumerateFiles(registry, "*.group") |> Seq.exactlyOne
++              let recordFields =
++                  File.ReadAllText(record).Split(' ', StringSplitOptions.RemoveEmptyEntries)
++              let anchorPid = Int32.Parse recordFields.[2]
++
++              Expect.isTrue (pidAlive effectPid) "the descendant remained alive after its group leader exited"
++              Expect.isTrue (pidAlive anchorPid) "the anchor prevents PGID reuse after leader exit"
++              Expect.isFalse host.HasExited "the owner was still inside bounded post-leader drain/reap"
++              Expect.isFalse
++                  (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty)
++                  "the exited leader's identity-bound group remained registered"
++
++              host.Kill()
++              host.WaitForExit 3_000 |> ignore
++              Expect.isTrue
++                  (waitForReap effectPid)
++                  "the still-armed EOF watchdog reaped descendants across the leader-exit boundary"
++              Expect.isTrue (waitForReap anchorPid) "the anchor was reaped with the original group"
++              Directory.Delete(root, true)
++          }
++
++          test "the step leads its own process group" {
+               let r = Executor.runStep (request (tempRoot ()) "echo x")
+               Expect.isSome r.ProcessGroupId "a group id was observed"
+           }
+@@ -3235,22 +3782,46 @@ let maskingOnOutputPath =
+ 
+ [<EntryPoint>]
+ let main argv =
+-    // These tests spawn real processes and assert on /proc; running them in
+-    // parallel makes the survivor counts race against each other.
+-    runTestsWithCLIArgs
+-        []
+-        argv
+-        (testSequenced
+-            (testList
+-                "Fogell.Execution"
+-                [ workspaceHygiene
+-                  shellExecution
+-                  environmentIsolation
+-                  containment
+-                  eventDrivenWaits
+-                  credentialKeyBoundaries
+-                  stashDefaultExcludes
+-                  secrets
+-                  deadProcessDetection
+-                  externalInterrupt
+-                  maskingOnOutputPath ]))
++    match argv with
++    | [| "--containment-child"; registry; pidFile; readyFile |] ->
++        runContainmentChild registry pidFile readyFile
++    | [| "--containment-exited-leader-child"; registry; pidFile; readyFile |] ->
++        runExitedLeaderContainmentChild registry pidFile readyFile
++    | [| "--containment-term-grace-child"; registry; pidFile; termFile |] ->
++        runTermGraceContainmentChild registry pidFile termFile
++    | [| "--containment-pre-setsid-child";
++          registry;
++          effectFile;
++          releaseFile;
++          readyFile;
++          observedFile;
++          stoppedFile;
++          cleanupReleaseFile |] ->
++        runPreSetsidContainmentChild
++            registry
++            effectFile
++            releaseFile
++            readyFile
++            observedFile
++            stoppedFile
++            cleanupReleaseFile
++    | _ ->
++        // These tests spawn real processes and assert on /proc; running them in
++        // parallel makes the survivor counts race against each other.
++        runTestsWithCLIArgs
++            []
++            argv
++            (testSequenced
++                (testList
++                    "Fogell.Execution"
++                    [ workspaceHygiene
++                      shellExecution
++                      environmentIsolation
++                      containment
++                      eventDrivenWaits
++                      credentialKeyBoundaries
++                      stashDefaultExcludes
++                      secrets
++                      deadProcessDetection
++                      externalInterrupt
++                      maskingOnOutputPath ]))
+diff --git a/tests/Fogell.Store.Tests/Tests.fs b/tests/Fogell.Store.Tests/Tests.fs
+index 10c7b89..e496db7 100644
+--- a/tests/Fogell.Store.Tests/Tests.fs
++++ b/tests/Fogell.Store.Tests/Tests.fs
+@@ -1158,56 +1158,127 @@ let fencing =
+                   "terminal result remains stable"
+           }
+ 
+-          test "claim names a legacy multi-node build instead of silently skipping it" {
+-              let org, project = freshProject ()
+-              let admitted = admitOk (newBuild org project "legacy-shape" [ "build" ])
++          test "invalid FIFO claims are quarantined once and cannot poison later work" {
++              for poison, expectedReason in
++                  [ "missing-definition", "missing_definition"
++                    "legacy-multi-node", "legacy_multi_node"
++                    "digest-mismatch", "definition_digest_mismatch" ] do
++                  let org, project = freshProject ()
++                  let invalid = admitOk (newBuild org project $"poison-{poison}" [ "build" ])
+ 
+-              use conn = new Npgsql.NpgsqlConnection(connectionString)
+-              conn.Open()
+-              use cmd = conn.CreateCommand()
+-              cmd.CommandText <-
+-                  "INSERT INTO nodes
+-                       (id, organization_id, build_id, name, ordinal, required_trust_pool,
+-                        required_capabilities, status)
+-                   VALUES (@id, @o, @b, 'legacy-second-stage', 1, 'trusted-linux', ARRAY['linux'], 'queued')"
+-              cmd.Parameters.AddWithValue("id", Guid.NewGuid()) |> ignore
+-              cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+-              cmd.Parameters.AddWithValue("b", admitted.BuildId.Value) |> ignore
+-              cmd.ExecuteNonQuery() |> ignore
++                  use conn = new Npgsql.NpgsqlConnection(connectionString)
++                  conn.Open()
+ 
+-              match store.ClaimNextExecution(org, "local:test", "trusted-linux", [ "linux" ], 60) with
+-              | Error error ->
+-                  Expect.stringContains error "single whole-pipeline" "operator gets the reconciliation reason"
+-              | Ok _ -> failtest "a legacy multi-node build must not be skipped or executed"
+-          }
++                  // Admission timestamps are immutable execution identity. Let
++                  // PostgreSQL's own clock advance before admitting the valid
++                  // row instead of rewriting either attempt after admission.
++                  use separateAdmissions = conn.CreateCommand()
++                  separateAdmissions.CommandText <- "SELECT pg_sleep(0.01)"
++                  separateAdmissions.ExecuteNonQuery() |> ignore
++                  let valid = admitOk (newBuild org project $"valid-after-{poison}" [ "build" ])
+ 
+-          test "claim rehashes durable source before execution" {
+-              let org, project = freshProject ()
+-              let admitted = admitOk (newBuild org project "corrupt-source" [ "build" ])
++                  match poison with
++                  | "legacy-multi-node" ->
++                      use addNode = conn.CreateCommand()
++                      addNode.CommandText <-
++                          "INSERT INTO nodes
++                               (id, organization_id, build_id, name, ordinal, required_trust_pool,
++                                required_capabilities, status)
++                           VALUES (@id, @o, @b, 'legacy-second-stage', 1,
++                                   'trusted-linux', ARRAY['linux'], 'queued')"
++                      addNode.Parameters.AddWithValue("id", Guid.NewGuid()) |> ignore
++                      addNode.Parameters.AddWithValue("o", org.Value) |> ignore
++                      addNode.Parameters.AddWithValue("b", invalid.BuildId.Value) |> ignore
++                      Expect.equal (addNode.ExecuteNonQuery()) 1 "fixture added the incompatible second node"
++                  | "missing-definition"
++                  | "digest-mismatch" ->
++                      try
++                          use disable = conn.CreateCommand()
++                          disable.CommandText <-
++                              "ALTER TABLE build_definitions DISABLE TRIGGER build_definitions_guard"
++                          disable.ExecuteNonQuery() |> ignore
+ 
+-              use conn = new Npgsql.NpgsqlConnection(connectionString)
+-              conn.Open()
++                          use damage = conn.CreateCommand()
++                          damage.CommandText <-
++                              if poison = "missing-definition" then
++                                  "DELETE FROM build_definitions
++                                    WHERE organization_id = @o AND build_id = @b"
++                              else
++                                  "UPDATE build_definitions
++                                      SET source_digest = decode(repeat('00', 32), 'hex')
++                                    WHERE organization_id = @o AND build_id = @b"
++                          damage.Parameters.AddWithValue("o", org.Value) |> ignore
++                          damage.Parameters.AddWithValue("b", invalid.BuildId.Value) |> ignore
++                          Expect.equal (damage.ExecuteNonQuery()) 1 $"fixture planted {poison}"
++                      finally
++                          use enable = conn.CreateCommand()
++                          enable.CommandText <-
++                              "ALTER TABLE build_definitions ENABLE TRIGGER build_definitions_guard"
++                          enable.ExecuteNonQuery() |> ignore
++                  | other -> failtestf "unknown poison fixture %s" other
+ 
+-              try
+-                  use corrupt = conn.CreateCommand()
+-                  corrupt.CommandText <-
+-                      "ALTER TABLE build_definitions DISABLE TRIGGER build_definitions_guard;
+-                       UPDATE build_definitions
+-                          SET source_digest = decode(repeat('00', 32), 'hex')
+-                        WHERE organization_id = @o AND build_id = @b;
+-                       ALTER TABLE build_definitions ENABLE TRIGGER build_definitions_guard"
+-                  corrupt.Parameters.AddWithValue("o", org.Value) |> ignore
+-                  corrupt.Parameters.AddWithValue("b", admitted.BuildId.Value) |> ignore
+-                  corrupt.ExecuteNonQuery() |> ignore
++                  use gate = new System.Threading.ManualResetEventSlim(false)
++                  let claimers =
++                      [| 1..8 |]
++                      |> Array.map (fun index ->
++                          System.Threading.Tasks.Task.Run(fun () ->
++                              gate.Wait()
++                              Store(connectionString).ClaimNextExecution(
++                                  org,
++                                  $"local:poison-race-{index}",
++                                  "trusted-linux",
++                                  [ "linux" ],
++                                  60)))
++                  gate.Set()
++                  claimers
++                  |> Array.map (fun task -> task :> System.Threading.Tasks.Task)
++                  |> System.Threading.Tasks.Task.WaitAll
+ 
+-                  match store.ClaimNextExecution(org, "local:test", "trusted-linux", [ "linux" ], 60) with
+-                  | Error error -> Expect.stringContains error "digest mismatch" "corruption is named"
+-                  | Ok _ -> failtest "corrupt source must never be offered for execution"
+-              finally
+-                  use repair = conn.CreateCommand()
+-                  repair.CommandText <-
+-                      "ALTER TABLE build_definitions ENABLE TRIGGER build_definitions_guard"
+-                  repair.ExecuteNonQuery() |> ignore
++                  let results = claimers |> Array.map (fun task -> task.Result)
++                  let errors = results |> Array.choose (function Error error -> Some error | Ok _ -> None)
++                  Expect.isEmpty errors $"{poison} is durable state, not a recurring claim error"
++                  let claims =
++                      results
++                      |> Array.choose (function Ok(Some claim) -> Some claim | _ -> None)
++                  Expect.equal claims.Length 1 $"exactly one worker passed {poison} and claimed later work"
++                  Expect.equal claims.[0].AttemptId valid.AttemptId $"{poison} did not starve the valid FIFO row"
++
++                  Expect.equal
++                      (store.AttemptState(org, invalid.AttemptId))
++                      (Some("reconciliation_required", 0L, None))
++                      $"{poison} attempt was quarantined without acquiring execution authority"
++                  Expect.equal
++                      (store.BuildSnapshot(org, project, invalid.BuildId))
++                      (Some("reconciliation_required", false))
++                      $"{poison} is visible in public build truth"
++
++                  use truth = conn.CreateCommand()
++                  truth.CommandText <-
++                      "SELECT n.status,
++                              count(e.id),
++                              min(e.payload->>'reason')
++                         FROM nodes n
++                         LEFT JOIN events e
++                           ON e.organization_id = n.organization_id
++                          AND e.build_id = n.build_id
++                          AND e.attempt_id = @a
++                          AND e.kind = 'attempt.reconciliation_required'
++                        WHERE n.organization_id = @o AND n.id = @n
++                        GROUP BY n.status"
++                  truth.Parameters.AddWithValue("o", org.Value) |> ignore
++                  truth.Parameters.AddWithValue("n", invalid.NodeId.Value) |> ignore
++                  truth.Parameters.AddWithValue("a", invalid.AttemptId.Value) |> ignore
++                  use row = truth.ExecuteReader()
++                  Expect.isTrue (row.Read()) $"{poison} node/event truth exists"
++                  Expect.equal (row.GetString 0) "reconciliation_required" $"{poison} node was quarantined"
++                  Expect.equal (row.GetInt64 1) 1L $"{poison} emitted exactly one refusal event"
++                  Expect.equal (row.GetString 2) expectedReason $"{poison} event names the durable reason"
++                  row.Close()
++
++                  Expect.equal
++                      (store.CountEvents(org, invalid.BuildId, "attempt.reconciliation_required"))
++                      1
++                      $"later claimers did not duplicate the {poison} refusal event"
+           }
+ 
+           test "exactly one winner among 16 concurrent publishers" {
+diff --git a/tools/Fogell.Run.Host/Program.fs b/tools/Fogell.Run.Host/Program.fs
+index 55467c7..7fbd3b8 100644
+--- a/tools/Fogell.Run.Host/Program.fs
++++ b/tools/Fogell.Run.Host/Program.fs
+@@ -134,11 +134,19 @@ let main argv =
+                 start <- start + count
+ 
+     let emitEvent (body: string) =
+-        eventPath
+-        |> Option.iter (fun path ->
+-            lock eventGate (fun () ->
+-                Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+-                appendEventFrames path body))
++        try
++            eventPath
++            |> Option.iter (fun path ->
++                lock eventGate (fun () ->
++                    Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
++                    appendEventFrames path body))
++        with
++        | :? OutputPublicationException -> reraise ()
++        | ex ->
++            raise (
++                OutputPublicationException(
++                    "controller event publication failed",
++                    ex))
+ 
+     match Array.toList argv with
+     | jenkinsfile :: workspaceRoot :: jobName :: journalArg :: rest when List.length rest <= 1 ->
+@@ -1102,8 +1110,23 @@ let main argv =
+                 approvalsDir |> Option.iter sweepOwnPrompts
+ 
+         // the workspace is already prepared above — never re-wipe here
+-        match FogellSide.runPersisted [] workspaceRoot jobName buildNumber false hooks script with
+-        | Result.Error e ->
++        let persistedRun =
++            try
++                Choice1Of2(FogellSide.runPersisted [] workspaceRoot jobName buildNumber false hooks script)
++            with :? OutputPublicationException as failure ->
++                Choice2Of2 failure
++
++        match persistedRun with
++        | Choice2Of2 _ ->
++            // Infrastructure could not preserve the progressive event stream.
++            // Do not turn that into a semantic build failure: without a terminal
++            // journal record the controller's natural-exit path requires
++            // reconciliation and cannot publish guessed build truth.
++            journal.Close()
++            clearOutstandingPrompts ()
++            eprintfn "controller event publication failed; reconciliation required"
++            3
++        | Choice1Of2(Result.Error e) ->
+             // The attempt is OVER and failed — steps may already be durably
+             // finished (the leak guard, for one, refuses AFTER they ran), and
+             // leaving no terminal record would let a later invocation resume
+@@ -1113,7 +1136,7 @@ let main argv =
+             clearOutstandingPrompts ()
+             eprintfn $"run failed: {e}"
+             2
+-        | Ok trace ->
++        | Choice1Of2(Ok trace) ->
+             let status =
+                 BuildStatus.ofWireString trace.Result |> Option.defaultValue BuildStatus.Failure
+ 

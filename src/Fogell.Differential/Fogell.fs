@@ -11,10 +11,26 @@ open Fogell.Ir
 /// step, and reduces the run to a [Trace] in the same canonical form.
 module FogellSide =
 
-    /// A run-scoped agent HOME owned by Fogell rather than by the controller
-    /// account.  Its root is an explicit execution input, never controller
-    /// TMPDIR; the differential harness canonicalises this exact value.
-    let agentHome workspaceRoot = Path.Combine(workspaceRoot, "_agent_home")
+    /// A build-scoped agent HOME owned by Fogell rather than by the controller
+    /// account. Its root is an explicit execution input, never controller
+    /// TMPDIR. Stable job/build identity makes a restarted build converge on
+    /// the same HOME without sharing mutable state with another build.
+    let agentHome (workspaceRoot: string) (jobName: string) (buildNumber: int) =
+        let identity =
+            jobName
+            + "\u0000"
+            + buildNumber.ToString(Globalization.CultureInfo.InvariantCulture)
+            |> Text.Encoding.UTF8.GetBytes
+            |> Security.Cryptography.SHA256.HashData
+            |> Convert.ToHexString
+
+        Path.Combine(workspaceRoot, "_agent_home", identity.ToLowerInvariant())
+
+    let coordinatedAgentHomeReplacement coordinated workspaceRoot jobName buildNumber =
+        if coordinated |> List.exists (fun (_, token) -> token = "${HOME}") then
+            [ agentHome workspaceRoot jobName buildNumber, "${HOME}" ]
+        else
+            []
 
     let private privateDirectoryMode =
         UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute
@@ -510,12 +526,18 @@ module FogellSide =
         | Ready pipeline ->
             let scmPreflightNotes = verifyScmDefinition ()
             prepareFreshJob ()
-            let buildHome = agentHome workspaceRoot
+            let buildHomeRoot = Path.Combine(workspaceRoot, "_agent_home")
+            ensurePrivateDirectory buildHomeRoot
+            let buildHome = agentHome workspaceRoot jobName buildNumber
             ensurePrivateDirectory buildHome
             // FG-105: the run-scoped mutable state lives in WalkerCtx — one record,
             // one stated contract (see WalkerCtx.fs for its two-lock discipline).
             // These rebinds keep call sites unchanged.
-            let runCtx = WalkerCtx.create buildStartTimeInMillis isRestartedRun
+            let runCtx =
+                WalkerCtx.create
+                    buildStartTimeInMillis
+                    isRestartedRun
+                    (persistence |> Option.map (fun hooks -> hooks.OnOutput))
 
             // FG-053. The SCRIPT decides whether a timestamp-shaped prefix is
             // engine decoration or the build's own output — nothing in a line's
@@ -1186,6 +1208,12 @@ module FogellSide =
 
             announcePipelineExceeded ()
 
+            // The callback is an ordered infrastructure stream.  A slow
+            // publisher may still be draining lines emitted by a parallel
+            // branch; no terminal trace may overtake it, and any publisher
+            // failure must escape runPersisted for controller reconciliation.
+            runCtx.FlushOutput()
+
             let workspaceHash, files = Trace.hashWorkspace workspace
 
             // Fail CLOSED on a leaked secret, checked over the RAW output — before
@@ -1213,11 +1241,21 @@ module FogellSide =
                     |> Seq.map (fun i -> $"@tmp/durable-{i}/script.sh", "@tmp/durable-<id>/script.sh")
                     |> List.ofSeq
 
+                // The CLI enables a HOME fold only for a case that actually
+                // references HOME. Supply this build's exact stable identity
+                // to that existing fold without teaching the CLI one shared
+                // cross-build path.
+                let buildEnvReplacements =
+                    if envReplacements |> List.exists (fun (_, token) -> token = "${HOME}") then
+                        (buildHome, "${HOME}") :: envReplacements
+                    else
+                        envReplacements
+
                 Trace.normaliseOutputShapedWithTimestampCoverage
                     declaresTimestamps
                     false
                     ((workspace, "${WORKSPACE}") :: idReplacements)
-                    envReplacements
+                    buildEnvReplacements
                     (runCtx.Output())
 
             let terminalStatus = runCtx.Status()
@@ -1293,11 +1331,14 @@ module FogellSide =
             Result.Error ex.Message
 
     /// FG-112. Run one build with durability hooks — the restart lane's entry.
-    /// Same walker, same semantics; the hooks journal top-level steps.
+    /// Same walker, same semantics; the hooks journal top-level steps. The
+    /// caller supplies the durable project build number because persisted runs
+    /// are not necessarily the first build of a job.
     let runPersisted
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
+        (buildNumber: int)
         (freshWorkspace: bool)
         (hooks: PersistenceHooks)
         (script: string)
@@ -1341,9 +1382,10 @@ module FogellSide =
                         + String.concat ", " unsafe
                     )
 
-            runWith envReplacements workspaceRoot jobName 1 None freshWorkspace None (Some hooks) script
-        with ex ->
-            Result.Error ex.Message
+            runWith envReplacements workspaceRoot jobName buildNumber None freshWorkspace None (Some hooks) script
+        with
+        | :? OutputPublicationException -> reraise ()
+        | ex -> Result.Error ex.Message
 
     /// FG-052. Run one build of an SCM-DEFINED job: the script is what the
     /// harness pushed to the SCM (the same bytes Jenkins obtains), and the spec

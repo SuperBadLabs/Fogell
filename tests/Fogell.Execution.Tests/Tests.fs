@@ -70,9 +70,109 @@ let private waitForPidFile (pidFile: string) =
     else
         None
 
+let private runContainmentChild registry pidFile readyFile =
+    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
+
+    let script =
+        $"sleep 600 & fogell_effect=$!; printf '%%s' \"$fogell_effect\" > '{pidFile}'; printf ready > '{readyFile}'; wait \"$fogell_effect\""
+
+    ProcessGroup.run
+        { RunRequest.create (script, tempRoot ()) with
+            ReapGroup = false }
+    |> ignore
+
+    0
+
+let private runExitedLeaderContainmentChild registry pidFile readyFile =
+    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
+
+    let script =
+        $"sleep 600 & fogell_effect=$!; printf '%%s' \"$fogell_effect\" > '{pidFile}'; printf ready > '{readyFile}'; exit 0"
+
+    ProcessGroup.run
+        { RunRequest.create (script, tempRoot ()) with
+            ReapGroup = false }
+    |> ignore
+    0
+
+let private runTermGraceContainmentChild registry pidFile termFile =
+    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
+
+    let script =
+        $"/bin/sh -c 'trap \"\" TERM; exec /bin/sleep 600' & fogell_effect=$!; printf '%%s' \"$fogell_effect\" > '{pidFile}'; trap 'printf term > \"{termFile}\"' TERM; wait \"$fogell_effect\""
+
+    ProcessGroup.run
+        { RunRequest.create (script, tempRoot ()) with
+            TimeoutMs = Some 200L
+            GraceMs = 5_000 }
+    |> ignore
+    0
+
+let private runHostilePathContainmentChild registry pidFile readyFile hostilePath =
+    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
+
+    let script =
+        $"/bin/sh -c 'trap \"\" TERM; exec /bin/sleep 600' & fogell_effect=$!; /usr/bin/printf '%%s' \"$fogell_effect\" > '{pidFile}'; /usr/bin/printf ready > '{readyFile}'; wait \"$fogell_effect\""
+
+    ProcessGroup.run
+        { RunRequest.create (script, tempRoot ()) with
+            Environment = [ "PATH", hostilePath ]
+            ReapGroup = false }
+    |> ignore
+    0
+
+let private runPreSetsidContainmentChild
+    registry
+    effectFile
+    releaseFile
+    readyFile
+    observedFile
+    stoppedFile
+    cleanupReleaseFile
+    =
+    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
+    Environment.SetEnvironmentVariable("FOGELL_TEST_PRE_SETSID_RELEASE_FILE", releaseFile)
+    Environment.SetEnvironmentVariable("FOGELL_TEST_PRE_SETSID_READY_FILE", readyFile)
+    Environment.SetEnvironmentVariable("FOGELL_TEST_PRE_SETSID_OBSERVED_FILE", observedFile)
+    Environment.SetEnvironmentVariable("FOGELL_TEST_PRE_SETSID_STOPPED_FILE", stoppedFile)
+    Environment.SetEnvironmentVariable("FOGELL_TEST_PRE_SETSID_CLEANUP_RELEASE_FILE", cleanupReleaseFile)
+
+    ProcessGroup.run
+        { RunRequest.create ($"printf ran > '{effectFile}'; sleep 600", tempRoot ()) with
+            ReapGroup = false }
+    |> ignore
+    0
+
 /// Alive per /proc, which needs no signal and cannot be confused by reuse
 /// within a single test.
 let private pidAlive (pid: int) = Directory.Exists $"/proc/{pid}"
+
+let private containmentAnchorPids () =
+    if not (OperatingSystem.IsLinux()) then
+        Set.empty
+    else
+        Directory.GetDirectories "/proc"
+        |> Array.choose (fun directory ->
+            match Int32.TryParse(Path.GetFileName directory) with
+            | true, pid ->
+                try
+                    let arguments =
+                        File.ReadAllText(Path.Combine(directory, "cmdline"))
+                            .Split('\000', StringSplitOptions.RemoveEmptyEntries)
+
+                    // Match argv, not a substring: the outer wait wrapper has
+                    // the anchor command in its shell-program argument and is
+                    // deliberately alive during STOP-boundary tests.
+                    if arguments.Length >= 2
+                       && arguments.[0] = "/bin/sleep"
+                       && arguments.[1] = "2147483647" then
+                        Some pid
+                    else
+                        None
+                with _ ->
+                    None
+            | _ -> None)
+        |> Set.ofArray
 
 /// Reaping is asynchronous, so the assertion has to WAIT for it rather than
 /// sample once. Both call sites slept a flat 300ms and asserted — which passes
@@ -90,6 +190,14 @@ let private waitForReap (pid: int) =
         Threading.Thread.Sleep 25
 
     not (pidAlive pid)
+
+let private waitForFile path budgetMs =
+    let clock = Diagnostics.Stopwatch.StartNew()
+
+    while not (File.Exists path) && clock.ElapsedMilliseconds < int64 budgetMs do
+        Threading.Thread.Sleep 10
+
+    File.Exists path
 
 let workspaceHygiene =
     testList
@@ -440,7 +548,529 @@ let environmentIsolation =
 let containment =
     testList
         "FG-031/032 process group containment"
-        [ test "the step leads its own process group" {
+        [ test "a running registered leader is released only after its stopped state is observed" {
+              let states =
+                  Collections.Generic.Queue(
+                      [ ProcessGroup.ProcessIdentityState.Matching 'R'
+                        ProcessGroup.ProcessIdentityState.Matching 'S'
+                        ProcessGroup.ProcessIdentityState.Matching 'T' ])
+              let mutable pauses = 0
+
+              let stopped =
+                  ProcessGroup.waitForIdentityStop
+                      3
+                      (fun () -> states.Dequeue())
+                      (fun () -> pauses <- pauses + 1)
+
+              Expect.isTrue stopped "SIGCONT is authorized only by the observed stopped state"
+              Expect.equal pauses 2 "running states consume the bounded polling budget"
+
+              let launcherStates =
+                  Collections.Generic.Queue(
+                      [ ProcessGroup.LauncherFormationState.SameIdentity 17
+                        ProcessGroup.LauncherFormationState.SameIdentity 42 ])
+
+              let formed =
+                  ProcessGroup.waitForIdentityGroup
+                      42
+                      1
+                      (fun () -> launcherStates.Dequeue())
+                      ignore
+
+              Expect.equal
+                  formed
+                  ProcessGroup.LauncherFormationDecision.GroupFormed
+                  "the EOF guard follows the same launcher identity across setsid"
+
+              let timedOut =
+                  ProcessGroup.waitForIdentityGroup
+                      42
+                      0
+                      (fun () -> ProcessGroup.LauncherFormationState.SameIdentity 17)
+                      ignore
+
+              Expect.equal
+                  timedOut
+                  ProcessGroup.LauncherFormationDecision.TerminateLauncher
+                  "the bound kills a still-pre-setsid launcher instead of abandoning it"
+
+              let drifted =
+                  ProcessGroup.waitForIdentityGroup
+                      42
+                      20
+                      (fun () -> ProcessGroup.LauncherFormationState.Changed)
+                      ignore
+
+              Expect.equal
+                  drifted
+                  ProcessGroup.LauncherFormationDecision.Refused
+                  "numeric pid reuse never authorizes either group or launcher signalling"
+
+              let disappeared =
+                  ProcessGroup.waitForIdentityGroup
+                      42
+                      20
+                      (fun () -> ProcessGroup.LauncherFormationState.Absent)
+                      ignore
+
+              Expect.equal
+                  disappeared
+                  ProcessGroup.LauncherFormationDecision.Disappeared
+                  "a launcher that vanished before session formation needs no signal"
+          }
+
+          test "a leader that never stops is refused at the exact polling bound" {
+              let mutable observations = 0
+              let mutable pauses = 0
+
+              let stopped =
+                  ProcessGroup.waitForIdentityStop
+                      2
+                      (fun () ->
+                          observations <- observations + 1
+                          ProcessGroup.ProcessIdentityState.Matching 'R')
+                      (fun () -> pauses <- pauses + 1)
+
+              Expect.isFalse stopped "a marker alone can never authorize SIGCONT"
+              Expect.equal observations 3 "the initial observation plus two bounded retries were made"
+              Expect.equal pauses 2 "the timeout has no hidden extra sleep"
+          }
+
+          test "leader identity drift refuses release immediately" {
+              let states =
+                  Collections.Generic.Queue(
+                      [ ProcessGroup.ProcessIdentityState.Matching 'R'
+                        ProcessGroup.ProcessIdentityState.Changed ])
+              let mutable pauses = 0
+
+              let stopped =
+                  ProcessGroup.waitForIdentityStop
+                      20
+                      (fun () -> states.Dequeue())
+                      (fun () -> pauses <- pauses + 1)
+
+              Expect.isFalse stopped "a reused numeric pid cannot authorize SIGCONT"
+              Expect.equal pauses 1 "identity drift fails closed without spending the remaining budget"
+          }
+
+          test "pre-registration owner failures never release or leak the launcher" {
+              let root = tempRoot ()
+              let invalidRegistry = Path.Combine(root, "registry-is-a-file")
+              let userEffect = Path.Combine(root, "user-effect")
+              let previousRegistry = Environment.GetEnvironmentVariable "FOGELL_PROCESS_GROUP_REGISTRY"
+              let anchorsBefore = containmentAnchorPids ()
+              File.WriteAllText(invalidRegistry, "not a directory")
+              Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", invalidRegistry)
+
+              try
+                  Expect.throws
+                      (fun () ->
+                          ProcessGroup.run
+                              (RunRequest.create ($"printf ran > '{userEffect}'", root))
+                          |> ignore)
+                      "registration failure is surfaced rather than releasing unregistered code"
+              finally
+                  Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", previousRegistry)
+
+              let clock = Stopwatch.StartNew()
+              let mutable leaked = Set.difference (containmentAnchorPids ()) anchorsBefore
+
+              while not leaked.IsEmpty && clock.ElapsedMilliseconds < 3_000L do
+                  Threading.Thread.Sleep 25
+                  leaked <- Set.difference (containmentAnchorPids ()) anchorsBefore
+
+              Expect.isFalse (File.Exists userEffect) "the stopped user leader never executed its command"
+              Expect.isEmpty leaked "the no-record guard reaped the anchor under the bounded fallback"
+
+              // Exercise the still-earlier window: the owner dies while the
+              // direct child has been forked but has not executed setsid or
+              // emitted its marker. A release-file gate makes the boundary
+              // exact; the guard acknowledgement proves EOF was observed while
+              // pid and pgrp were still different.
+              let earlyRoot = tempRoot ()
+              let registry = Path.Combine(earlyRoot, "registry")
+              let effect = Path.Combine(earlyRoot, "effect")
+              let release = Path.Combine(earlyRoot, "release")
+              let ready = Path.Combine(earlyRoot, "launcher.pid")
+              let observed = Path.Combine(earlyRoot, "guard.observed")
+              let earlyAnchorsBefore = containmentAnchorPids ()
+              Directory.CreateDirectory registry |> ignore
+
+              let start = ProcessStartInfo(Environment.ProcessPath)
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              start.ArgumentList.Add "--containment-pre-setsid-child"
+              start.ArgumentList.Add registry
+              start.ArgumentList.Add effect
+              start.ArgumentList.Add release
+              start.ArgumentList.Add ready
+              start.ArgumentList.Add observed
+              start.ArgumentList.Add ""
+              start.ArgumentList.Add ""
+              start.UseShellExecute <- false
+              start.RedirectStandardOutput <- true
+              start.RedirectStandardError <- true
+              use host = Process.Start start
+
+              if not (waitForFile ready 5_000) then
+                  host.Kill(true)
+                  failtest "pre-setsid launcher did not establish the deterministic gate"
+
+              let launcherPid = Int32.Parse((File.ReadAllText ready).Trim())
+              Expect.isTrue (pidAlive launcherPid) "the delayed launcher was alive before owner death"
+              Expect.notEqual
+                  (Native.processGroupOf launcherPid)
+                  (Some launcherPid)
+                  "the test kills the owner before setsid, not after group formation"
+              Expect.isTrue
+                  (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty)
+                  "no marker or durable registration existed at the failure boundary"
+
+              host.Kill()
+              host.WaitForExit 3_000 |> ignore
+
+              if not (waitForFile observed 3_000) then
+                  File.WriteAllText(release, "release")
+                  failtest "EOF guard did not observe the identity-bound pre-setsid launcher"
+
+              File.WriteAllText(release, "release")
+              Expect.isTrue (waitForReap launcherPid) "the guard followed setsid and reaped the formed group"
+              Expect.isFalse (File.Exists effect) "user code remained gated across abrupt owner death"
+
+              let anchorClock = Stopwatch.StartNew()
+              let mutable earlyLeaked = Set.difference (containmentAnchorPids ()) earlyAnchorsBefore
+
+              while not earlyLeaked.IsEmpty && anchorClock.ElapsedMilliseconds < 3_000L do
+                  Threading.Thread.Sleep 25
+                  earlyLeaked <- Set.difference (containmentAnchorPids ()) earlyAnchorsBefore
+
+              Expect.isEmpty earlyLeaked "the earliest owner-death window left no identity anchor"
+              Expect.isTrue
+                  (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty)
+                  "the pre-marker failure did not manufacture registration evidence"
+              Directory.Delete(earlyRoot, true)
+
+              // The polling bound is itself fail-closed. If setsid has not yet
+              // arrived, the guard freezes and identity-checks the direct
+              // launcher before classifying it. The test then releases the
+              // launch gate while cleanup is deliberately paused: acknowledged
+              // T/t, not signal delivery alone, is what prevents transition.
+              let timeoutRoot = tempRoot ()
+              let timeoutRegistry = Path.Combine(timeoutRoot, "registry")
+              let timeoutEffect = Path.Combine(timeoutRoot, "effect")
+              let timeoutRelease = Path.Combine(timeoutRoot, "never-release")
+              let timeoutReady = Path.Combine(timeoutRoot, "launcher.pid")
+              let timeoutObserved = Path.Combine(timeoutRoot, "guard.observed")
+              let timeoutStopped = Path.Combine(timeoutRoot, "guard.stopped")
+              let timeoutCleanupRelease = Path.Combine(timeoutRoot, "cleanup.release")
+              Directory.CreateDirectory timeoutRegistry |> ignore
+
+              let timeoutStart = ProcessStartInfo(Environment.ProcessPath)
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  timeoutStart.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              timeoutStart.ArgumentList.Add "--containment-pre-setsid-child"
+              timeoutStart.ArgumentList.Add timeoutRegistry
+              timeoutStart.ArgumentList.Add timeoutEffect
+              timeoutStart.ArgumentList.Add timeoutRelease
+              timeoutStart.ArgumentList.Add timeoutReady
+              timeoutStart.ArgumentList.Add timeoutObserved
+              timeoutStart.ArgumentList.Add timeoutStopped
+              timeoutStart.ArgumentList.Add timeoutCleanupRelease
+              timeoutStart.UseShellExecute <- false
+              timeoutStart.RedirectStandardOutput <- true
+              timeoutStart.RedirectStandardError <- true
+              use timeoutHost = Process.Start timeoutStart
+
+              if not (waitForFile timeoutReady 5_000) then
+                  timeoutHost.Kill(true)
+                  failtest "bounded pre-setsid launcher did not establish its gate"
+
+              let timeoutLauncher = Int32.Parse((File.ReadAllText timeoutReady).Trim())
+              timeoutHost.Kill()
+              timeoutHost.WaitForExit 3_000 |> ignore
+              Expect.isTrue
+                  (waitForFile timeoutObserved 3_000)
+                  "the timeout case non-vacuously entered pre-setsid polling"
+              Expect.isTrue
+                  (waitForFile timeoutStopped 3_000)
+                  "the guard acknowledged the exact launcher identity in T/t before classifying it"
+              let frozenPgrp = Int32.Parse((File.ReadAllText timeoutStopped).Trim())
+              Expect.isGreaterThan
+                  frozenPgrp
+                  1
+                  (if frozenPgrp = timeoutLauncher then
+                       "STOP acknowledgement classified an already-formed inner group"
+                   else
+                       "STOP acknowledgement classified the direct pre-setsid launcher")
+              File.WriteAllText(timeoutRelease, "release")
+              Threading.Thread.Sleep 50
+              Expect.isTrue (pidAlive timeoutLauncher) "cleanup remained paused with the launcher frozen"
+              Expect.equal
+                  (Native.processGroupOf timeoutLauncher)
+                  (Some frozenPgrp)
+                  "the acknowledged frozen classification remained stable after gate release"
+              Expect.isFalse (File.Exists timeoutEffect) "a released gate cannot advance a stopped launcher"
+              File.WriteAllText(timeoutCleanupRelease, "cleanup")
+              Expect.isTrue
+                  (waitForReap timeoutLauncher)
+                  "the polling bound killed the frozen same-identity launcher"
+              Expect.isFalse (File.Exists timeoutEffect) "timeout never released user code"
+
+              let timeoutAnchorClock = Stopwatch.StartNew()
+              let mutable timeoutAnchors = Set.difference (containmentAnchorPids ()) earlyAnchorsBefore
+
+              while not timeoutAnchors.IsEmpty && timeoutAnchorClock.ElapsedMilliseconds < 3_000L do
+                  Threading.Thread.Sleep 25
+                  timeoutAnchors <- Set.difference (containmentAnchorPids ()) earlyAnchorsBefore
+
+              Expect.isEmpty
+                  timeoutAnchors
+                  $"cleanup reaped every anchor after frozen pgrp {frozenPgrp} was classified"
+              Expect.isTrue
+                  (Directory.EnumerateFiles(timeoutRegistry, "*.group") |> Seq.isEmpty)
+                  "timeout before setsid created no false registration"
+              Directory.Delete(timeoutRoot, true)
+          }
+
+          test "an abrupt Run.Host death reaps a registered inner step group" {
+              let root = tempRoot ()
+              let registry = Path.Combine(root, "registry")
+              let pidFile = Path.Combine(root, "effect.pid")
+              let readyFile = Path.Combine(root, "effect.ready")
+              Directory.CreateDirectory registry |> ignore
+
+              let start = ProcessStartInfo(Environment.ProcessPath)
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              start.ArgumentList.Add "--containment-child"
+              start.ArgumentList.Add registry
+              start.ArgumentList.Add pidFile
+              start.ArgumentList.Add readyFile
+              start.UseShellExecute <- false
+              start.RedirectStandardOutput <- true
+              start.RedirectStandardError <- true
+              use host = Process.Start start
+
+              let clock = Stopwatch.StartNew()
+
+              while ((not (File.Exists readyFile)
+                      || (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty))
+                     && clock.ElapsedMilliseconds < 5_000L) do
+                  Threading.Thread.Sleep 25
+
+              let effectPid =
+                  match waitForPidFile pidFile with
+                  | Some pid -> pid
+                  | None ->
+                      host.Kill(true)
+                      failtest "inner effect never established its non-vacuous pid precondition"
+
+              let record = Directory.EnumerateFiles(registry, "*.group") |> Seq.exactlyOne
+              let recordFields =
+                  File.ReadAllText(record).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+              Expect.equal recordFields.Length 4 "the registry binds both leader and identity anchor"
+              let anchorPid = Int32.Parse recordFields.[2]
+
+              Expect.isTrue (pidAlive effectPid) "the background effect was alive before abrupt host death"
+              Expect.isTrue (pidAlive anchorPid) "the anchor continuously reserved the inner PGID"
+              Expect.isFalse
+                  (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty)
+                  "the inner group was durably registered before effects ran"
+
+              host.Kill()
+              host.WaitForExit 3_000 |> ignore
+              Expect.isTrue (waitForReap effectPid) "stdin-EOF watchdog reaped the inner group after SIGKILL"
+              Expect.isTrue (waitForReap anchorPid) "the watchdog reaped its continuous identity anchor"
+              Expect.isTrue
+                  (File.Exists record)
+                  "the watchdog leaves durable cleanup evidence for the controller verifier"
+              Directory.Delete(root, true)
+          }
+
+          test "EOF watchdog cleanup cannot resolve its grace sleep from hostile PATH" {
+              if not (OperatingSystem.IsLinux()) then
+                  Tests.skiptest "the watchdog containment contract is Linux-only"
+
+              let root = tempRoot ()
+              let registry = Path.Combine(root, "registry")
+              let hostilePath = Path.Combine(root, "hostile-path")
+              let pidFile = Path.Combine(root, "effect.pid")
+              let readyFile = Path.Combine(root, "effect.ready")
+              let intercepted = Path.Combine(root, "sleep.intercepted")
+              let hostileSleep = Path.Combine(hostilePath, "sleep")
+              Directory.CreateDirectory registry |> ignore
+              Directory.CreateDirectory hostilePath |> ignore
+              File.WriteAllText(
+                  hostileSleep,
+                  $"#!/bin/sh\n/usr/bin/printf intercepted > '{intercepted}'\nexec /bin/sleep 30\n")
+              File.SetUnixFileMode(
+                  hostileSleep,
+                  UnixFileMode.UserRead
+                  ||| UnixFileMode.UserWrite
+                  ||| UnixFileMode.UserExecute)
+
+              let start = ProcessStartInfo(Environment.ProcessPath)
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              start.ArgumentList.Add "--containment-hostile-path-child"
+              start.ArgumentList.Add registry
+              start.ArgumentList.Add pidFile
+              start.ArgumentList.Add readyFile
+              start.ArgumentList.Add hostilePath
+              start.UseShellExecute <- false
+              start.RedirectStandardOutput <- true
+              start.RedirectStandardError <- true
+              use host = Process.Start start
+              let mutable group = 0
+
+              try
+                  let clock = Stopwatch.StartNew()
+
+                  while ((not (File.Exists readyFile)
+                          || (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty))
+                         && clock.ElapsedMilliseconds < 5_000L) do
+                      Threading.Thread.Sleep 10
+
+                  let effectPid =
+                      match waitForPidFile pidFile with
+                      | Some pid -> pid
+                      | None -> failtest "hostile-PATH effect never established its non-vacuous pid precondition"
+
+                  let record = Directory.EnumerateFiles(registry, "*.group") |> Seq.exactlyOne
+                  let fields = File.ReadAllText(record).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                  group <- Int32.Parse fields.[0]
+                  Expect.isTrue (pidAlive effectPid) "the TERM-resistant effect was alive before owner death"
+
+                  host.Kill()
+                  host.WaitForExit 3_000 |> ignore
+                  Expect.isTrue (waitForReap effectPid) "the EOF watchdog reached absolute-path KILL"
+                  Expect.isFalse (File.Exists intercepted) "the build-controlled sleep executable was never invoked"
+              finally
+                  if not host.HasExited then
+                      host.Kill(true)
+
+                  if group > 1 then
+                      Native.signalGroup group Native.SIGKILL |> ignore
+
+                  Directory.Delete(root, true)
+          }
+
+          test "owner death during TERM grace retains anchor provenance through KILL" {
+              let root = tempRoot ()
+              let registry = Path.Combine(root, "registry")
+              let pidFile = Path.Combine(root, "effect.pid")
+              let termFile = Path.Combine(root, "term.seen")
+              Directory.CreateDirectory registry |> ignore
+
+              let start = ProcessStartInfo(Environment.ProcessPath)
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              start.ArgumentList.Add "--containment-term-grace-child"
+              start.ArgumentList.Add registry
+              start.ArgumentList.Add pidFile
+              start.ArgumentList.Add termFile
+              start.UseShellExecute <- false
+              start.RedirectStandardOutput <- true
+              start.RedirectStandardError <- true
+              use host = Process.Start start
+
+              let clock = Stopwatch.StartNew()
+
+              while ((not (File.Exists termFile)
+                      || (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty))
+                     && clock.ElapsedMilliseconds < 5_000L) do
+                  Threading.Thread.Sleep 10
+
+              let effectPid =
+                  match waitForPidFile pidFile with
+                  | Some pid -> pid
+                  | None ->
+                      host.Kill(true)
+                      failtest "TERM-resistant effect never established its pid precondition"
+
+              let record = Directory.EnumerateFiles(registry, "*.group") |> Seq.exactlyOne
+              let recordFields =
+                  File.ReadAllText(record).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+              let anchorPid = Int32.Parse recordFields.[2]
+
+              Expect.isTrue (File.Exists termFile) "the timeout entered TERM grace before owner death"
+              Expect.isTrue (pidAlive effectPid) "the effect deliberately survived TERM"
+              Expect.isTrue (pidAlive anchorPid) "the stopped anchor survived TERM as continuous provenance"
+
+              host.Kill()
+              host.WaitForExit 3_000 |> ignore
+              Expect.isTrue (waitForReap effectPid) "EOF escalation killed the TERM-resistant effect"
+              Expect.isTrue (waitForReap anchorPid) "EOF escalation killed the provenance anchor last"
+              Directory.Delete(root, true)
+          }
+
+          test "owner death after the inner leader exits still reaps its background group" {
+              let root = tempRoot ()
+              let registry = Path.Combine(root, "registry")
+              let pidFile = Path.Combine(root, "effect.pid")
+              let readyFile = Path.Combine(root, "effect.ready")
+              Directory.CreateDirectory registry |> ignore
+
+              let start = ProcessStartInfo(Environment.ProcessPath)
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              start.ArgumentList.Add "--containment-exited-leader-child"
+              start.ArgumentList.Add registry
+              start.ArgumentList.Add pidFile
+              start.ArgumentList.Add readyFile
+              start.UseShellExecute <- false
+              start.RedirectStandardOutput <- true
+              start.RedirectStandardError <- true
+              use host = Process.Start start
+
+              let clock = Stopwatch.StartNew()
+
+              while ((not (File.Exists readyFile)
+                      || (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty))
+                     && clock.ElapsedMilliseconds < 5_000L) do
+                  Threading.Thread.Sleep 10
+
+              let effectPid =
+                  match waitForPidFile pidFile with
+                  | Some pid -> pid
+                  | None ->
+                      host.Kill(true)
+                      failtest "background effect never established its non-vacuous pid precondition"
+
+              let record = Directory.EnumerateFiles(registry, "*.group") |> Seq.exactlyOne
+              let recordFields =
+                  File.ReadAllText(record).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+              let anchorPid = Int32.Parse recordFields.[2]
+
+              Expect.isTrue (pidAlive effectPid) "the descendant remained alive after its group leader exited"
+              Expect.isTrue (pidAlive anchorPid) "the anchor prevents PGID reuse after leader exit"
+              Expect.isFalse host.HasExited "the owner was still inside bounded post-leader drain/reap"
+              Expect.isFalse
+                  (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty)
+                  "the exited leader's identity-bound group remained registered"
+
+              host.Kill()
+              host.WaitForExit 3_000 |> ignore
+              Expect.isTrue
+                  (waitForReap effectPid)
+                  "the still-armed EOF watchdog reaped descendants across the leader-exit boundary"
+              Expect.isTrue (waitForReap anchorPid) "the anchor was reaped with the original group"
+              Directory.Delete(root, true)
+          }
+
+          test "the step leads its own process group" {
               let r = Executor.runStep (request (tempRoot ()) "echo x")
               Expect.isSome r.ProcessGroupId "a group id was observed"
           }
@@ -3235,22 +3865,48 @@ let maskingOnOutputPath =
 
 [<EntryPoint>]
 let main argv =
-    // These tests spawn real processes and assert on /proc; running them in
-    // parallel makes the survivor counts race against each other.
-    runTestsWithCLIArgs
-        []
-        argv
-        (testSequenced
-            (testList
-                "Fogell.Execution"
-                [ workspaceHygiene
-                  shellExecution
-                  environmentIsolation
-                  containment
-                  eventDrivenWaits
-                  credentialKeyBoundaries
-                  stashDefaultExcludes
-                  secrets
-                  deadProcessDetection
-                  externalInterrupt
-                  maskingOnOutputPath ]))
+    match argv with
+    | [| "--containment-child"; registry; pidFile; readyFile |] ->
+        runContainmentChild registry pidFile readyFile
+    | [| "--containment-exited-leader-child"; registry; pidFile; readyFile |] ->
+        runExitedLeaderContainmentChild registry pidFile readyFile
+    | [| "--containment-term-grace-child"; registry; pidFile; termFile |] ->
+        runTermGraceContainmentChild registry pidFile termFile
+    | [| "--containment-hostile-path-child"; registry; pidFile; readyFile; hostilePath |] ->
+        runHostilePathContainmentChild registry pidFile readyFile hostilePath
+    | [| "--containment-pre-setsid-child";
+          registry;
+          effectFile;
+          releaseFile;
+          readyFile;
+          observedFile;
+          stoppedFile;
+          cleanupReleaseFile |] ->
+        runPreSetsidContainmentChild
+            registry
+            effectFile
+            releaseFile
+            readyFile
+            observedFile
+            stoppedFile
+            cleanupReleaseFile
+    | _ ->
+        // These tests spawn real processes and assert on /proc; running them in
+        // parallel makes the survivor counts race against each other.
+        runTestsWithCLIArgs
+            []
+            argv
+            (testSequenced
+                (testList
+                    "Fogell.Execution"
+                    [ workspaceHygiene
+                      shellExecution
+                      environmentIsolation
+                      containment
+                      eventDrivenWaits
+                      credentialKeyBoundaries
+                      stashDefaultExcludes
+                      secrets
+                      deadProcessDetection
+                      externalInterrupt
+                      maskingOnOutputPath ]))

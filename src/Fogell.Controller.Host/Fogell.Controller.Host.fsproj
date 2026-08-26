@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Fogell.Controller.Host</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Config.fs" />
+    <Compile Include="EventStream.fs" />
+    <Compile Include="ProcessGroup.fs" />
+    <Compile Include="WorkerScheduling.fs" />
+    <Compile Include="WorkerPaths.fs" />
+    <Compile Include="WorkerLaunch.fs" />
+    <Compile Include="Worker.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Fogell.Controller.Api/Fogell.Controller.Api.fsproj" />
+    <ProjectReference Include="../Fogell.Store/Fogell.Store.fsproj" />
+    <ProjectReference Include="../Fogell.Execution/Fogell.Execution.fsproj" />
+    <ProjectReference Include="../Fogell.Journal/Fogell.Journal.fsproj" />
+  </ItemGroup>
+</Project>

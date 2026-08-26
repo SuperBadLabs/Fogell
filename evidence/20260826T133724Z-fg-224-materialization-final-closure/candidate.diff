@@ -1,0 +1,272 @@
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index a00cbe0..f086015 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -60,10 +60,13 @@ failure into build semantics.
+ Forced tenant RLS remains the data boundary. The only global runtime relation is
+ `organization_work_roots`, containing UUIDs and no tenant slug or record; every
+ claim after discovery still opens a transaction-local tenant scope. A queued
+-legacy multi-node build or missing/corrupt definition cannot poison later tenant
+-work: the selected attempt, node, and build atomically become
+-`reconciliation_required`, exactly one reason-specific event is emitted, and the
+-same claim transaction continues scanning the FIFO queue.
++legacy multi-node build, missing/corrupt durable definition, or conflicting
++state-root materialization cannot poison later tenant work. Invalid durable
++claims are quarantined inside FIFO arbitration; a materialization failure after
++an offer uses that offer's owner and fence to move the same attempt, node, and
++build to `reconciliation_required` before the worker scans again. Later work
++therefore remains claimable instead of waiting behind a repeatedly requeued
++poisoned admission.
+ 
+ ## Acceptance
+ 
+@@ -81,14 +84,14 @@ gate runs this proof against its PostgreSQL service.
+ 
+ Exact-tree HeMan acceptance on fresh databases:
+ 
+-- Store: 73/73 passed;
++- Store: 74/74 passed;
+ - Controller API: 22/22 passed;
+ - Differential: 259/259 passed;
+ - Execution: 94/94 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-locked repository gate also passes all 857 main-suite tests and every blocking
++locked repository gate also passes all 858 main-suite tests and every blocking
+ proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
+ recorded at publication rather than predicted here.
+ 
+diff --git a/scripts/prove-runnable-controller.sh b/scripts/prove-runnable-controller.sh
+index b14867d..f9cdc96 100755
+--- a/scripts/prove-runnable-controller.sh
++++ b/scripts/prove-runnable-controller.sh
+@@ -171,6 +171,13 @@ chunked_code=$(curl --http1.1 -sS -o "$scratch/chunked-overflow.json" -w '%{http
+ grep -q 'pipeline_too_large' "$scratch/chunked-overflow.json" \
+   || { echo "FG-224 REFUSED: chunked overflow lost its stable error code" >&2; exit 1; }
+ 
++poison_pipeline=$'pipeline {\n  agent any\n  stages {\n    stage(\'Poison\') {\n      steps {\n        echo \'this-source-must-never-run\'\n      }\n    }\n  }\n}'
++poison_response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-materialization-poison' \
++  -H 'content-type: application/x-jenkinsfile' --data-binary "$poison_pipeline" "$builds_url")
++poison_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$poison_response")
++[[ -n "$poison_build_id" ]] \
++  || { echo "FG-224 REFUSED: materialization-poison admission returned no build id" >&2; exit 1; }
++
+ pipeline=$'pipeline {\n  agent any\n  stages {\n    stage(\'Build\') {\n      steps {\n        echo \'hello-controller-before\'\n        echo "FG224-METADATA:${env.BUILD_NUMBER}:${env.BUILD_ID}:${env.BUILD_DISPLAY_NAME}"\n        sh \'printf QkVHSU4tMjI0 | base64 -d; head -c 20000 /dev/zero | base64 -w0; printf RU5ELTEtMjI0 | base64 -d\'\n        sh \'sleep 5\'\n        echo \'hello-controller-after\'\n      }\n    }\n  }\n}'
+ 
+ response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-e2e' \
+@@ -178,8 +185,8 @@ response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-e2e' \
+ build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$response")
+ [[ -n "$build_id" ]] || { echo "FG-224 REFUSED: admission returned no build id" >&2; exit 1; }
+ build_number=$(sed -n 's/.*"number":\([0-9][0-9]*\).*/\1/p' <<<"$response")
+-[[ "$build_number" = 2 ]] \
+-  || { echo "FG-224 REFUSED: second project admission returned build number ${build_number:-missing}" >&2; exit 1; }
++[[ "$build_number" = 3 ]] \
++  || { echo "FG-224 REFUSED: third project admission returned build number ${build_number:-missing}" >&2; exit 1; }
+ 
+ queued_state=$(admin "$database" -Atc \
+   "SELECT a.state FROM attempts a JOIN nodes n ON n.id=a.node_id AND n.organization_id=a.organization_id WHERE n.build_id='$build_id'")
+@@ -191,6 +198,12 @@ host_pid=""
+ ! curl -fsS --max-time 1 "$base_url/health/live" >/dev/null 2>&1 \
+   || { echo "FG-224 REFUSED: stopped controller still served requests" >&2; exit 1; }
+ 
++organization_key=${organization//-/}
++poison_build_key=${poison_build_id//-/}
++poison_definition="$state_root/definitions/$organization_key/$poison_build_key/Jenkinsfile"
++mkdir -p "$(dirname "$poison_definition")"
++printf '%s' 'pipeline { agent none }' >"$poison_definition"
++
+ env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" "$controller" >>"$host_log" 2>&1 &
+ host_pid=$!
+ 
+@@ -205,6 +218,44 @@ for _ in $(seq 1 200); do
+ done
+ [[ $ready -eq 1 ]] || { echo "FG-224 REFUSED: restarted controller never became ready" >&2; exit 1; }
+ 
++# The oldest offered build has a materialized definition that conflicts with
++# immutable admission truth. It must become reconciliation_required rather than
++# escaping before BeginExecution and returning to queued on lease expiry. The
++# later build's progressive and terminal assertions below prove FIFO progress.
++poison_terminal=""
++for _ in $(seq 1 200); do
++  poison_terminal=$(curl -fsS -H "$auth" "$builds_url/$poison_build_id")
++  grep -q '"status":"reconciliation_required"' <<<"$poison_terminal" && break
++  grep -q '"status":"\(success\|failure\|aborted\)"' <<<"$poison_terminal" && {
++    echo "FG-224 REFUSED: materialization poison reached false terminal truth $poison_terminal" >&2
++    exit 1
++  }
++  sleep 0.05
++done
++grep -q '"status":"reconciliation_required"' <<<"$poison_terminal" \
++  || { echo "FG-224 REFUSED: materialization poison was not quarantined" >&2; exit 1; }
++poison_attempt=$(admin "$database" -Atc \
++  "SELECT a.state || '|' || (a.lease_owner IS NULL)::text || '|' || (a.lease_expires_at IS NULL)::text
++     FROM attempts a
++     JOIN nodes n ON n.organization_id=a.organization_id AND n.id=a.node_id
++    WHERE a.organization_id='$organization' AND n.build_id='$poison_build_id'")
++[[ "$poison_attempt" = "reconciliation_required|true|true" ]] \
++  || { echo "FG-224 REFUSED: materialization poison retained requeue authority: $poison_attempt" >&2; exit 1; }
++poison_logs=$(curl -fsS -H "$auth" "$builds_url/$poison_build_id/logs")
++! grep -Fq 'this-source-must-never-run' <<<"$poison_logs" \
++  || { echo "FG-224 REFUSED: materialization poison executed its durable source" >&2; exit 1; }
++grep -Fq '"from_sequence":0' <<<"$poison_logs" \
++  || { echo "FG-224 REFUSED: materialization poison log response lost its initial cursor" >&2; exit 1; }
++grep -Fq '"next_sequence":0' <<<"$poison_logs" \
++  || { echo "FG-224 REFUSED: materialization poison advanced its log cursor" >&2; exit 1; }
++grep -Fq '"chunks":[]' <<<"$poison_logs" \
++  || { echo "FG-224 REFUSED: materialization poison published log chunks: $poison_logs" >&2; exit 1; }
++poison_chunk_count=$(admin "$database" -Atc \
++  "SELECT count(*) FROM log_chunks
++    WHERE organization_id='$organization' AND build_id='$poison_build_id'")
++[[ "$poison_chunk_count" = 0 ]] \
++  || { echo "FG-224 REFUSED: materialization poison persisted $poison_chunk_count log chunks" >&2; exit 1; }
++
+ # A progressive log must cross the complete child -> event file -> fenced store
+ # -> HTTP path before the build reaches terminal state. A terminal replay could
+ # satisfy a post-build grep but cannot satisfy this assertion.
+@@ -311,4 +362,4 @@ if grep -Fq 'fg224-proof-token-0123456789abcdef' "$host_log" || grep -Fq 'Passwo
+   exit 1
+ fi
+ 
+-echo "FG-224 PROOF PASS: safe timing refusal; restart-discovered durable admission; exact chunked byte bounds; build-number metadata; supervised execution; progressive bounded fenced logs; atomic terminal roll-up"
++echo "FG-224 PROOF PASS: safe timing refusal; restart-discovered durable admission; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; progressive bounded fenced logs; atomic terminal roll-up"
+diff --git a/src/Fogell.Controller.Host/Worker.fs b/src/Fogell.Controller.Host/Worker.fs
+index 689e1c3..864f875 100644
+--- a/src/Fogell.Controller.Host/Worker.fs
++++ b/src/Fogell.Controller.Host/Worker.fs
+@@ -230,11 +230,39 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+             let tempRoot = Path.Combine(config.StateRoot, "tmp")
+             use _eventFile = deleteEventFile eventPath
+ 
+-            Directory.CreateDirectory workspaceRoot |> ignore
+-            Directory.CreateDirectory neutralHome |> ignore
+-            Directory.CreateDirectory tempRoot |> ignore
+-            Directory.CreateDirectory containmentPath |> ignore
+-            atomicDefinition definitionPath claim.PipelineSource
++            let mutable materialized = false
++
++            try
++                // Definition identity is checked before any per-execution state is
++                // created. A deterministic mismatch must not escape while the
++                // attempt is merely offered: lease recovery would otherwise queue
++                // the same poisoned FIFO row forever.
++                atomicDefinition definitionPath claim.PipelineSource
++                Directory.CreateDirectory workspaceRoot |> ignore
++                Directory.CreateDirectory neutralHome |> ignore
++                Directory.CreateDirectory tempRoot |> ignore
++                Directory.CreateDirectory containmentPath |> ignore
++                materialized <- true
++            with ex ->
++                logger.LogError(
++                    ex,
++                    "FG-224 definition materialization failed for {AttemptId}; reconciliation is required",
++                    claim.AttemptId.Value)
++
++                if
++                    not
++                        (store.RequireReconciliation(
++                            claim.OrganizationId,
++                            claim.AttemptId,
++                            claim.Fence,
++                            owner))
++                then
++                    logger.LogWarning(
++                        "FG-224 materialization quarantine lost authority for {AttemptId}",
++                        claim.AttemptId.Value)
++
++            if not materialized then
++                return ()
+ 
+             match
+                 store.BeginExecution(
+diff --git a/tests/Fogell.Store.Tests/Tests.fs b/tests/Fogell.Store.Tests/Tests.fs
+index e496db7..721d29b 100644
+--- a/tests/Fogell.Store.Tests/Tests.fs
++++ b/tests/Fogell.Store.Tests/Tests.fs
+@@ -1281,6 +1281,86 @@ let fencing =
+                       $"later claimers did not duplicate the {poison} refusal event"
+           }
+ 
++          test "a materialization failure is quarantined and cannot starve later execution" {
++              let org, project = freshProject ()
++              let poisoned = admitOk (newBuild org project "materialization-poison" [ "build" ])
++
++              use conn = new Npgsql.NpgsqlConnection(connectionString)
++              conn.Open()
++              use separateAdmissions = conn.CreateCommand()
++              separateAdmissions.CommandText <- "SELECT pg_sleep(0.01)"
++              separateAdmissions.ExecuteNonQuery() |> ignore
++
++              let valid = admitOk (newBuild org project "valid-after-materialization-poison" [ "build" ])
++              let poisonedOwner = "local:materialization-poison"
++
++              let poisonedClaim =
++                  match
++                      store.ClaimNextExecution(
++                          org,
++                          poisonedOwner,
++                          "trusted-linux",
++                          [ "linux" ],
++                          60)
++                  with
++                  | Ok(Some value) -> value
++                  | other -> failtestf "expected poisoned FIFO claim, got %A" other
++
++              Expect.equal
++                  poisonedClaim.AttemptId
++                  poisoned.AttemptId
++                  "the materialization fixture owns the oldest offered attempt"
++
++              Expect.isTrue
++                  (store.RequireReconciliation(
++                      org,
++                      poisonedClaim.AttemptId,
++                      poisonedClaim.Fence,
++                      poisonedOwner))
++                  "the pre-execution materialization failure is durably quarantined"
++
++              Expect.equal
++                  (store.AttemptState(org, poisoned.AttemptId))
++                  (Some("reconciliation_required", poisonedClaim.Fence.Value, None))
++                  "the poisoned offer cannot become queued when its old lease expires"
++              Expect.equal
++                  (store.BuildSnapshot(org, project, poisoned.BuildId))
++                  (Some("reconciliation_required", false))
++                  "public build truth exposes the poisoned admission"
++              Expect.equal
++                  (store.RequeueExpiredLocalAttempts org)
++                  0
++                  "lease recovery has no offered poison left to requeue"
++
++              let validOwner = "local:after-materialization-poison"
++              let validClaim =
++                  match
++                      store.ClaimNextExecution(
++                          org,
++                          validOwner,
++                          "trusted-linux",
++                          [ "linux" ],
++                          60)
++                  with
++                  | Ok(Some value) -> value
++                  | other -> failtestf "expected later valid claim, got %A" other
++
++              Expect.equal validClaim.AttemptId valid.AttemptId "FIFO advanced past the poison"
++              Expect.equal
++                  (store.BeginExecution(org, validClaim.AttemptId, validClaim.Fence, validOwner, 60))
++                  (Ok ExecutionStarted)
++                  "the later valid build remains executable"
++              Expect.isTrue
++                  (Result.isOk
++                      (store.PublishTerminal(
++                          org,
++                          validClaim.AttemptId,
++                          validClaim.Fence,
++                          validOwner,
++                          Success)))
++                  "the later valid build can publish terminal truth"
++          }
++
+           test "exactly one winner among 16 concurrent publishers" {
+               let org, project = freshProject ()
+               let a = admitOk (newBuild org project "race-pub" [ "b" ])

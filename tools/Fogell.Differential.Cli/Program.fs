@@ -153,7 +153,11 @@ let main argv =
         )
         |> ignore
 
-        let fogellBuildBaseline = LaunchEnvironment.buildBaseline (FogellSide.agentHome fogellRoot)
+        // HOME is build-scoped and injected into the enabled HOME fold by the
+        // Fogell runner once job/build identity is known. PATH remains static.
+        let fogellBuildBaseline =
+            LaunchEnvironment.buildBaseline ""
+            |> List.filter (fun (name, _) -> name <> "HOME")
 
         let envReplacements =
             if not envCanonicalisationEnabled then
@@ -174,10 +178,6 @@ let main argv =
                     match pairs |> List.map snd |> List.distinct with
                     | [ _ ] -> Some pairs.Head
                     | _ -> None)
-
-        let stableReceiptEnvironment =
-            envReplacements
-            |> List.filter (fun (_, token) -> token = "${HOME}")
 
         // FG-111. The `git` step echoes each engine's OWN `git --version` — an
         // environment-of-necessity pair exactly like HOME. Both versions fold to
@@ -516,12 +516,30 @@ let main argv =
 
                     List.zip jenkinsRuns fogellRuns
                     |> List.mapi (fun bi (jenkins, fogell) ->
+                        let receiptEnvReplacements =
+                            envReplacementsAll
+                            @ FogellSide.coordinatedAgentHomeReplacement
+                                envReplacementsAll
+                                fogellRoot
+                                job
+                                (bi + 1)
+                            |> List.distinct
+                            |> List.groupBy fst
+                            |> List.choose (fun (_, pairs) ->
+                                match pairs |> List.map snd |> List.distinct with
+                                | [ _ ] -> Some pairs.Head
+                                | _ -> None)
+
+                        let stableReceiptEnvironment =
+                            receiptEnvReplacements
+                            |> List.filter (fun (_, token) -> token = "${HOME}")
+
                         Compare.receiptWithStableEnvironment
                             stableReceiptEnvironment
                             (caseNameFor bi)
                             caseBytes
                             core
-                            envReplacementsAll
+                            receiptEnvReplacements
                             jenkins
                             fogell)
 

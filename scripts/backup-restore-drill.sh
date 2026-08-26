@@ -197,10 +197,11 @@ VALUES ('10000000-0000-0000-0000-000000000001', 'fg085a-org');
 INSERT INTO projects (id, organization_id, slug)
 VALUES ('20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'fg085a-project');
 INSERT INTO builds
-  (id, organization_id, project_id, number, idempotency_key, status, cancellation_requested, created_at)
+  (id, organization_id, project_id, number, idempotency_key, status,
+   cancellation_requested, next_log_sequence, created_at)
 VALUES
   ('30000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001',
-   '20000000-0000-0000-0000-000000000001', 7, 'fg085a-key', 'running', true,
+   '20000000-0000-0000-0000-000000000001', 7, 'fg085a-key', 'running', true, 10,
    '2026-08-24T01:02:03.456789Z');
 INSERT INTO nodes
   (id, organization_id, build_id, name, ordinal, required_trust_pool, required_capabilities, status)
@@ -231,10 +232,10 @@ VALUES
    '{"build":"30000000-0000-0000-0000-000000000001","ordinal":7}'::jsonb,
    '2026-08-24T01:06:00.123456Z', '2026-08-24T01:05:30.123456Z');
 INSERT INTO log_chunks
-  (organization_id, build_id, attempt_id, sequence, body, created_at)
+  (organization_id, build_id, attempt_id, sequence, build_sequence, body, created_at)
 VALUES
   ('10000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001',
-   '50000000-0000-0000-0000-000000000002', 9, 'quoted '' value | unicode π',
+   '50000000-0000-0000-0000-000000000002', 9, 9, 'quoted '' value | unicode π',
    '2026-08-24T01:07:00.123456Z');
 SELECT setval(pg_get_serial_sequence('events', 'id'), 41, true);
 SELECT setval(pg_get_serial_sequence('outbox', 'id'), 52, true);

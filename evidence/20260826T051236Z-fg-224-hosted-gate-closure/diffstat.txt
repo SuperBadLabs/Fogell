@@ -1,0 +1,3 @@
+ scripts/prove-backup-restore-drill.sh              | 56 +++++++++++++++++++---
+ .../migrations/0007_canonical_effect_key_check.sql | 12 +++++
+ 2 files changed, 62 insertions(+), 6 deletions(-)

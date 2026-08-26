@@ -1,0 +1,5 @@
+ docs/tickets/FG-224.md               | 15 ++++---
+ scripts/prove-runnable-controller.sh | 57 +++++++++++++++++++++++--
+ src/Fogell.Controller.Host/Worker.fs | 38 ++++++++++++++---
+ tests/Fogell.Store.Tests/Tests.fs    | 80 ++++++++++++++++++++++++++++++++++++
+ 4 files changed, 176 insertions(+), 14 deletions(-)

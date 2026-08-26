@@ -28,10 +28,28 @@
           "Fogell.Ir": "[1.0.0, )"
         }
       },
+      "fogell.differential": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Execution": "[1.0.0, )",
+          "Fogell.Groovy.Interpreter": "[1.0.0, )",
+          "Fogell.Groovy.Parser": "[1.0.0, )",
+          "Fogell.Pipeline.Parser": "[1.0.0, )"
+        }
+      },
       "fogell.domain": {
         "type": "Project",
         "dependencies": {
           "FSharp.Core": "[10.1.301, )"
+        }
+      },
+      "fogell.execution": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Admission": "[1.0.0, )",
+          "Fogell.Domain": "[1.0.0, )"
         }
       },
       "fogell.groovy": {
@@ -39,6 +57,14 @@
         "dependencies": {
           "FSharp.Core": "[10.1.301, )",
           "Fogell.Ir": "[1.0.0, )"
+        }
+      },
+      "fogell.groovy.interpreter": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Admission": "[1.0.0, )",
+          "Fogell.Groovy": "[1.0.0, )"
         }
       },
       "fogell.groovy.parser": {

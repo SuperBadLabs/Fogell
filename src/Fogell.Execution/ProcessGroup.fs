@@ -38,7 +38,7 @@ module LaunchEnvironment =
     /// controller configuration. It cannot be passed to a build launcher.
     let internal controllerScmFrom environment = ControllerScmEnvironment environment
 
-    let private isExecutable path =
+    let internal isExecutableFile path =
         try
             if not (IO.File.Exists path) then
                 false
@@ -73,7 +73,7 @@ module LaunchEnvironment =
                         IO.Path.Combine(workingDirectory, directory)
 
                 IO.Path.GetFullPath(IO.Path.Combine(root, executable)))
-            |> Array.tryFind isExecutable)
+            |> Array.tryFind isExecutableFile)
 
     let resolveBuildExecutable executable workingDirectory environment =
         resolveExecutable executable workingDirectory environment
@@ -264,6 +264,78 @@ type RunRequest =
 
 module ProcessGroup =
 
+    [<RequireQualifiedAccess>]
+    type internal ProcessIdentityState =
+        | Matching of char
+        | Absent
+        | Changed
+        | Uncertain
+
+    /// The marker write happens before the child stops itself. A SIGCONT sent
+    /// merely because the marker arrived can therefore be lost while the child
+    /// is still running, after which it executes SIGSTOP and wedges forever.
+    /// Wait for the identity-bound /proc state transition under one strict bound.
+    let internal waitForIdentityStop
+        maxRunningChecks
+        (observe: unit -> ProcessIdentityState)
+        (pause: unit -> unit)
+        =
+        if maxRunningChecks < 0 then
+            invalidArg (nameof maxRunningChecks) "running-state check count cannot be negative"
+
+        let rec wait remaining =
+            match observe () with
+            | ProcessIdentityState.Matching('T' | 't') -> true
+            | ProcessIdentityState.Matching _ when remaining > 0 ->
+                pause ()
+                wait (remaining - 1)
+            | _ -> false
+
+        wait maxRunningChecks
+
+    [<RequireQualifiedAccess>]
+    type internal LauncherFormationState =
+        | SameIdentity of processGroup: int
+        | Absent
+        | Changed
+        | Uncertain
+
+    [<RequireQualifiedAccess>]
+    type internal LauncherFormationDecision =
+        | GroupFormed
+        | Disappeared
+        | TerminateLauncher
+        | Refused
+
+    /// The EOF guard can wake after fork but before the child has executed
+    /// `setsid`. Its numeric pid is not yet a safe negative-pgid signal target at
+    /// that instant. Keep the SAME start-time-bound identity under observation
+    /// until it becomes its own group, disappears, or the bounded proof fails.
+    /// The out-of-process shell guard below mirrors this decision table because
+    /// it must survive the managed owner being SIGKILLed.
+    let internal waitForIdentityGroup
+        pid
+        maxPendingChecks
+        (observe: unit -> LauncherFormationState)
+        (pause: unit -> unit)
+        =
+        if maxPendingChecks < 0 then
+            invalidArg (nameof maxPendingChecks) "pending-state check count cannot be negative"
+
+        let rec wait remaining =
+            match observe () with
+            | LauncherFormationState.SameIdentity processGroup when processGroup = pid ->
+                LauncherFormationDecision.GroupFormed
+            | LauncherFormationState.SameIdentity _ when remaining > 0 ->
+                pause ()
+                wait (remaining - 1)
+            | LauncherFormationState.SameIdentity _ ->
+                LauncherFormationDecision.TerminateLauncher
+            | LauncherFormationState.Absent -> LauncherFormationDecision.Disappeared
+            | _ -> LauncherFormationDecision.Refused
+
+        wait maxPendingChecks
+
     /// Count processes still in the group. Reads /proc directly rather than
     /// shelling out, so the check cannot itself spawn something.
     /// -1 means UNKNOWN: the /proc read itself failed. FG-103 — returning 0 there
@@ -289,13 +361,6 @@ module ProcessGroup =
             -1
 
     /// Wait until the group is EMPTY, up to `budgetMs`.
-    ///
-    /// This deliberately counts group membership rather than asking whether the
-    /// leader pid still exists. The leader is usually the first to exit — a step
-    /// that backgrounds a daemon leaves the group populated while the leader is
-    /// long gone — so a leader-existence check reports success and leaves the
-    /// daemon running. That is exactly the Jenkins behaviour FG-032 exists to
-    /// beat, and the first version of this function reproduced it.
     let private waitForGroupExit (pgid: int) (budgetMs: int) : bool =
         let sw = Stopwatch.StartNew()
         let mutable gone = survivorsIn pgid = 0
@@ -305,6 +370,61 @@ module ProcessGroup =
             gone <- survivorsIn pgid = 0
 
         gone
+
+    let private survivorsInExcept (pgid: int) (excludedPid: int) : int =
+        try
+            IO.Directory.GetDirectories "/proc"
+            |> Array.choose (fun d ->
+                match Int32.TryParse(IO.Path.GetFileName d) with
+                | true, pid when pid <> excludedPid -> Some pid
+                | _ -> None)
+            |> Array.filter (fun pid -> Native.processGroupOf pid = Some pgid)
+            |> Array.length
+        with _ ->
+            -1
+
+    let private waitForGroupExitExcept pgid excludedPid budgetMs =
+        let sw = Stopwatch.StartNew()
+        let mutable gone = survivorsInExcept pgid excludedPid = 0
+
+        while not gone && sw.ElapsedMilliseconds < int64 budgetMs do
+            Thread.Sleep 20
+            gone <- survivorsInExcept pgid excludedPid = 0
+
+        gone
+
+    let private releaseIdentityAnchor pgid anchor =
+        // The anchor is SIGSTOPped before registration. TERM remains pending
+        // while stopped, so CONT lets it take the default TERM action without
+        // introducing another long-lived helper or inherited descriptor.
+        Native.signalProcess anchor Native.SIGTERM |> ignore
+        Native.signalProcess anchor Native.SIGCONT |> ignore
+        waitForGroupExit pgid 2_000
+
+    let private terminateGroupWithAnchor pgid anchor graceMs =
+        let termDelivered = Native.signalGroup pgid Native.SIGTERM
+        let usersExited = termDelivered && waitForGroupExitExcept pgid anchor graceMs
+        let exitedOnTerm = usersExited && releaseIdentityAnchor pgid anchor
+
+        let escalated =
+            if exitedOnTerm then
+                false
+            else
+                Native.signalGroup pgid Native.SIGKILL |> ignore
+                waitForGroupExit pgid 2_000 |> ignore
+                true
+
+        { GracefulExit = exitedOnTerm
+          Escalated = escalated
+          LeakedProcesses = survivorsIn pgid }
+
+    let private reapWithAnchor pgid anchor graceMs =
+        if survivorsInExcept pgid anchor = 0 && releaseIdentityAnchor pgid anchor then
+            { GracefulExit = true
+              Escalated = false
+              LeakedProcesses = 0 }
+        else
+            terminateGroupWithAnchor pgid anchor graceMs
 
     /// SIGTERM the group, wait out the grace period, then SIGKILL. This is the
     /// contract measured on Jenkins (JB-FAIL-003): the interrupt is a trappable
@@ -363,6 +483,63 @@ module ProcessGroup =
     let run (request: RunRequest) : RunResult =
         let sw = Stopwatch.StartNew()
 
+        let containmentDirectory =
+            match Environment.GetEnvironmentVariable "FOGELL_PROCESS_GROUP_REGISTRY" with
+            | null
+            | "" -> None
+            | value when OperatingSystem.IsLinux() -> Some(IO.Path.GetFullPath value)
+            | _ -> invalidOp "process-group registry containment is supported only on Linux"
+
+        let processStateAndStartTime pid =
+            try
+                let value = IO.File.ReadAllText($"/proc/{pid}/stat")
+                let close = value.LastIndexOf ')'
+
+                if close < 0 || close + 2 >= value.Length then
+                    ProcessIdentityState.Uncertain, None
+                else
+                    let fields =
+                        value.Substring(close + 2).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+
+                    // fields begins at /proc/<pid>/stat field 3 after removing
+                    // the parenthesized comm. State is index 0 and starttime
+                    // (field 22) is index 19.
+                    if fields.Length > 19 && fields[0].Length = 1 then
+                        ProcessIdentityState.Matching fields.[0].[0], Some fields.[19]
+                    else
+                        ProcessIdentityState.Uncertain, None
+            with
+            | :? IO.FileNotFoundException
+            | :? IO.DirectoryNotFoundException -> ProcessIdentityState.Absent, None
+            | _ -> ProcessIdentityState.Uncertain, None
+
+        let observeIdentity pid expectedStartTime =
+            match processStateAndStartTime pid with
+            | ProcessIdentityState.Matching state, Some actual when actual = expectedStartTime ->
+                ProcessIdentityState.Matching state
+            | ProcessIdentityState.Matching _, Some _ -> ProcessIdentityState.Changed
+            | observation, _ -> observation
+
+        let groupRecordPath pgid =
+            containmentDirectory
+            |> Option.map (fun directory -> IO.Path.Combine(directory, $"{pgid}.group"))
+
+        let persistGroup pgid startTime anchor anchorStartTime =
+            match containmentDirectory with
+            | None -> ()
+            | Some directory ->
+                IO.Directory.CreateDirectory directory |> ignore
+                let target = IO.Path.Combine(directory, $"{pgid}.group")
+                let temporary = target + $".{Guid.NewGuid():N}.tmp"
+                IO.File.WriteAllText(temporary, $"{pgid} {startTime} {anchor} {anchorStartTime}\n")
+                IO.File.Move(temporary, target)
+
+        let forgetExtinguishedGroup pgid =
+            if survivorsIn pgid = 0 then
+                groupRecordPath pgid
+                |> Option.iter (fun path ->
+                    try IO.File.Delete path with _ -> ())
+
         // `setsid --wait` keeps a parent around to collect the exit status, but
         // that parent is what .NET reports as the process id — and ITS group is
         // ours, not the child's. So the session leader reports its own pid on
@@ -375,8 +552,88 @@ module ProcessGroup =
         // not the session leader) without `setsid --fork --wait`: util-linux maps
         // a signal-killed child to the bare signal number, whereas the shell's
         // wait status preserves the established 128+signal diagnostic contract.
+        // fd 9 explicitly carries the controller-owned liveness pipe into the
+        // async guard: POSIX shells otherwise replace an asynchronous command's
+        // stdin with /dev/null. The inner session closes it before user code, so
+        // only Run.Host can keep the guard armed.
         psi.ArgumentList.Add "-c"
-        psi.ArgumentList.Add "/usr/bin/setsid /bin/sh -c \"$1\" \"$2\" \"$3\"; exit $?"
+        psi.ArgumentList.Add(
+            "fogell_registry=$4; fogell_launch_gate=$5; fogell_launch_ready=$6; fogell_guard_observed=$7; "
+            + "fogell_guard_stopped=$8; fogell_cleanup_release=$9; exec 9<&0; "
+            + "(if [ -n \"$fogell_launch_gate\" ]; then while [ ! -e \"$fogell_launch_gate\" ]; do /bin/sleep 0.01; done; fi; "
+            + "exec /usr/bin/setsid /bin/sh -c \"$1\" \"$2\" \"$3\" \"$fogell_registry\" 9<&- </dev/null) & "
+            + "fogell_inner=$!; "
+            + "fogell_launcher_start=; fogell_capture_checks=200; "
+            + "while [ -z \"$fogell_launcher_start\" ] && [ \"$fogell_capture_checks\" -ge 0 ]; do "
+            + "if [ -r \"/proc/$fogell_inner/stat\" ] && IFS= read -r fogell_launcher_stat < \"/proc/$fogell_inner/stat\"; then "
+            + "fogell_launcher_tail=${fogell_launcher_stat##*) }; set -- $fogell_launcher_tail; "
+            + "if [ \"$#\" -gt 19 ]; then shift 19; fogell_launcher_start=$1; fi; "
+            + "elif [ ! -e \"/proc/$fogell_inner\" ]; then break; fi; "
+            + "if [ -z \"$fogell_launcher_start\" ]; then fogell_capture_checks=$((fogell_capture_checks - 1)); /bin/sleep 0.01; fi; "
+            + "done; "
+            + "if [ -z \"$fogell_launcher_start\" ] && [ -e \"/proc/$fogell_inner\" ]; then "
+            // The outer shell has not entered wait(1), so its direct child PID
+            // cannot be reaped/reused between these two signals. Killing that
+            // child first prevents a later setsid transition; the negative-pgid
+            // kill then catches a group that formed just before the direct kill.
+            + "/bin/kill -STOP \"$fogell_inner\" 2>/dev/null || true; "
+            + "/bin/kill -KILL \"$fogell_inner\" 2>/dev/null || true; "
+            + "/bin/kill -KILL -- -$fogell_inner 2>/dev/null || true; "
+            + "fi; "
+            + "(trap '' HUP INT TERM; "
+            + "if ! IFS= read -r fogell_guard_command || [ \"$fogell_guard_command\" != disarm ]; then "
+            + "fogell_record=\"$fogell_registry/$fogell_inner.group\"; fogell_safe=0; fogell_kill_launcher=0; "
+            + "if [ -n \"$fogell_registry\" ] && [ -r \"$fogell_record\" ] "
+            + "&& IFS=' ' read -r fogell_record_pgid fogell_leader_start fogell_anchor fogell_anchor_start < \"$fogell_record\" "
+            + "&& [ \"$fogell_record_pgid\" = \"$fogell_inner\" ] && [ \"$fogell_anchor\" -gt 1 ] 2>/dev/null "
+            + "&& [ -r \"/proc/$fogell_anchor/stat\" ]; then "
+            + "fogell_stat=$(/bin/cat \"/proc/$fogell_anchor/stat\" 2>/dev/null) || fogell_stat=; "
+            + "fogell_tail=${fogell_stat##*) }; set -- $fogell_tail; "
+            + "if [ \"$3\" = \"$fogell_inner\" ]; then shift 19; [ \"$1\" = \"$fogell_anchor_start\" ] && fogell_safe=1; fi; "
+            + "elif [ -n \"$fogell_launcher_start\" ]; then "
+            + "fogell_checks=200; fogell_polling=1; "
+            + "while [ \"$fogell_polling\" -eq 1 ]; do "
+            + "if [ ! -r \"/proc/$fogell_inner/stat\" ] || ! IFS= read -r fogell_stat < \"/proc/$fogell_inner/stat\"; then break; fi; "
+            + "fogell_tail=${fogell_stat##*) }; set -- $fogell_tail; "
+            + "if [ \"$#\" -le 19 ]; then break; fi; "
+            + "fogell_pgrp=$3; shift 19; fogell_actual_start=$1; "
+            + "if [ \"$fogell_actual_start\" != \"$fogell_launcher_start\" ]; then break; fi; "
+            + "if [ \"$fogell_pgrp\" = \"$fogell_inner\" ]; then fogell_safe=1; break; fi; "
+            + "if [ -n \"$fogell_guard_observed\" ]; then printf observed > \"$fogell_guard_observed\"; fogell_guard_observed=; fi; "
+            + "if [ \"$fogell_checks\" -le 0 ]; then "
+            + "if /bin/kill -STOP \"$fogell_inner\" 2>/dev/null; then "
+            + "fogell_stop_checks=200; "
+            + "while [ \"$fogell_stop_checks\" -ge 0 ]; do "
+            + "if [ ! -r \"/proc/$fogell_inner/stat\" ] || ! IFS= read -r fogell_frozen_stat < \"/proc/$fogell_inner/stat\"; then break; fi; "
+            + "fogell_frozen_tail=${fogell_frozen_stat##*) }; set -- $fogell_frozen_tail; "
+            + "if [ \"$#\" -le 19 ]; then break; fi; "
+            + "fogell_frozen_state=$1; fogell_frozen_pgrp=$3; shift 19; fogell_frozen_start=$1; "
+            + "if [ \"$fogell_frozen_start\" != \"$fogell_launcher_start\" ]; then break; fi; "
+            + "if [ \"$fogell_frozen_state\" = T ] || [ \"$fogell_frozen_state\" = t ]; then "
+            + "if [ \"$fogell_frozen_pgrp\" = \"$fogell_inner\" ]; then fogell_safe=1; else fogell_kill_launcher=1; fi; "
+            + "if [ -n \"$fogell_guard_stopped\" ]; then printf '%s' \"$fogell_frozen_pgrp\" > \"$fogell_guard_stopped\"; fi; "
+            + "if [ -n \"$fogell_cleanup_release\" ]; then while [ ! -e \"$fogell_cleanup_release\" ]; do /bin/sleep 0.01; done; fi; "
+            + "break; fi; "
+            + "fogell_stop_checks=$((fogell_stop_checks - 1)); /bin/sleep 0.01; "
+            + "done; fi; break; fi; "
+            + "fogell_checks=$((fogell_checks - 1)); /bin/sleep 0.01; "
+            + "done; "
+            + "fi; "
+            // This watchdog inherits the build environment, including PATH.
+            // Keep every cleanup executable absolute: if a trusted Linux
+            // utility is unavailable the shell advances immediately to the
+            // next signal instead of letting build-controlled code delay KILL.
+            + "if [ \"$fogell_safe\" -eq 1 ]; then "
+            + "/bin/kill -TERM -- -$fogell_inner 2>/dev/null || true; /bin/sleep 0.2; "
+            + "/bin/kill -KILL -- -$fogell_inner 2>/dev/null || true; /bin/sleep 0.2; "
+            + "elif [ \"$fogell_kill_launcher\" -eq 1 ]; then "
+            + "/bin/kill -KILL \"$fogell_inner\" 2>/dev/null || true; /bin/sleep 0.2; "
+            + "fi; "
+            + "fi) <&9 >/dev/null 2>&1 & fogell_guard=$!; "
+            + "if [ -n \"$fogell_launch_ready\" ]; then printf '%s' \"$fogell_inner\" > \"$fogell_launch_ready\"; fi; "
+            + "exec 9<&-; "
+            + "wait $fogell_inner; fogell_rc=$?; "
+            + "exit $fogell_rc")
         psi.ArgumentList.Add "fogell-wait-wrapper" // $0 for the outer waiter
         // `-xe`, exactly as Jenkins' durable-task runs a shell step: `-x` makes the
         // trace an EMITTED, COMPARED artifact on both engines (retiring the last
@@ -483,19 +740,37 @@ module ProcessGroup =
         // still prints, the program's own output does not — and leaves every other step
         // byte-identical, which is what keeps the receipts valid.
         let mergeStderr = if request.SuppressStdoutEcho then "" else " 2>&1"
+        let registeredPrelude =
+            "fogell_anchor=0; "
+            + "if [ -n \"$2\" ]; then /bin/sleep 2147483647 </dev/null >/dev/null 2>&1 & fogell_anchor=$!; kill -STOP \"$fogell_anchor\"; fi; "
+            + $"printf '%%s%%s %%s\n' '{pgidMarker}' \"$$\" \"$fogell_anchor\" >&2; kill -STOP \"$$\"; "
 
         (match request.Command.StartsWith "#!" with
-         | true -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec \"$1\"{mergeStderr}"
-         | false -> psi.ArgumentList.Add $"printf '%%s%%s\n' '{pgidMarker}' \"$$\" >&2; exec /bin/sh -xe \"$1\"{mergeStderr}")
+         | true ->
+             psi.ArgumentList.Add
+                 $"{registeredPrelude}exec \"$1\"{mergeStderr}"
+         | false ->
+             psi.ArgumentList.Add
+                 $"{registeredPrelude}exec /bin/sh -xe \"$1\"{mergeStderr}")
 
-        // These are $1..$3 of the outer waiter, and therefore command/$0/$1 of
-        // the inner shell launched by setsid.
+        // These are $1..$4 of the outer waiter, and therefore command/$0/$1/$2
+        // of the inner shell launched by setsid.
         psi.ArgumentList.Add "fogell-launcher"
         psi.ArgumentList.Add(defaultArg shebangFile request.Command)
+        psi.ArgumentList.Add(defaultArg containmentDirectory "")
+        // Test-only controller seams. They are read before the child environment
+        // is cleared and travel positionally, so a build cannot set them through
+        // withEnv/environment. Production leaves both empty.
+        psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_RELEASE_FILE")) "")
+        psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_READY_FILE")) "")
+        psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_OBSERVED_FILE")) "")
+        psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_STOPPED_FILE")) "")
+        psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_CLEANUP_RELEASE_FILE")) "")
 
         psi.WorkingDirectory <- request.WorkingDirectory
         psi.RedirectStandardOutput <- true
         psi.RedirectStandardError <- true
+        psi.RedirectStandardInput <- true
         psi.UseShellExecute <- false
 
         LaunchEnvironment.applyBuildTo psi request.Environment
@@ -507,7 +782,7 @@ module ProcessGroup =
         let stdout = Text.StringBuilder()
         let stderr = Text.StringBuilder()
         let completionOptions = Tasks.TaskCreationOptions.RunContinuationsAsynchronously
-        let reportedPgid = Tasks.TaskCompletionSource<int>(completionOptions)
+        let reportedPgid = Tasks.TaskCompletionSource<int * int>(completionOptions)
         let stdoutClosed = Tasks.TaskCompletionSource<unit>(completionOptions)
         let stderrClosed = Tasks.TaskCompletionSource<unit>(completionOptions)
         let processExited = Tasks.TaskCompletionSource<unit>(completionOptions)
@@ -557,8 +832,15 @@ module ProcessGroup =
                 | line when line.StartsWith pgidMarker ->
                     // the leader's own pid: the real group id. Never surfaced to the
                     // caller as build output.
-                    match Int32.TryParse(line.Substring(pgidMarker.Length).Trim()) with
-                    | true, pid -> reportedPgid.TrySetResult pid |> ignore
+                    match
+                        line.Substring(pgidMarker.Length).Split(
+                            ' ',
+                            StringSplitOptions.RemoveEmptyEntries)
+                    with
+                    | [| rawPid; rawAnchor |] ->
+                        match Int32.TryParse rawPid, Int32.TryParse rawAnchor with
+                        | (true, pid), (true, anchor) -> reportedPgid.TrySetResult(pid, anchor) |> ignore
+                        | _ -> ()
                     | _ -> ()
                 | line -> emit stderr line))
 
@@ -619,6 +901,8 @@ module ProcessGroup =
         let allReadersCompleted =
             Tasks.Task.WhenAll [| stdoutReaderCompleted; stderrClosed.Task :> Tasks.Task |]
 
+        let mutable identityAnchor: int option = None
+
         // Wait for the leader marker or definitive stderr EOF, with the same
         // two-second upper bound as before. Deriving it from proc.Id is WRONG:
         // that is setsid's pid, in our own group. EOF is load-bearing for a
@@ -634,8 +918,64 @@ module ProcessGroup =
             |> ignore
 
             if reportedPgid.Task.IsCompletedSuccessfully then
-                Some reportedPgid.Task.Result
+                let group, anchor = reportedPgid.Task.Result
+
+                try
+                    let startTime =
+                        match processStateAndStartTime group with
+                        | ProcessIdentityState.Matching _, Some value -> value
+                        | _ -> invalidOp $"could not bind process group {group} to its Linux start time"
+
+                    let anchorStartTime =
+                        match containmentDirectory with
+                        | None when anchor = 0 -> "-"
+                        | Some _ when anchor > 1 && Native.processGroupOf anchor = Some group ->
+                            match processStateAndStartTime anchor with
+                            | ProcessIdentityState.Matching _, Some value -> value
+                            | _ -> invalidOp $"could not bind process-group anchor {anchor} to its Linux start time"
+                        | _ -> invalidOp $"process group {group} did not report a valid containment anchor"
+
+                    persistGroup group startTime anchor anchorStartTime
+
+                    match containmentDirectory with
+                    | Some _ ->
+                        let anchorStopped =
+                            waitForIdentityStop
+                                200
+                                (fun () -> observeIdentity anchor anchorStartTime)
+                                (fun () -> Thread.Sleep 10)
+
+                        if not anchorStopped then
+                            invalidOp $"process-group anchor {anchor} did not reach its identity-bound stopped state"
+
+                        identityAnchor <- Some anchor
+                    | None -> ()
+
+                    let stopped =
+                        waitForIdentityStop
+                            200
+                            (fun () -> observeIdentity group startTime)
+                            (fun () -> Thread.Sleep 10)
+
+                    if not stopped then
+                        invalidOp $"process group {group} did not reach an identity-bound stopped state"
+
+                    // Release only the identity-checked leader. The stopped
+                    // anchor must remain stopped so a later group TERM stays
+                    // pending on it throughout the user's grace window.
+                    if not (Native.signalProcess group Native.SIGCONT) then
+                        invalidOp $"could not release registered process group {group}"
+
+                    Some group
+                with _ ->
+                    // Closing the sole writer wakes the out-of-group watchdog;
+                    // the stopped child cannot execute user code before cleanup.
+                    proc.StandardInput.Close()
+                    reraise ()
             else
+                // A missing marker cannot leave a stopped, unregistered child.
+                // EOF delegates cleanup to the wrapper's watchdog.
+                proc.StandardInput.Close()
                 None
 
         // NOTE: never use the parameterless WaitForExit() with redirected
@@ -777,7 +1117,11 @@ module ProcessGroup =
 
                 let t =
                     if request.ReapGroup then
-                        pgid |> Option.map (fun g -> reap g request.GraceMs)
+                        pgid
+                        |> Option.map (fun g ->
+                            match identityAnchor with
+                            | Some anchor -> reapWithAnchor g anchor request.GraceMs
+                            | None -> reap g request.GraceMs)
                     else
                         None
 
@@ -812,7 +1156,12 @@ module ProcessGroup =
                 settleBeforeSignal 300
                 let outputBeforeSignal = lock stdout (fun () -> stdout.ToString())
                 let stderrBeforeSignal = lock stderr (fun () -> stderr.ToString())
-                let t = pgid |> Option.map (fun g -> terminateGroup g request.GraceMs)
+                let t =
+                    pgid
+                    |> Option.map (fun g ->
+                        match identityAnchor with
+                        | Some anchor -> terminateGroupWithAnchor g anchor request.GraceMs
+                        | None -> terminateGroup g request.GraceMs)
                 waitForReaderCompletion 300
 
                 // On Jenkins the wrapper shell survives to print `Terminated` for its
@@ -834,6 +1183,35 @@ module ProcessGroup =
                 // Distinguish the two ways a step can fail to finish. Both take
                 // the same signal path; only the reported cause differs.
                 (if waitEnd = WaitEnd.Interrupted then Cancelled else TimedOut), t
+
+        // The guard outlives the inner leader. This closes the interval between
+        // leader exit and group reaping: if Run.Host dies there, stdin reaches
+        // EOF and the guard kills surviving descendants. Disarm only after
+        // extinction is verified. Outside controller containment, ReapGroup=false
+        // retains its historical opt-out by explicitly disarming the guard.
+        let mayDisarmGuard =
+            match containmentDirectory, pgid with
+            | None, _ -> true
+            | Some _, Some group -> survivorsIn group = 0
+            | Some _, None -> false
+
+        let mutable guardDisarmed = false
+
+        try
+            if mayDisarmGuard then
+                proc.StandardInput.WriteLine "disarm"
+                proc.StandardInput.Flush()
+                guardDisarmed <- true
+
+            proc.StandardInput.Close()
+        with _ ->
+            ()
+
+        // Keep the anchor-bound record available until the disarm command is in
+        // the pipe. If Run.Host dies before that point, the guard still has the
+        // provenance it needs; after the flush it will read `disarm`, not EOF.
+        if guardDisarmed then
+            pgid |> Option.iter forgetExtinguishedGroup
 
         sw.Stop()
 

@@ -1,6 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup><OutputType>Exe</OutputType><IsPackable>false</IsPackable></PropertyGroup>
-  <ItemGroup><Compile Include="Tests.fs" /></ItemGroup>
+  <ItemGroup>
+    <Compile Include="../../src/Fogell.Controller.Host/Config.fs" Link="Config.fs" />
+    <Compile Include="../../src/Fogell.Controller.Host/WorkerPaths.fs" Link="WorkerPaths.fs" />
+    <Compile Include="../../src/Fogell.Controller.Host/WorkerLaunch.fs" Link="WorkerLaunch.fs" />
+    <Compile Include="Tests.fs" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj" />
     <PackageReference Include="Expecto" Version="10.2.3" />

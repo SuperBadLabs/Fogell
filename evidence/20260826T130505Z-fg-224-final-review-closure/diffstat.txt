@@ -1,0 +1,8 @@
+ docs/tickets/FG-224.md                             |  4 +-
+ src/Fogell.Controller.Host/Config.fs               | 15 +++--
+ .../Fogell.Controller.Host.fsproj                  |  1 +
+ src/Fogell.Controller.Host/packages.lock.json      |  8 +++
+ src/Fogell.Execution/Fogell.Execution.fsproj       |  3 +
+ src/Fogell.Execution/ProcessGroup.fs               |  4 +-
+ tests/Fogell.Differential.Tests/Tests.fs           | 65 ++++++++++++++++++++--
+ 7 files changed, 88 insertions(+), 12 deletions(-)

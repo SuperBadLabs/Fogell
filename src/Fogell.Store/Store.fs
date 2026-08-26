@@ -1,7 +1,9 @@
 namespace Fogell.Store
 
 open System
+open System.Buffers.Binary
 open System.Security.Cryptography
+open System.Text
 open Npgsql
 open Fogell.Domain
 
@@ -13,6 +15,13 @@ type CancellationOutcome =
     | AlreadyRequested
     | AlreadyTerminal of status: string
     | NoSuchBuild
+
+/// The database-linearized decision immediately before a local worker may
+/// launch a child. A cancellation that wins this decision is made terminal
+/// without starting user code.
+type ExecutionStartOutcome =
+    | ExecutionStarted
+    | ExecutionCancelledBeforeStart
 
 /// What admission returns. Repeating the same idempotency key returns exactly
 /// these identifiers again, without emitting a second event or outbox message.
@@ -27,9 +36,31 @@ type NewBuild =
     { OrganizationId: OrganizationId
       ProjectId: ProjectId
       IdempotencyKey: string
+      /// Exact UTF-8 request bytes accepted by the parser.  They are persisted
+      /// atomically with the build and never reconstructed from an AST.
+      PipelineSource: byte array
       StageNames: string list
       RequiredTrustPool: string
       RequiredCapabilities: string list }
+
+/// One whole-pipeline execution owned by the local controller.  Nodes retain
+/// stage metadata, but the persisted runner executes the accepted definition
+/// exactly once per build rather than once per stage.
+type ExecutionClaim =
+    { OrganizationId: OrganizationId
+      ProjectId: ProjectId
+      BuildId: BuildId
+      BuildNumber: int
+      NodeId: NodeId
+      AttemptId: AttemptId
+      Fence: Fence
+      PipelineSource: byte array
+      PipelineSha256: string }
+
+type DatabaseIdentity =
+    { User: string
+      IsSuperuser: bool
+      BypassesRls: bool }
 
 /// FG-026. The durable state of one externally visible effect for one attempt.
 type EffectCheckpointState =
@@ -128,6 +159,152 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         with _ ->
             tx.Dispose()
             reraise ()
+
+    let lockExecutionAuthority
+        (conn: NpgsqlConnection)
+        (tx: NpgsqlTransaction)
+        (org: OrganizationId)
+        (attempt: AttemptId)
+        (fence: Fence)
+        (owner: string)
+        (offeredOnly: bool)
+        =
+        // Lock order is contractual and matches every attempt roll-up:
+        // attempt -> node -> build. A multi-table FOR UPDATE leaves that order
+        // implicit in the query plan and can deadlock an explicit roll-up that
+        // already owns the attempt while waiting for the build.
+        use attemptLock = conn.CreateCommand()
+        attemptLock.Transaction <- tx
+        attemptLock.CommandText <-
+            "SELECT a.node_id
+               FROM attempts a
+              WHERE a.organization_id = @o AND a.id = @a AND a.fence = @f
+                AND a.lease_owner = @owner
+                AND a.lease_expires_at > clock_timestamp()
+                AND a.restore_epoch = (SELECT restore_epoch FROM controller_metadata WHERE singleton)
+                AND ((@offered_only AND a.state = 'offered')
+                     OR (NOT @offered_only
+                         AND a.state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')))
+              FOR UPDATE OF a"
+        attemptLock.Parameters.AddWithValue("o", org.Value) |> ignore
+        attemptLock.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        attemptLock.Parameters.AddWithValue("f", fence.Value) |> ignore
+        attemptLock.Parameters.AddWithValue("owner", owner) |> ignore
+        attemptLock.Parameters.AddWithValue("offered_only", offeredOnly) |> ignore
+
+        match attemptLock.ExecuteScalar() with
+        | null -> None
+        | nodeValue ->
+            let nodeId = nodeValue :?> Guid
+            use nodeLock = conn.CreateCommand()
+            nodeLock.Transaction <- tx
+            nodeLock.CommandText <-
+                "SELECT build_id FROM nodes
+                  WHERE organization_id = @o AND id = @n
+                  FOR UPDATE"
+            nodeLock.Parameters.AddWithValue("o", org.Value) |> ignore
+            nodeLock.Parameters.AddWithValue("n", nodeId) |> ignore
+
+            match nodeLock.ExecuteScalar() with
+            | null -> None
+            | buildValue ->
+                let buildId = buildValue :?> Guid
+                use buildLock = conn.CreateCommand()
+                buildLock.Transaction <- tx
+                buildLock.CommandText <-
+                    "SELECT cancellation_requested FROM builds
+                      WHERE organization_id = @o AND id = @b
+                      FOR UPDATE"
+                buildLock.Parameters.AddWithValue("o", org.Value) |> ignore
+                buildLock.Parameters.AddWithValue("b", buildId) |> ignore
+
+                match buildLock.ExecuteScalar() with
+                | :? bool as cancellationRequested -> Some(nodeId, buildId, cancellationRequested)
+                | _ -> None
+
+    let publishLockedTerminal
+        (conn: NpgsqlConnection)
+        (tx: NpgsqlTransaction)
+        (org: OrganizationId)
+        (attempt: AttemptId)
+        (fence: Fence)
+        (owner: string)
+        (nodeId: Guid)
+        (buildId: Guid)
+        (terminalStatus: BuildStatus)
+        =
+        let resultWire = BuildStatus.toWireString terminalStatus
+        use finishAttempt = conn.CreateCommand()
+        finishAttempt.Transaction <- tx
+        finishAttempt.CommandText <-
+            "UPDATE attempts
+                SET state = 'terminal', result = @r, lease_owner = NULL, lease_expires_at = NULL
+              WHERE organization_id = @o AND id = @a AND fence = @f AND lease_owner = @owner
+                AND lease_expires_at > clock_timestamp()
+                AND state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
+                AND restore_epoch = (SELECT restore_epoch FROM controller_metadata WHERE singleton)"
+        finishAttempt.Parameters.AddWithValue("o", org.Value) |> ignore
+        finishAttempt.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        finishAttempt.Parameters.AddWithValue("f", fence.Value) |> ignore
+        finishAttempt.Parameters.AddWithValue("owner", owner) |> ignore
+        finishAttempt.Parameters.AddWithValue("r", resultWire) |> ignore
+
+        if finishAttempt.ExecuteNonQuery() <> 1 then
+            Error "publication refused: stale fence, wrong owner, expired lease, pre-restore epoch, or already terminal"
+        else
+            use finishNode = conn.CreateCommand()
+            finishNode.Transaction <- tx
+            finishNode.CommandText <-
+                "UPDATE nodes SET status = @r
+                  WHERE organization_id = @o AND id = @n AND build_id = @b"
+            finishNode.Parameters.AddWithValue("o", org.Value) |> ignore
+            finishNode.Parameters.AddWithValue("n", nodeId) |> ignore
+            finishNode.Parameters.AddWithValue("b", buildId) |> ignore
+            finishNode.Parameters.AddWithValue("r", resultWire) |> ignore
+
+            if finishNode.ExecuteNonQuery() <> 1 then
+                failwith "terminal attempt has no node lineage"
+
+            use finishBuild = conn.CreateCommand()
+            finishBuild.Transaction <- tx
+            finishBuild.CommandText <-
+                "UPDATE builds
+                    SET status = @r, cancellation_requested = false
+                  WHERE organization_id = @o AND id = @b"
+            finishBuild.Parameters.AddWithValue("o", org.Value) |> ignore
+            finishBuild.Parameters.AddWithValue("b", buildId) |> ignore
+            finishBuild.Parameters.AddWithValue("r", resultWire) |> ignore
+
+            if finishBuild.ExecuteNonQuery() <> 1 then
+                failwith "terminal attempt has no build lineage"
+
+            use ev = conn.CreateCommand()
+            ev.Transaction <- tx
+            ev.CommandText <-
+                "INSERT INTO events (organization_id, build_id, attempt_id, kind, payload)
+                 VALUES (@o, @b, @a, 'attempt.terminal', @pl)"
+            ev.Parameters.AddWithValue("o", org.Value) |> ignore
+            ev.Parameters.AddWithValue("b", buildId) |> ignore
+            ev.Parameters.AddWithValue("a", attempt.Value) |> ignore
+            ev.Parameters.Add(
+                NpgsqlParameter("pl", NpgsqlTypes.NpgsqlDbType.Jsonb,
+                                Value = $"{{\"result\":\"{resultWire}\"}}")) |> ignore
+            ev.ExecuteNonQuery() |> ignore
+
+            use outbox = conn.CreateCommand()
+            outbox.Transaction <- tx
+            outbox.CommandText <-
+                "INSERT INTO outbox (organization_id, topic, body)
+                 VALUES (@o, 'build.terminal', @body)"
+            outbox.Parameters.AddWithValue("o", org.Value) |> ignore
+            outbox.Parameters.Add(
+                NpgsqlParameter(
+                    "body",
+                    NpgsqlTypes.NpgsqlDbType.Jsonb,
+                    Value = $"{{\"build\":\"{buildId}\",\"result\":\"{resultWire}\"}}"))
+            |> ignore
+            outbox.ExecuteNonQuery() |> ignore
+            Ok()
 
     let effectProjection =
         "organization_id, attempt_id, effect_key, fence, authority_owner,
@@ -294,6 +471,25 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
     let digestHex (digest: byte array) =
         Convert.ToHexString(digest).ToLowerInvariant()
 
+    let admissionFingerprint (source: byte array) (trustPool: string) (capabilities: string list) =
+        use hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
+
+        let append (bytes: byte array) =
+            let length = Array.zeroCreate<byte> 4
+            BinaryPrimitives.WriteInt32BigEndian(length.AsSpan(), bytes.Length)
+            hash.AppendData length
+            hash.AppendData bytes
+
+        append (Encoding.UTF8.GetBytes "fogell-admission-v1")
+        append source
+        append (Encoding.UTF8.GetBytes trustPool)
+
+        capabilities
+        |> List.sortWith (fun left right -> String.CompareOrdinal(left, right))
+        |> List.iter (Encoding.UTF8.GetBytes >> append)
+
+        hash.GetHashAndReset()
+
     let readCheckpoint (reader: System.Data.Common.DbDataReader) =
         let state =
             match reader.GetString 7 with
@@ -405,6 +601,82 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             None
 
     member _.Migrate() = Migrations.run maintenanceConnectionString
+
+    member _.Ping() =
+        try
+            use conn = openConn ()
+            use cmd = conn.CreateCommand()
+            cmd.CommandText <- "SELECT 1"
+            cmd.ExecuteScalar() :?> int = 1
+        with _ ->
+            false
+
+    member _.RuntimeDatabaseIdentity() : Result<DatabaseIdentity, string> =
+        try
+            use conn = openConn ()
+            use cmd = conn.CreateCommand()
+            cmd.CommandText <-
+                "SELECT current_user, rolsuper, rolbypassrls
+                   FROM pg_roles
+                  WHERE rolname = current_user"
+            use reader = cmd.ExecuteReader()
+
+            if reader.Read() then
+                Ok
+                    { User = reader.GetString 0
+                      IsSuperuser = reader.GetBoolean 1
+                      BypassesRls = reader.GetBoolean 2 }
+            else
+                Error "runtime database identity is unavailable"
+        with ex ->
+            Error ex.Message
+
+    member _.RuntimeCapabilities() =
+        try
+            use conn = openConn ()
+            use cmd = conn.CreateCommand()
+            cmd.CommandText <-
+                "SELECT
+                     has_table_privilege(current_user, 'public.controller_metadata', 'SELECT')
+                     AND has_table_privilege(current_user, 'public.organization_work_roots', 'SELECT')
+                     AND NOT EXISTS (
+                         SELECT 1
+                           FROM unnest(ARRAY[
+                             'organizations', 'projects', 'builds', 'nodes', 'attempts',
+                             'events', 'outbox', 'log_chunks', 'effect_checkpoints',
+                             'retry_decisions', 'build_definitions'
+                           ]) AS required_table(name)
+                           CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'])
+                             AS required_privilege(name)
+                          WHERE NOT has_table_privilege(
+                              current_user,
+                              'public.' || quote_ident(required_table.name),
+                              required_privilege.name))
+                     AND NOT EXISTS (
+                         SELECT 1
+                           FROM unnest(ARRAY[
+                             'events_id_seq', 'outbox_id_seq', 'log_chunks_id_seq'
+                           ]) AS required_sequence(name)
+                           CROSS JOIN unnest(ARRAY['USAGE', 'SELECT'])
+                             AS required_privilege(name)
+                          WHERE NOT has_sequence_privilege(
+                                current_user,
+                                'public.' || quote_ident(required_sequence.name),
+                                required_privilege.name))"
+            cmd.ExecuteScalar() :?> bool
+        with _ ->
+            false
+
+    /// Organization UUIDs are the bounded, deliberately non-tenant work scan
+    /// roots.  Slugs and tenant records stay behind forced RLS; every subsequent
+    /// claim still opens a transaction-local tenant context before seeing work.
+    member _.OrganizationIds() : OrganizationId list =
+        use conn = openConn ()
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <- "SELECT organization_id FROM organization_work_roots ORDER BY organization_id"
+        use reader = cmd.ExecuteReader()
+        [ while reader.Read() do
+              yield OrganizationId(reader.GetGuid 0) ]
 
     member _.CreateProject(org: OrganizationId, orgSlug: string, project: ProjectId, projectSlug: string) =
         use conn = openConn ()
@@ -909,21 +1181,63 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             Error "a build must declare at least one stage"
         elif String.IsNullOrWhiteSpace input.IdempotencyKey then
             Error "idempotency key is required"
+        elif isNull input.PipelineSource || input.PipelineSource.Length = 0 then
+            Error "pipeline source is required"
+        elif String.IsNullOrWhiteSpace input.RequiredTrustPool then
+            Error "a trust pool is required"
         else
 
         use conn = openConn ()
         use tx = beginTenantTransaction conn input.OrganizationId
 
         try
+            let sourceDigest = payloadDigest input.PipelineSource
+            let fingerprint =
+                admissionFingerprint input.PipelineSource input.RequiredTrustPool input.RequiredCapabilities
+
+            // Allocate project-scoped build numbers under the project row lock.
+            // Every admission takes locks in the same order (project, then
+            // idempotency key), so distinct keys cannot race MAX(number) + 1 and
+            // exact replays cannot introduce a lock-order cycle.
+            use projectLock = conn.CreateCommand()
+            projectLock.Transaction <- tx
+            projectLock.CommandText <-
+                "SELECT id
+                   FROM projects
+                  WHERE organization_id = @o AND id = @p
+                  FOR UPDATE"
+            projectLock.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
+            projectLock.Parameters.AddWithValue("p", input.ProjectId.Value) |> ignore
+
+            if isNull (projectLock.ExecuteScalar()) then
+                invalidOp "project is unavailable"
+
+            // Serialise one idempotency key before looking it up.  The unique
+            // constraint remains the database backstop, while this lock lets
+            // concurrent exact replays observe and return the committed winner
+            // instead of surfacing a transient uniqueness error.
+            use idempotencyLock = conn.CreateCommand()
+            idempotencyLock.Transaction <- tx
+            idempotencyLock.CommandText <-
+                "SELECT pg_advisory_xact_lock(hashtextextended(@identity, 0))"
+            idempotencyLock.Parameters.AddWithValue(
+                "identity",
+                $"{input.OrganizationId.Value:N}/{input.ProjectId.Value:N}/{input.IdempotencyKey}")
+            |> ignore
+            idempotencyLock.ExecuteNonQuery() |> ignore
+
             // Has this key already been admitted? Read inside the transaction so
             // the unique constraint is the arbiter under concurrency.
             use existing = conn.CreateCommand()
             existing.Transaction <- tx
             existing.CommandText <-
-                "SELECT b.id, b.number, n.id, a.id
+                "SELECT b.id, b.number, n.id, a.id,
+                        d.source_digest, d.admission_fingerprint
                  FROM builds b
                  JOIN nodes n    ON n.build_id = b.id AND n.organization_id = b.organization_id AND n.ordinal = 0
                  JOIN attempts a ON a.node_id = n.id  AND a.organization_id = n.organization_id AND a.ordinal = 0
+                 LEFT JOIN build_definitions d
+                   ON d.build_id = b.id AND d.organization_id = b.organization_id
                  WHERE b.organization_id = @o AND b.project_id = @p AND b.idempotency_key = @k"
             existing.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
             existing.Parameters.AddWithValue("p", input.ProjectId.Value) |> ignore
@@ -932,16 +1246,27 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             use reader = existing.ExecuteReader()
 
             if reader.Read() then
-                let result =
-                    { BuildId = BuildId(reader.GetGuid 0)
-                      Number = reader.GetInt32 1
-                      NodeId = NodeId(reader.GetGuid 2)
-                      AttemptId = AttemptId(reader.GetGuid 3)
-                      WasExisting = true }
+                let sameDefinition =
+                    not (reader.IsDBNull 4)
+                    && not (reader.IsDBNull 5)
+                    && CryptographicOperations.FixedTimeEquals(reader.GetFieldValue<byte array>(4), sourceDigest)
+                    && CryptographicOperations.FixedTimeEquals(reader.GetFieldValue<byte array>(5), fingerprint)
 
-                reader.Close()
-                tx.Commit()
-                Ok result
+                if not sameDefinition then
+                    reader.Close()
+                    tx.Rollback()
+                    Error "idempotency key is already bound to a different pipeline or placement policy"
+                else
+                    let result =
+                        { BuildId = BuildId(reader.GetGuid 0)
+                          Number = reader.GetInt32 1
+                          NodeId = NodeId(reader.GetGuid 2)
+                          AttemptId = AttemptId(reader.GetGuid 3)
+                          WasExisting = true }
+
+                    reader.Close()
+                    tx.Commit()
+                    Ok result
             else
                 reader.Close()
 
@@ -968,31 +1293,25 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                 insert.Parameters.AddWithValue("k", input.IdempotencyKey) |> ignore
                 let number = insert.ExecuteScalar() :?> int
 
-                // one node per declared stage; the first attempt of the first
-                // node is created eagerly so the scheduler has something to offer
-                let nodeIds =
-                    input.StageNames
-                    |> List.mapi (fun i name ->
-                        let nodeId = Guid.NewGuid()
+                // The persisted runner owns one whole Jenkinsfile.  Scheduling
+                // it once per parsed stage would duplicate cross-stage effects
+                // and break environment/post semantics, so a build has exactly
+                // one local execution node; stage detail remains in the source.
+                let firstNode = Guid.NewGuid()
+                use n = conn.CreateCommand()
+                n.Transaction <- tx
+                n.CommandText <-
+                    "INSERT INTO nodes
+                         (id, organization_id, build_id, name, ordinal, required_trust_pool,
+                          required_capabilities, status)
+                     VALUES (@id, @o, @b, 'pipeline', 0, @pool, @caps, 'queued')"
+                n.Parameters.AddWithValue("id", firstNode) |> ignore
+                n.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
+                n.Parameters.AddWithValue("b", buildId) |> ignore
+                n.Parameters.AddWithValue("pool", input.RequiredTrustPool) |> ignore
+                n.Parameters.AddWithValue("caps", List.toArray input.RequiredCapabilities) |> ignore
+                n.ExecuteNonQuery() |> ignore
 
-                        use n = conn.CreateCommand()
-                        n.Transaction <- tx
-                        n.CommandText <-
-                            "INSERT INTO nodes
-                                 (id, organization_id, build_id, name, ordinal, required_trust_pool,
-                                  required_capabilities, status)
-                             VALUES (@id, @o, @b, @name, @ord, @pool, @caps, 'queued')"
-                        n.Parameters.AddWithValue("id", nodeId) |> ignore
-                        n.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
-                        n.Parameters.AddWithValue("b", buildId) |> ignore
-                        n.Parameters.AddWithValue("name", name) |> ignore
-                        n.Parameters.AddWithValue("ord", i) |> ignore
-                        n.Parameters.AddWithValue("pool", input.RequiredTrustPool) |> ignore
-                        n.Parameters.AddWithValue("caps", List.toArray input.RequiredCapabilities) |> ignore
-                        n.ExecuteNonQuery() |> ignore
-                        nodeId)
-
-                let firstNode = List.head nodeIds
                 let attemptId = Guid.NewGuid()
 
                 use a = conn.CreateCommand()
@@ -1005,6 +1324,19 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                 a.Parameters.AddWithValue("n", firstNode) |> ignore
                 a.Parameters.AddWithValue("e", epoch) |> ignore
                 a.ExecuteNonQuery() |> ignore
+
+                use definition = conn.CreateCommand()
+                definition.Transaction <- tx
+                definition.CommandText <-
+                    "INSERT INTO build_definitions
+                         (build_id, organization_id, source_bytes, source_digest, admission_fingerprint)
+                     VALUES (@b, @o, @source, @digest, @fingerprint)"
+                definition.Parameters.AddWithValue("b", buildId) |> ignore
+                definition.Parameters.AddWithValue("o", input.OrganizationId.Value) |> ignore
+                definition.Parameters.AddWithValue("source", input.PipelineSource) |> ignore
+                definition.Parameters.AddWithValue("digest", sourceDigest) |> ignore
+                definition.Parameters.AddWithValue("fingerprint", fingerprint) |> ignore
+                definition.ExecuteNonQuery() |> ignore
 
                 use ev = conn.CreateCommand()
                 ev.Transaction <- tx
@@ -1072,9 +1404,23 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         use cmd = conn.CreateCommand()
         cmd.Transaction <- tx
         cmd.CommandText <-
-            "UPDATE attempts SET state = 'running'
-              WHERE organization_id = @o AND id = @a AND fence = @f AND lease_owner = @owner
-                AND state = 'offered' AND lease_expires_at > clock_timestamp()"
+            "WITH accepted AS (
+                 UPDATE attempts
+                    SET state = 'running'
+                  WHERE organization_id = @o AND id = @a AND fence = @f AND lease_owner = @owner
+                    AND state = 'offered' AND lease_expires_at > clock_timestamp()
+                 RETURNING node_id
+             ), running_node AS (
+                 UPDATE nodes n
+                    SET status = 'running'
+                   FROM accepted a
+                  WHERE n.organization_id = @o AND n.id = a.node_id
+                 RETURNING n.build_id
+             )
+             UPDATE builds b
+                SET status = 'running'
+               FROM running_node n
+              WHERE b.organization_id = @o AND b.id = n.build_id"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
         cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
         cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
@@ -1083,10 +1429,119 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         tx.Commit()
         accepted
 
+    /// Linearization point between queued/offered work and child execution.
+    /// The build row is locked together with the fenced attempt, so a queued
+    /// cancellation either wins here and becomes an atomic ABORTED terminal
+    /// result, or observes RUNNING after this transaction and is handled as an
+    /// in-flight cancellation. User code is never launched on the former path.
+    member _.BeginExecution(org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string, leaseSeconds: int)
+        : Result<ExecutionStartOutcome, string> =
+        if leaseSeconds <= 0 then
+            Error "execution start requires a positive lease"
+        else
+            use conn = openConn ()
+            use tx = beginTenantTransaction conn org
+
+            try
+                match lockExecutionAuthority conn tx org attempt fence owner true with
+                | None ->
+                    tx.Rollback()
+                    Error "execution start refused: stale fence, wrong owner, expired lease, pre-restore epoch, or invalid state"
+                | Some(nodeId, buildId, true) ->
+                    match publishLockedTerminal conn tx org attempt fence owner nodeId buildId BuildStatus.Aborted with
+                    | Error error ->
+                        tx.Rollback()
+                        Error error
+                    | Ok _ ->
+                        tx.Commit()
+                        Ok ExecutionCancelledBeforeStart
+                | Some(nodeId, buildId, false) ->
+                    use startAttempt = conn.CreateCommand()
+                    startAttempt.Transaction <- tx
+                    startAttempt.CommandText <-
+                        "UPDATE attempts
+                            SET state = 'running',
+                                lease_expires_at = clock_timestamp() + make_interval(secs => @secs)
+                          WHERE organization_id = @o AND id = @a AND fence = @f
+                            AND lease_owner = @owner AND state = 'offered'
+                            AND lease_expires_at > clock_timestamp()
+                            AND restore_epoch = (SELECT restore_epoch FROM controller_metadata WHERE singleton)"
+                    startAttempt.Parameters.AddWithValue("o", org.Value) |> ignore
+                    startAttempt.Parameters.AddWithValue("a", attempt.Value) |> ignore
+                    startAttempt.Parameters.AddWithValue("f", fence.Value) |> ignore
+                    startAttempt.Parameters.AddWithValue("owner", owner) |> ignore
+                    startAttempt.Parameters.AddWithValue("secs", float leaseSeconds) |> ignore
+
+                    if startAttempt.ExecuteNonQuery() <> 1 then
+                        tx.Rollback()
+                        Error "execution start refused after authority validation"
+                    else
+                        use startNode = conn.CreateCommand()
+                        startNode.Transaction <- tx
+                        startNode.CommandText <-
+                            "UPDATE nodes SET status = 'running'
+                              WHERE organization_id = @o AND id = @n AND build_id = @b"
+                        startNode.Parameters.AddWithValue("o", org.Value) |> ignore
+                        startNode.Parameters.AddWithValue("n", nodeId) |> ignore
+                        startNode.Parameters.AddWithValue("b", buildId) |> ignore
+
+                        if startNode.ExecuteNonQuery() <> 1 then
+                            failwith "starting attempt has no node lineage"
+
+                        use startBuild = conn.CreateCommand()
+                        startBuild.Transaction <- tx
+                        startBuild.CommandText <-
+                            "UPDATE builds SET status = 'running'
+                              WHERE organization_id = @o AND id = @b"
+                        startBuild.Parameters.AddWithValue("o", org.Value) |> ignore
+                        startBuild.Parameters.AddWithValue("b", buildId) |> ignore
+
+                        if startBuild.ExecuteNonQuery() <> 1 then
+                            failwith "starting attempt has no build lineage"
+
+                        tx.Commit()
+                        Ok ExecutionStarted
+            with ex ->
+                (try tx.Rollback() with _ -> ())
+                Error ex.Message
+
+    member _.RenewLease
+        (org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string, leaseSeconds: int)
+        : bool =
+        if leaseSeconds <= 0 then
+            false
+        else
+            use conn = openConn ()
+            use tx = beginTenantTransaction conn org
+            use cmd = conn.CreateCommand()
+            cmd.Transaction <- tx
+            cmd.CommandText <-
+                "UPDATE attempts
+                    SET lease_expires_at = clock_timestamp() + make_interval(secs => @secs)
+                  WHERE organization_id = @o AND id = @a AND fence = @f
+                    AND lease_owner = @owner
+                    AND state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
+                    AND restore_epoch = (SELECT restore_epoch FROM controller_metadata WHERE singleton)
+                    AND lease_expires_at > clock_timestamp()"
+            cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+            cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+            cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
+            cmd.Parameters.AddWithValue("owner", owner) |> ignore
+            cmd.Parameters.AddWithValue("secs", float leaseSeconds) |> ignore
+            let renewed = cmd.ExecuteNonQuery() = 1
+            tx.Commit()
+            renewed
+
     /// FG-022. Publish a terminal result. Admissible only from the exact current
     /// fence, the exact lease owner, the current restore epoch, an unexpired
-    /// lease and an active state — all seven conditions from ADR 0007, in one
-    /// statement so there is no read-then-write race.
+    /// lease and an active state — all seven conditions from ADR 0007.
+    ///
+    /// The attempt, node, and build are locked as one lineage before choosing
+    /// the result. RequestCancellation locks the same build row. Consequently a
+    /// cancellation committed before this decision makes ABORTED the effective
+    /// terminal truth; a terminal publication committed first makes the later
+    /// cancellation report AlreadyTerminal. An accepted cancellation can never
+    /// be erased by a success publication racing behind it.
     ///
     /// `clock_timestamp()` deliberately, not `now()`: `now()` is transaction
     /// start time, so inside a long transaction an expired lease would still
@@ -1098,46 +1553,20 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         use tx = beginTenantTransaction conn org
 
         try
-            use cmd = conn.CreateCommand()
-            cmd.Transaction <- tx
-            cmd.CommandText <-
-                "UPDATE attempts a
-                    SET state = 'terminal', result = @r, lease_owner = NULL, lease_expires_at = NULL
-                  WHERE a.organization_id = @o
-                    AND a.id = @a
-                    AND a.fence = @f
-                    AND a.lease_owner = @owner
-                    AND a.lease_expires_at > clock_timestamp()
-                    AND a.state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
-                    AND a.restore_epoch = (SELECT restore_epoch FROM controller_metadata WHERE singleton)
-                  RETURNING a.node_id"
-            cmd.Parameters.AddWithValue("o", org.Value) |> ignore
-            cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
-            cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
-            cmd.Parameters.AddWithValue("owner", owner) |> ignore
-            cmd.Parameters.AddWithValue("r", BuildStatus.toWireString result) |> ignore
-
-            match cmd.ExecuteScalar() with
-            | null ->
+            match lockExecutionAuthority conn tx org attempt fence owner false with
+            | None ->
                 tx.Rollback()
                 Error "publication refused: stale fence, wrong owner, expired lease, pre-restore epoch, or already terminal"
-            | nodeId ->
-                use ev = conn.CreateCommand()
-                ev.Transaction <- tx
-                ev.CommandText <-
-                    "INSERT INTO events (organization_id, build_id, attempt_id, kind, payload)
-                     SELECT @o, n.build_id, @a, 'attempt.terminal', @pl
-                     FROM nodes n WHERE n.id = @n AND n.organization_id = @o"
-                ev.Parameters.AddWithValue("o", org.Value) |> ignore
-                ev.Parameters.AddWithValue("a", attempt.Value) |> ignore
-                ev.Parameters.AddWithValue("n", nodeId :?> Guid) |> ignore
-                ev.Parameters.Add(
-                    NpgsqlParameter("pl", NpgsqlTypes.NpgsqlDbType.Jsonb,
-                                    Value = $"{{\"result\":\"{BuildStatus.toWireString result}\"}}")) |> ignore
-                ev.ExecuteNonQuery() |> ignore
+            | Some(nodeId, buildId, cancellationRequested) ->
+                let effectiveResult = if cancellationRequested then BuildStatus.Aborted else result
 
-                tx.Commit()
-                Ok()
+                match publishLockedTerminal conn tx org attempt fence owner nodeId buildId effectiveResult with
+                | Error error ->
+                    tx.Rollback()
+                    Error error
+                | Ok _ ->
+                    tx.Commit()
+                    Ok()
         with ex ->
             (try tx.Rollback() with _ -> ())
             Error ex.Message
@@ -1271,6 +1700,402 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             (try tx.Rollback() with _ -> ())
             Error ex.Message
 
+    /// FG-224 local-controller claim.  Unlike the legacy scheduler projection,
+    /// this returns the immutable whole-pipeline bytes under the same lock and
+    /// refuses legacy multi-node builds that cannot honestly be mapped onto the
+    /// whole-pipeline runner.
+    member _.ClaimNextExecution
+        (org: OrganizationId, agentId: string, trustPool: string, capabilities: string list, leaseSeconds: int)
+        : Result<ExecutionClaim option, string> =
+        use conn = openConn ()
+        use tx = beginTenantTransaction conn org
+
+        try
+            use lock = conn.CreateCommand()
+            lock.Transaction <- tx
+            lock.CommandText <- "SELECT pg_advisory_xact_lock(hashtext(@o))"
+            lock.Parameters.AddWithValue("o", org.Value.ToString()) |> ignore
+            lock.ExecuteNonQuery() |> ignore
+
+            let quarantine attemptId nodeId buildId reason =
+                // The attempt was locked by the FIFO pick. Complete the same
+                // attempt -> node -> build lock order used by every execution
+                // roll-up before publishing the durable refusal.
+                use nodeLock = conn.CreateCommand()
+                nodeLock.Transaction <- tx
+                nodeLock.CommandText <-
+                    "SELECT build_id FROM nodes
+                      WHERE organization_id = @o AND id = @n
+                      FOR UPDATE"
+                nodeLock.Parameters.AddWithValue("o", org.Value) |> ignore
+                nodeLock.Parameters.AddWithValue("n", nodeId) |> ignore
+
+                match nodeLock.ExecuteScalar() with
+                | :? Guid as lockedBuildId when lockedBuildId = buildId -> ()
+                | _ -> failwith "invalid execution claim has no node lineage"
+
+                use buildLock = conn.CreateCommand()
+                buildLock.Transaction <- tx
+                buildLock.CommandText <-
+                    "SELECT id FROM builds
+                      WHERE organization_id = @o AND id = @b
+                      FOR UPDATE"
+                buildLock.Parameters.AddWithValue("o", org.Value) |> ignore
+                buildLock.Parameters.AddWithValue("b", buildId) |> ignore
+
+                if isNull (buildLock.ExecuteScalar()) then
+                    failwith "invalid execution claim has no build lineage"
+
+                use rejectAttempt = conn.CreateCommand()
+                rejectAttempt.Transaction <- tx
+                rejectAttempt.CommandText <-
+                    "UPDATE attempts
+                        SET state = 'reconciliation_required',
+                            lease_owner = NULL,
+                            lease_expires_at = NULL
+                      WHERE organization_id = @o AND id = @a AND state = 'queued'"
+                rejectAttempt.Parameters.AddWithValue("o", org.Value) |> ignore
+                rejectAttempt.Parameters.AddWithValue("a", attemptId) |> ignore
+
+                if rejectAttempt.ExecuteNonQuery() <> 1 then
+                    failwith "invalid execution claim changed after FIFO arbitration"
+
+                use rejectNode = conn.CreateCommand()
+                rejectNode.Transaction <- tx
+                rejectNode.CommandText <-
+                    "UPDATE nodes SET status = 'reconciliation_required'
+                      WHERE organization_id = @o AND id = @n AND build_id = @b"
+                rejectNode.Parameters.AddWithValue("o", org.Value) |> ignore
+                rejectNode.Parameters.AddWithValue("n", nodeId) |> ignore
+                rejectNode.Parameters.AddWithValue("b", buildId) |> ignore
+
+                if rejectNode.ExecuteNonQuery() <> 1 then
+                    failwith "invalid execution claim has no node to quarantine"
+
+                use rejectBuild = conn.CreateCommand()
+                rejectBuild.Transaction <- tx
+                rejectBuild.CommandText <-
+                    "UPDATE builds SET status = 'reconciliation_required'
+                      WHERE organization_id = @o AND id = @b"
+                rejectBuild.Parameters.AddWithValue("o", org.Value) |> ignore
+                rejectBuild.Parameters.AddWithValue("b", buildId) |> ignore
+
+                if rejectBuild.ExecuteNonQuery() <> 1 then
+                    failwith "invalid execution claim has no build to quarantine"
+
+                use refusal = conn.CreateCommand()
+                refusal.Transaction <- tx
+                refusal.CommandText <-
+                    "INSERT INTO events (organization_id, build_id, attempt_id, kind, payload)
+                     VALUES (@o, @b, @a, 'attempt.reconciliation_required', @payload)"
+                refusal.Parameters.AddWithValue("o", org.Value) |> ignore
+                refusal.Parameters.AddWithValue("b", buildId) |> ignore
+                refusal.Parameters.AddWithValue("a", attemptId) |> ignore
+                refusal.Parameters.Add(
+                    NpgsqlParameter(
+                        "payload",
+                        NpgsqlTypes.NpgsqlDbType.Jsonb,
+                        Value = $"{{\"reason\":\"{reason}\"}}"))
+                |> ignore
+                refusal.ExecuteNonQuery() |> ignore
+
+            let readCandidate () =
+                use pick = conn.CreateCommand()
+                pick.Transaction <- tx
+                pick.CommandText <-
+                    "SELECT a.id, n.id, n.build_id, b.project_id, b.number,
+                            d.source_bytes, d.source_digest, n.ordinal,
+                            (SELECT count(*) FROM nodes all_nodes
+                              WHERE all_nodes.organization_id = b.organization_id
+                                AND all_nodes.build_id = b.id) AS node_count
+                       FROM attempts a
+                       JOIN nodes n
+                         ON n.id = a.node_id AND n.organization_id = a.organization_id
+                       JOIN builds b
+                         ON b.id = n.build_id AND b.organization_id = n.organization_id
+                       LEFT JOIN build_definitions d
+                         ON d.build_id = b.id AND d.organization_id = b.organization_id
+                      WHERE a.organization_id = @o
+                        AND a.state = 'queued'
+                        AND n.required_trust_pool = @pool
+                        AND n.required_capabilities <@ @caps
+                      ORDER BY a.created_at, a.id
+                      FOR UPDATE OF a SKIP LOCKED
+                      LIMIT 1"
+                pick.Parameters.AddWithValue("o", org.Value) |> ignore
+                pick.Parameters.AddWithValue("pool", trustPool) |> ignore
+                pick.Parameters.AddWithValue("caps", List.toArray capabilities) |> ignore
+                use reader = pick.ExecuteReader()
+
+                if not (reader.Read()) then
+                    None
+                else
+                    let attemptId = reader.GetGuid 0
+                    let nodeId = reader.GetGuid 1
+                    let buildId = reader.GetGuid 2
+                    let projectId = reader.GetGuid 3
+                    let buildNumber = reader.GetInt32 4
+                    let hasDefinition = not (reader.IsDBNull 5) && not (reader.IsDBNull 6)
+                    let source = if hasDefinition then reader.GetFieldValue<byte array> 5 else Array.empty
+                    let sourceDigest = if hasDefinition then reader.GetFieldValue<byte array> 6 else Array.empty
+                    let nodeOrdinal = reader.GetInt32 7
+                    let nodeCount = reader.GetInt64 8
+
+                    Some(
+                        attemptId,
+                        nodeId,
+                        buildId,
+                        projectId,
+                        buildNumber,
+                        hasDefinition,
+                        source,
+                        sourceDigest,
+                        nodeOrdinal,
+                        nodeCount)
+
+            let rec claimNext () =
+                match readCandidate () with
+                | None -> None
+                | Some(
+                    attemptId,
+                    nodeId,
+                    buildId,
+                    projectId,
+                    buildNumber,
+                    hasDefinition,
+                    source,
+                    sourceDigest,
+                    nodeOrdinal,
+                    nodeCount) ->
+
+                    let refusalReason =
+                        if not hasDefinition then
+                            Some "missing_definition"
+                        elif nodeOrdinal <> 0 || nodeCount <> 1L then
+                            Some "legacy_multi_node"
+                        elif not (CryptographicOperations.FixedTimeEquals(payloadDigest source, sourceDigest)) then
+                            Some "definition_digest_mismatch"
+                        else
+                            None
+
+                    match refusalReason with
+                    | Some reason ->
+                        quarantine attemptId nodeId buildId reason
+                        claimNext ()
+                    | None ->
+                        use offer = conn.CreateCommand()
+                        offer.Transaction <- tx
+                        offer.CommandText <-
+                            "UPDATE attempts
+                                SET fence = fence + 1, state = 'offered', lease_owner = @agent,
+                                    lease_expires_at = clock_timestamp() + make_interval(secs => @secs)
+                              WHERE organization_id = @o AND id = @a AND state = 'queued'
+                              RETURNING fence"
+                        offer.Parameters.AddWithValue("o", org.Value) |> ignore
+                        offer.Parameters.AddWithValue("a", attemptId) |> ignore
+                        offer.Parameters.AddWithValue("agent", agentId) |> ignore
+                        offer.Parameters.AddWithValue("secs", float leaseSeconds) |> ignore
+
+                        match offer.ExecuteScalar() with
+                        | null -> failwith "execution candidate changed after FIFO arbitration"
+                        | value ->
+                            Some
+                                { OrganizationId = org
+                                  ProjectId = ProjectId projectId
+                                  BuildId = BuildId buildId
+                                  BuildNumber = buildNumber
+                                  NodeId = NodeId nodeId
+                                  AttemptId = AttemptId attemptId
+                                  Fence = Fence(value :?> int64)
+                                  PipelineSource = source
+                                  PipelineSha256 = digestHex sourceDigest }
+
+            let claimed = claimNext ()
+            tx.Commit()
+            Ok claimed
+        with ex ->
+            (try tx.Rollback() with _ -> ())
+            Error ex.Message
+
+    /// Recover expired in-process leases without confusing lease expiry with
+    /// child termination. An offered attempt is still before BeginExecution's
+    /// launch linearization point, so it is safe to offer again. Every later
+    /// active state is ambiguous: the old child may still be running or may
+    /// have written journal/effect state that has not been observed. Those
+    /// attempts fail closed until reconciliation. RequeueOwnedAttempt is the
+    /// separate caller-authorized path and must only be used after every child
+    /// process has been confirmed terminated.
+    member _.RequeueExpiredLocalAttempts(org: OrganizationId) : int =
+        use conn = openConn ()
+        use tx = beginTenantTransaction conn org
+        use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
+        cmd.CommandText <-
+            "WITH expired AS MATERIALIZED (
+                 SELECT id, node_id, state
+                   FROM attempts
+                  WHERE organization_id = @o
+                    AND lease_owner LIKE 'local:%'
+                    AND lease_expires_at <= clock_timestamp()
+                    AND state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
+                  ORDER BY id
+                  FOR UPDATE
+             ), moved AS (
+                 UPDATE attempts a
+                    SET state = CASE WHEN e.state = 'offered'
+                                     THEN 'queued'
+                                     ELSE 'reconciliation_required'
+                                END,
+                        lease_owner = NULL,
+                        lease_expires_at = NULL
+                   FROM expired e
+                  WHERE a.organization_id = @o AND a.id = e.id
+                 RETURNING a.node_id, a.state
+             ), reconciled_nodes AS (
+                 UPDATE nodes n
+                    SET status = 'reconciliation_required'
+                   FROM (SELECT DISTINCT node_id
+                           FROM moved
+                          WHERE state = 'reconciliation_required') m
+                  WHERE n.organization_id = @o AND n.id = m.node_id
+                 RETURNING n.build_id
+             ), reconciled_builds AS (
+                 UPDATE builds b
+                    SET status = 'reconciliation_required'
+                   FROM (SELECT DISTINCT build_id FROM reconciled_nodes) n
+                  WHERE b.organization_id = @o AND b.id = n.build_id
+                 RETURNING b.id
+             )
+             SELECT (SELECT count(*)::integer FROM moved),
+                    (SELECT count(*)::integer FROM reconciled_nodes),
+                    (SELECT count(*)::integer FROM reconciled_builds)"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        use reader = cmd.ExecuteReader()
+        let count = if reader.Read() then reader.GetInt32 0 else 0
+        reader.Close()
+        tx.Commit()
+        count
+
+    member _.RequeueOwnedAttempt(org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string) : bool =
+        use conn = openConn ()
+        use tx = beginTenantTransaction conn org
+
+        try
+            // This path is authorized only after the caller has proved process
+            // extinction. Lock the same lineage in the same attempt -> node ->
+            // build order as execution start and terminal publication. The
+            // build's cancellation_requested bit is deliberately not cleared:
+            // if cancellation raced shutdown, the replacement claim observes it
+            // and becomes ABORTED before launching another child.
+            match lockExecutionAuthority conn tx org attempt fence owner false with
+            | None ->
+                tx.Rollback()
+                false
+            | Some(nodeId, buildId, _) ->
+                use requeueAttempt = conn.CreateCommand()
+                requeueAttempt.Transaction <- tx
+                requeueAttempt.CommandText <-
+                    "UPDATE attempts
+                        SET state = 'queued', lease_owner = NULL, lease_expires_at = NULL
+                      WHERE organization_id = @o AND id = @a AND fence = @f
+                        AND lease_owner = @owner
+                        AND state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')"
+                requeueAttempt.Parameters.AddWithValue("o", org.Value) |> ignore
+                requeueAttempt.Parameters.AddWithValue("a", attempt.Value) |> ignore
+                requeueAttempt.Parameters.AddWithValue("f", fence.Value) |> ignore
+                requeueAttempt.Parameters.AddWithValue("owner", owner) |> ignore
+
+                if requeueAttempt.ExecuteNonQuery() <> 1 then
+                    tx.Rollback()
+                    false
+                else
+                    use requeueNode = conn.CreateCommand()
+                    requeueNode.Transaction <- tx
+                    requeueNode.CommandText <-
+                        "UPDATE nodes SET status = 'queued'
+                          WHERE organization_id = @o AND id = @n AND build_id = @b"
+                    requeueNode.Parameters.AddWithValue("o", org.Value) |> ignore
+                    requeueNode.Parameters.AddWithValue("n", nodeId) |> ignore
+                    requeueNode.Parameters.AddWithValue("b", buildId) |> ignore
+
+                    if requeueNode.ExecuteNonQuery() <> 1 then
+                        failwith "requeued attempt has no node lineage"
+
+                    use requeueBuild = conn.CreateCommand()
+                    requeueBuild.Transaction <- tx
+                    requeueBuild.CommandText <-
+                        "UPDATE builds SET status = 'queued'
+                          WHERE organization_id = @o AND id = @b"
+                    requeueBuild.Parameters.AddWithValue("o", org.Value) |> ignore
+                    requeueBuild.Parameters.AddWithValue("b", buildId) |> ignore
+
+                    if requeueBuild.ExecuteNonQuery() <> 1 then
+                        failwith "requeued attempt has no build lineage"
+
+                    tx.Commit()
+                    true
+        with _ ->
+            (try tx.Rollback() with _ -> ())
+            reraise ()
+
+    member _.RequireReconciliation(org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string) : bool =
+        use conn = openConn ()
+        use tx = beginTenantTransaction conn org
+        use attemptCmd = conn.CreateCommand()
+        attemptCmd.Transaction <- tx
+        attemptCmd.CommandText <-
+            "UPDATE attempts
+                SET state = 'reconciliation_required', lease_owner = NULL, lease_expires_at = NULL
+              WHERE organization_id = @o AND id = @a AND fence = @f AND lease_owner = @owner
+                AND state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
+              RETURNING node_id"
+        attemptCmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        attemptCmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        attemptCmd.Parameters.AddWithValue("f", fence.Value) |> ignore
+        attemptCmd.Parameters.AddWithValue("owner", owner) |> ignore
+
+        match attemptCmd.ExecuteScalar() with
+        | null ->
+            tx.Rollback()
+            false
+        | nodeId ->
+            use rollup = conn.CreateCommand()
+            rollup.Transaction <- tx
+            rollup.CommandText <-
+                "WITH changed_node AS (
+                     UPDATE nodes
+                        SET status = 'reconciliation_required'
+                      WHERE organization_id = @o AND id = @n
+                     RETURNING build_id
+                 )
+                 UPDATE builds b
+                    SET status = 'reconciliation_required'
+                   FROM changed_node n
+                  WHERE b.organization_id = @o AND b.id = n.build_id"
+            rollup.Parameters.AddWithValue("o", org.Value) |> ignore
+            rollup.Parameters.AddWithValue("n", nodeId :?> Guid) |> ignore
+            rollup.ExecuteNonQuery() |> ignore
+            tx.Commit()
+            true
+
+    member _.BuildCancellationRequested(org: OrganizationId, build: BuildId) : bool =
+        use conn = openConn ()
+        use tx = beginTenantTransaction conn org
+        use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
+        cmd.CommandText <-
+            "SELECT cancellation_requested
+               FROM builds
+              WHERE organization_id = @o AND id = @b"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+        let requested =
+            match cmd.ExecuteScalar() with
+            | :? bool as value -> value
+            | _ -> false
+        tx.Commit()
+        requested
+
     /// FG-061 wait diagnostics. Distinguishes an EMPTY queue from a concrete
     /// capability mismatch, and names the missing capabilities — Jenkins' own
     /// "There are no nodes with the label X" is the behaviour worth matching
@@ -1320,53 +2145,211 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         tx.Commit()
         explanation
 
-    /// FG-064a. The append and its attempt -> node -> build ownership check are
-    /// one statement. IDs are tenant-composite, so the attempt predicate and
-    /// node join both carry the tenant.
-    member _.AppendLog(org: OrganizationId, build: BuildId, attempt: AttemptId, sequence: int, body: string) : bool =
+    /// Lock the canonical lineage in the same explicit order as execution
+    /// roll-up: attempt -> node -> build. Both attempts.node_id and
+    /// nodes.build_id are mutable columns, so locking only the attempt or using
+    /// a multi-table query leaves a substitution window. The requested build
+    /// is checked only after the actual lineage and its build row are locked.
+    /// A concurrent duplicate waiter also acquires the attempt only after the
+    /// winner commits, so its following READ COMMITTED duplicate query sees the
+    /// committed chunk without burning a build cursor.
+    member private _.LockLogLineage
+        (conn: NpgsqlConnection,
+         tx: NpgsqlTransaction,
+         org: OrganizationId,
+         build: BuildId,
+         attempt: AttemptId)
+        : bool =
+        use attemptLock = conn.CreateCommand()
+        attemptLock.Transaction <- tx
+        attemptLock.CommandText <-
+            "SELECT node_id FROM attempts
+              WHERE organization_id = @o AND id = @a
+              FOR UPDATE"
+        attemptLock.Parameters.AddWithValue("o", org.Value) |> ignore
+        attemptLock.Parameters.AddWithValue("a", attempt.Value) |> ignore
+
+        match attemptLock.ExecuteScalar() with
+        | null -> false
+        | nodeValue ->
+            let nodeId = nodeValue :?> Guid
+            use nodeLock = conn.CreateCommand()
+            nodeLock.Transaction <- tx
+            nodeLock.CommandText <-
+                "SELECT build_id FROM nodes
+                  WHERE organization_id = @o AND id = @n
+                  FOR UPDATE"
+            nodeLock.Parameters.AddWithValue("o", org.Value) |> ignore
+            nodeLock.Parameters.AddWithValue("n", nodeId) |> ignore
+
+            match nodeLock.ExecuteScalar() with
+            | null -> false
+            | buildValue ->
+                let lockedBuildId = buildValue :?> Guid
+                use buildLock = conn.CreateCommand()
+                buildLock.Transaction <- tx
+                buildLock.CommandText <-
+                    "SELECT id FROM builds
+                      WHERE organization_id = @o AND id = @b
+                      FOR UPDATE"
+                buildLock.Parameters.AddWithValue("o", org.Value) |> ignore
+                buildLock.Parameters.AddWithValue("b", lockedBuildId) |> ignore
+
+                match buildLock.ExecuteScalar() with
+                | :? Guid as lockedId -> lockedId = build.Value
+                | _ -> false
+
+    member private _.LogChunkExists
+        (conn: NpgsqlConnection, tx: NpgsqlTransaction, org: OrganizationId, attempt: AttemptId, sequence: int)
+        : bool =
+        use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
+        cmd.CommandText <-
+            "SELECT EXISTS (
+                 SELECT 1 FROM log_chunks
+                  WHERE organization_id = @o AND attempt_id = @a AND sequence = @s
+             )"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        cmd.Parameters.AddWithValue("s", sequence) |> ignore
+        cmd.ExecuteScalar() :?> bool
+
+    /// FG-064a. Canonical tenant lineage is locked before publication. The
+    /// caller's sequence is attempt-local for replay idempotency; the UPDATE
+    /// atomically allocates the public, build-wide cursor even when multiple
+    /// attempts publish concurrently.
+    member this.AppendLog(org: OrganizationId, build: BuildId, attempt: AttemptId, sequence: int, body: string) : bool =
+        use conn = openConn ()
+        use tx = beginTenantTransaction conn org
+
+        let appended =
+            if not (this.LockLogLineage(conn, tx, org, build, attempt)) then
+                false
+            elif this.LogChunkExists(conn, tx, org, attempt, sequence) then
+                false
+            else
+                use cmd = conn.CreateCommand()
+                cmd.Transaction <- tx
+                cmd.CommandText <-
+                    "WITH allocation AS (
+                         UPDATE builds b
+                            SET next_log_sequence = GREATEST(b.next_log_sequence, @s) + 1
+                          WHERE b.organization_id = @o AND b.id = @b
+                         RETURNING b.next_log_sequence - 1 AS build_sequence
+                     )
+                     INSERT INTO log_chunks
+                            (organization_id, build_id, attempt_id, sequence, build_sequence, body)
+                     SELECT @o, @b, @a, @s, allocation.build_sequence, @body
+                       FROM allocation"
+                cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+                cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+                cmd.Parameters.AddWithValue("s", sequence) |> ignore
+                cmd.Parameters.AddWithValue("body", body) |> ignore
+                cmd.ExecuteNonQuery() = 1
+
+        tx.Commit()
+        appended
+
+    /// The local supervisor, not the untrusted child, writes public log chunks.
+    /// After the canonical lineage locks are held, authority is re-checked in
+    /// the allocation statement so a stale supervisor cannot consume a cursor
+    /// or append after its lease or fence has been replaced.
+    member this.AppendLogFenced
+        (org: OrganizationId,
+         build: BuildId,
+         attempt: AttemptId,
+         fence: Fence,
+         owner: string,
+         sequence: int,
+         body: string)
+        : bool =
+        use conn = openConn ()
+        use tx = beginTenantTransaction conn org
+
+        let appended =
+            if not (this.LockLogLineage(conn, tx, org, build, attempt)) then
+                false
+            elif this.LogChunkExists(conn, tx, org, attempt, sequence) then
+                false
+            else
+                use cmd = conn.CreateCommand()
+                cmd.Transaction <- tx
+                cmd.CommandText <-
+                    "WITH allocation AS (
+                         UPDATE builds b
+                            SET next_log_sequence = GREATEST(b.next_log_sequence, @s) + 1
+                          WHERE b.organization_id = @o AND b.id = @b
+                            AND EXISTS (
+                                SELECT 1
+                                  FROM attempts a
+                                 WHERE a.organization_id = @o AND a.id = @a
+                                   AND a.fence = @f AND a.lease_owner = @owner
+                                   AND a.lease_expires_at > clock_timestamp()
+                                   AND a.state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
+                                   AND a.restore_epoch =
+                                       (SELECT restore_epoch FROM controller_metadata WHERE singleton)
+                            )
+                         RETURNING b.next_log_sequence - 1 AS build_sequence
+                     )
+                     INSERT INTO log_chunks
+                            (organization_id, build_id, attempt_id, sequence, build_sequence, body)
+                     SELECT @o, @b, @a, @s, allocation.build_sequence, @body
+                       FROM allocation"
+                cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+                cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+                cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
+                cmd.Parameters.AddWithValue("owner", owner) |> ignore
+                cmd.Parameters.AddWithValue("s", sequence) |> ignore
+                cmd.Parameters.AddWithValue("body", body) |> ignore
+                cmd.ExecuteNonQuery() = 1
+
+        tx.Commit()
+        appended
+
+    member _.NextLogSequence(org: OrganizationId, attempt: AttemptId) : int =
         use conn = openConn ()
         use tx = beginTenantTransaction conn org
         use cmd = conn.CreateCommand()
         cmd.Transaction <- tx
         cmd.CommandText <-
-            "INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, body)
-             SELECT a.organization_id, n.build_id, a.id, @s, @body
-             FROM attempts a
-             JOIN nodes n ON n.organization_id = a.organization_id AND n.id = a.node_id
-             WHERE a.organization_id = @o AND a.id = @a AND n.build_id = @b
-             ON CONFLICT (organization_id, attempt_id, sequence) DO NOTHING"
+            "SELECT COALESCE(MAX(sequence), -1) + 1
+               FROM log_chunks
+              WHERE organization_id = @o AND attempt_id = @a"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
-        cmd.Parameters.AddWithValue("b", build.Value) |> ignore
         cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
-        cmd.Parameters.AddWithValue("s", sequence) |> ignore
-        cmd.Parameters.AddWithValue("body", body) |> ignore
-        let appended = cmd.ExecuteNonQuery() = 1
+        let value = cmd.ExecuteScalar() :?> int
         tx.Commit()
-        appended
+        value
 
     /// FG-060a/FG-064. The build lineage and progressive read are one query.
     /// Some [] therefore means a real build with no chunks at this offset,
     /// while None means that org/project/build lineage does not exist.
-    member _.ReadLog(org: OrganizationId, project: ProjectId, build: BuildId, fromSequence: int) : (int * string) list option =
+    member _.ReadLogPage
+        (org: OrganizationId, project: ProjectId, build: BuildId, fromSequence: int, limit: int)
+        : (int * string) list option =
         use conn = openConn ()
         use tx = beginTenantTransaction conn org
         use cmd = conn.CreateCommand()
         cmd.Transaction <- tx
         cmd.CommandText <-
-            "SELECT l.sequence, l.body
+            "SELECT l.build_sequence, l.body
                FROM builds b
                LEFT JOIN log_chunks l
                  ON l.organization_id = b.organization_id
                 AND l.build_id = b.id
-                AND l.sequence >= @s
+                AND l.build_sequence >= @s
               WHERE b.organization_id = @o
                 AND b.project_id = @p
                 AND b.id = @b
-              ORDER BY l.sequence"
+              ORDER BY l.build_sequence
+              LIMIT @limit"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
         cmd.Parameters.AddWithValue("p", project.Value) |> ignore
         cmd.Parameters.AddWithValue("b", build.Value) |> ignore
         cmd.Parameters.AddWithValue("s", fromSequence) |> ignore
+        cmd.Parameters.AddWithValue("limit", max 1 limit) |> ignore
 
         use r = cmd.ExecuteReader()
         let mutable lineageExists = false
@@ -1383,10 +2366,15 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         tx.Commit()
         result
 
+    member this.ReadLog(org: OrganizationId, project: ProjectId, build: BuildId, fromSequence: int) =
+        this.ReadLogPage(org, project, build, fromSequence, Int32.MaxValue)
+
     /// Cancellation is IDEMPOTENT by design. A retried request — after a client
     /// timeout, say — must not look like an error: the caller's intent is already
     /// satisfied. What genuinely is a conflict is asking to cancel a build that
-    /// has already finished, or one that does not exist.
+    /// has already finished, or one that does not exist. The build row lock is
+    /// also PublishTerminal's arbitration point: whichever transaction acquires
+    /// it first determines whether cancellation or the prior terminal result wins.
     member _.RequestCancellation(org: OrganizationId, project: ProjectId, build: BuildId) : CancellationOutcome =
         use conn = openConn ()
         use tx = beginTenantTransaction conn org
@@ -1394,7 +2382,8 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         cmd.Transaction <- tx
         cmd.CommandText <-
             "SELECT status, cancellation_requested FROM builds
-              WHERE organization_id = @o AND project_id = @p AND id = @b"
+              WHERE organization_id = @o AND project_id = @p AND id = @b
+              FOR UPDATE"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
         cmd.Parameters.AddWithValue("p", project.Value) |> ignore
         cmd.Parameters.AddWithValue("b", build.Value) |> ignore
@@ -1405,7 +2394,15 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
 
         match existing with
         | None -> NoSuchBuild
-        | Some(status, _) when status = "succeeded" || status = "failed" || status = "aborted" ->
+        | Some(status, _) when
+            status = "success"
+            || status = "unstable"
+            || status = "failure"
+            || status = "aborted"
+            // Read compatibility for pre-FG-224 fixtures/rows.
+            || status = "succeeded"
+            || status = "failed"
+            ->
             AlreadyTerminal status
         | Some(_, true) -> AlreadyRequested
         | Some _ ->
@@ -1413,11 +2410,13 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             upd.Transaction <- tx
             upd.CommandText <-
                 "UPDATE builds SET cancellation_requested = true
-                  WHERE organization_id = @o AND project_id = @p AND id = @b"
+                  WHERE organization_id = @o AND project_id = @p AND id = @b
+                    AND status NOT IN ('success', 'unstable', 'failure', 'aborted', 'succeeded', 'failed')"
             upd.Parameters.AddWithValue("o", org.Value) |> ignore
             upd.Parameters.AddWithValue("p", project.Value) |> ignore
             upd.Parameters.AddWithValue("b", build.Value) |> ignore
-            upd.ExecuteNonQuery() |> ignore
+            if upd.ExecuteNonQuery() <> 1 then
+                failwith "cancellation target changed after row arbitration"
             CancellationAccepted
         |> fun outcome ->
             tx.Commit()

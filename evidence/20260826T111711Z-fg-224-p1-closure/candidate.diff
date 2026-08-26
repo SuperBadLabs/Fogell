@@ -1,0 +1,624 @@
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index cb77490..4ac89cc 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -22,6 +22,11 @@ and a versioned fingerprint binding source plus controller-owned placement.
+ Concurrent replays of one idempotency key converge on that immutable definition;
+ source or placement substitution is refused.
+ 
++Before durable admission, the HTTP boundary runs the same deterministic
++execution preflight as `Fogell.Run.Host`. A pipeline that parses but exceeds
++Fogell's execution capability returns a stable 422 refusal without allocating a
++build number or binding the caller's idempotency key.
++
+ The local worker discovers organization UUID roots after restart, claims one
+ whole-pipeline execution unit, materializes the exact durable source, and starts
+ `Fogell.Run.Host` in its own process group with a cleared environment. The child
+@@ -90,21 +95,23 @@ controller process, real whole-pipeline execution, progressive output through
+ the HTTP API before terminal state, exact-once output after terminal state,
+ decoded-body overflow refusal for an actual chunked request, atomic terminal
+ roll-up, exact idempotent replay, source-substitution conflict, request placement
+-denial, durable build-number metadata, terminal cancellation conflict, immutable
+-definition enforcement, and absence of configured token/password text in host
+-logs. Unsafe worker poll/lease combinations are refused at startup. The hosted
++denial, and a repeated parseable-but-execution-unsupported submission that
++creates no build and leaves its idempotency key available to a supported source.
++It also proves durable build-number metadata, terminal cancellation conflict,
++immutable definition enforcement, and absence of configured token/password text
++in host logs. Unsafe worker poll/lease combinations are refused at startup. The hosted
+ gate runs this proof against its PostgreSQL service.
+ 
+ Exact-tree HeMan acceptance on fresh databases:
+ 
+ - Store: 80/80 passed;
+-- Controller API: 23/23 passed;
++- Controller API: 24/24 passed;
+ - Differential: 265/265 passed;
+ - Execution: 94/94 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-locked repository gate also passes all 871 main-suite tests and every blocking
++locked repository gate also passes all 872 main-suite tests and every blocking
+ proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
+ recorded at publication rather than predicted here.
+ 
+diff --git a/scripts/prove-runnable-controller.sh b/scripts/prove-runnable-controller.sh
+index a3ab097..20d7cb2 100755
+--- a/scripts/prove-runnable-controller.sh
++++ b/scripts/prove-runnable-controller.sh
+@@ -171,6 +171,47 @@ chunked_code=$(curl --http1.1 -sS -o "$scratch/chunked-overflow.json" -w '%{http
+ grep -q 'pipeline_too_large' "$scratch/chunked-overflow.json" \
+   || { echo "FG-224 REFUSED: chunked overflow lost its stable error code" >&2; exit 1; }
+ 
++# A parseable pipeline can still be outside Fogell's execution capability.
++# Admission must run the exact Run.Host preflight before allocating a build or
++# binding the idempotency key, so a retry is a stable refusal and the same key
++# remains available for a supported source.
++unsupported_pipeline=$'pipeline {\n  agent any\n  tools { maven \'m3\' }\n  stages { stage(\'Unsupported\') { steps { echo \'never-admitted\' } } }\n}'
++builds_before_unsupported=$(admin "$database" -Atc \
++  "SELECT count(*) FROM builds WHERE organization_id='$organization' AND project_id='$project'")
++for attempt in 1 2; do
++  unsupported_code=$(curl -sS -o "$scratch/unsupported-$attempt.json" -w '%{http_code}' -X POST \
++    -H "$auth" -H 'idempotency-key: fg224-unsupported-retry' \
++    -H 'content-type: application/x-jenkinsfile' --data-binary "$unsupported_pipeline" "$builds_url")
++  [[ "$unsupported_code" = 422 ]] \
++    || { echo "FG-224 REFUSED: unsupported admission attempt $attempt returned $unsupported_code" >&2; exit 1; }
++  grep -Fq '"code":"execution_unsupported"' "$scratch/unsupported-$attempt.json" \
++    || { echo "FG-224 REFUSED: unsupported admission attempt $attempt lost its stable API code" >&2; exit 1; }
++  grep -Fq 'unsupported_tools' "$scratch/unsupported-$attempt.json" \
++    || { echo "FG-224 REFUSED: unsupported admission attempt $attempt lost the shared preflight reason" >&2; exit 1; }
++  builds_after_unsupported=$(admin "$database" -Atc \
++    "SELECT count(*) FROM builds WHERE organization_id='$organization' AND project_id='$project'")
++  [[ "$builds_after_unsupported" = "$builds_before_unsupported" ]] \
++    || { echo "FG-224 REFUSED: unsupported admission attempt $attempt created durable build state" >&2; exit 1; }
++done
++
++supported_after_refusal=$(curl -sS -o "$scratch/supported-after-refusal.json" -w '%{http_code}' -X POST \
++  -H "$auth" -H 'idempotency-key: fg224-unsupported-retry' \
++  -H 'content-type: application/x-jenkinsfile' --data-binary "$exact_prefix" "$builds_url")
++[[ "$supported_after_refusal" = 201 ]] \
++  || { echo "FG-224 REFUSED: refused idempotency key was not available to supported admission" >&2; exit 1; }
++supported_after_refusal_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <"$scratch/supported-after-refusal.json")
++[[ -n "$supported_after_refusal_id" ]] \
++  || { echo "FG-224 REFUSED: supported admission after refusal returned no build id" >&2; exit 1; }
++supported_replay_code=$(curl -sS -o "$scratch/supported-after-refusal-replay.json" -w '%{http_code}' -X POST \
++  -H "$auth" -H 'idempotency-key: fg224-unsupported-retry' \
++  -H 'content-type: application/x-jenkinsfile' --data-binary "$exact_prefix" "$builds_url")
++[[ "$supported_replay_code" = 200 ]] \
++  || { echo "FG-224 REFUSED: supported admission after refusal did not replay idempotently" >&2; exit 1; }
++supported_cancel_code=$(curl -sS -o "$scratch/supported-after-refusal-cancel.json" -w '%{http_code}' -X POST \
++  -H "$auth" "$builds_url/$supported_after_refusal_id/cancel")
++[[ "$supported_cancel_code" = 202 ]] \
++  || { echo "FG-224 REFUSED: supported admission after refusal was not cancelled before worker start" >&2; exit 1; }
++
+ poison_pipeline=$'pipeline {\n  agent any\n  stages {\n    stage(\'Poison\') {\n      steps {\n        echo \'this-source-must-never-run\'\n      }\n    }\n  }\n}'
+ poison_response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-materialization-poison' \
+   -H 'content-type: application/x-jenkinsfile' --data-binary "$poison_pipeline" "$builds_url")
+@@ -185,8 +226,8 @@ response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-e2e' \
+ build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$response")
+ [[ -n "$build_id" ]] || { echo "FG-224 REFUSED: admission returned no build id" >&2; exit 1; }
+ build_number=$(sed -n 's/.*"number":\([0-9][0-9]*\).*/\1/p' <<<"$response")
+-[[ "$build_number" = 3 ]] \
+-  || { echo "FG-224 REFUSED: third project admission returned build number ${build_number:-missing}" >&2; exit 1; }
++[[ "$build_number" = 4 ]] \
++  || { echo "FG-224 REFUSED: fourth project admission returned build number ${build_number:-missing}" >&2; exit 1; }
+ 
+ queued_state=$(admin "$database" -Atc \
+   "SELECT a.state FROM attempts a JOIN nodes n ON n.id=a.node_id AND n.organization_id=a.organization_id WHERE n.build_id='$build_id'")
+@@ -351,6 +392,123 @@ facts=$(admin "$database" -Atc \
+           (SELECT count(*) FROM outbox WHERE topic='build.terminal' AND body->>'build'='$build_id')")
+ [[ "$facts" = "1|1|1|1|1" ]] || { echo "FG-224 REFUSED: durable vertical slice counts were $facts" >&2; exit 1; }
+ 
++# A retry is a new execution attempt over the same build and source. Its
++# journal must therefore be keyed by attempt identity: a build-keyed journal
++# would make the child replay the failed parent's terminal record without ever
++# entering the shell. The source leaves one workspace marker so its second
++# execution (the retry child) is observable and successful.
++retry_pipeline=$'pipeline {\n  agent any\n  stages {\n    stage(\'RetryJournal\') {\n      steps {\n        sh \'if [ -f "$HOME/.fg224-allow-child" ]; then echo FG224-RETRY-CHILD-EXECUTED; else exit 7; fi\'\n        echo \'FG224-RETRY-CHILD-COMPLETED\'\n      }\n    }\n  }\n}'
++retry_response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-attempt-journal' \
++  -H 'content-type: application/x-jenkinsfile' --data-binary "$retry_pipeline" "$builds_url")
++retry_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$retry_response")
++retry_parent_attempt=$(sed -n 's/.*"attempt_id":"\([^"]*\)".*/\1/p' <<<"$retry_response")
++[[ -n "$retry_build_id" && -n "$retry_parent_attempt" ]] \
++  || { echo "FG-224 REFUSED: retry journal fixture admission lost build or attempt identity" >&2; exit 1; }
++retry_build_key=${retry_build_id//-/}
++
++retry_parent_terminal=""
++for _ in $(seq 1 300); do
++  retry_parent_terminal=$(admin "$database" -Atc \
++    "SELECT state || '|' || COALESCE(result, '') FROM attempts WHERE organization_id='$organization' AND id='$retry_parent_attempt'")
++  [[ "$retry_parent_terminal" = "terminal|failure" ]] && break
++  [[ "$retry_parent_terminal" = reconciliation_required* ]] && {
++    echo "FG-224 REFUSED: retry parent required reconciliation: $retry_parent_terminal" >&2
++    exit 1
++  }
++  sleep 0.05
++done
++[[ "$retry_parent_terminal" = "terminal|failure" ]] \
++  || { echo "FG-224 REFUSED: retry parent did not fail durably: $retry_parent_terminal" >&2; exit 1; }
++
++# Parent and retry share the restart-stable build HOME. Make the already-
++# admitted source's child branch eligible only after the parent's failure is
++# durable, so the child execution cannot be a replayed parent result. The
++# worker-created private HOME already exists; refusing an empty match keeps the
++# proof honest if its derivation ever changes.
++retry_home_root="$state_root/workspaces/$organization_key/_agent_home"
++retry_home_count=0
++for retry_home in "$retry_home_root"/*; do
++  [[ -d "$retry_home" ]] || continue
++  touch "$retry_home/.fg224-allow-child"
++  retry_home_count=$((retry_home_count + 1))
++done
++(( retry_home_count > 0 )) \
++  || { echo "FG-224 REFUSED: retry parent created no private build HOME" >&2; exit 1; }
++
++retry_child_attempt=$(tr -d '-' </proc/sys/kernel/random/uuid)
++retry_child_attempt="${retry_child_attempt:0:8}-${retry_child_attempt:8:4}-${retry_child_attempt:12:4}-${retry_child_attempt:16:4}-${retry_child_attempt:20:12}"
++admin "$database" -c "BEGIN;
++  INSERT INTO attempts
++      (id, organization_id, node_id, ordinal, retry_of, state, fence,
++       restore_epoch, lease_owner, lease_expires_at, result)
++    SELECT '$retry_child_attempt', organization_id, node_id, ordinal + 1, id,
++           'queued', 0, restore_epoch, NULL, NULL, NULL
++      FROM attempts
++     WHERE organization_id='$organization' AND id='$retry_parent_attempt';
++  INSERT INTO retry_decisions
++      (organization_id, parent_attempt_id, parent_node_id, parent_ordinal,
++       parent_retry_of, parent_restore_epoch, attempt_limit, outcome,
++       child_attempt_id, dead_letter_reason)
++    SELECT organization_id, id, node_id, ordinal, retry_of, restore_epoch,
++           2, 'child_created', '$retry_child_attempt', NULL
++      FROM attempts
++     WHERE organization_id='$organization' AND id='$retry_parent_attempt';
++  COMMIT;" >/dev/null
++
++retry_child_terminal=""
++for _ in $(seq 1 300); do
++  retry_child_terminal=$(admin "$database" -Atc \
++    "SELECT state || '|' || COALESCE(result, '') FROM attempts WHERE organization_id='$organization' AND id='$retry_child_attempt'")
++  [[ "$retry_child_terminal" = "terminal|success" ]] && break
++  [[ "$retry_child_terminal" = reconciliation_required* ]] && {
++    echo "FG-224 REFUSED: retry child required reconciliation: $retry_child_terminal" >&2
++    exit 1
++  }
++  sleep 0.05
++done
++[[ "$retry_child_terminal" = "terminal|success" ]] \
++  || { echo "FG-224 REFUSED: retry child did not execute successfully: $retry_child_terminal" >&2; exit 1; }
++
++retry_logs=$(curl -fsS -H "$auth" "$builds_url/$retry_build_id/logs")
++retry_child_marker_count=$(admin "$database" -Atc \
++  "SELECT count(*) FROM log_chunks
++    WHERE organization_id='$organization' AND build_id='$retry_build_id'
++      AND body='FG224-RETRY-CHILD-EXECUTED'")
++[[ "$retry_child_marker_count" = 1 ]] \
++  || { echo "FG-224 REFUSED: retry child shell did not execute exactly once" >&2; exit 1; }
++grep -Fq 'FG224-RETRY-CHILD-COMPLETED' <<<"$retry_logs" \
++  || { echo "FG-224 REFUSED: retry child did not reach its continuation" >&2; exit 1; }
++
++retry_parent_key=${retry_parent_attempt//-/}
++retry_child_key=${retry_child_attempt//-/}
++retry_journal_root="$state_root/journals/$organization_key/attempts"
++retry_parent_journal="$retry_journal_root/$retry_parent_key.journal"
++retry_child_journal="$retry_journal_root/$retry_child_key.journal"
++retry_legacy_journal="$state_root/journals/$organization_key/$retry_build_key.journal"
++[[ -f "$retry_parent_journal" && -f "$retry_child_journal" ]] \
++  || { echo "FG-224 REFUSED: parent and child did not receive separate attempt journals" >&2; exit 1; }
++[[ "$retry_parent_journal" != "$retry_child_journal" && ! -e "$retry_legacy_journal" ]] \
++  || { echo "FG-224 REFUSED: retry journal identity collided with parent or legacy build path" >&2; exit 1; }
++grep -qx $'build-finished\tfailure' "$retry_parent_journal" \
++  || { echo "FG-224 REFUSED: parent journal lost its failure terminal" >&2; exit 1; }
++grep -qx $'build-finished\tsuccess' "$retry_child_journal" \
++  || { echo "FG-224 REFUSED: child journal lost its success terminal" >&2; exit 1; }
++
++# Restarting the exact child against its deterministic path must resume that
++# journal as a terminal no-op, not execute the shell again or append bytes.
++retry_child_sum_before=$(sha256sum "$retry_child_journal" | cut -d' ' -f1)
++"$run_host" \
++  "$state_root/definitions/$organization_key/$retry_build_key/Jenkinsfile" \
++  "$state_root/workspaces/$organization_key" "$retry_build_key" "$retry_child_journal" \
++  >"$scratch/retry-child-restart.log" 2>&1
++retry_child_sum_after=$(sha256sum "$retry_child_journal" | cut -d' ' -f1)
++[[ "$retry_child_sum_after" = "$retry_child_sum_before" ]] \
++  || { echo "FG-224 REFUSED: same-child restart mutated its terminal journal" >&2; exit 1; }
++grep -Fq 'already-terminal: success' "$scratch/retry-child-restart.log" \
++  || { echo "FG-224 REFUSED: same-child restart did not resume its own terminal journal" >&2; exit 1; }
++! grep -Fq 'FG224-RETRY-CHILD-EXECUTED' "$scratch/retry-child-restart.log" \
++  || { echo "FG-224 REFUSED: same-child restart re-executed the shell" >&2; exit 1; }
++
+ # Force a finite post-exit event tail beyond the former 16 MiB aggregate drain
+ # ceiling. With a 10-second poll and the guarded sub-80-second runtime, bounded
+ # running slices can consume less than 3 MiB of the >24 MiB encoded event file;
+@@ -431,4 +589,4 @@ if grep -Fq 'fg224-proof-token-0123456789abcdef' "$host_log" || grep -Fq 'Passwo
+   exit 1
+ fi
+ 
+-echo "FG-224 PROOF PASS: safe timing refusal; restart-discovered durable admission; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; atomic terminal roll-up"
++echo "FG-224 PROOF PASS: safe timing refusal; exact execution-preflight admission and idempotency boundary; restart-discovered durable admission; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; attempt-keyed retry journals with same-child deterministic resume; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; atomic terminal roll-up"
+diff --git a/src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj b/src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj
+index 3e9b9fe..2213982 100644
+--- a/src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj
++++ b/src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj
+@@ -10,6 +10,7 @@
+   </ItemGroup>
+   <ItemGroup>
+     <ProjectReference Include="../Fogell.Store/Fogell.Store.fsproj" />
++    <ProjectReference Include="../Fogell.Differential/Fogell.Differential.fsproj" />
+     <ProjectReference Include="../Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />
+   </ItemGroup>
+ </Project>
+diff --git a/src/Fogell.Controller.Api/Router.fs b/src/Fogell.Controller.Api/Router.fs
+index 03699f0..0bb0b16 100644
+--- a/src/Fogell.Controller.Api/Router.fs
++++ b/src/Fogell.Controller.Api/Router.fs
+@@ -140,37 +140,46 @@ module Router =
+                                                 (Fogell.Admission.AdmissionError.render source e)
+                                                 (Some(string e.Position))
+                                     | Result.Ok pipeline ->
+-                                        let stages =
+-                                            Fogell.Ir.Pipeline.flattenStages pipeline.Stages
+-                                            |> List.map (fun s -> s.Name)
+-
+-                                        let input =
+-                                            { OrganizationId = OrganizationId org
+-                                              ProjectId = ProjectId project
+-                                              IdempotencyKey = key
+-                                              PipelineSource = sourceBytes
+-                                              StageNames = stages
+-                                              RequiredTrustPool = state.TrustPool
+-                                              RequiredCapabilities = [ "linux" ] }
+-
+-                                        match state.Store.AdmitBuild input with
+-                                        | Result.Error e when
+-                                            e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
+-                                            ->
+-                                            return! fail ctx 409 "idempotency_conflict" e None
+-                                        | Result.Error _ ->
++                                        // Parse success is deliberately broader than the execution
++                                        // capability. The durable controller must ask the same
++                                        // fail-closed preflight as Run.Host before binding either a
++                                        // build number or the caller's idempotency key.
++                                        match Fogell.Differential.FogellSide.preflightExecution source with
++                                        | Result.Error why ->
+                                             return!
+-                                                fail ctx 503 "admission_unavailable"
+-                                                    "build admission is temporarily unavailable" None
+-                                        | Result.Ok a ->
+-                                            let payload: AdmissionResponse =
+-                                                { BuildId = string a.BuildId.Value
+-                                                  NodeId = string a.NodeId.Value
+-                                                  AttemptId = string a.AttemptId.Value
+-                                                  Number = a.Number
+-                                                  WasExisting = a.WasExisting }
++                                                fail ctx 422 "execution_unsupported" why None
++                                        | Result.Ok _ ->
++                                            let stages =
++                                                Fogell.Ir.Pipeline.flattenStages pipeline.Stages
++                                                |> List.map (fun s -> s.Name)
+ 
+-                                            return! json ctx (if a.WasExisting then 200 else 201) payload
++                                            let input =
++                                                { OrganizationId = OrganizationId org
++                                                  ProjectId = ProjectId project
++                                                  IdempotencyKey = key
++                                                  PipelineSource = sourceBytes
++                                                  StageNames = stages
++                                                  RequiredTrustPool = state.TrustPool
++                                                  RequiredCapabilities = [ "linux" ] }
++
++                                            match state.Store.AdmitBuild input with
++                                            | Result.Error e when
++                                                e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
++                                                ->
++                                                return! fail ctx 409 "idempotency_conflict" e None
++                                            | Result.Error _ ->
++                                                return!
++                                                    fail ctx 503 "admission_unavailable"
++                                                        "build admission is temporarily unavailable" None
++                                            | Result.Ok a ->
++                                                let payload: AdmissionResponse =
++                                                    { BuildId = string a.BuildId.Value
++                                                      NodeId = string a.NodeId.Value
++                                                      AttemptId = string a.AttemptId.Value
++                                                      Number = a.Number
++                                                      WasExisting = a.WasExisting }
++
++                                                return! json ctx (if a.WasExisting then 200 else 201) payload
+         }
+         :> Threading.Tasks.Task
+ 
+diff --git a/src/Fogell.Controller.Api/packages.lock.json b/src/Fogell.Controller.Api/packages.lock.json
+index bca8fdc..906990d 100644
+--- a/src/Fogell.Controller.Api/packages.lock.json
++++ b/src/Fogell.Controller.Api/packages.lock.json
+@@ -28,12 +28,30 @@
+           "Fogell.Ir": "[1.0.0, )"
+         }
+       },
++      "fogell.differential": {
++        "type": "Project",
++        "dependencies": {
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Execution": "[1.0.0, )",
++          "Fogell.Groovy.Interpreter": "[1.0.0, )",
++          "Fogell.Groovy.Parser": "[1.0.0, )",
++          "Fogell.Pipeline.Parser": "[1.0.0, )"
++        }
++      },
+       "fogell.domain": {
+         "type": "Project",
+         "dependencies": {
+           "FSharp.Core": "[10.1.301, )"
+         }
+       },
++      "fogell.execution": {
++        "type": "Project",
++        "dependencies": {
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Admission": "[1.0.0, )",
++          "Fogell.Domain": "[1.0.0, )"
++        }
++      },
+       "fogell.groovy": {
+         "type": "Project",
+         "dependencies": {
+@@ -41,6 +59,14 @@
+           "Fogell.Ir": "[1.0.0, )"
+         }
+       },
++      "fogell.groovy.interpreter": {
++        "type": "Project",
++        "dependencies": {
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Admission": "[1.0.0, )",
++          "Fogell.Groovy": "[1.0.0, )"
++        }
++      },
+       "fogell.groovy.parser": {
+         "type": "Project",
+         "dependencies": {
+diff --git a/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj b/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
+index 751221a..6bbb4d2 100644
+--- a/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
++++ b/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
+@@ -8,6 +8,7 @@
+     <Compile Include="EventStream.fs" />
+     <Compile Include="ProcessGroup.fs" />
+     <Compile Include="WorkerScheduling.fs" />
++    <Compile Include="WorkerPaths.fs" />
+     <Compile Include="Worker.fs" />
+     <Compile Include="Program.fs" />
+   </ItemGroup>
+diff --git a/src/Fogell.Controller.Host/Worker.fs b/src/Fogell.Controller.Host/Worker.fs
+index a3e2911..7ab00aa 100644
+--- a/src/Fogell.Controller.Host/Worker.fs
++++ b/src/Fogell.Controller.Host/Worker.fs
+@@ -211,7 +211,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+             let buildKey = claim.BuildId.Value.ToString "N"
+             let orgKey = claim.OrganizationId.Value.ToString "N"
+             let definitionPath = Path.Combine(config.StateRoot, "definitions", orgKey, buildKey, "Jenkinsfile")
+-            let journalPath = Path.Combine(config.StateRoot, "journals", orgKey, buildKey + ".journal")
++            let journalPath = WorkerPaths.journalPath config.StateRoot claim.OrganizationId claim.AttemptId
+             let eventPath =
+                 Path.Combine(
+                     config.StateRoot,
+diff --git a/src/Fogell.Controller.Host/WorkerPaths.fs b/src/Fogell.Controller.Host/WorkerPaths.fs
+new file mode 100644
+index 0000000..fc807a5
+--- /dev/null
++++ b/src/Fogell.Controller.Host/WorkerPaths.fs
+@@ -0,0 +1,15 @@
++namespace Fogell.Controller.Host
++
++open System.IO
++open Fogell.Domain
++
++/// Durable worker paths whose identity must follow an execution attempt, not
++/// the build shared by every attempt in a retry lineage.
++module WorkerPaths =
++    let journalPath stateRoot (organizationId: OrganizationId) (attemptId: AttemptId) =
++        Path.Combine(
++            stateRoot,
++            "journals",
++            organizationId.Value.ToString "N",
++            "attempts",
++            attemptId.Value.ToString "N" + ".journal")
+diff --git a/src/Fogell.Controller.Host/packages.lock.json b/src/Fogell.Controller.Host/packages.lock.json
+index c0f29d5..e9e6d92 100644
+--- a/src/Fogell.Controller.Host/packages.lock.json
++++ b/src/Fogell.Controller.Host/packages.lock.json
+@@ -32,10 +32,21 @@
+         "type": "Project",
+         "dependencies": {
+           "FSharp.Core": "[10.1.301, )",
++          "Fogell.Differential": "[1.0.0, )",
+           "Fogell.Pipeline.Parser": "[1.0.0, )",
+           "Fogell.Store": "[1.0.0, )"
+         }
+       },
++      "fogell.differential": {
++        "type": "Project",
++        "dependencies": {
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Execution": "[1.0.0, )",
++          "Fogell.Groovy.Interpreter": "[1.0.0, )",
++          "Fogell.Groovy.Parser": "[1.0.0, )",
++          "Fogell.Pipeline.Parser": "[1.0.0, )"
++        }
++      },
+       "fogell.domain": {
+         "type": "Project",
+         "dependencies": {
+@@ -57,6 +68,14 @@
+           "Fogell.Ir": "[1.0.0, )"
+         }
+       },
++      "fogell.groovy.interpreter": {
++        "type": "Project",
++        "dependencies": {
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Admission": "[1.0.0, )",
++          "Fogell.Groovy": "[1.0.0, )"
++        }
++      },
+       "fogell.groovy.parser": {
+         "type": "Project",
+         "dependencies": {
+diff --git a/tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj b/tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj
+index d2bfdd2..e2673fd 100644
+--- a/tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj
++++ b/tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj
+@@ -1,6 +1,9 @@
+ <Project Sdk="Microsoft.NET.Sdk.Web">
+   <PropertyGroup><OutputType>Exe</OutputType><IsPackable>false</IsPackable></PropertyGroup>
+-  <ItemGroup><Compile Include="Tests.fs" /></ItemGroup>
++  <ItemGroup>
++    <Compile Include="../../src/Fogell.Controller.Host/WorkerPaths.fs" Link="WorkerPaths.fs" />
++    <Compile Include="Tests.fs" />
++  </ItemGroup>
+   <ItemGroup>
+     <ProjectReference Include="../../src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj" />
+     <PackageReference Include="Expecto" Version="10.2.3" />
+diff --git a/tests/Fogell.Controller.Api.Tests/Tests.fs b/tests/Fogell.Controller.Api.Tests/Tests.fs
+index a95a183..f1e30e0 100644
+--- a/tests/Fogell.Controller.Api.Tests/Tests.fs
++++ b/tests/Fogell.Controller.Api.Tests/Tests.fs
+@@ -13,6 +13,7 @@ open Microsoft.Extensions.Logging
+ open Fogell.Domain
+ open Fogell.Store
+ open Fogell.Controller.Api
++open Fogell.Controller.Host
+ 
+ let private connectionString =
+     match Environment.GetEnvironmentVariable "FOGELL_TEST_DATABASE_URL" with
+@@ -186,6 +187,52 @@ let endpoints =
+               Expect.stringContains body2 "\"was_existing\":true" "recognised as existing"
+           }
+ 
++          test "execution preflight refuses before build and idempotency admission" {
++              let org, project = freshProject ()
++              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
++              let unsupported =
++                  "pipeline { agent any tools { maven 'm3' } stages { stage('Build') { steps { echo 'hi' } } } }"
++
++              let buildCount () =
++                  use connection = new Npgsql.NpgsqlConnection(connectionString)
++                  connection.Open()
++                  use command = connection.CreateCommand()
++                  command.CommandText <-
++                      "SELECT count(*) FROM builds WHERE organization_id=@organization AND project_id=@project"
++                  command.Parameters.AddWithValue("organization", org.Value) |> ignore
++                  command.Parameters.AddWithValue("project", project.Value) |> ignore
++                  Convert.ToInt32(command.ExecuteScalar())
++
++              Expect.equal (buildCount ()) 0 "fixture begins without a build"
++
++              for attempt in 1..2 do
++                  let code, body =
++                      send HttpMethod.Post url (Some token) (Some "unsupported-retry") (Some unsupported)
++                  Expect.equal code 422 $"unsupported attempt {attempt} is not durably admitted"
++                  use payload = JsonDocument.Parse body
++                  Expect.equal
++                      (payload.RootElement.GetProperty("code").GetString())
++                      "execution_unsupported"
++                      $"unsupported attempt {attempt} has the stable API code"
++                  Expect.stringContains
++                      (payload.RootElement.GetProperty("message").GetString())
++                      "unsupported_tools"
++                      $"unsupported attempt {attempt} preserves the shared preflight reason"
++                  Expect.equal (buildCount ()) 0 $"unsupported attempt {attempt} creates no build"
++
++              let supportedCode, supportedBody =
++                  send HttpMethod.Post url (Some token) (Some "unsupported-retry") (Some pipeline)
++              Expect.equal supportedCode 201 "the rejected key remains available to supported source"
++              Expect.stringContains supportedBody "\"was_existing\":false" "supported source is a fresh admission"
++              Expect.equal (buildCount ()) 1 "only the supported request creates a build"
++
++              let replayCode, replayBody =
++                  send HttpMethod.Post url (Some token) (Some "unsupported-retry") (Some pipeline)
++              Expect.equal replayCode 200 "the supported admission still replays normally"
++              Expect.stringContains replayBody "\"was_existing\":true" "the replay finds the one supported build"
++              Expect.equal (buildCount ()) 1 "replay creates no second build"
++          }
++
+           test "one idempotency key cannot substitute different Jenkinsfile bytes" {
+               let org, project = freshProject ()
+               let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+@@ -444,6 +491,21 @@ let endpoints =
+                   | Error error -> failtestf "retry decision failed: %A" error
+                   | Ok _ -> ()
+ 
++                  let stateRoot = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-worker-path-proof")
++                  let parentJournal = WorkerPaths.journalPath stateRoot org parent
++                  let childJournal = WorkerPaths.journalPath stateRoot org child
++                  let restartedChildJournal = WorkerPaths.journalPath stateRoot org child
++                  let legacyBuildJournal =
++                      IO.Path.Combine(
++                          stateRoot,
++                          "journals",
++                          org.Value.ToString "N",
++                          buildId.Value.ToString "N" + ".journal")
++
++                  Expect.notEqual childJournal parentJournal "retry child cannot reopen its failed parent's journal"
++                  Expect.equal restartedChildJournal childJournal "the same child resumes its own deterministic journal"
++                  Expect.notEqual childJournal legacyBuildJournal "attempt namespace cannot ambiguously adopt a legacy build journal"
++
+                   Expect.isTrue (store.AppendLog(org, buildId, child, 0, "child-zero")) "retry log appended"
+ 
+                   let page from =
+diff --git a/tests/Fogell.Controller.Api.Tests/packages.lock.json b/tests/Fogell.Controller.Api.Tests/packages.lock.json
+index f175cf4..6e0cd41 100644
+--- a/tests/Fogell.Controller.Api.Tests/packages.lock.json
++++ b/tests/Fogell.Controller.Api.Tests/packages.lock.json
+@@ -67,16 +67,35 @@
+         "type": "Project",
+         "dependencies": {
+           "FSharp.Core": "[10.1.301, )",
++          "Fogell.Differential": "[1.0.0, )",
+           "Fogell.Pipeline.Parser": "[1.0.0, )",
+           "Fogell.Store": "[1.0.0, )"
+         }
+       },
++      "fogell.differential": {
++        "type": "Project",
++        "dependencies": {
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Execution": "[1.0.0, )",
++          "Fogell.Groovy.Interpreter": "[1.0.0, )",
++          "Fogell.Groovy.Parser": "[1.0.0, )",
++          "Fogell.Pipeline.Parser": "[1.0.0, )"
++        }
++      },
+       "fogell.domain": {
+         "type": "Project",
+         "dependencies": {
+           "FSharp.Core": "[10.1.301, )"
+         }
+       },
++      "fogell.execution": {
++        "type": "Project",
++        "dependencies": {
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Admission": "[1.0.0, )",
++          "Fogell.Domain": "[1.0.0, )"
++        }
++      },
+       "fogell.groovy": {
+         "type": "Project",
+         "dependencies": {
+@@ -84,6 +103,14 @@
+           "Fogell.Ir": "[1.0.0, )"
+         }
+       },
++      "fogell.groovy.interpreter": {
++        "type": "Project",
++        "dependencies": {
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Admission": "[1.0.0, )",
++          "Fogell.Groovy": "[1.0.0, )"
++        }
++      },
+       "fogell.groovy.parser": {
+         "type": "Project",
+         "dependencies": {

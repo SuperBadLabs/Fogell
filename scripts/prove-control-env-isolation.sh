@@ -116,10 +116,16 @@ judge() {
     /fg222/withenv:"$LIVE"/fakebin:*) ;;
     *) echo "  FAIL: PATH overlay order is wrong"; failures=$((failures + 1)) ;;
   esac
-  [ "$(cat "$ws/home.txt" 2>/dev/null || true)" = "$state/ws/_agent_home" ] \
+  local build_home
+  build_home=$(cat "$ws/home.txt" 2>/dev/null || true)
+  case "$build_home" in
+    "$state"/ws/_agent_home/*) ;;
+    *) echo "  FAIL: HOME is not beneath the build identity root"; failures=$((failures + 1)) ;;
+  esac
+  [ "$build_home" != "$state/ws/_agent_home" ] \
     || { echo "  FAIL: HOME is not the neutral build path"; failures=$((failures + 1)); }
-  [ -d "$state/ws/_agent_home" ] \
-    || { echo "  FAIL: neutral build HOME was not materialized"; failures=$((failures + 1)); }
+  [ -d "$build_home" ] \
+    || { echo "  FAIL: build-scoped neutral HOME was not materialized"; failures=$((failures + 1)); }
   [ "$(cat "$ws/credential.txt" 2>/dev/null || true)" = "$CREDENTIAL_SECRET" ] \
     || { echo "  FAIL: explicit credential binding was lost"; failures=$((failures + 1)); }
   [ -s "$ws/child.env" ] || { echo "  FAIL: shell env capture missing"; failures=$((failures + 1)); }

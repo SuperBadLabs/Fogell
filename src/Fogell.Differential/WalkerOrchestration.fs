@@ -38,7 +38,15 @@ type InputAnswer =
 /// re-selection story (the arms select against a status resume must
 /// reconstruct); it is FG-046b/FG-082 territory, not silently claimed here.
 type PersistenceHooks =
-    { /// True when this attempt RESUMES an interrupted journal — what
+    { /// A masked and leak-screened build-console line. It is assigned its
+      /// monotonic publication order at the same point it enters the run's
+      /// ordered output buffer, then delivered by one serialized publisher
+      /// outside the output-state lock. Persisted hosts use this to publish
+      /// progressive console without waiting for the terminal Trace snapshot.
+      /// Throwing is an infrastructure failure: it is surfaced as
+      /// OutputPublicationException and must not become build semantics.
+      OnOutput: string -> unit
+      /// True when this attempt RESUMES an interrupted journal — what
       /// `when { isRestartedRun() }` evaluates to.
       IsRestartedRun: bool
       /// stage -> stepIndex -> run it? False = durably finished in a prior

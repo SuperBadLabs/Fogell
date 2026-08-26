@@ -1,0 +1,8 @@
+ M docs/tickets/FG-224.md
+ M src/Fogell.Controller.Host/Config.fs
+ M src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
+ M src/Fogell.Controller.Host/packages.lock.json
+ M src/Fogell.Execution/Fogell.Execution.fsproj
+ M src/Fogell.Execution/ProcessGroup.fs
+ M tests/Fogell.Differential.Tests/Tests.fs
+?? evidence/.20260826T130505Z-fg-224-final-review-closure.partial/

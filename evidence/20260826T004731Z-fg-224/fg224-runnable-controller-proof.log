@@ -1,0 +1,1 @@
+FG-224 PROOF PASS: restart-discovered durable admission; byte-bound idempotency; fixed placement; supervised whole-pipeline execution; fenced logs; atomic terminal roll-up

@@ -1,0 +1,590 @@
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index bf0c5f5..cb77490 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -99,12 +99,12 @@ Exact-tree HeMan acceptance on fresh databases:
+ 
+ - Store: 80/80 passed;
+ - Controller API: 23/23 passed;
+-- Differential: 261/261 passed;
++- Differential: 265/265 passed;
+ - Execution: 94/94 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-locked repository gate also passes all 867 main-suite tests and every blocking
++locked repository gate also passes all 871 main-suite tests and every blocking
+ proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
+ recorded at publication rather than predicted here.
+ 
+diff --git a/scripts/prove-runnable-controller.sh b/scripts/prove-runnable-controller.sh
+index f9cdc96..a3ab097 100755
+--- a/scripts/prove-runnable-controller.sh
++++ b/scripts/prove-runnable-controller.sh
+@@ -351,6 +351,75 @@ facts=$(admin "$database" -Atc \
+           (SELECT count(*) FROM outbox WHERE topic='build.terminal' AND body->>'build'='$build_id')")
+ [[ "$facts" = "1|1|1|1|1" ]] || { echo "FG-224 REFUSED: durable vertical slice counts were $facts" >&2; exit 1; }
+ 
++# Force a finite post-exit event tail beyond the former 16 MiB aggregate drain
++# ceiling. With a 10-second poll and the guarded sub-80-second runtime, bounded
++# running slices can consume less than 3 MiB of the >24 MiB encoded event file;
++# terminal success therefore requires draining a post-exit remainder above the
++# old ceiling. Uniform payload cardinality and unique sentinels detect either
++# loss or replay across every bounded slice.
++kill -TERM "$host_pid"
++wait "$host_pid"
++host_pid=""
++
++env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" "FOGELL_WORKER_POLL_MS=10000" \
++  "$controller" >>"$host_log" 2>&1 &
++host_pid=$!
++
++ready=0
++for _ in $(seq 1 200); do
++  if curl -fsS "$base_url/health/ready" >/dev/null 2>&1; then
++    ready=1
++    break
++  fi
++  kill -0 "$host_pid" 2>/dev/null || { echo "FG-224 REFUSED: tail-proof controller exited" >&2; exit 1; }
++  sleep 0.05
++done
++[[ $ready -eq 1 ]] || { echo "FG-224 REFUSED: tail-proof controller never became ready" >&2; exit 1; }
++
++tail_pipeline=$'pipeline {\n  agent any\n  stages {\n    stage(\'Tail\') {\n      steps {\n        sh \'printf RFJBSU4tQkVHSU4tMjI0 | base64 -d; head -c 18000000 /dev/zero | tr "\\\\0" "\\\\132"; printf RFJBSU4tRU5ELTIyNA== | base64 -d\'\n      }\n    }\n  }\n}'
++tail_response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-post-exit-tail' \
++  -H 'content-type: application/x-jenkinsfile' --data-binary "$tail_pipeline" "$builds_url")
++tail_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$tail_response")
++[[ -n "$tail_build_id" ]] || { echo "FG-224 REFUSED: tail proof admission returned no build id" >&2; exit 1; }
++
++tail_started=$(date +%s)
++tail_terminal=""
++for _ in $(seq 1 800); do
++  tail_terminal=$(curl -fsS -H "$auth" "$builds_url/$tail_build_id")
++  grep -q '"status":"success"' <<<"$tail_terminal" && break
++  grep -q '"status":"\(failure\|aborted\|reconciliation_required\)"' <<<"$tail_terminal" && {
++    echo "FG-224 REFUSED: tail proof reached $tail_terminal" >&2
++    exit 1
++  }
++  sleep 0.1
++done
++grep -q '"status":"success"' <<<"$tail_terminal" \
++  || { echo "FG-224 REFUSED: tail proof did not finish" >&2; exit 1; }
++tail_elapsed=$(( $(date +%s) - tail_started ))
++(( tail_elapsed < 80 )) \
++  || { echo "FG-224 REFUSED: tail proof timing no longer establishes a >16 MiB post-exit remainder" >&2; exit 1; }
++
++IFS='|' read -r tail_begin tail_end tail_z tail_chunks <<<"$(admin "$database" -Atc \
++  "WITH bounds AS (
++     SELECT min(sequence) FILTER (WHERE body LIKE 'step-started: Tail% sh') AS started,
++            min(sequence) FILTER (WHERE body LIKE 'step-finished: Tail% success') AS finished
++     FROM log_chunks WHERE build_id='$tail_build_id'
++   ), frame AS (
++     SELECT body FROM log_chunks, bounds
++     WHERE build_id='$tail_build_id' AND sequence > started AND sequence < finished
++   )
++   SELECT count(*) FILTER (WHERE body LIKE '%DRAIN-BEGIN-224%'),
++          count(*) FILTER (WHERE body LIKE '%DRAIN-END-224%'),
++          COALESCE(sum(length(body) - length(replace(body, 'Z', ''))), 0),
++          count(*)
++   FROM frame")"
++[[ "$tail_begin" = 1 && "$tail_end" = 1 ]] \
++  || { echo "FG-224 REFUSED: tail sentinels were lost or replayed ($tail_begin|$tail_end)" >&2; exit 1; }
++[[ "$tail_z" = 18000000 ]] \
++  || { echo "FG-224 REFUSED: post-exit tail payload was lost or replayed ($tail_z of 18000000 bytes)" >&2; exit 1; }
++(( tail_chunks > 256 )) \
++  || { echo "FG-224 REFUSED: tail proof did not cross enough bounded event frames ($tail_chunks)" >&2; exit 1; }
++
+ set +e
+ admin "$database" -c "UPDATE build_definitions SET source_bytes = decode('00','hex') WHERE build_id='$build_id'" >/dev/null 2>&1
+ mutate_rc=$?
+@@ -362,4 +431,4 @@ if grep -Fq 'fg224-proof-token-0123456789abcdef' "$host_log" || grep -Fq 'Passwo
+   exit 1
+ fi
+ 
+-echo "FG-224 PROOF PASS: safe timing refusal; restart-discovered durable admission; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; progressive bounded fenced logs; atomic terminal roll-up"
++echo "FG-224 PROOF PASS: safe timing refusal; restart-discovered durable admission; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; atomic terminal roll-up"
+diff --git a/src/Fogell.Controller.Host/EventStream.fs b/src/Fogell.Controller.Host/EventStream.fs
+index 64c3f0c..4d1d388 100644
+--- a/src/Fogell.Controller.Host/EventStream.fs
++++ b/src/Fogell.Controller.Host/EventStream.fs
+@@ -20,9 +20,10 @@ type internal EventDrainBatch =
+ 
+ type internal EventDrainStop =
+     | EndOfStream
+-    | CumulativeBudgetExhausted
+     | ControlStopped
+     | PublicationAuthorityLost
++    | StreamChangedAfterExtinction
++    | IncompleteFrameAtEndOfStream
+ 
+ type internal EventDrainCompletion =
+     { BytesProcessed: int
+@@ -115,47 +116,63 @@ module internal EventStream =
+           ReachedEof = reachedEof
+           AuthorityLost = authorityLost }
+ 
+-    /// Repeated bounded slices for the post-exit phase. The caller supplies a
+-    /// fresh stream view and a control check before every slice. Completion is
+-    /// bounded even if another writer keeps appending forever.
+-    let drainToBoundary
++    /// Drain the exact finite boundary observed after producer extinction.
++    /// Individual slices remain bounded so lease/cancellation checks are
++    /// interleaved with publication, but there is deliberately no cumulative
++    /// byte or frame ceiling: a finite tail must not be silently truncated.
++    /// Any later length change contradicts the extinction proof and is surfaced
++    /// as unsafe evidence rather than being folded into terminal truth.
++    let drainExtinguishedBoundary
+         (openStream: unit -> Stream option)
+         (state: EventDrainState)
+         maxFrameBytes
+         sliceByteBudget
+         sliceFrameBudget
+-        cumulativeByteBudget
+-        cumulativeFrameBudget
+         (continueControl: unit -> bool)
+         publish
+         =
+-        if cumulativeByteBudget < 1 then
+-            invalidArg (nameof cumulativeByteBudget) "cumulative byte budget must be positive"
+-
+-        if cumulativeFrameBudget < 1 then
+-            invalidArg (nameof cumulativeFrameBudget) "cumulative frame budget must be positive"
+-
+         let mutable totalBytes = 0
+         let mutable totalFrames = 0
+         let mutable stop = None
+ 
+-        while stop.IsNone do
+-            if not (continueControl()) then
+-                stop <- Some ControlStopped
+-            elif totalBytes >= cumulativeByteBudget || totalFrames >= cumulativeFrameBudget then
+-                stop <- Some CumulativeBudgetExhausted
+-            else
+-                match openStream () with
+-                | None -> stop <- Some EndOfStream
+-                | Some stream ->
+-                    use stream = stream
++        match openStream () with
++        | None ->
++            stop <-
++                if state.Offset <> 0L then
++                    Some StreamChangedAfterExtinction
++                elif state.Tail.Length <> 0 || state.DiscardingOversizedFrame then
++                    Some IncompleteFrameAtEndOfStream
++                else
++                    Some EndOfStream
++        | Some opened ->
++            // Retain the same handle for the full drain. Besides fixing the
++            // byte boundary, this fixes file identity if the path is replaced.
++            use stream = opened
++            let boundary = stream.Length
++
++            if boundary < state.Offset then
++                stop <- Some StreamChangedAfterExtinction
++
++            while stop.IsNone do
++                if not (continueControl()) then
++                    stop <- Some ControlStopped
++                elif stream.Length <> boundary then
++                    stop <- Some StreamChangedAfterExtinction
++                elif state.Offset = boundary then
++                    stop <-
++                        if state.Tail.Length = 0 && not state.DiscardingOversizedFrame then
++                            Some EndOfStream
++                        else
++                            Some IncompleteFrameAtEndOfStream
++                else
++                    let remaining = boundary - state.Offset
+                     let batch =
+                         drainBatch
+                             stream
+                             state
+                             maxFrameBytes
+-                            (min sliceByteBudget (cumulativeByteBudget - totalBytes))
+-                            (min sliceFrameBudget (cumulativeFrameBudget - totalFrames))
++                            (min sliceByteBudget (int (min remaining (int64 Int32.MaxValue))))
++                            sliceFrameBudget
+                             publish
+ 
+                     totalBytes <- totalBytes + batch.BytesProcessed
+@@ -163,9 +180,16 @@ module internal EventStream =
+ 
+                     if batch.AuthorityLost then
+                         stop <- Some PublicationAuthorityLost
+-                    elif batch.ReachedEof then
+-                        stop <- Some EndOfStream
++                    elif batch.BytesProcessed = 0 then
++                        // The frozen boundary promised unread bytes. A zero
++                        // read cannot safely be interpreted as completion.
++                        stop <- Some StreamChangedAfterExtinction
+ 
+         { BytesProcessed = totalBytes
+           FramesProcessed = totalFrames
+           Stop = stop.Value }
++
++    /// Terminal truth is authorized only by a complete, immutable frame
++    /// boundary. Every other completion requires reconciliation.
++    let terminalPublicationAllowed completion =
++        completion.Stop = EndOfStream
+diff --git a/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj b/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
+index 3aa28ca..751221a 100644
+--- a/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
++++ b/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
+@@ -7,6 +7,7 @@
+     <Compile Include="Config.fs" />
+     <Compile Include="EventStream.fs" />
+     <Compile Include="ProcessGroup.fs" />
++    <Compile Include="WorkerScheduling.fs" />
+     <Compile Include="Worker.fs" />
+     <Compile Include="Program.fs" />
+   </ItemGroup>
+diff --git a/src/Fogell.Controller.Host/Worker.fs b/src/Fogell.Controller.Host/Worker.fs
+index 864f875..a3e2911 100644
+--- a/src/Fogell.Controller.Host/Worker.fs
++++ b/src/Fogell.Controller.Host/Worker.fs
+@@ -25,12 +25,13 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+     // renewal and cancellation behind an EOF that may never arrive.
+     let eventDrainByteBudget = 256 * 1024
+     let eventDrainFrameBudget = 16
+-    let postExitDrainByteBudget = 16 * 1024 * 1024
+-    let postExitDrainFrameBudget = 4096
+-    let postExitDrainMilliseconds = 5000
+     let processGroupProbeMilliseconds = 50
+     let processGroupTermChecks = 40
+     let processGroupKillChecks = 100
++    // This cursor belongs to this BackgroundService instance. ExecuteAsync has
++    // a single claim loop, so no shared mutable state or cross-worker lock is
++    // needed to rotate the first organization probed on subsequent scans.
++    let mutable lastClaimedOrganization: OrganizationId option = None
+ 
+     let atomicDefinition (path: string) (bytes: byte array) =
+         Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+@@ -159,14 +160,12 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+         =
+         let nextSequence = ref sequence
+         let completion =
+-            EventStream.drainToBoundary
++            EventStream.drainExtinguishedBoundary
+                 (openEventStream eventPath)
+                 state
+                 maxEventFrameEncodedBytes
+                 eventDrainByteBudget
+                 eventDrainFrameBudget
+-                postExitDrainByteBudget
+-                postExitDrainFrameBudget
+                 continueControl
+                 (eventPublisher claim nextSequence)
+ 
+@@ -290,6 +289,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                 let mutable cancelled = false
+                 let mutable interrupted = false
+                 let mutable leaseLost = false
++                let mutable terminalDrainConfirmed = false
+ 
+                 use child = new Process()
+                 let start = ProcessStartInfo("/usr/bin/setsid")
+@@ -425,16 +425,12 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                             && not cancelled
+                             && not interrupted
+                         then
+-                            let drainDeadline =
+-                                DateTimeOffset.UtcNow.AddMilliseconds(float postExitDrainMilliseconds)
+-
+                             let continueFinalDrain () =
+                                 refreshControl false
+ 
+                                 not leaseLost
+                                 && not cancelled
+                                 && not interrupted
+-                                && DateTimeOffset.UtcNow < drainDeadline
+ 
+                             let next, completion =
+                                 drainFinalEvents
+@@ -445,22 +441,24 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                                     continueFinalDrain
+ 
+                             sequence <- next
++                            terminalDrainConfirmed <-
++                                EventStream.terminalPublicationAllowed completion
+ 
+                             match completion.Stop with
++                            | EndOfStream -> ()
+                             | PublicationAuthorityLost -> leaseLost <- true
+-                            | CumulativeBudgetExhausted ->
+-                                logger.LogWarning(
+-                                    "FG-224 post-exit event drain hit its cumulative bound for {AttemptId}; terminal publication will not wait on an unbounded writer",
+-                                    claim.AttemptId.Value)
+-                            | ControlStopped when not cancelled && not interrupted && not leaseLost ->
+-                                logger.LogWarning(
+-                                    "FG-224 post-exit event drain hit its deadline for {AttemptId}; terminal publication will not wait on an unbounded writer",
+-                                    claim.AttemptId.Value)
+-                            | EndOfStream
+                             | ControlStopped -> ()
++                            | StreamChangedAfterExtinction ->
++                                logger.LogError(
++                                    "FG-224 event stream changed after producer extinction for {AttemptId}; reconciliation is required",
++                                    claim.AttemptId.Value)
++                            | IncompleteFrameAtEndOfStream ->
++                                logger.LogError(
++                                    "FG-224 event stream ended with an incomplete frame for {AttemptId}; reconciliation is required",
++                                    claim.AttemptId.Value)
+ 
+                         let finalExitKind =
+-                            if cancelled || interrupted || leaseLost then
++                            if cancelled || interrupted || leaseLost || not terminalDrainConfirmed then
+                                 ChildExitKind.Forced
+                             else
+                                 exitKind
+@@ -508,7 +506,9 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                 let mutable claimed = false
+ 
+                 try
+-                    for org in store.OrganizationIds() do
++                    for org in
++                        store.OrganizationIds()
++                        |> WorkerScheduling.organizationsAfter lastClaimedOrganization do
+                         if not claimed && not stoppingToken.IsCancellationRequested then
+                             store.RequeueExpiredLocalAttempts org |> ignore
+ 
+@@ -524,6 +524,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                             | Ok None -> ()
+                             | Ok(Some claim) ->
+                                 claimed <- true
++                                lastClaimedOrganization <- Some org
+                                 do! runClaim claim stoppingToken
+                 with ex ->
+                     logger.LogError(ex, "FG-224 worker iteration failed")
+diff --git a/src/Fogell.Controller.Host/WorkerScheduling.fs b/src/Fogell.Controller.Host/WorkerScheduling.fs
+new file mode 100644
+index 0000000..5024597
+--- /dev/null
++++ b/src/Fogell.Controller.Host/WorkerScheduling.fs
+@@ -0,0 +1,38 @@
++namespace Fogell.Controller.Host
++
++open Fogell.Domain
++
++/// Worker-local ordering for an organization claim scan.
++///
++/// The cursor is the organization that most recently produced a claim.  A
++/// fresh, sorted snapshot starts immediately after it, wrapping once.  Keeping
++/// the cursor on the LocalWorker instance avoids cross-worker coordination and
++/// still lets an organization that is continuously busy yield the first probe
++/// on the following scan.
++module WorkerScheduling =
++    let organizationsAfter
++        (lastClaimed: OrganizationId option)
++        (organizations: seq<OrganizationId>)
++        =
++        let ordered =
++            organizations
++            |> Seq.distinct
++            |> Seq.sortBy _.Value
++            |> Seq.toArray
++
++        match lastClaimed, ordered.Length with
++        | _, 0 -> ordered
++        | None, _ -> ordered
++        | Some cursor, _ ->
++            // Starting at the first value greater than the cursor also gives a
++            // deterministic successor when the cursor's organization has
++            // disappeared since the previous scan.
++            let split =
++                ordered
++                |> Array.tryFindIndex (fun organization -> organization.Value > cursor.Value)
++                |> Option.defaultValue 0
++
++            if split = 0 then
++                ordered
++            else
++                Array.append ordered[split..] ordered[.. split - 1]
+diff --git a/tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj b/tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj
+index 4a22102..a67c9e1 100644
+--- a/tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj
++++ b/tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj
+@@ -8,6 +8,7 @@
+     <Compile Include="../../src/Fogell.Controller.Host/Config.fs" Link="Config.fs" />
+     <Compile Include="../../src/Fogell.Controller.Host/EventStream.fs" Link="EventStream.fs" />
+     <Compile Include="../../src/Fogell.Controller.Host/ProcessGroup.fs" Link="ProcessGroup.fs" />
++    <Compile Include="../../src/Fogell.Controller.Host/WorkerScheduling.fs" Link="WorkerScheduling.fs" />
+     <Compile Include="Tests.fs" />
+   </ItemGroup>
+   <ItemGroup>
+diff --git a/tests/Fogell.Differential.Tests/Tests.fs b/tests/Fogell.Differential.Tests/Tests.fs
+index e77ed48..4a491ec 100644
+--- a/tests/Fogell.Differential.Tests/Tests.fs
++++ b/tests/Fogell.Differential.Tests/Tests.fs
+@@ -5,6 +5,7 @@ open System.Runtime.InteropServices
+ open Expecto
+ open Fogell.Controller.Host
+ open Fogell.Differential
++open Fogell.Domain
+ open Fogell.Execution
+ open Fogell.Groovy.Interpreter
+ open Fogell.Ir
+@@ -346,34 +347,142 @@ let controllerEventDrainBudgets =
+               Expect.equal cursor.Tail second[.. second.Length - 2] "the refused frame remains an exact retry boundary"
+           }
+ 
+-          test "post-exit draining terminates at its cumulative cap under a hot writer" {
+-              let seed = frame "hot"
+-              let mutable backing = seed
++          test "an extinct producer's finite tail beyond the former 16 MiB cap is published exactly once" {
++              let expected = [ for i in 0 .. 1539 -> $"{i:D4}:{String('x', 8192)}" ]
++              let backing = expected |> List.collect (frame >> Array.toList) |> Array.ofList
++              Expect.isGreaterThan backing.Length (16 * 1024 * 1024) "the regression crosses the removed aggregate cap"
+               let cursor = state ()
+-              let mutable published = 0
++              let observed = ResizeArray<int>()
+               let mutable controlChecks = 0
+ 
+               let openStream () =
+                   Some(new IO.MemoryStream(backing) :> IO.Stream)
+ 
+               let completion =
+-                  EventStream.drainToBoundary
++                  EventStream.drainExtinguishedBoundary
+                       openStream
+                       cursor
++                      (16 * 1024)
++                      (256 * 1024)
++                      16
++                      (fun () -> controlChecks <- controlChecks + 1; true)
++                      (function
++                      | Encoded value ->
++                          let text =
++                              value
++                              |> Text.Encoding.ASCII.GetString
++                              |> Convert.FromBase64String
++                              |> Text.Encoding.UTF8.GetString
++                          let index = observed.Count
++                          Expect.isLessThan index expected.Length "no extra frame is published"
++                          Expect.equal text expected[index] "each frame retains every byte and its exact position"
++                          observed.Add index
++                          true
++                      | Oversized -> false)
++
++              Expect.equal completion.Stop EndOfStream "the complete frozen boundary authorizes terminal truth"
++              Expect.isTrue (EventStream.terminalPublicationAllowed completion) "complete EOF is terminal-safe"
++              Expect.equal (List.ofSeq observed) [ 0 .. 1539 ] "every tail frame is published once in order"
++              Expect.isGreaterThan controlChecks 1 "control is interleaved between bounded slices"
++          }
++
++          test "growth after the extinction snapshot fails closed" {
++              let seed = frame "hot"
++              let stream = new IO.MemoryStream()
++              stream.Write(seed, 0, seed.Length)
++              stream.Position <- 0L
++              let cursor = state ()
++
++              let completion =
++                  EventStream.drainExtinguishedBoundary
++                      (fun () -> Some(stream :> IO.Stream))
++                      cursor
+                       1024
+                       4096
+                       1
+-                      65536
+-                      7
+-                      (fun () -> controlChecks <- controlChecks + 1; true)
+-                      (fun _ ->
+-                          published <- published + 1
+-                          backing <- Array.append backing seed
+-                          true)
++                      (fun () -> true)
++                      (fun _ -> stream.Write(seed, 0, seed.Length); true)
+ 
+-              Expect.equal completion.Stop CumulativeBudgetExhausted "a writer cannot postpone terminal work forever"
+-              Expect.equal published 7 "the cumulative frame cap is exact"
+-              Expect.isGreaterThan controlChecks 1 "control is interleaved between bounded slices"
++              Expect.equal completion.Stop StreamChangedAfterExtinction "new bytes contradict producer extinction"
++              Expect.isFalse (EventStream.terminalPublicationAllowed completion) "unsafe growth cannot authorize terminal truth"
++          }
++
++          test "an incomplete final frame fails closed" {
++              let backing = Text.Encoding.ASCII.GetBytes(Convert.ToBase64String(Text.Encoding.UTF8.GetBytes "partial"))
++              let cursor = state ()
++
++              let completion =
++                  EventStream.drainExtinguishedBoundary
++                      (fun () -> Some(new IO.MemoryStream(backing) :> IO.Stream))
++                      cursor
++                      1024
++                      4096
++                      16
++                      (fun () -> true)
++                      (fun _ -> true)
++
++              Expect.equal completion.Stop IncompleteFrameAtEndOfStream "unterminated evidence is named"
++              Expect.isFalse (EventStream.terminalPublicationAllowed completion) "truncated evidence cannot authorize terminal truth"
++          } ]
++
++let controllerWorkerScheduling =
++    let organization suffix =
++        OrganizationId(Guid.Parse $"00000000-0000-0000-0000-{suffix}")
++
++    testList
++        "FG-224 controller worker scheduling"
++        [ test "busy organizations rotate while empty organizations do not block claims" {
++              let low = organization "000000000001"
++              let empty = organization "000000000002"
++              let later = organization "000000000003"
++              let mutable cursor = None
++              let attempts = ResizeArray<OrganizationId list>()
++
++              let scan () =
++                  let probed = ResizeArray<OrganizationId>()
++
++                  let claimed =
++                      [ later; empty; low; low ]
++                      |> WorkerScheduling.organizationsAfter cursor
++                      |> Array.tryFind (fun candidate ->
++                          probed.Add candidate
++                          candidate = low || candidate = later)
++
++                  cursor <- claimed
++                  attempts.Add(List.ofSeq probed)
++                  claimed
++
++              let claims = [ for _ in 1..6 -> scan () ]
++
++              Expect.equal
++                  claims
++                  [ Some low; Some later; Some low; Some later; Some low; Some later ]
++                  "a continuously busy low UUID cannot starve a later organization"
++              Expect.equal
++                  (List.ofSeq attempts)
++                  [ [ low ]; [ empty; later ]; [ low ]; [ empty; later ]; [ low ]; [ empty; later ] ]
++                  "ineligible organizations are skipped and rotation remains bounded to two claim cycles"
++          }
++
++          test "a removed cursor and newly inserted organizations retain deterministic rotation" {
++              let low = organization "000000000010"
++              let removed = organization "000000000020"
++              let inserted = organization "000000000030"
++              let high = organization "000000000040"
++
++              Expect.equal
++                  ([ high; low; inserted ]
++                   |> WorkerScheduling.organizationsAfter (Some removed)
++                   |> Array.toList)
++                  [ inserted; high; low ]
++                  "a missing cursor resumes at its sorted successor and wraps exactly once"
++
++              Expect.equal
++                  ([ inserted; low ]
++                   |> WorkerScheduling.organizationsAfter (Some high)
++                   |> Array.toList)
++                  [ low; inserted ]
++                  "removing the final organization wraps to the first current organization"
+           } ]
+ 
+ let controllerWorkerTiming =
+@@ -7406,6 +7515,7 @@ let main argv =
+             "Fogell.Differential"
+             [ progressiveOutputPublication
+               controllerEventDrainBudgets
++              controllerWorkerScheduling
+               controllerWorkerTiming
+               controllerStateRoot
+               controllerProcessGroupExtinction

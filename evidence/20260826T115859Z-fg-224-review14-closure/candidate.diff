@@ -1,0 +1,570 @@
+diff --git a/docs/runbooks/controller-host.md b/docs/runbooks/controller-host.md
+index 4adf08c..9213468 100644
+--- a/docs/runbooks/controller-host.md
++++ b/docs/runbooks/controller-host.md
+@@ -58,8 +58,12 @@ writes and durably flushes it, and removes it. A root that cannot complete that
+ cycle is refused before readiness; existing operator data is never used as the
+ probe target. The configured Run.Host path is likewise checked against the Linux
+ kernel using the service's effective identity, so unrelated execute permission
+-bits do not authorize startup. Put the state root on storage whose loss/recovery
+-policy matches the PostgreSQL database; an incomplete journal is a reconciliation
++bits do not authorize startup. The outer process-group launcher is fixed
++to `/usr/bin/setsid`; startup refuses before binding unless that exact file is
++executable by the service identity. Readiness and the worker claim boundary
++recheck both executables, so later removal returns 503 and cannot start new work.
++Put the state root on storage whose loss/recovery policy matches the PostgreSQL
++database; an incomplete journal is a reconciliation
+ event, not permission to guess success.
+ 
+ ## Start and observe
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index 4ac89cc..80f0747 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -105,13 +105,13 @@ gate runs this proof against its PostgreSQL service.
+ Exact-tree HeMan acceptance on fresh databases:
+ 
+ - Store: 80/80 passed;
+-- Controller API: 24/24 passed;
++- Controller API: 27/27 passed;
+ - Differential: 265/265 passed;
+-- Execution: 94/94 passed; and
++- Execution: 95/95 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-locked repository gate also passes all 872 main-suite tests and every blocking
++locked repository gate also passes all 876 main-suite tests and every blocking
+ proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
+ recorded at publication rather than predicted here.
+ 
+diff --git a/src/Fogell.Controller.Host/Config.fs b/src/Fogell.Controller.Host/Config.fs
+index 4ddac5b..11dbb8d 100644
+--- a/src/Fogell.Controller.Host/Config.fs
++++ b/src/Fogell.Controller.Host/Config.fs
+@@ -11,6 +11,7 @@ type ControllerConfig =
+       ListenUrl: string
+       StateRoot: string
+       RunHostPath: string
++      SetsidPath: string
+       TrustPool: string
+       MaxPipelineBytes: int
+       MaxLogChunks: int
+@@ -19,6 +20,9 @@ type ControllerConfig =
+ 
+ module ControllerConfig =
+ 
++    [<Literal>]
++    let internal trustedSetsidLauncher = "/usr/bin/setsid"
++
+     [<Literal>]
+     let private AtCurrentWorkingDirectory = -100
+ 
+@@ -39,6 +43,21 @@ module ControllerConfig =
+         with _ ->
+             false
+ 
++    let internal validateSetsidLauncher path =
++        let fullPath = Path.GetFullPath path
++
++        if isExecutableByServiceIdentity fullPath then
++            Ok fullPath
++        else
++            Error "trusted setsid launcher does not name an executable file"
++
++    let internal executionLaunchersReadyAt runHostPath setsidPath =
++        isExecutableByServiceIdentity runHostPath
++        && isExecutableByServiceIdentity setsidPath
++
++    let internal executionLaunchersReady (config: ControllerConfig) =
++        executionLaunchersReadyAt config.RunHostPath config.SetsidPath
++
+     let internal prepareStateRoot path =
+         try
+             Directory.CreateDirectory path |> ignore
+@@ -117,7 +136,7 @@ module ControllerConfig =
+         | Ok item -> item
+         | Error error -> invalidOp error
+ 
+-    let load () =
++    let internal loadWithSetsidLauncher setsidLauncher =
+         let runtime = required "FOGELL_DATABASE_URL"
+         let maintenance = required "FOGELL_MAINTENANCE_DATABASE_URL"
+         let tokenFile = required "FOGELL_API_TOKEN_FILE" |> Result.bind validateTokenFilePath
+@@ -125,6 +144,7 @@ module ControllerConfig =
+         let stateRoot = required "FOGELL_STATE_ROOT" |> Result.bind validateStateRoot
+         let runHost = required "FOGELL_RUN_HOST_PATH"
+         let trustPool = required "FOGELL_LOCAL_TRUST_POOL"
++        let setsid = validateSetsidLauncher setsidLauncher
+         let maxPipeline = positiveInt "FOGELL_MAX_PIPELINE_BYTES" 1024 (16 * 1024 * 1024)
+         let maxLogs = positiveInt "FOGELL_MAX_LOG_CHUNKS" 1 10000
+         let poll = positiveInt "FOGELL_WORKER_POLL_MS" 25 60000
+@@ -135,7 +155,7 @@ module ControllerConfig =
+                 validateWorkerTiming pollMilliseconds leaseSeconds
+             | _ -> Ok()
+ 
+-        match combine [ runtime; maintenance; tokenFile; listen; stateRoot; runHost; trustPool ],
++        match combine [ runtime; maintenance; tokenFile; listen; stateRoot; runHost; trustPool; setsid ],
+               combine
+                   [ maxPipeline |> Result.map string
+                     maxLogs |> Result.map string
+@@ -151,6 +171,7 @@ module ControllerConfig =
+             let listenValue = value listen
+             let stateRootValue = value stateRoot
+             let runHostValue = value runHost |> Path.GetFullPath
++            let setsidValue = value setsid
+ 
+             let uriResult =
+                 match Uri.TryCreate(listenValue, UriKind.Absolute) with
+@@ -183,8 +204,11 @@ module ControllerConfig =
+                                   ListenUrl = listenValue
+                                   StateRoot = stateRootValue
+                                   RunHostPath = runHostValue
++                                  SetsidPath = setsidValue
+                                   TrustPool = value trustPool
+                                   MaxPipelineBytes = value maxPipeline
+                                   MaxLogChunks = value maxLogs
+                                   PollMilliseconds = value poll
+                                   LeaseSeconds = value lease }
++
++    let load () = loadWithSetsidLauncher trustedSetsidLauncher
+diff --git a/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj b/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
+index 6bbb4d2..c6edc7c 100644
+--- a/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
++++ b/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
+@@ -9,6 +9,7 @@
+     <Compile Include="ProcessGroup.fs" />
+     <Compile Include="WorkerScheduling.fs" />
+     <Compile Include="WorkerPaths.fs" />
++    <Compile Include="WorkerLaunch.fs" />
+     <Compile Include="Worker.fs" />
+     <Compile Include="Program.fs" />
+   </ItemGroup>
+diff --git a/src/Fogell.Controller.Host/Program.fs b/src/Fogell.Controller.Host/Program.fs
+index ca772cd..a0613cf 100644
+--- a/src/Fogell.Controller.Host/Program.fs
++++ b/src/Fogell.Controller.Host/Program.fs
+@@ -79,7 +79,14 @@ let main _ =
+                     app.MapGet(
+                         "/health/ready",
+                         RequestDelegate(fun ctx ->
+-                            health (if runtimeStore.Ping() && runtimeStore.RuntimeCapabilities() then 200 else 503) ctx))
++                            health
++                                (if
++                                     runtimeStore.Ping()
++                                     && runtimeStore.RuntimeCapabilities()
++                                     && ControllerConfig.executionLaunchersReady config
++                                 then 200
++                                 else 503)
++                                ctx))
+                     |> ignore
+ 
+                     Router.map
+diff --git a/src/Fogell.Controller.Host/Worker.fs b/src/Fogell.Controller.Host/Worker.fs
+index 7ab00aa..1bd3bdb 100644
+--- a/src/Fogell.Controller.Host/Worker.fs
++++ b/src/Fogell.Controller.Host/Worker.fs
+@@ -206,7 +206,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                     |> ignore
+         }
+ 
+-    let runClaim (claim: ExecutionClaim) (stoppingToken: CancellationToken) =
++    let runReadyClaim (claim: ExecutionClaim) (stoppingToken: CancellationToken) =
+         task {
+             let buildKey = claim.BuildId.Value.ToString "N"
+             let orgKey = claim.OrganizationId.Value.ToString "N"
+@@ -292,7 +292,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                 let mutable terminalDrainConfirmed = false
+ 
+                 use child = new Process()
+-                let start = ProcessStartInfo("/usr/bin/setsid")
++                let start = ProcessStartInfo(config.SetsidPath)
+                 start.ArgumentList.Add config.RunHostPath
+                 start.ArgumentList.Add definitionPath
+                 start.ArgumentList.Add workspaceRoot
+@@ -316,10 +316,34 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                 start.Environment["FOGELL_BUILD_NUMBER"] <- string claim.BuildNumber
+                 child.StartInfo <- start
+ 
+-                if not (child.Start()) then
+-                    store.RequireReconciliation(claim.OrganizationId, claim.AttemptId, claim.Fence, owner)
+-                    |> ignore
+-                else
++                let launched =
++                    WorkerLaunch.tryStart
++                        child.Start
++                        (fun error ->
++                            match error with
++                            | Some ex ->
++                                logger.LogError(
++                                    ex,
++                                    "FG-224 trusted launcher failed for {AttemptId}; reconciliation is required",
++                                    claim.AttemptId.Value)
++                            | None ->
++                                logger.LogError(
++                                    "FG-224 trusted launcher returned false for {AttemptId}; reconciliation is required",
++                                    claim.AttemptId.Value)
++
++                            if
++                                not
++                                    (store.RequireReconciliation(
++                                        claim.OrganizationId,
++                                        claim.AttemptId,
++                                        claim.Fence,
++                                        owner))
++                            then
++                                logger.LogWarning(
++                                    "FG-224 launch-failure reconciliation lost authority for {AttemptId}",
++                                    claim.AttemptId.Value))
++
++                if launched then
+                     let mutable dispositionRecorded = false
+ 
+                     let cleanupExecution =
+@@ -500,32 +524,50 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                             requireReconciliation ()
+         }
+ 
++    let runClaim (claim: ExecutionClaim) (stoppingToken: CancellationToken) =
++        task {
++            // Recheck after the offer and before definition materialization or
++            // BeginExecution. If an operator removes either trusted executable
++            // after startup, the offered lease may expire safely; the attempt
++            // never enters running and therefore needs no reconciliation.
++            if ControllerConfig.executionLaunchersReady config then
++                do! runReadyClaim claim stoppingToken
++            else
++                logger.LogError(
++                    "FG-224 execution launchers became unavailable before claim {AttemptId}; the attempt was not started",
++                    claim.AttemptId.Value)
++        }
++
+     override _.ExecuteAsync(stoppingToken: CancellationToken) =
+         task {
+             while not stoppingToken.IsCancellationRequested do
+                 let mutable claimed = false
+ 
+                 try
+-                    for org in
+-                        store.OrganizationIds()
+-                        |> WorkerScheduling.organizationsAfter lastClaimedOrganization do
+-                        if not claimed && not stoppingToken.IsCancellationRequested then
+-                            store.RequeueExpiredLocalAttempts org |> ignore
++                    if not (ControllerConfig.executionLaunchersReady config) then
++                        logger.LogError(
++                            "FG-224 execution launchers are unavailable; no work will be claimed")
++                    else
++                        for org in
++                            store.OrganizationIds()
++                            |> WorkerScheduling.organizationsAfter lastClaimedOrganization do
++                            if not claimed && not stoppingToken.IsCancellationRequested then
++                                store.RequeueExpiredLocalAttempts org |> ignore
+ 
+-                            match
+-                                store.ClaimNextExecution(
+-                                    org,
+-                                    owner,
+-                                    config.TrustPool,
+-                                    [ "linux" ],
+-                                    config.LeaseSeconds)
+-                            with
+-                            | Error error -> logger.LogError("FG-224 claim refused: {Reason}", error)
+-                            | Ok None -> ()
+-                            | Ok(Some claim) ->
+-                                claimed <- true
+-                                lastClaimedOrganization <- Some org
+-                                do! runClaim claim stoppingToken
++                                match
++                                    store.ClaimNextExecution(
++                                        org,
++                                        owner,
++                                        config.TrustPool,
++                                        [ "linux" ],
++                                        config.LeaseSeconds)
++                                with
++                                | Error error -> logger.LogError("FG-224 claim refused: {Reason}", error)
++                                | Ok None -> ()
++                                | Ok(Some claim) ->
++                                    claimed <- true
++                                    lastClaimedOrganization <- Some org
++                                    do! runClaim claim stoppingToken
+                 with ex ->
+                     logger.LogError(ex, "FG-224 worker iteration failed")
+ 
+diff --git a/src/Fogell.Controller.Host/WorkerLaunch.fs b/src/Fogell.Controller.Host/WorkerLaunch.fs
+new file mode 100644
+index 0000000..25a5755
+--- /dev/null
++++ b/src/Fogell.Controller.Host/WorkerLaunch.fs
+@@ -0,0 +1,17 @@
++namespace Fogell.Controller.Host
++
++/// Keeps the fallible OS launch edge injectable. Process.Start may return false
++/// or throw after durable BeginExecution; both outcomes must converge on the
++/// same fenced reconciliation callback rather than escaping to lease expiry.
++module internal WorkerLaunch =
++
++    let tryStart (start: unit -> bool) (onFailure: exn option -> unit) =
++        try
++            if start () then
++                true
++            else
++                onFailure None
++                false
++        with ex ->
++            onFailure (Some ex)
++            false
+diff --git a/src/Fogell.Execution/ProcessGroup.fs b/src/Fogell.Execution/ProcessGroup.fs
+index f74e505..6e335e1 100644
+--- a/src/Fogell.Execution/ProcessGroup.fs
++++ b/src/Fogell.Execution/ProcessGroup.fs
+@@ -619,11 +619,15 @@ module ProcessGroup =
+             + "fogell_checks=$((fogell_checks - 1)); /bin/sleep 0.01; "
+             + "done; "
+             + "fi; "
++            // This watchdog inherits the build environment, including PATH.
++            // Keep every cleanup executable absolute: if a trusted Linux
++            // utility is unavailable the shell advances immediately to the
++            // next signal instead of letting build-controlled code delay KILL.
+             + "if [ \"$fogell_safe\" -eq 1 ]; then "
+-            + "/bin/kill -TERM -- -$fogell_inner 2>/dev/null || true; sleep 0.2; "
+-            + "/bin/kill -KILL -- -$fogell_inner 2>/dev/null || true; sleep 0.2; "
++            + "/bin/kill -TERM -- -$fogell_inner 2>/dev/null || true; /bin/sleep 0.2; "
++            + "/bin/kill -KILL -- -$fogell_inner 2>/dev/null || true; /bin/sleep 0.2; "
+             + "elif [ \"$fogell_kill_launcher\" -eq 1 ]; then "
+-            + "/bin/kill -KILL \"$fogell_inner\" 2>/dev/null || true; sleep 0.2; "
++            + "/bin/kill -KILL \"$fogell_inner\" 2>/dev/null || true; /bin/sleep 0.2; "
+             + "fi; "
+             + "fi) <&9 >/dev/null 2>&1 & fogell_guard=$!; "
+             + "if [ -n \"$fogell_launch_ready\" ]; then printf '%s' \"$fogell_inner\" > \"$fogell_launch_ready\"; fi; "
+diff --git a/tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj b/tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj
+index e2673fd..b247700 100644
+--- a/tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj
++++ b/tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj
+@@ -1,7 +1,9 @@
+ <Project Sdk="Microsoft.NET.Sdk.Web">
+   <PropertyGroup><OutputType>Exe</OutputType><IsPackable>false</IsPackable></PropertyGroup>
+   <ItemGroup>
++    <Compile Include="../../src/Fogell.Controller.Host/Config.fs" Link="Config.fs" />
+     <Compile Include="../../src/Fogell.Controller.Host/WorkerPaths.fs" Link="WorkerPaths.fs" />
++    <Compile Include="../../src/Fogell.Controller.Host/WorkerLaunch.fs" Link="WorkerLaunch.fs" />
+     <Compile Include="Tests.fs" />
+   </ItemGroup>
+   <ItemGroup>
+diff --git a/tests/Fogell.Controller.Api.Tests/Tests.fs b/tests/Fogell.Controller.Api.Tests/Tests.fs
+index f1e30e0..80c9251 100644
+--- a/tests/Fogell.Controller.Api.Tests/Tests.fs
++++ b/tests/Fogell.Controller.Api.Tests/Tests.fs
+@@ -112,6 +112,96 @@ let private sendChunked (url: string) (idem: string) (body: byte array) =
+     use response = client.Send req
+     int response.StatusCode, response.Content.ReadAsStringAsync().Result
+ 
++let private executionLauncherValidation =
++    let variables =
++        [ "FOGELL_DATABASE_URL"; "FOGELL_MAINTENANCE_DATABASE_URL"
++          "FOGELL_API_TOKEN_FILE"; "FOGELL_LISTEN_URL"; "FOGELL_STATE_ROOT"
++          "FOGELL_RUN_HOST_PATH"; "FOGELL_LOCAL_TRUST_POOL"
++          "FOGELL_MAX_PIPELINE_BYTES"; "FOGELL_MAX_LOG_CHUNKS"
++          "FOGELL_WORKER_POLL_MS"; "FOGELL_WORKER_LEASE_SECONDS" ]
++
++    let withConfiguration f =
++        let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-setsid-validation-" + Guid.NewGuid().ToString("N"))
++        IO.Directory.CreateDirectory root |> ignore
++        let tokenFile = IO.Path.Combine(root, "token")
++        let runHost = IO.Path.Combine(root, "run-host")
++        IO.File.WriteAllText(tokenFile, String.replicate 32 "t")
++        IO.File.WriteAllText(runHost, "#!/bin/sh\nexit 0\n")
++        IO.File.SetUnixFileMode(runHost, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserExecute)
++        let previous = variables |> List.map (fun name -> name, Environment.GetEnvironmentVariable name)
++        let set name value = Environment.SetEnvironmentVariable(name, value)
++
++        set "FOGELL_DATABASE_URL" "Host=runtime;Database=fogell"
++        set "FOGELL_MAINTENANCE_DATABASE_URL" "Host=maintenance;Database=fogell"
++        set "FOGELL_API_TOKEN_FILE" tokenFile
++        set "FOGELL_LISTEN_URL" "http://127.0.0.1:18083"
++        set "FOGELL_STATE_ROOT" (IO.Path.Combine(root, "state"))
++        set "FOGELL_RUN_HOST_PATH" runHost
++        set "FOGELL_LOCAL_TRUST_POOL" "trusted-linux"
++        set "FOGELL_MAX_PIPELINE_BYTES" "1024"
++        set "FOGELL_MAX_LOG_CHUNKS" "100"
++        set "FOGELL_WORKER_POLL_MS" "50"
++        set "FOGELL_WORKER_LEASE_SECONDS" "60"
++
++        try f root runHost
++        finally
++            previous |> List.iter (fun (name, value) -> Environment.SetEnvironmentVariable(name, value))
++            IO.Directory.Delete(root, true)
++
++    testList
++        "FG-224 trusted setsid launcher"
++        [ test "the exact trusted launcher is shared into worker configuration" {
++              withConfiguration (fun _ _ ->
++                  match ControllerConfig.loadWithSetsidLauncher ControllerConfig.trustedSetsidLauncher with
++                  | Error error -> failtestf "trusted host launcher was refused: %s" error
++                  | Ok config ->
++                      Expect.equal config.SetsidPath "/usr/bin/setsid" "worker consumes the validated exact identity"
++                      Expect.isTrue (ControllerConfig.executionLaunchersReady config) "both configured launchers are executable")
++          }
++
++          test "a missing trusted launcher refuses startup" {
++              withConfiguration (fun root runHost ->
++                  let missing = IO.Path.Combine(root, "missing-setsid")
++                  Expect.isFalse
++                      (ControllerConfig.executionLaunchersReadyAt runHost missing)
++                      "readiness and the pre-claim guard reject the missing launcher"
++                  match ControllerConfig.loadWithSetsidLauncher missing with
++                  | Ok _ -> failtest "missing setsid launcher reached a configured controller"
++                  | Error error ->
++                      Expect.equal error "trusted setsid launcher does not name an executable file" "stable refusal")
++          }
++
++          test "a non-executable trusted launcher refuses startup" {
++              withConfiguration (fun root runHost ->
++                  let nonExecutable = IO.Path.Combine(root, "non-executable-setsid")
++                  IO.File.WriteAllText(nonExecutable, "not executable")
++                  IO.File.SetUnixFileMode(nonExecutable, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite)
++                  Expect.isFalse
++                      (ControllerConfig.executionLaunchersReadyAt runHost nonExecutable)
++                      "readiness and the pre-claim guard reject the non-executable launcher"
++                  match ControllerConfig.loadWithSetsidLauncher nonExecutable with
++                  | Ok _ -> failtest "non-executable setsid launcher reached a configured controller"
++                  | Error error ->
++                      Expect.equal error "trusted setsid launcher does not name an executable file" "stable refusal")
++
++              let mutable observed = None
++              let started =
++                  WorkerLaunch.tryStart
++                      (fun () -> raise (InvalidOperationException "simulated exec failure"))
++                      (fun error -> observed <- error)
++
++              Expect.isFalse started "a Process.Start exception is converted to launch failure"
++              match observed with
++              | Some (:? InvalidOperationException as error) ->
++                  Expect.equal error.Message "simulated exec failure" "the reconciliation callback receives the cause"
++              | other -> failtestf "launch exception did not reach the reconciliation callback: %A" other
++
++              let mutable falseCallbacks = 0
++              let returnedFalse = WorkerLaunch.tryStart (fun () -> false) (fun _ -> falseCallbacks <- falseCallbacks + 1)
++              Expect.isFalse returnedFalse "a false Process.Start result is a launch failure"
++              Expect.equal falseCallbacks 1 "the false result invokes reconciliation exactly once"
++          } ]
++
+ /// FG-060. Authorization is proven BEFORE anything else, because every other
+ /// test would otherwise be running against an open endpoint.
+ let authorization =
+@@ -601,4 +691,4 @@ let main argv =
+             eprintfn $"migrate failed: {e}"
+             1
+         | Ok _ ->
+-            runTestsWithCLIArgs [] argv (testSequenced (testList "Fogell.Controller.Api" [ authorization; endpoints ]))
++            runTestsWithCLIArgs [] argv (testSequenced (testList "Fogell.Controller.Api" [ executionLauncherValidation; authorization; endpoints ]))
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index d59b8c7..1d6f196 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -108,6 +108,19 @@ let private runTermGraceContainmentChild registry pidFile termFile =
+     |> ignore
+     0
+ 
++let private runHostilePathContainmentChild registry pidFile readyFile hostilePath =
++    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
++
++    let script =
++        $"/bin/sh -c 'trap \"\" TERM; exec /bin/sleep 600' & fogell_effect=$!; /usr/bin/printf '%%s' \"$fogell_effect\" > '{pidFile}'; /usr/bin/printf ready > '{readyFile}'; wait \"$fogell_effect\""
++
++    ProcessGroup.run
++        { RunRequest.create (script, tempRoot ()) with
++            Environment = [ "PATH", hostilePath ]
++            ReapGroup = false }
++    |> ignore
++    0
++
+ let private runPreSetsidContainmentChild
+     registry
+     effectFile
+@@ -880,6 +893,76 @@ let containment =
+               Directory.Delete(root, true)
+           }
+ 
++          test "EOF watchdog cleanup cannot resolve its grace sleep from hostile PATH" {
++              if not (OperatingSystem.IsLinux()) then
++                  Tests.skiptest "the watchdog containment contract is Linux-only"
++
++              let root = tempRoot ()
++              let registry = Path.Combine(root, "registry")
++              let hostilePath = Path.Combine(root, "hostile-path")
++              let pidFile = Path.Combine(root, "effect.pid")
++              let readyFile = Path.Combine(root, "effect.ready")
++              let intercepted = Path.Combine(root, "sleep.intercepted")
++              let hostileSleep = Path.Combine(hostilePath, "sleep")
++              Directory.CreateDirectory registry |> ignore
++              Directory.CreateDirectory hostilePath |> ignore
++              File.WriteAllText(
++                  hostileSleep,
++                  $"#!/bin/sh\n/usr/bin/printf intercepted > '{intercepted}'\nexec /bin/sleep 30\n")
++              File.SetUnixFileMode(
++                  hostileSleep,
++                  UnixFileMode.UserRead
++                  ||| UnixFileMode.UserWrite
++                  ||| UnixFileMode.UserExecute)
++
++              let start = ProcessStartInfo(Environment.ProcessPath)
++
++              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
++                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
++
++              start.ArgumentList.Add "--containment-hostile-path-child"
++              start.ArgumentList.Add registry
++              start.ArgumentList.Add pidFile
++              start.ArgumentList.Add readyFile
++              start.ArgumentList.Add hostilePath
++              start.UseShellExecute <- false
++              start.RedirectStandardOutput <- true
++              start.RedirectStandardError <- true
++              use host = Process.Start start
++              let mutable group = 0
++
++              try
++                  let clock = Stopwatch.StartNew()
++
++                  while ((not (File.Exists readyFile)
++                          || (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty))
++                         && clock.ElapsedMilliseconds < 5_000L) do
++                      Threading.Thread.Sleep 10
++
++                  let effectPid =
++                      match waitForPidFile pidFile with
++                      | Some pid -> pid
++                      | None -> failtest "hostile-PATH effect never established its non-vacuous pid precondition"
++
++                  let record = Directory.EnumerateFiles(registry, "*.group") |> Seq.exactlyOne
++                  let fields = File.ReadAllText(record).Split(' ', StringSplitOptions.RemoveEmptyEntries)
++                  group <- Int32.Parse fields.[0]
++                  Expect.isTrue (pidAlive effectPid) "the TERM-resistant effect was alive before owner death"
++
++                  host.Kill()
++                  host.WaitForExit 3_000 |> ignore
++                  Expect.isTrue (waitForReap effectPid) "the EOF watchdog reached absolute-path KILL"
++                  Expect.isFalse (File.Exists intercepted) "the build-controlled sleep executable was never invoked"
++              finally
++                  if not host.HasExited then
++                      host.Kill(true)
++
++                  if group > 1 then
++                      Native.signalGroup group Native.SIGKILL |> ignore
++
++                  Directory.Delete(root, true)
++          }
++
+           test "owner death during TERM grace retains anchor provenance through KILL" {
+               let root = tempRoot ()
+               let registry = Path.Combine(root, "registry")
+@@ -3789,6 +3872,8 @@ let main argv =
+         runExitedLeaderContainmentChild registry pidFile readyFile
+     | [| "--containment-term-grace-child"; registry; pidFile; termFile |] ->
+         runTermGraceContainmentChild registry pidFile termFile
++    | [| "--containment-hostile-path-child"; registry; pidFile; readyFile; hostilePath |] ->
++        runHostilePathContainmentChild registry pidFile readyFile hostilePath
+     | [| "--containment-pre-setsid-child";
+           registry;
+           effectFile;

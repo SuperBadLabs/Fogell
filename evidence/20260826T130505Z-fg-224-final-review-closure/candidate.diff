@@ -1,0 +1,258 @@
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index d5da04d..a00cbe0 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -83,12 +83,12 @@ Exact-tree HeMan acceptance on fresh databases:
+ 
+ - Store: 73/73 passed;
+ - Controller API: 22/22 passed;
+-- Differential: 257/257 passed;
++- Differential: 259/259 passed;
+ - Execution: 94/94 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-locked repository gate also passes all 855 main-suite tests and every blocking
++locked repository gate also passes all 857 main-suite tests and every blocking
+ proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
+ recorded at publication rather than predicted here.
+ 
+diff --git a/src/Fogell.Controller.Host/Config.fs b/src/Fogell.Controller.Host/Config.fs
+index 3449050..9c947cf 100644
+--- a/src/Fogell.Controller.Host/Config.fs
++++ b/src/Fogell.Controller.Host/Config.fs
+@@ -2,6 +2,7 @@ namespace Fogell.Controller.Host
+ 
+ open System
+ open System.IO
++open Fogell.Execution
+ 
+ type ControllerConfig =
+     { RuntimeDatabaseUrl: string
+@@ -27,6 +28,12 @@ module ControllerConfig =
+         else
+             Error "FOGELL_STATE_ROOT must be absolute"
+ 
++    let internal validateTokenFilePath (raw: string) =
++        if Path.IsPathFullyQualified raw then
++            Ok(Path.GetFullPath raw)
++        else
++            Error "FOGELL_API_TOKEN_FILE must be absolute"
++
+     let internal validateWorkerTiming pollMilliseconds leaseSeconds =
+         // Renewal is targeted at one third of the lease. A control check can
+         // occur immediately before that target and then sleep for one complete
+@@ -71,7 +78,7 @@ module ControllerConfig =
+     let load () =
+         let runtime = required "FOGELL_DATABASE_URL"
+         let maintenance = required "FOGELL_MAINTENANCE_DATABASE_URL"
+-        let tokenFile = required "FOGELL_API_TOKEN_FILE"
++        let tokenFile = required "FOGELL_API_TOKEN_FILE" |> Result.bind validateTokenFilePath
+         let listen = required "FOGELL_LISTEN_URL"
+         let stateRoot = required "FOGELL_STATE_ROOT" |> Result.bind validateStateRoot
+         let runHost = required "FOGELL_RUN_HOST_PATH"
+@@ -98,7 +105,7 @@ module ControllerConfig =
+         | Ok _, Ok _ ->
+             let runtimeValue = value runtime
+             let maintenanceValue = value maintenance
+-            let tokenPath = value tokenFile |> Path.GetFullPath
++            let tokenPath = value tokenFile
+             let listenValue = value listen
+             let stateRootValue = value stateRoot
+             let runHostValue = value runHost |> Path.GetFullPath
+@@ -111,8 +118,8 @@ module ControllerConfig =
+ 
+             if runtimeValue = maintenanceValue then
+                 Error "runtime and maintenance database URLs must be distinct capabilities"
+-            elif not (File.Exists runHostValue) then
+-                Error "FOGELL_RUN_HOST_PATH does not name a file"
++            elif not (LaunchEnvironment.isExecutableFile runHostValue) then
++                Error "FOGELL_RUN_HOST_PATH does not name an executable file"
+             elif not (File.Exists tokenPath) then
+                 Error "FOGELL_API_TOKEN_FILE does not name a file"
+             else
+diff --git a/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj b/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
+index 1cffe5e..3aa28ca 100644
+--- a/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
++++ b/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
+@@ -13,6 +13,7 @@
+   <ItemGroup>
+     <ProjectReference Include="../Fogell.Controller.Api/Fogell.Controller.Api.fsproj" />
+     <ProjectReference Include="../Fogell.Store/Fogell.Store.fsproj" />
++    <ProjectReference Include="../Fogell.Execution/Fogell.Execution.fsproj" />
+     <ProjectReference Include="../Fogell.Journal/Fogell.Journal.fsproj" />
+   </ItemGroup>
+ </Project>
+diff --git a/src/Fogell.Controller.Host/packages.lock.json b/src/Fogell.Controller.Host/packages.lock.json
+index 4c17a67..c0f29d5 100644
+--- a/src/Fogell.Controller.Host/packages.lock.json
++++ b/src/Fogell.Controller.Host/packages.lock.json
+@@ -42,6 +42,14 @@
+           "FSharp.Core": "[10.1.301, )"
+         }
+       },
++      "fogell.execution": {
++        "type": "Project",
++        "dependencies": {
++          "FSharp.Core": "[10.1.301, )",
++          "Fogell.Admission": "[1.0.0, )",
++          "Fogell.Domain": "[1.0.0, )"
++        }
++      },
+       "fogell.groovy": {
+         "type": "Project",
+         "dependencies": {
+diff --git a/src/Fogell.Execution/Fogell.Execution.fsproj b/src/Fogell.Execution/Fogell.Execution.fsproj
+index b58d2c2..d932395 100644
+--- a/src/Fogell.Execution/Fogell.Execution.fsproj
++++ b/src/Fogell.Execution/Fogell.Execution.fsproj
+@@ -23,6 +23,9 @@
+     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+       <_Parameter1>Fogell.Execution.Tests</_Parameter1>
+     </AssemblyAttribute>
++    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
++      <_Parameter1>Fogell.Controller.Host</_Parameter1>
++    </AssemblyAttribute>
+     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+       <_Parameter1>Fogell.Differential.Tests</_Parameter1>
+     </AssemblyAttribute>
+diff --git a/src/Fogell.Execution/ProcessGroup.fs b/src/Fogell.Execution/ProcessGroup.fs
+index 961fcc6..f74e505 100644
+--- a/src/Fogell.Execution/ProcessGroup.fs
++++ b/src/Fogell.Execution/ProcessGroup.fs
+@@ -38,7 +38,7 @@ module LaunchEnvironment =
+     /// controller configuration. It cannot be passed to a build launcher.
+     let internal controllerScmFrom environment = ControllerScmEnvironment environment
+ 
+-    let private isExecutable path =
++    let internal isExecutableFile path =
+         try
+             if not (IO.File.Exists path) then
+                 false
+@@ -73,7 +73,7 @@ module LaunchEnvironment =
+                         IO.Path.Combine(workingDirectory, directory)
+ 
+                 IO.Path.GetFullPath(IO.Path.Combine(root, executable)))
+-            |> Array.tryFind isExecutable)
++            |> Array.tryFind isExecutableFile)
+ 
+     let resolveBuildExecutable executable workingDirectory environment =
+         resolveExecutable executable workingDirectory environment
+diff --git a/tests/Fogell.Differential.Tests/Tests.fs b/tests/Fogell.Differential.Tests/Tests.fs
+index 66860b9..92be807 100644
+--- a/tests/Fogell.Differential.Tests/Tests.fs
++++ b/tests/Fogell.Differential.Tests/Tests.fs
+@@ -409,7 +409,7 @@ let controllerStateRoot =
+           "FOGELL_WORKER_POLL_MS"
+           "FOGELL_WORKER_LEASE_SECONDS" ]
+ 
+-    let withConfig stateRoot assertion =
++    let withConfig stateRoot configure assertion =
+         let previous =
+             variables
+             |> List.map (fun name -> name, Environment.GetEnvironmentVariable name)
+@@ -424,6 +424,12 @@ let controllerStateRoot =
+             IO.Directory.CreateDirectory fixtureRoot |> ignore
+             IO.File.WriteAllText(tokenPath, String('t', 32))
+             IO.File.WriteAllText(runHostPath, "test host placeholder")
++            IO.File.SetUnixFileMode(
++                runHostPath,
++                IO.UnixFileMode.UserRead
++                ||| IO.UnixFileMode.UserWrite
++                ||| IO.UnixFileMode.UserExecute)
++
+             Environment.SetEnvironmentVariable("FOGELL_DATABASE_URL", "postgres://runtime")
+             Environment.SetEnvironmentVariable("FOGELL_MAINTENANCE_DATABASE_URL", "postgres://maintenance")
+             Environment.SetEnvironmentVariable("FOGELL_API_TOKEN_FILE", tokenPath)
+@@ -435,6 +441,7 @@ let controllerStateRoot =
+             Environment.SetEnvironmentVariable("FOGELL_MAX_LOG_CHUNKS", "100")
+             Environment.SetEnvironmentVariable("FOGELL_WORKER_POLL_MS", "1000")
+             Environment.SetEnvironmentVariable("FOGELL_WORKER_LEASE_SECONDS", "10")
++            configure fixtureRoot tokenPath runHostPath
+             assertion (ControllerConfig.load ())
+         finally
+             for name, value in previous do
+@@ -447,7 +454,7 @@ let controllerStateRoot =
+         (testList
+             "FG-224 controller state root"
+             [ test "a missing state root remains required rather than defaulting to the cwd" {
+-                  withConfig null (fun result ->
++                  withConfig null (fun _ _ _ -> ()) (fun result ->
+                       Expect.equal
+                           result
+                           (Error "FOGELL_STATE_ROOT is required")
+@@ -459,7 +466,7 @@ let controllerStateRoot =
+                   let accidentallyNormalized = IO.Path.GetFullPath relative
+ 
+                   try
+-                      withConfig relative (fun result ->
++                      withConfig relative (fun _ _ _ -> ()) (fun result ->
+                           Expect.equal
+                               result
+                               (Error "FOGELL_STATE_ROOT must be absolute")
+@@ -472,6 +479,56 @@ let controllerStateRoot =
+                           IO.Directory.Delete(accidentallyNormalized, true)
+               }
+ 
++              test "a relative API token path is refused before normalization or state creation" {
++                  let stateRoot =
++                      IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-token-state-{Guid.NewGuid():N}")
++
++                  try
++                      withConfig
++                          stateRoot
++                          (fun _ tokenPath _ ->
++                              Environment.SetEnvironmentVariable(
++                                  "FOGELL_API_TOKEN_FILE",
++                                  IO.Path.GetFileName tokenPath))
++                          (fun result ->
++                              Expect.equal
++                                  result
++                                  (Error "FOGELL_API_TOKEN_FILE must be absolute")
++                                  "the raw relative token path is rejected before GetFullPath can bind it to the cwd")
++
++                      Expect.isFalse
++                          (IO.Directory.Exists stateRoot)
++                          "invalid token configuration cannot create durable state"
++                  finally
++                      if IO.Directory.Exists stateRoot then
++                          IO.Directory.Delete(stateRoot, true)
++              }
++
++              test "a non-executable run host is refused before state creation" {
++                  let stateRoot =
++                      IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-run-host-state-{Guid.NewGuid():N}")
++
++                  try
++                      withConfig
++                          stateRoot
++                          (fun _ _ runHostPath ->
++                              IO.File.SetUnixFileMode(
++                                  runHostPath,
++                                  IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite))
++                          (fun result ->
++                              Expect.equal
++                                  result
++                                  (Error "FOGELL_RUN_HOST_PATH does not name an executable file")
++                                  "an existing regular file without an execute bit is not launchable")
++
++                      Expect.isFalse
++                          (IO.Directory.Exists stateRoot)
++                          "an unlaunchable run host cannot create durable state"
++                  finally
++                      if IO.Directory.Exists stateRoot then
++                          IO.Directory.Delete(stateRoot, true)
++              }
++
+               test "an absolute state root is accepted and normalized without changing other settings" {
+                   let stateFixtureRoot =
+                       IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-state-{Guid.NewGuid():N}")
+@@ -486,7 +543,7 @@ let controllerStateRoot =
+                   let expected = IO.Path.GetFullPath fixture
+ 
+                   try
+-                      withConfig fixture (function
++                      withConfig fixture (fun _ _ _ -> ()) (function
+                           | Error error -> failtestf "absolute state root was refused: %s" error
+                           | Ok config ->
+                               Expect.equal config.StateRoot expected "accepted roots retain canonical normalization"

@@ -1,0 +1,433 @@
+diff --git a/docs/runbooks/controller-host.md b/docs/runbooks/controller-host.md
+index 21f4fe5..4adf08c 100644
+--- a/docs/runbooks/controller-host.md
++++ b/docs/runbooks/controller-host.md
+@@ -17,7 +17,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
+   organizations, projects, builds, nodes, attempts, events, outbox, log_chunks,
+   effect_checkpoints, retry_decisions, build_definitions
+ TO fogell_runtime;
+-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO fogell_runtime;
++GRANT USAGE, SELECT ON
++  events_id_seq, outbox_id_seq, log_chunks_id_seq TO fogell_runtime;
+ ```
+ 
+ The maintenance identity applies checksum-pinned migrations during startup and
+@@ -30,8 +31,8 @@ FOGELL_DATABASE_URL                 runtime Npgsql connection string
+ FOGELL_MAINTENANCE_DATABASE_URL     distinct migration connection string
+ FOGELL_API_TOKEN_FILE               absolute/readable token file, >=32 characters
+ FOGELL_LISTEN_URL                   HTTPS, or loopback HTTP for local operation
+-FOGELL_STATE_ROOT                   absolute durable controller-state directory
+-FOGELL_RUN_HOST_PATH                built Fogell.Run.Host executable
++FOGELL_STATE_ROOT                   absolute durable controller-state directory, creatable/writable by the service identity
++FOGELL_RUN_HOST_PATH                built Fogell.Run.Host executable by the effective service identity
+ FOGELL_LOCAL_TRUST_POOL             controller-owned placement pool
+ FOGELL_MAX_PIPELINE_BYTES           1024..16777216
+ FOGELL_MAX_LOG_CHUNKS               1..10000 returned per request
+@@ -51,10 +52,15 @@ The runtime state root holds immutable definitions, journals, event frames,
+ identity-bound inner process-group registry records, workspaces, a neutral child
+ home, private job/build-scoped agent homes, and temporary files. The configured
+ root is validated as absolute before normalization; relative input is refused
+-rather than resolved against the controller's current directory. Put it on
+-storage whose loss/recovery policy matches
+-the PostgreSQL database; an incomplete journal is a reconciliation event, not
+-permission to guess success.
++rather than resolved against the controller's current directory. Before startup
++continues, the controller creates a uniquely named probe without replacement,
++writes and durably flushes it, and removes it. A root that cannot complete that
++cycle is refused before readiness; existing operator data is never used as the
++probe target. The configured Run.Host path is likewise checked against the Linux
++kernel using the service's effective identity, so unrelated execute permission
++bits do not authorize startup. Put the state root on storage whose loss/recovery
++policy matches the PostgreSQL database; an incomplete journal is a reconciliation
++event, not permission to guess success.
+ 
+ ## Start and observe
+ 
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index f086015..53a6730 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -31,7 +31,12 @@ a private HOME derived from stable job/build identity, so restart converges on
+ the same directory while distinct builds cannot share mutable HOME state. The
+ raw configured state root must be fully qualified before it is normalized, so a
+ relative path cannot silently bind durability to the controller's current
+-directory. Every engine-created
++directory. Startup also performs a create-new, write, durable-flush, and cleanup
++probe inside that root before readiness; an existing root that the service
++identity cannot write is refused without replacing user data. Run-host admission
++asks the Linux kernel whether the effective service identity may execute the
++configured file, rather than accepting an execute bit from an inapplicable owner,
++group, or other permission class. Every engine-created
+ inner `setsid` step group is identity-bound by Linux pid plus process start ticks
+ and registered before user code is released. A Run.Host-liveness EOF watchdog
+ and the controller's combined outer/registered-inner cleanup reap descendants,
+@@ -84,14 +89,14 @@ gate runs this proof against its PostgreSQL service.
+ 
+ Exact-tree HeMan acceptance on fresh databases:
+ 
+-- Store: 74/74 passed;
++- Store: 75/75 passed;
+ - Controller API: 22/22 passed;
+-- Differential: 259/259 passed;
++- Differential: 261/261 passed;
+ - Execution: 94/94 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-locked repository gate also passes all 858 main-suite tests and every blocking
++locked repository gate also passes all 861 main-suite tests and every blocking
+ proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
+ recorded at publication rather than predicted here.
+ 
+diff --git a/src/Fogell.Controller.Host/Config.fs b/src/Fogell.Controller.Host/Config.fs
+index 9c947cf..4ddac5b 100644
+--- a/src/Fogell.Controller.Host/Config.fs
++++ b/src/Fogell.Controller.Host/Config.fs
+@@ -2,7 +2,7 @@ namespace Fogell.Controller.Host
+ 
+ open System
+ open System.IO
+-open Fogell.Execution
++open System.Runtime.InteropServices
+ 
+ type ControllerConfig =
+     { RuntimeDatabaseUrl: string
+@@ -19,6 +19,48 @@ type ControllerConfig =
+ 
+ module ControllerConfig =
+ 
++    [<Literal>]
++    let private AtCurrentWorkingDirectory = -100
++
++    [<Literal>]
++    let private ExecuteAccess = 1
++
++    [<Literal>]
++    let private UseEffectiveIdentity = 0x200
++
++    [<DllImport("libc", SetLastError = true)>]
++    extern int private faccessat(int directoryFileDescriptor, string path, int mode, int flags)
++
++    let internal isExecutableByServiceIdentity path =
++        try
++            OperatingSystem.IsLinux()
++            && File.Exists path
++            && faccessat(AtCurrentWorkingDirectory, path, ExecuteAccess, UseEffectiveIdentity) = 0
++        with _ ->
++            false
++
++    let internal prepareStateRoot path =
++        try
++            Directory.CreateDirectory path |> ignore
++
++            let probePath =
++                Path.Combine(path, $".fogell-readiness-{Guid.NewGuid():N}.tmp")
++
++            let options =
++                FileStreamOptions(
++                    Mode = FileMode.CreateNew,
++                    Access = FileAccess.Write,
++                    Share = FileShare.None,
++                    Options = (FileOptions.DeleteOnClose ||| FileOptions.WriteThrough),
++                    UnixCreateMode = (UnixFileMode.UserRead ||| UnixFileMode.UserWrite))
++
++            use probe = File.Open(probePath, options)
++            probe.WriteByte 0uy
++            probe.Flush true
++            Ok()
++        with _ ->
++            Error "FOGELL_STATE_ROOT cannot be created and written by the service identity"
++
+     let internal validateStateRoot (raw: string) =
+         // Validate the operator-supplied value before normalization. GetFullPath
+         // makes every relative path absolute by resolving it against the current
+@@ -118,7 +160,7 @@ module ControllerConfig =
+ 
+             if runtimeValue = maintenanceValue then
+                 Error "runtime and maintenance database URLs must be distinct capabilities"
+-            elif not (LaunchEnvironment.isExecutableFile runHostValue) then
++            elif not (isExecutableByServiceIdentity runHostValue) then
+                 Error "FOGELL_RUN_HOST_PATH does not name an executable file"
+             elif not (File.Exists tokenPath) then
+                 Error "FOGELL_API_TOKEN_FILE does not name a file"
+@@ -131,16 +173,18 @@ module ControllerConfig =
+                     if token.Length < 32 || token <> token.Trim() then
+                         Error "API token file must contain at least 32 non-padded characters"
+                     else
+-                        Directory.CreateDirectory stateRootValue |> ignore
+-                        Ok
+-                            { RuntimeDatabaseUrl = runtimeValue
+-                              MaintenanceDatabaseUrl = maintenanceValue
+-                              ApiToken = token
+-                              ListenUrl = listenValue
+-                              StateRoot = stateRootValue
+-                              RunHostPath = runHostValue
+-                              TrustPool = value trustPool
+-                              MaxPipelineBytes = value maxPipeline
+-                              MaxLogChunks = value maxLogs
+-                              PollMilliseconds = value poll
+-                              LeaseSeconds = value lease }
++                        match prepareStateRoot stateRootValue with
++                        | Error error -> Error error
++                        | Ok _ ->
++                            Ok
++                                { RuntimeDatabaseUrl = runtimeValue
++                                  MaintenanceDatabaseUrl = maintenanceValue
++                                  ApiToken = token
++                                  ListenUrl = listenValue
++                                  StateRoot = stateRootValue
++                                  RunHostPath = runHostValue
++                                  TrustPool = value trustPool
++                                  MaxPipelineBytes = value maxPipeline
++                                  MaxLogChunks = value maxLogs
++                                  PollMilliseconds = value poll
++                                  LeaseSeconds = value lease }
+diff --git a/src/Fogell.Store/Store.fs b/src/Fogell.Store/Store.fs
+index 786422c..c63759e 100644
+--- a/src/Fogell.Store/Store.fs
++++ b/src/Fogell.Store/Store.fs
+@@ -645,17 +645,24 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+                              'organizations', 'projects', 'builds', 'nodes', 'attempts',
+                              'events', 'outbox', 'log_chunks', 'effect_checkpoints',
+                              'retry_decisions', 'build_definitions'
+-                           ]) AS required(name)
++                           ]) AS required_table(name)
++                           CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'])
++                             AS required_privilege(name)
+                           WHERE NOT has_table_privilege(
+                               current_user,
+-                              'public.' || quote_ident(required.name),
+-                              'SELECT,INSERT,UPDATE,DELETE'))
++                              'public.' || quote_ident(required_table.name),
++                              required_privilege.name))
+                      AND NOT EXISTS (
+                          SELECT 1
+-                           FROM pg_class c
+-                           JOIN pg_namespace n ON n.oid = c.relnamespace
+-                          WHERE n.nspname = 'public' AND c.relkind = 'S'
+-                            AND NOT has_sequence_privilege(current_user, c.oid, 'USAGE,SELECT'))"
++                           FROM unnest(ARRAY[
++                             'events_id_seq', 'outbox_id_seq', 'log_chunks_id_seq'
++                           ]) AS required_sequence(name)
++                           CROSS JOIN unnest(ARRAY['USAGE', 'SELECT'])
++                             AS required_privilege(name)
++                          WHERE NOT has_sequence_privilege(
++                                current_user,
++                                'public.' || quote_ident(required_sequence.name),
++                                required_privilege.name))"
+             cmd.ExecuteScalar() :?> bool
+         with _ ->
+             false
+diff --git a/tests/Fogell.Differential.Tests/Tests.fs b/tests/Fogell.Differential.Tests/Tests.fs
+index 92be807..e77ed48 100644
+--- a/tests/Fogell.Differential.Tests/Tests.fs
++++ b/tests/Fogell.Differential.Tests/Tests.fs
+@@ -1,6 +1,7 @@
+ module Fogell.Differential.Tests
+ 
+ open System
++open System.Runtime.InteropServices
+ open Expecto
+ open Fogell.Controller.Host
+ open Fogell.Differential
+@@ -8,6 +9,11 @@ open Fogell.Execution
+ open Fogell.Groovy.Interpreter
+ open Fogell.Ir
+ 
++[<DllImport("libc")>]
++extern uint32 private geteuid()
++
++let private effectiveIdentityIsRoot () = geteuid() = 0u
++
+ /// FG-224. Progressive output leaves the engine at WalkerCtx.Emit, which is
+ /// also the one run-scoped masking and ordering boundary.  These tests pin the
+ /// publication contract directly so a future transport cannot accidentally
+@@ -529,6 +535,94 @@ let controllerStateRoot =
+                           IO.Directory.Delete(stateRoot, true)
+               }
+ 
++              test "run host execute permissions are evaluated for the effective identity" {
++                  let stateRoot =
++                      IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-other-execute-state-{Guid.NewGuid():N}")
++
++                  try
++                      withConfig
++                          stateRoot
++                          (fun _ _ runHostPath ->
++                              // The fixture belongs to this process. For an unprivileged owner,
++                              // the kernel selects the owner class and ignores OtherExecute;
++                              // Linux root may execute because at least one execute bit exists.
++                              IO.File.SetUnixFileMode(
++                                  runHostPath,
++                                  IO.UnixFileMode.UserRead
++                                  ||| IO.UnixFileMode.UserWrite
++                                  ||| IO.UnixFileMode.OtherExecute))
++                          (fun result ->
++                              if effectiveIdentityIsRoot () then
++                                  match result with
++                                  | Ok _ -> ()
++                                  | Error error ->
++                                      failtestf "root's effective execute access was refused: %s" error
++                              else
++                                  Expect.equal
++                                      result
++                                      (Error "FOGELL_RUN_HOST_PATH does not name an executable file")
++                                      "an other-only bit does not grant the owning unprivileged identity execute access")
++
++                      if effectiveIdentityIsRoot () then
++                          Expect.isTrue
++                              (IO.Directory.Exists stateRoot)
++                              "Linux root may execute a regular file when any execute bit is present"
++                          Expect.isEmpty
++                              (IO.Directory.GetFileSystemEntries stateRoot)
++                              "the successful root readiness probe is removed"
++                      else
++                          Expect.isFalse
++                              (IO.Directory.Exists stateRoot)
++                              "a run host inaccessible to the unprivileged identity cannot create durable state"
++                  finally
++                      if IO.Directory.Exists stateRoot then
++                          IO.Directory.Delete(stateRoot, true)
++              }
++
++              test "state root write access follows the effective identity without changing existing contents" {
++                  let stateRoot =
++                      IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-readonly-state-{Guid.NewGuid():N}")
++
++                  let sentinel = IO.Path.Combine(stateRoot, "operator-data")
++
++                  try
++                      IO.Directory.CreateDirectory stateRoot |> ignore
++                      IO.File.WriteAllText(sentinel, "preserve me")
++
++                      IO.File.SetUnixFileMode(
++                          stateRoot,
++                          IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserExecute)
++
++                      withConfig stateRoot (fun _ _ _ -> ()) (fun result ->
++                          if effectiveIdentityIsRoot () then
++                              match result with
++                              | Ok _ -> ()
++                              | Error error ->
++                                  failtestf "root's effective write access was refused: %s" error
++                          else
++                              Expect.equal
++                                  result
++                                  (Error "FOGELL_STATE_ROOT cannot be created and written by the service identity")
++                                  "an unprivileged identity is refused when the real create/write probe fails")
++
++                      Expect.sequenceEqual
++                          (IO.Directory.GetFileSystemEntries stateRoot)
++                          [| sentinel |]
++                          "neither the failed unprivileged probe nor the successful root probe leaves an artifact"
++                      Expect.equal
++                          (IO.File.ReadAllText sentinel)
++                          "preserve me"
++                          "the failed probe does not modify existing data"
++                  finally
++                      if IO.Directory.Exists stateRoot then
++                          IO.File.SetUnixFileMode(
++                              stateRoot,
++                              IO.UnixFileMode.UserRead
++                              ||| IO.UnixFileMode.UserWrite
++                              ||| IO.UnixFileMode.UserExecute)
++                          IO.Directory.Delete(stateRoot, true)
++              }
++
+               test "an absolute state root is accepted and normalized without changing other settings" {
+                   let stateFixtureRoot =
+                       IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-state-{Guid.NewGuid():N}")
+@@ -551,7 +645,10 @@ let controllerStateRoot =
+                               Expect.equal config.MaxLogChunks 100 "log limit parsing is unchanged"
+                               Expect.equal config.PollMilliseconds 1000 "poll parsing is unchanged"
+                               Expect.equal config.LeaseSeconds 10 "lease parsing is unchanged"
+-                              Expect.isTrue (IO.Directory.Exists expected) "the accepted state directory is created")
++                              Expect.isTrue (IO.Directory.Exists expected) "the accepted state directory is created"
++                              Expect.isEmpty
++                                  (IO.Directory.GetFileSystemEntries expected)
++                                  "a successful readiness probe is removed before startup continues")
+                   finally
+                       if IO.Directory.Exists stateFixtureRoot then
+                           IO.Directory.Delete(stateFixtureRoot, true)
+diff --git a/tests/Fogell.Store.Tests/Tests.fs b/tests/Fogell.Store.Tests/Tests.fs
+index 721d29b..9fd2dd9 100644
+--- a/tests/Fogell.Store.Tests/Tests.fs
++++ b/tests/Fogell.Store.Tests/Tests.fs
+@@ -252,7 +252,76 @@ let migrations =
+ let tenantIsolation =
+     testList
+         "FG-028 forced tenant isolation"
+-        [ test "a real NOBYPASSRLS runtime role is fail-closed and Store sets only transaction-local context" {
++        [ test "runtime readiness requires every table and sequence privilege, not maintenance capabilities" {
++              let roleName = $"fogell_runtime_{Guid.NewGuid():N}"
++              let maintenanceSequenceName = $"fogell_maintenance_{Guid.NewGuid():N}"
++
++              let admin sql =
++                  use conn = new Npgsql.NpgsqlConnection(connectionString)
++                  conn.Open()
++                  use cmd = conn.CreateCommand()
++                  cmd.CommandText <- sql
++                  cmd.ExecuteNonQuery() |> ignore
++
++              admin $"CREATE ROLE {roleName} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"
++              admin $"CREATE SEQUENCE {maintenanceSequenceName}"
++
++              try
++                  admin
++                      $"GRANT USAGE ON SCHEMA public TO {roleName};
++                        GRANT SELECT, UPDATE(singleton) ON controller_metadata TO {roleName};
++                        GRANT SELECT ON
++                          organizations, projects, builds, nodes, attempts,
++                          events, outbox, log_chunks, effect_checkpoints, retry_decisions,
++                          build_definitions
++                        TO {roleName};
++                        GRANT SELECT ON organization_work_roots TO {roleName};
++                        GRANT USAGE ON events_id_seq, outbox_id_seq, log_chunks_id_seq TO {roleName}"
++
++                  // Deliberately disable Npgsql's pool reset and force one physical
++                  // connection. Otherwise a session-scoped set_config mutant is
++                  // cleaned up by the client and this test falsely credits the
++                  // Store for transaction-local isolation PostgreSQL never got.
++                  let runtimeConnectionString =
++                      $"{connectionString};Options=-c role={roleName};No Reset On Close=true;Maximum Pool Size=1"
++                  let runtimeStore = Store(runtimeConnectionString, connectionString)
++
++                  Expect.isFalse
++                      (runtimeStore.RuntimeCapabilities())
++                      "one of four required table privileges is not the full table capability"
++
++                  admin
++                      $"GRANT INSERT, UPDATE, DELETE ON
++                          organizations, projects, builds, nodes, attempts,
++                          events, outbox, log_chunks, effect_checkpoints, retry_decisions,
++                          build_definitions
++                        TO {roleName}"
++
++                  Expect.isFalse
++                      (runtimeStore.RuntimeCapabilities())
++                      "sequence USAGE without SELECT is not the full sequence capability"
++
++                  admin $"GRANT SELECT ON events_id_seq, outbox_id_seq, log_chunks_id_seq TO {roleName}"
++
++                  Expect.isTrue
++                      (runtimeStore.RuntimeCapabilities())
++                      "the runtime role has the exact controller surface without a maintenance-only sequence"
++
++                  use capabilityConn = new Npgsql.NpgsqlConnection(connectionString)
++                  capabilityConn.Open()
++                  use capability = capabilityConn.CreateCommand()
++                  capability.CommandText <-
++                      $"SELECT has_sequence_privilege('{roleName}', 'public.{maintenanceSequenceName}', 'USAGE')"
++                  Expect.isFalse
++                      (capability.ExecuteScalar() :?> bool)
++                      "readiness did not require granting the maintenance-only sequence to runtime"
++              finally
++                  Npgsql.NpgsqlConnection.ClearAllPools()
++                  admin $"DROP SEQUENCE {maintenanceSequenceName}"
++                  admin $"DROP OWNED BY {roleName}; DROP ROLE {roleName}"
++          }
++
++          test "a real NOBYPASSRLS runtime role is fail-closed and Store sets only transaction-local context" {
+               let roleName = $"fogell_runtime_{Guid.NewGuid():N}"
+ 
+               let admin sql =

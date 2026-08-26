@@ -1,0 +1,4 @@
+ M docs/tickets/FG-224.md
+ M scripts/prove-runnable-controller.sh
+ M src/Fogell.Controller.Host/Worker.fs
+ M tests/Fogell.Store.Tests/Tests.fs

@@ -4,6 +4,12 @@ open System
 open Fogell.Domain
 open Fogell.Execution
 
+/// Progressive output is controller infrastructure, not build semantics.  Keep
+/// its failure typed across the walker/Run.Host boundary so the host can leave
+/// the journal non-terminal and force reconciliation.
+type OutputPublicationException(message: string, inner: exn) =
+    inherit Exception(message, inner)
+
 /// FG-105. The walker's run-scoped mutable state — one value constructed per
 /// build, passed explicitly where the 2,000-line closure used to capture it.
 ///
@@ -60,6 +66,9 @@ type WalkerCtx =
       BindSecrets: SecretBinding list -> unit
       /// Locked snapshot of the raw output lines, in emission order.
       Output: unit -> string list
+      /// Wait for the ordered external publisher and surface its first failure.
+      /// Persisted hosts call this before constructing terminal truth.
+      FlushOutput: unit -> unit
       /// Locked snapshot pairing each line with the secrets that were already
       /// bound when it was emitted — the leak scan's exact input.
       OutputWithActiveSecrets: unit -> (string * SecretBinding list) list
@@ -151,11 +160,82 @@ module WalkerCtx =
 
     /// Build the run-scoped state. Everything mutable lives inside this call's
     /// closures; the returned record is the only handle.
-    let create (buildStartTimeInMillis: int64) (isRestartedRun: bool) : WalkerCtx =
+    let create
+        (buildStartTimeInMillis: int64)
+        (isRestartedRun: bool)
+        (onOutput: (string -> unit) option)
+        : WalkerCtx =
         let output = System.Collections.Generic.List<string>()
         // Parallel branches append from several threads at once; this one lock
         // also orders output against secret registration and the fired-set.
         let outputLock = obj ()
+
+        // Emit assigns publication order while holding outputLock, then one
+        // drainer invokes the external callback without that lock.  A callback
+        // may therefore block or re-enter Emit without freezing masking, trace
+        // reads, or parallel writers. Monitor re-entrancy lets a nested Emit
+        // enqueue and return; the outer drain publishes it next.
+        let publicationLock = obj ()
+        let publications = System.Collections.Generic.Queue<int64 * string>()
+        let mutable nextPublicationOrder = 0L
+        let mutable publicationActive = false
+        let mutable publicationFailure: OutputPublicationException option = None
+
+        let drainPublications publish =
+            let mutable draining = true
+
+            while draining do
+                let next =
+                    lock publicationLock (fun () ->
+                        if publications.Count = 0 then
+                            publicationActive <- false
+                            System.Threading.Monitor.PulseAll publicationLock
+                            None
+                        else
+                            Some(publications.Dequeue()))
+
+                match next with
+                | None -> draining <- false
+                | Some(_, line) ->
+                    try
+                        // External code runs with neither WalkerCtx lock held.
+                        publish line
+                    with ex ->
+                        let failure =
+                            match ex with
+                            | :? OutputPublicationException as typed -> typed
+                            | _ -> OutputPublicationException("progressive output publication failed", ex)
+
+                        lock publicationLock (fun () ->
+                            publicationFailure <- Some failure
+                            publications.Clear()
+                            publicationActive <- false
+                            System.Threading.Monitor.PulseAll publicationLock)
+                        raise failure
+
+        let flushPublications () =
+            match onOutput with
+            | None -> ()
+            | Some publish ->
+                let mutable complete = false
+
+                while not complete do
+                    let shouldDrain =
+                        lock publicationLock (fun () ->
+                            match publicationFailure with
+                            | Some failure -> raise failure
+                            | None when not publicationActive && publications.Count > 0 ->
+                                publicationActive <- true
+                                true
+                            | None when publicationActive ->
+                                System.Threading.Monitor.Wait publicationLock |> ignore
+                                false
+                            | None ->
+                                complete <- true
+                                false)
+
+                    if shouldDrain then
+                        drainPublications publish
 
         let firedDeadlines = System.Collections.Generic.HashSet<int>()
 
@@ -192,34 +272,69 @@ module WalkerCtx =
 
         { Emit =
             fun line ->
-                lock outputLock (fun () ->
-                    let safe =
-                        if boundSecrets.Count = 0 then
-                            line
-                        else
-                            Secrets.mask (boundSecrets |> Seq.map fst |> List.ofSeq) line
+                let shouldDrain =
+                    lock outputLock (fun () ->
+                        let safe =
+                            if boundSecrets.Count = 0 then
+                                line
+                            else
+                                Secrets.mask (boundSecrets |> Seq.map fst |> List.ofSeq) line
 
-                    // AFTER masking, deliberately. The prefix carries no secret,
-                    // and masking a line whose start has already moved would let
-                    // an offset-based masker act on the wrong span.
-                    let stamped =
-                        if timestamps then
-                            // INVARIANT CULTURE. `ToString(format)` uses the
-                            // CURRENT culture, whose time separator is not always
-                            // `:` — a process running under one of those would
-                            // emit `T03.54.07.729Z`, which `Trace.timestampPrefix`
-                            // does not match, so Fogell would neither strip nor
-                            // count its own prefix. The engine's output would
-                            // depend on the operator's locale.
-                            let now =
-                                System.DateTime.UtcNow.ToString(
-                                    "yyyy-MM-ddTHH:mm:ss.fffZ",
-                                    System.Globalization.CultureInfo.InvariantCulture)
-                            $"[{now}] {safe}"
-                        else
-                            safe
+                        // A transformed secret can survive the ordinary masker.
+                        // The terminal trace refuses those lines later, but a
+                        // progressive callback happens NOW and must not publish the
+                        // bytes first. Executor emits the safe warning separately;
+                        // retain the line for the terminal leak guard and suppress
+                        // only its external publication.
+                        let safeToPublish =
+                            boundSecrets.Count = 0
+                            || (Secrets.detectLeaks (boundSecrets |> Seq.map fst |> List.ofSeq) safe
+                                |> List.isEmpty)
 
-                    output.Add stamped)
+                        // AFTER masking, deliberately. The prefix carries no secret,
+                        // and masking a line whose start has already moved would let
+                        // an offset-based masker act on the wrong span.
+                        let stamped =
+                            if timestamps then
+                                // INVARIANT CULTURE. `ToString(format)` uses the
+                                // CURRENT culture, whose time separator is not always
+                                // `:` — a process running under one of those would
+                                // emit `T03.54.07.729Z`, which `Trace.timestampPrefix`
+                                // does not match, so Fogell would neither strip nor
+                                // count its own prefix. The engine's output would
+                                // depend on the operator's locale.
+                                let now =
+                                    System.DateTime.UtcNow.ToString(
+                                        "yyyy-MM-ddTHH:mm:ss.fffZ",
+                                        System.Globalization.CultureInfo.InvariantCulture)
+                                $"[{now}] {safe}"
+                            else
+                                safe
+
+                        output.Add stamped
+                        // Enqueue under the trace lock, after masking/leak screening,
+                        // so the assigned monotonic order is exactly Output() order.
+                        // The single callback consumer runs below, outside this lock.
+                        if safeToPublish && Option.isSome onOutput then
+                            lock publicationLock (fun () ->
+                                match publicationFailure with
+                                | Some failure -> raise failure
+                                | None ->
+                                    let order = nextPublicationOrder
+                                    nextPublicationOrder <- nextPublicationOrder + 1L
+                                    publications.Enqueue(order, stamped)
+
+                                    if publicationActive then
+                                        false
+                                    else
+                                        publicationActive <- true
+                                        true)
+                        else
+                            false)
+
+                match shouldDrain, onOutput with
+                | true, Some publish -> drainPublications publish
+                | _ -> ()
           EnableTimestamps = fun () -> lock outputLock (fun () -> timestamps <- true)
           BindSecrets =
             fun bindings ->
@@ -227,6 +342,7 @@ module WalkerCtx =
                     for b in bindings do
                         boundSecrets.Add(b, output.Count))
           Output = fun () -> lock outputLock (fun () -> List.ofSeq output)
+          FlushOutput = flushPublications
           OutputWithActiveSecrets =
             fun () ->
                 lock outputLock (fun () ->

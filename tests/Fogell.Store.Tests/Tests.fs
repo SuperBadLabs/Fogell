@@ -35,7 +35,8 @@ let private tenantTables =
       "outbox", "organization_id"
       "log_chunks", "organization_id"
       "effect_checkpoints", "organization_id"
-      "retry_decisions", "organization_id" ]
+      "retry_decisions", "organization_id"
+      "build_definitions", "organization_id" ]
 
 let private freshProject () =
     let org = OrganizationId(Guid.NewGuid())
@@ -44,9 +45,13 @@ let private freshProject () =
     org, project
 
 let private newBuild org project key stages =
+    let stageList = String.concat "," stages
+    let source = $"pipeline:{stageList}"
+
     { OrganizationId = org
       ProjectId = project
       IdempotencyKey = key
+      PipelineSource = Text.Encoding.UTF8.GetBytes source
       StageNames = stages
       RequiredTrustPool = "trusted-linux"
       RequiredCapabilities = [ "linux" ] }
@@ -227,12 +232,284 @@ let migrations =
                       (string value)
                       "af4f5fadfbccfdbba78b785753386b09f9385e1ac88167d18960b03d9635f920"
                       "migration 0005 exact source checksum"
+          }
+
+          test "runnable controller migration 0006 is checksum-pinned" {
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use cmd = conn.CreateCommand()
+              cmd.CommandText <- "SELECT checksum FROM schema_migrations WHERE version = '0006'"
+
+              match cmd.ExecuteScalar() with
+              | null -> failtest "migration ledger has no 0006 row"
+              | value ->
+                  Expect.equal
+                      (string value)
+                      "26daeb1153b1a71b945bc897aee2ce1dba9994bc53aa1bdf206e416aa284a7aa"
+                      "migration 0006 exact source checksum"
+          }
+
+          test "build-wide log cursor migration 0008 is checksum-pinned" {
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use cmd = conn.CreateCommand()
+              cmd.CommandText <- "SELECT checksum FROM schema_migrations WHERE version = '0008'"
+
+              match cmd.ExecuteScalar() with
+              | null -> failtest "migration ledger has no 0008 row"
+              | value ->
+                  Expect.equal
+                      (string value)
+                      "a164a5a46fe18d9712508bb7222016badb9fef4cd51c4516662b591a912bede9"
+                      "migration 0008 exact source checksum"
+          }
+
+          test "migration 0008 upgrades populated sparse and colliding legacy logs" {
+              let databaseName = $"fogell_log_upgrade_{Guid.NewGuid():N}"
+              let adminBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+              adminBuilder.Database <- "postgres"
+              let targetBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+              targetBuilder.Database <- databaseName
+
+              use admin = new Npgsql.NpgsqlConnection(adminBuilder.ConnectionString)
+              admin.Open()
+              use create = admin.CreateCommand()
+              create.CommandText <- $"CREATE DATABASE {databaseName}"
+              create.ExecuteNonQuery() |> ignore
+
+              try
+                  use target = new Npgsql.NpgsqlConnection(targetBuilder.ConnectionString)
+                  target.Open()
+
+                  Migrations.all ()
+                  |> List.filter (fun (version, _) -> version <= "0007")
+                  |> List.iter (fun (_, sql) ->
+                      use apply = target.CreateCommand()
+                      apply.CommandText <- sql
+                      apply.ExecuteNonQuery() |> ignore)
+
+                  let org = Guid.NewGuid()
+                  let project = Guid.NewGuid()
+                  let populatedBuild = Guid.NewGuid()
+                  let emptyBuild = Guid.NewGuid()
+                  let node = Guid.NewGuid()
+                  let parent = Guid.NewGuid()
+                  let retry = Guid.NewGuid()
+
+                  use seedTx = target.BeginTransaction()
+                  use seed = target.CreateCommand()
+                  seed.Transaction <- seedTx
+                  seed.CommandText <-
+                      "SELECT set_config('fogell.organization_id', @org_text, true);
+                       INSERT INTO organizations (id, slug) VALUES (@org, 'upgrade-org');
+                       INSERT INTO projects (id, organization_id, slug)
+                       VALUES (@project, @org, 'upgrade-project');
+                       INSERT INTO builds
+                              (id, organization_id, project_id, number, idempotency_key, status)
+                       VALUES (@build, @org, @project, 1, 'populated', 'queued'),
+                              (@empty, @org, @project, 2, 'empty', 'queued');
+                       INSERT INTO nodes
+                              (id, organization_id, build_id, name, ordinal,
+                               required_trust_pool, status)
+                       VALUES (@node, @org, @build, 'legacy', 0, 'trusted-linux', 'queued');
+                       INSERT INTO attempts
+                              (id, organization_id, node_id, ordinal, state)
+                       VALUES (@parent, @org, @node, 0, 'queued'),
+                              (@retry, @org, @node, 1, 'queued');
+                       INSERT INTO log_chunks
+                              (organization_id, build_id, attempt_id, sequence, body, created_at)
+                       VALUES (@org, @build, @parent, 0, 'zero',
+                               '2026-01-01T00:00:00Z'::timestamptz),
+                              (@org, @build, @parent, 4, 'four',
+                               '2026-01-01T00:00:01Z'::timestamptz),
+                              (@org, @build, @retry, 0, 'retry-zero',
+                               '2026-01-01T00:00:02Z'::timestamptz)"
+                  seed.Parameters.AddWithValue("org_text", string org) |> ignore
+                  seed.Parameters.AddWithValue("org", org) |> ignore
+                  seed.Parameters.AddWithValue("project", project) |> ignore
+                  seed.Parameters.AddWithValue("build", populatedBuild) |> ignore
+                  seed.Parameters.AddWithValue("empty", emptyBuild) |> ignore
+                  seed.Parameters.AddWithValue("node", node) |> ignore
+                  seed.Parameters.AddWithValue("parent", parent) |> ignore
+                  seed.Parameters.AddWithValue("retry", retry) |> ignore
+                  seed.ExecuteNonQuery() |> ignore
+                  seedTx.Commit()
+
+                  let migration8 =
+                      Migrations.all ()
+                      |> List.find (fun (version, _) -> version = "0008")
+                      |> snd
+
+                  use apply8 = target.CreateCommand()
+                  apply8.CommandText <- migration8
+                  apply8.ExecuteNonQuery() |> ignore
+
+                  use readTx = target.BeginTransaction()
+                  use scopeRead = target.CreateCommand()
+                  scopeRead.Transaction <- readTx
+                  scopeRead.CommandText <- "SELECT set_config('fogell.organization_id', @org_text, true)"
+                  scopeRead.Parameters.AddWithValue("org_text", string org) |> ignore
+                  scopeRead.ExecuteScalar() |> ignore
+                  use select = target.CreateCommand()
+                  select.Transaction <- readTx
+                  select.CommandText <-
+                      "SELECT body, build_sequence
+                         FROM log_chunks
+                        WHERE organization_id = @org AND build_id = @build
+                        ORDER BY build_sequence"
+                  select.Parameters.AddWithValue("org", org) |> ignore
+                  select.Parameters.AddWithValue("build", populatedBuild) |> ignore
+                  use rows = select.ExecuteReader()
+
+                  let mapping =
+                      [ while rows.Read() do
+                            yield rows.GetString 0, rows.GetInt32 1 ]
+
+                  rows.Close()
+                  Expect.equal mapping [ "zero", 0; "four", 4; "retry-zero", 5 ] "sparse values survive and retry tie is lifted"
+
+                  use counters = target.CreateCommand()
+                  counters.Transaction <- readTx
+                  counters.CommandText <-
+                      "SELECT id, next_log_sequence
+                         FROM builds
+                        WHERE organization_id = @org AND id IN (@build, @empty)
+                        ORDER BY number"
+                  counters.Parameters.AddWithValue("org", org) |> ignore
+                  counters.Parameters.AddWithValue("build", populatedBuild) |> ignore
+                  counters.Parameters.AddWithValue("empty", emptyBuild) |> ignore
+                  use counterRows = counters.ExecuteReader()
+                  Expect.isTrue (counterRows.Read()) "populated build counter exists"
+                  Expect.equal (counterRows.GetGuid 0, counterRows.GetInt32 1) (populatedBuild, 6) "counter follows lifted maximum"
+                  Expect.isTrue (counterRows.Read()) "empty build counter exists"
+                  Expect.equal (counterRows.GetGuid 0, counterRows.GetInt32 1) (emptyBuild, 0) "empty build stays at zero"
+                  Expect.isFalse (counterRows.Read()) "only the two seeded builds exist"
+                  counterRows.Close()
+                  readTx.Commit()
+
+                  use collisionTx = target.BeginTransaction()
+                  use collision = target.CreateCommand()
+                  collision.Transaction <- collisionTx
+                  collision.CommandText <-
+                      "SELECT set_config('fogell.organization_id', @org_text, true);
+                       INSERT INTO log_chunks
+                              (organization_id, build_id, attempt_id, sequence, build_sequence, body)
+                       VALUES (@org, @build, @retry, 99, 5, 'collision')"
+                  collision.Parameters.AddWithValue("org_text", string org) |> ignore
+                  collision.Parameters.AddWithValue("org", org) |> ignore
+                  collision.Parameters.AddWithValue("build", populatedBuild) |> ignore
+                  collision.Parameters.AddWithValue("retry", retry) |> ignore
+
+                  let uniqueRejected =
+                      try
+                          collision.ExecuteNonQuery() |> ignore
+                          false
+                      with :? Npgsql.PostgresException as error ->
+                          error.SqlState = "23505"
+
+                  Expect.isTrue uniqueRejected "build-wide cursor uniqueness is enforced"
+                  collisionTx.Rollback()
+
+                  use rls = target.CreateCommand()
+                  rls.CommandText <-
+                      "SELECT relname, relrowsecurity, relforcerowsecurity
+                         FROM pg_class
+                        WHERE relname IN ('builds', 'log_chunks')
+                        ORDER BY relname"
+                  use rlsRows = rls.ExecuteReader()
+                  let protections =
+                      [ while rlsRows.Read() do
+                            yield rlsRows.GetString 0, rlsRows.GetBoolean 1, rlsRows.GetBoolean 2 ]
+
+                  rlsRows.Close()
+                  Expect.equal protections [ "builds", true, true; "log_chunks", true, true ] "migration restores forced RLS"
+              finally
+                  Npgsql.NpgsqlConnection.ClearAllPools()
+                  use terminate = admin.CreateCommand()
+                  terminate.CommandText <-
+                      "SELECT pg_terminate_backend(pid)
+                         FROM pg_stat_activity
+                        WHERE datname = @database AND pid <> pg_backend_pid()"
+                  terminate.Parameters.AddWithValue("database", databaseName) |> ignore
+                  terminate.ExecuteNonQuery() |> ignore
+                  use drop = admin.CreateCommand()
+                  drop.CommandText <- $"DROP DATABASE {databaseName}"
+                  drop.ExecuteNonQuery() |> ignore
           } ]
 
 let tenantIsolation =
     testList
         "FG-028 forced tenant isolation"
-        [ test "a real NOBYPASSRLS runtime role is fail-closed and Store sets only transaction-local context" {
+        [ test "runtime readiness requires every table and sequence privilege, not maintenance capabilities" {
+              let roleName = $"fogell_runtime_{Guid.NewGuid():N}"
+              let maintenanceSequenceName = $"fogell_maintenance_{Guid.NewGuid():N}"
+
+              let admin sql =
+                  use conn = new Npgsql.NpgsqlConnection(connectionString)
+                  conn.Open()
+                  use cmd = conn.CreateCommand()
+                  cmd.CommandText <- sql
+                  cmd.ExecuteNonQuery() |> ignore
+
+              admin $"CREATE ROLE {roleName} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"
+              admin $"CREATE SEQUENCE {maintenanceSequenceName}"
+
+              try
+                  admin
+                      $"GRANT USAGE ON SCHEMA public TO {roleName};
+                        GRANT SELECT, UPDATE(singleton) ON controller_metadata TO {roleName};
+                        GRANT SELECT ON
+                          organizations, projects, builds, nodes, attempts,
+                          events, outbox, log_chunks, effect_checkpoints, retry_decisions,
+                          build_definitions
+                        TO {roleName};
+                        GRANT SELECT ON organization_work_roots TO {roleName};
+                        GRANT USAGE ON events_id_seq, outbox_id_seq, log_chunks_id_seq TO {roleName}"
+
+                  // Deliberately disable Npgsql's pool reset and force one physical
+                  // connection. Otherwise a session-scoped set_config mutant is
+                  // cleaned up by the client and this test falsely credits the
+                  // Store for transaction-local isolation PostgreSQL never got.
+                  let runtimeConnectionString =
+                      $"{connectionString};Options=-c role={roleName};No Reset On Close=true;Maximum Pool Size=1"
+                  let runtimeStore = Store(runtimeConnectionString, connectionString)
+
+                  Expect.isFalse
+                      (runtimeStore.RuntimeCapabilities())
+                      "one of four required table privileges is not the full table capability"
+
+                  admin
+                      $"GRANT INSERT, UPDATE, DELETE ON
+                          organizations, projects, builds, nodes, attempts,
+                          events, outbox, log_chunks, effect_checkpoints, retry_decisions,
+                          build_definitions
+                        TO {roleName}"
+
+                  Expect.isFalse
+                      (runtimeStore.RuntimeCapabilities())
+                      "sequence USAGE without SELECT is not the full sequence capability"
+
+                  admin $"GRANT SELECT ON events_id_seq, outbox_id_seq, log_chunks_id_seq TO {roleName}"
+
+                  Expect.isTrue
+                      (runtimeStore.RuntimeCapabilities())
+                      "the runtime role has the exact controller surface without a maintenance-only sequence"
+
+                  use capabilityConn = new Npgsql.NpgsqlConnection(connectionString)
+                  capabilityConn.Open()
+                  use capability = capabilityConn.CreateCommand()
+                  capability.CommandText <-
+                      $"SELECT has_sequence_privilege('{roleName}', 'public.{maintenanceSequenceName}', 'USAGE')"
+                  Expect.isFalse
+                      (capability.ExecuteScalar() :?> bool)
+                      "readiness did not require granting the maintenance-only sequence to runtime"
+              finally
+                  Npgsql.NpgsqlConnection.ClearAllPools()
+                  admin $"DROP SEQUENCE {maintenanceSequenceName}"
+                  admin $"DROP OWNED BY {roleName}; DROP ROLE {roleName}"
+          }
+
+          test "a real NOBYPASSRLS runtime role is fail-closed and Store sets only transaction-local context" {
               let roleName = $"fogell_runtime_{Guid.NewGuid():N}"
 
               let admin sql =
@@ -250,8 +527,10 @@ let tenantIsolation =
                         GRANT SELECT, UPDATE(singleton) ON controller_metadata TO {roleName};
                         GRANT SELECT, INSERT, UPDATE, DELETE ON
                           organizations, projects, builds, nodes, attempts,
-                          events, outbox, log_chunks, effect_checkpoints, retry_decisions
+                          events, outbox, log_chunks, effect_checkpoints, retry_decisions,
+                          build_definitions
                         TO {roleName};
+                        GRANT SELECT ON organization_work_roots TO {roleName};
                         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {roleName}"
 
                   // Deliberately disable Npgsql's pool reset and force one physical
@@ -261,6 +540,10 @@ let tenantIsolation =
                   let runtimeConnectionString =
                       $"{connectionString};Options=-c role={roleName};No Reset On Close=true;Maximum Pool Size=1"
                   let runtimeStore = Store(runtimeConnectionString, connectionString)
+
+                  Expect.isTrue
+                      (runtimeStore.RuntimeCapabilities())
+                      "the runtime role has the exact controller database surface"
 
                   do
                       use identityConn = new Npgsql.NpgsqlConnection(runtimeConnectionString)
@@ -308,6 +591,11 @@ let tenantIsolation =
                   let orgA, admissionA = seed "tenant-a"
                   let orgB, admissionB = seed "tenant-b"
 
+                  Expect.containsAll
+                      (runtimeStore.OrganizationIds())
+                      [ orgA; orgB ]
+                      "the UUID-only registry lets a restarted runtime discover tenant scopes"
+
                   let count (conn: Npgsql.NpgsqlConnection) (tx: Npgsql.NpgsqlTransaction option) table predicate =
                       use cmd = conn.CreateCommand()
                       tx |> Option.iter (fun value -> cmd.Transaction <- value)
@@ -319,6 +607,11 @@ let tenantIsolation =
 
                   for table, _ in tenantTables do
                       Expect.equal (count runtime None table "") 0L $"{table} exposes no rows without context"
+
+                  Expect.isGreaterThan
+                      (count runtime None "organization_work_roots" "")
+                      1L
+                      "only UUID work roots are deliberately global"
 
                   use tenantTx = runtime.BeginTransaction()
                   use setTenant = runtime.CreateCommand()
@@ -407,8 +700,9 @@ let tenantIsolation =
                       "event cannot substitute another tenant's attempt"
                   Expect.isTrue
                       (crossLineageRejected
-                          "INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, body)
-                           VALUES (@o, @b, @a, 99, 'cross-lineage')")
+                          "INSERT INTO log_chunks
+                                  (organization_id, build_id, attempt_id, sequence, build_sequence, body)
+                           VALUES (@o, @b, @a, 99, 99, 'cross-lineage')")
                       "log cannot substitute another tenant's attempt"
 
                   use catalog = new Npgsql.NpgsqlConnection(connectionString)
@@ -421,7 +715,10 @@ let tenantIsolation =
                          AND c.relrowsecurity
                          AND c.relforcerowsecurity"
                   rls.Parameters.AddWithValue("tables", tenantTables |> List.map fst |> List.toArray) |> ignore
-                  Expect.equal (rls.ExecuteScalar() :?> int64) 10L "every tenant table enables and forces RLS"
+                  Expect.equal
+                      (rls.ExecuteScalar() :?> int64)
+                      (int64 tenantTables.Length)
+                      "every tenant table enables and forces RLS"
 
                   use policies = catalog.CreateCommand()
                   policies.CommandText <-
@@ -429,7 +726,10 @@ let tenantIsolation =
                        WHERE tablename = ANY(@tables)
                          AND policyname LIKE '%tenant_isolation'"
                   policies.Parameters.AddWithValue("tables", tenantTables |> List.map fst |> List.toArray) |> ignore
-                  Expect.equal (policies.ExecuteScalar() :?> int64) 10L "every tenant table has an isolation policy"
+                  Expect.equal
+                      (policies.ExecuteScalar() :?> int64)
+                      (int64 tenantTables.Length)
+                      "every tenant table has an isolation policy"
 
                   use lineage = catalog.CreateCommand()
                   lineage.CommandText <-
@@ -482,6 +782,83 @@ let admission =
               Expect.equal (store.CountOutbox org) 1 "still one outbox row"
           }
 
+          test "idempotency binds the exact source and placement fingerprint" {
+              let org, project = freshProject ()
+              let original = newBuild org project "definition-bound" [ "build" ]
+              let first = admitOk original
+              let replay = admitOk original
+              Expect.equal replay.BuildId first.BuildId "exact bytes replay"
+
+              let substituted =
+                  { original with
+                      PipelineSource = Text.Encoding.UTF8.GetBytes "pipeline:substituted" }
+
+              match store.AdmitBuild substituted with
+              | Error error -> Expect.stringContains error "different pipeline" "payload substitution named"
+              | Ok _ -> failtest "one idempotency key accepted different source bytes"
+
+              let moved = { original with RequiredTrustPool = "privileged" }
+              match store.AdmitBuild moved with
+              | Error error -> Expect.stringContains error "placement policy" "placement substitution named"
+              | Ok _ -> failtest "one idempotency key accepted a different placement policy"
+
+              Expect.equal (store.CountEvents(org, first.BuildId, "build.admitted")) 1 "one admission event"
+              Expect.equal (store.CountOutbox org) 1 "one admission outbox row"
+          }
+
+          test "16 mixed concurrent payloads converge on one immutable definition" {
+              let org, project = freshProject ()
+              let baseInput = newBuild org project "mixed-race" [ "build" ]
+              let sourceA = Text.Encoding.UTF8.GetBytes "pipeline:A"
+              let sourceB = Text.Encoding.UTF8.GetBytes "pipeline:B"
+
+              let results =
+                  [ 0..15 ]
+                  |> List.map (fun index ->
+                      async {
+                          let source = if index % 2 = 0 then sourceA else sourceB
+                          return Store(connectionString).AdmitBuild({ baseInput with PipelineSource = source })
+                      })
+                  |> Async.Parallel
+                  |> Async.RunSynchronously
+
+              let accepted = results |> Array.choose (function Ok value -> Some value | Error _ -> None)
+              let refused = results.Length - accepted.Length
+              Expect.equal accepted.Length 8 "all exact replays of the winning bytes succeed"
+              Expect.equal refused 8 "every conflicting payload is refused"
+              Expect.equal (accepted |> Array.map (fun value -> value.BuildId) |> Array.distinct |> Array.length) 1 "one build"
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use count = conn.CreateCommand()
+              count.CommandText <-
+                  "SELECT count(*)
+                     FROM build_definitions
+                    WHERE organization_id = @o"
+              count.Parameters.AddWithValue("o", org.Value) |> ignore
+              Expect.equal (count.ExecuteScalar() :?> int64) 1L "one durable definition"
+          }
+
+          test "a new admission is one whole-pipeline execution unit" {
+              let org, project = freshProject ()
+              let input = newBuild org project "whole-pipeline" [ "build"; "test"; "deploy" ]
+              let admitted = admitOk input
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use count = conn.CreateCommand()
+              count.CommandText <-
+                  "SELECT count(*), min(name)
+                     FROM nodes
+                    WHERE organization_id = @o AND build_id = @b"
+              count.Parameters.AddWithValue("o", org.Value) |> ignore
+              count.Parameters.AddWithValue("b", admitted.BuildId.Value) |> ignore
+              use reader = count.ExecuteReader()
+              Expect.isTrue (reader.Read()) "node aggregate exists"
+              Expect.equal (reader.GetInt64 0) 1L "the runner is scheduled exactly once"
+              Expect.equal (reader.GetString 1) "pipeline" "unit is named honestly"
+          }
+
           test "16 concurrent submissions of one key produce exactly one build" {
               let org, project = freshProject ()
 
@@ -498,6 +875,40 @@ let admission =
               let distinct = succeeded |> Array.map (fun a -> a.BuildId) |> Array.distinct
               Expect.equal distinct.Length 1 "all callers agree on one build id"
               Expect.equal (store.CountEvents(org, distinct.[0], "build.admitted")) 1 "exactly one event"
+          }
+
+          test "16 concurrent distinct keys allocate every project build number exactly once" {
+              let org, project = freshProject ()
+              use gate = new Threading.ManualResetEventSlim(false)
+
+              let admissions =
+                  [| 1..16 |]
+                  |> Array.map (fun index ->
+                      Threading.Tasks.Task.Run(fun () ->
+                          gate.Wait()
+                          Store(connectionString).AdmitBuild(
+                              newBuild org project $"number-race-{index}" [ "build" ])))
+
+              gate.Set()
+              admissions
+              |> Array.map (fun task -> task :> Threading.Tasks.Task)
+              |> Threading.Tasks.Task.WaitAll
+
+              let results = admissions |> Array.map (fun task -> task.Result)
+              let errors = results |> Array.choose (function Error error -> Some error | Ok _ -> None)
+              let errorSummary = String.concat "; " errors
+              Expect.isEmpty errors $"all distinct-key admissions succeed: {errorSummary}"
+
+              let accepted = results |> Array.choose (function Ok value -> Some value | Error _ -> None)
+              Expect.equal accepted.Length 16 "all concurrent callers receive an admission"
+              Expect.equal
+                  (accepted |> Array.map (fun value -> value.BuildId) |> Array.distinct |> Array.length)
+                  16
+                  "distinct keys create distinct builds"
+              Expect.equal
+                  (accepted |> Array.map (fun value -> value.Number) |> Array.sort |> Array.toList)
+                  [ 1..16 ]
+                  "project numbers form the exact gap-free allocation"
           }
 
           test "build numbers increment per project" {
@@ -543,6 +954,669 @@ let fencing =
                           Expect.equal result (Some "success") "result recorded"
                       | None -> failtest "attempt vanished"
                   | Error e -> failtestf "publication refused: %s" e
+          }
+
+          test "claim carries byte-exact source and terminal publication rolls up atomically" {
+              let org, project = freshProject ()
+              let input = newBuild org project "controller-vertical" [ "build" ]
+              let admitted = admitOk input
+
+              let claim =
+                  match store.ClaimNextExecution(org, "local:test", "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | Ok None -> failtest "new build was not claimable"
+                  | Error error -> failtestf "claim failed: %s" error
+
+              Expect.sequenceEqual claim.PipelineSource input.PipelineSource "exact source bytes survive admission"
+              Expect.equal claim.BuildId admitted.BuildId "claim belongs to admitted build"
+              Expect.equal
+                  (store.BeginExecution(org, claim.AttemptId, claim.Fence, "local:test", 60))
+                  (Ok ExecutionStarted)
+                  "execution start was linearized"
+
+              match store.PublishTerminal(org, claim.AttemptId, claim.Fence, "local:test", Success) with
+              | Error error -> failtestf "terminal roll-up failed: %s" error
+              | Ok _ -> ()
+
+              Expect.equal
+                  (store.BuildSnapshot(org, project, admitted.BuildId))
+                  (Some("success", false))
+                  "public status is the same terminal truth"
+              Expect.equal (store.CountEvents(org, admitted.BuildId, "attempt.terminal")) 1 "one terminal event"
+              Expect.equal (store.CountOutbox org) 2 "admission plus terminal outbox"
+          }
+
+          test "a queued cancellation becomes terminal before execution starts" {
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "cancel-before-start" [ "build" ])
+
+              Expect.equal
+                  (store.RequestCancellation(org, project, admitted.BuildId))
+                  CancellationAccepted
+                  "queued cancellation accepted"
+
+              let claim =
+                  match store.ClaimNextExecution(org, "local:cancel-before-start", "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | Ok None -> failtest "cancelled queued work still needs a fenced terminal decision"
+                  | Error error -> failtestf "claim failed: %s" error
+
+              Expect.equal
+                  (store.BeginExecution(org, claim.AttemptId, claim.Fence, "local:cancel-before-start", 60))
+                  (Ok ExecutionCancelledBeforeStart)
+                  "worker is told not to launch a child"
+              Expect.equal
+                  (store.AttemptState(org, admitted.AttemptId))
+                  (Some("terminal", claim.Fence.Value, Some "aborted"))
+                  "attempt is atomically aborted"
+              Expect.equal
+                  (store.BuildSnapshot(org, project, admitted.BuildId))
+                  (Some("aborted", false))
+                  "public truth is terminal and clears the request flag"
+              Expect.equal (store.CountEvents(org, admitted.BuildId, "attempt.terminal")) 1 "one terminal event"
+              Expect.equal (store.CountOutbox org) 2 "admission plus one terminal outbox"
+          }
+
+          test "execution start refreshes a near-expiry lease before child launch" {
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "start-refreshes-lease" [ "build" ])
+
+              let claim =
+                  match store.ClaimNextExecution(org, "local:lease-refresh", "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected claim, got %A" other
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use shorten = conn.CreateCommand()
+              shorten.CommandText <-
+                  "UPDATE attempts
+                      SET lease_expires_at = clock_timestamp() + interval '5 seconds'
+                    WHERE organization_id = @o AND id = @a"
+              shorten.Parameters.AddWithValue("o", org.Value) |> ignore
+              shorten.Parameters.AddWithValue("a", claim.AttemptId.Value) |> ignore
+              Expect.equal (shorten.ExecuteNonQuery()) 1 "fixture moved the offer near expiry"
+
+              Expect.equal
+                  (store.BeginExecution(org, claim.AttemptId, claim.Fence, "local:lease-refresh", 60))
+                  (Ok ExecutionStarted)
+                  "start authority granted"
+
+              use refreshed = conn.CreateCommand()
+              refreshed.CommandText <-
+                  "SELECT lease_expires_at > clock_timestamp() + interval '50 seconds'
+                     FROM attempts
+                    WHERE organization_id = @o AND id = @a"
+              refreshed.Parameters.AddWithValue("o", org.Value) |> ignore
+              refreshed.Parameters.AddWithValue("a", claim.AttemptId.Value) |> ignore
+              Expect.isTrue (refreshed.ExecuteScalar() :?> bool) "start restored a full launch lease"
+
+              let requeued =
+                  [ 1..8 ]
+                  |> List.map (fun _ -> async { return Store(connectionString).RequeueExpiredLocalAttempts org })
+                  |> Async.Parallel
+                  |> Async.RunSynchronously
+                  |> Array.sum
+              Expect.equal requeued 0 "concurrent expiry scans cannot steal freshly-started work"
+              Expect.equal
+                  (store.AttemptState(org, admitted.AttemptId))
+                  (Some("running", claim.Fence.Value, None))
+                  "fence and running ownership remain intact through the launch window"
+          }
+
+          test "only an expired pre-launch offer is safe to requeue" {
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "expired-offer" [ "build" ])
+
+              let oldClaim =
+                  match store.ClaimNextExecution(org, "local:expired-offer", "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected old claim, got %A" other
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use expire = conn.CreateCommand()
+              expire.CommandText <-
+                  "UPDATE attempts
+                      SET lease_expires_at = clock_timestamp() - interval '1 second'
+                    WHERE organization_id = @o AND id = @a"
+              expire.Parameters.AddWithValue("o", org.Value) |> ignore
+              expire.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+              Expect.equal (expire.ExecuteNonQuery()) 1 "fixture expired the unstarted offer"
+
+              Expect.equal (store.RequeueExpiredLocalAttempts org) 1 "the pre-launch offer was recovered"
+              Expect.equal
+                  (store.AttemptState(org, admitted.AttemptId))
+                  (Some("queued", oldClaim.Fence.Value, None))
+                  "recovery preserved the old fence until the next claim"
+              expectError
+                  "the expired owner cannot cross the execution-start boundary"
+                  (store.BeginExecution(org, admitted.AttemptId, oldClaim.Fence, "local:expired-offer", 60))
+
+              let newClaim =
+                  match store.ClaimNextExecution(org, "local:new-worker", "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected replacement claim, got %A" other
+
+              Expect.equal newClaim.AttemptId admitted.AttemptId "the safe offer was reclaimed"
+              Expect.equal newClaim.Fence.Value (oldClaim.Fence.Value + 1L) "replacement authority has a new fence"
+          }
+
+          test "expired post-offer local states require reconciliation" {
+              for state in [ "accepted"; "running"; "finalizing"; "cancelling" ] do
+                  let org, project = freshProject ()
+                  let admitted = admitOk (newBuild org project $"expired-{state}" [ "build" ])
+                  let owner = $"local:expired-{state}"
+
+                  let claim =
+                      match store.ClaimNextExecution(org, owner, "trusted-linux", [ "linux" ], 60) with
+                      | Ok(Some value) -> value
+                      | other -> failtestf "expected %s claim, got %A" state other
+
+                  if state <> "accepted" then
+                      Expect.equal
+                          (store.BeginExecution(org, claim.AttemptId, claim.Fence, owner, 60))
+                          (Ok ExecutionStarted)
+                          $"{state} fixture crossed the launch boundary"
+
+                  use conn = new Npgsql.NpgsqlConnection(connectionString)
+                  conn.Open()
+                  use makeExpired = conn.CreateCommand()
+                  makeExpired.CommandText <-
+                      "WITH changed_attempt AS (
+                           UPDATE attempts
+                              SET state = @state,
+                                  lease_expires_at = clock_timestamp() - interval '1 second'
+                            WHERE organization_id = @o AND id = @a
+                           RETURNING node_id
+                       ), changed_node AS (
+                           UPDATE nodes n SET status = 'running'
+                             FROM changed_attempt a
+                            WHERE n.organization_id = @o AND n.id = a.node_id
+                           RETURNING n.build_id
+                       )
+                       UPDATE builds b SET status = 'running'
+                         FROM changed_node n
+                        WHERE b.organization_id = @o AND b.id = n.build_id"
+                  makeExpired.Parameters.AddWithValue("state", state) |> ignore
+                  makeExpired.Parameters.AddWithValue("o", org.Value) |> ignore
+                  makeExpired.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+                  Expect.equal (makeExpired.ExecuteNonQuery()) 1 $"fixture expired {state}"
+
+                  Expect.equal (store.RequeueExpiredLocalAttempts org) 1 $"expiry scan handled {state} once"
+                  Expect.equal
+                      (store.AttemptState(org, admitted.AttemptId))
+                      (Some("reconciliation_required", claim.Fence.Value, None))
+                      $"{state} failed closed instead of becoming runnable"
+                  Expect.equal
+                      (store.BuildSnapshot(org, project, admitted.BuildId))
+                      (Some("reconciliation_required", false))
+                      $"{state} ambiguity reached public build truth"
+                  Expect.equal
+                      (store.ClaimNextExecution(org, "local:replacement", "trusted-linux", [ "linux" ], 60))
+                      (Ok None)
+                      $"{state} was not offered to another worker"
+          }
+
+          test "stale owner and replacement-worker race cannot duplicate started work" {
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "expired-running-race" [ "build" ])
+              let owner = "local:stale-owner"
+
+              let claim =
+                  match store.ClaimNextExecution(org, owner, "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected stale-owner claim, got %A" other
+
+              Expect.equal
+                  (store.BeginExecution(org, claim.AttemptId, claim.Fence, owner, 60))
+                  (Ok ExecutionStarted)
+                  "old child crossed the launch boundary"
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use expire = conn.CreateCommand()
+              expire.CommandText <-
+                  "UPDATE attempts
+                      SET lease_expires_at = clock_timestamp() - interval '1 second'
+                    WHERE organization_id = @o AND id = @a"
+              expire.Parameters.AddWithValue("o", org.Value) |> ignore
+              expire.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+              Expect.equal (expire.ExecuteNonQuery()) 1 "fixture expired the started owner"
+
+              use gate = new System.Threading.ManualResetEventSlim(false)
+              let scans =
+                  [| 1..8 |]
+                  |> Array.map (fun _ ->
+                      System.Threading.Tasks.Task.Run(fun () ->
+                          gate.Wait()
+                          Store(connectionString).RequeueExpiredLocalAttempts org))
+              let replacementClaims =
+                  [| 1..8 |]
+                  |> Array.map (fun i ->
+                      System.Threading.Tasks.Task.Run(fun () ->
+                          gate.Wait()
+                          Store(connectionString).ClaimNextExecution(
+                              org,
+                              $"local:replacement-{i}",
+                              "trusted-linux",
+                              [ "linux" ],
+                              60)))
+              gate.Set()
+              Array.append
+                  (scans |> Array.map (fun task -> task :> System.Threading.Tasks.Task))
+                  (replacementClaims |> Array.map (fun task -> task :> System.Threading.Tasks.Task))
+              |> System.Threading.Tasks.Task.WaitAll
+
+              Expect.equal (scans |> Array.sumBy (fun task -> task.Result)) 1 "exactly one scan quarantined the attempt"
+              replacementClaims
+              |> Array.iter (fun task ->
+                  Expect.equal task.Result (Ok None) "no race winner received ambiguous started work")
+              expectError
+                  "the stale owner cannot publish after lease expiry"
+                  (store.PublishTerminal(org, admitted.AttemptId, claim.Fence, owner, Success))
+              Expect.isFalse
+                  (store.RequeueOwnedAttempt(org, admitted.AttemptId, claim.Fence, owner))
+                  "cleared ownership prevents a stale termination claim from reopening work"
+              Expect.equal
+                  (store.AttemptState(org, admitted.AttemptId))
+                  (Some("reconciliation_required", claim.Fence.Value, None))
+                  "race converged on reconciliation without a fence handoff"
+              Expect.equal
+                  (store.BuildSnapshot(org, project, admitted.BuildId))
+                  (Some("reconciliation_required", false))
+                  "public truth names the ambiguity"
+          }
+
+          test "verified-extinction requeue rolls the whole lineage back to queued" {
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "owned-requeue-rollup" [ "build" ])
+              let owner = "local:verified-extinction"
+
+              let claim =
+                  match store.ClaimNextExecution(org, owner, "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected original claim, got %A" other
+
+              Expect.equal
+                  (store.BeginExecution(org, claim.AttemptId, claim.Fence, owner, 60))
+                  (Ok ExecutionStarted)
+                  "original owner crossed the launch boundary"
+              Expect.isTrue
+                  (store.RequeueOwnedAttempt(org, claim.AttemptId, claim.Fence, owner))
+                  "verified extinction authorized the fenced requeue"
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use lineage = conn.CreateCommand()
+              lineage.CommandText <-
+                  "SELECT a.state, n.status, b.status, a.lease_owner, a.lease_expires_at
+                     FROM attempts a
+                     JOIN nodes n
+                       ON n.organization_id = a.organization_id AND n.id = a.node_id
+                     JOIN builds b
+                       ON b.organization_id = n.organization_id AND b.id = n.build_id
+                    WHERE a.organization_id = @o AND a.id = @a"
+              lineage.Parameters.AddWithValue("o", org.Value) |> ignore
+              lineage.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+              use row = lineage.ExecuteReader()
+              Expect.isTrue (row.Read()) "requeued lineage exists"
+              Expect.equal (row.GetString 0) "queued" "attempt returned to queued"
+              Expect.equal (row.GetString 1) "queued" "node returned to queued"
+              Expect.equal (row.GetString 2) "queued" "build returned to queued"
+              Expect.isTrue (row.IsDBNull 3) "requeue cleared the old lease owner"
+              Expect.isTrue (row.IsDBNull 4) "requeue cleared the old lease expiry"
+              row.Close()
+
+              let replacement =
+                  match store.ClaimNextExecution(org, "local:replacement", "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected replacement claim, got %A" other
+
+              Expect.equal replacement.AttemptId admitted.AttemptId "replacement reclaimed the same attempt"
+              Expect.equal replacement.Fence.Value (claim.Fence.Value + 1L) "replacement claim advanced the fence"
+              expectError
+                  "the terminated owner cannot publish through its old fence"
+                  (store.PublishTerminal(org, admitted.AttemptId, claim.Fence, owner, Success))
+          }
+
+          test "cancellation racing verified-extinction requeue remains authoritative" {
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "owned-requeue-cancel-race" [ "build" ])
+              let owner = "local:shutdown-owner"
+
+              let claim =
+                  match store.ClaimNextExecution(org, owner, "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected shutdown claim, got %A" other
+
+              Expect.equal
+                  (store.BeginExecution(org, claim.AttemptId, claim.Fence, owner, 60))
+                  (Ok ExecutionStarted)
+                  "shutdown fixture is running"
+
+              use gate = new System.Threading.ManualResetEventSlim(false)
+              let requeue =
+                  System.Threading.Tasks.Task.Run(fun () ->
+                      gate.Wait()
+                      Store(connectionString).RequeueOwnedAttempt(org, claim.AttemptId, claim.Fence, owner))
+              let cancel =
+                  System.Threading.Tasks.Task.Run(fun () ->
+                      gate.Wait()
+                      Store(connectionString).RequestCancellation(org, project, admitted.BuildId))
+              gate.Set()
+              System.Threading.Tasks.Task.WaitAll [| requeue :> System.Threading.Tasks.Task; cancel :> System.Threading.Tasks.Task |]
+
+              Expect.isTrue requeue.Result "verified owner completed its requeue"
+              Expect.equal cancel.Result CancellationAccepted "racing cancellation was durably accepted"
+              Expect.equal
+                  (store.AttemptState(org, admitted.AttemptId))
+                  (Some("queued", claim.Fence.Value, None))
+                  "attempt remained reclaimable under the old fence"
+              Expect.equal
+                  (store.BuildSnapshot(org, project, admitted.BuildId))
+                  (Some("queued", true))
+                  "requeue preserved the accepted cancellation bit"
+
+              let replacementOwner = "local:cancellation-finisher"
+              let replacement =
+                  match store.ClaimNextExecution(org, replacementOwner, "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected cancellation-finisher claim, got %A" other
+
+              Expect.equal replacement.Fence.Value (claim.Fence.Value + 1L) "replacement received fresh authority"
+              Expect.equal
+                  (store.BeginExecution(
+                      org,
+                      replacement.AttemptId,
+                      replacement.Fence,
+                      replacementOwner,
+                      60))
+                  (Ok ExecutionCancelledBeforeStart)
+                  "accepted cancellation prevented a replacement child launch"
+              Expect.equal
+                  (store.BuildSnapshot(org, project, admitted.BuildId))
+                  (Some("aborted", false))
+                  "cancellation became the terminal public truth"
+          }
+
+          test "cancellation linearized before publication makes aborted the effective result" {
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "cancel-wins-publication" [ "build" ])
+
+              let claim =
+                  match store.ClaimNextExecution(org, "local:cancel-wins", "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected claim, got %A" other
+
+              Expect.equal
+                  (store.BeginExecution(org, claim.AttemptId, claim.Fence, "local:cancel-wins", 60))
+                  (Ok ExecutionStarted)
+                  "running"
+              Expect.equal
+                  (store.RequestCancellation(org, project, admitted.BuildId))
+                  CancellationAccepted
+                  "cancellation wins the build-row arbitration"
+              Expect.isTrue
+                  (Result.isOk
+                      (store.PublishTerminal(org, claim.AttemptId, claim.Fence, "local:cancel-wins", Success)))
+                  "publisher retains fenced authority"
+              Expect.equal
+                  (store.AttemptState(org, admitted.AttemptId))
+                  (Some("terminal", claim.Fence.Value, Some "aborted"))
+                  "requested success cannot erase accepted cancellation"
+              Expect.equal
+                  (store.BuildSnapshot(org, project, admitted.BuildId))
+                  (Some("aborted", false))
+                  "build agrees with attempt truth"
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use terminalTruth = conn.CreateCommand()
+              terminalTruth.CommandText <-
+                  "SELECT
+                       (SELECT payload->>'result' FROM events
+                         WHERE organization_id = @o AND build_id = @b AND kind = 'attempt.terminal'),
+                       (SELECT body->>'result' FROM outbox
+                         WHERE organization_id = @o AND topic = 'build.terminal'
+                           AND body->>'build' = @build)"
+              terminalTruth.Parameters.AddWithValue("o", org.Value) |> ignore
+              terminalTruth.Parameters.AddWithValue("b", admitted.BuildId.Value) |> ignore
+              terminalTruth.Parameters.AddWithValue("build", admitted.BuildId.Value.ToString()) |> ignore
+              use truth = terminalTruth.ExecuteReader()
+              Expect.isTrue (truth.Read()) "terminal projections exist"
+              Expect.equal (truth.GetString 0) "aborted" "event records effective result"
+              Expect.equal (truth.GetString 1) "aborted" "outbox records effective result"
+          }
+
+          test "publication linearized before cancellation remains terminal" {
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "publication-wins-cancel" [ "build" ])
+
+              let claim =
+                  match store.ClaimNextExecution(org, "local:publish-wins", "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected claim, got %A" other
+
+              Expect.equal
+                  (store.BeginExecution(org, claim.AttemptId, claim.Fence, "local:publish-wins", 60))
+                  (Ok ExecutionStarted)
+                  "running"
+              Expect.isTrue
+                  (Result.isOk
+                      (store.PublishTerminal(org, claim.AttemptId, claim.Fence, "local:publish-wins", Success)))
+                  "publication wins the build-row arbitration"
+              Expect.equal
+                  (store.RequestCancellation(org, project, admitted.BuildId))
+                  (AlreadyTerminal "success")
+                  "later cancellation is not falsely accepted"
+              Expect.equal
+                  (store.BuildSnapshot(org, project, admitted.BuildId))
+                  (Some("success", false))
+                  "terminal result remains stable"
+          }
+
+          test "invalid FIFO claims are quarantined once and cannot poison later work" {
+              for poison, expectedReason in
+                  [ "missing-definition", "missing_definition"
+                    "legacy-multi-node", "legacy_multi_node"
+                    "digest-mismatch", "definition_digest_mismatch" ] do
+                  let org, project = freshProject ()
+                  let invalid = admitOk (newBuild org project $"poison-{poison}" [ "build" ])
+
+                  use conn = new Npgsql.NpgsqlConnection(connectionString)
+                  conn.Open()
+
+                  // Admission timestamps are immutable execution identity. Let
+                  // PostgreSQL's own clock advance before admitting the valid
+                  // row instead of rewriting either attempt after admission.
+                  use separateAdmissions = conn.CreateCommand()
+                  separateAdmissions.CommandText <- "SELECT pg_sleep(0.01)"
+                  separateAdmissions.ExecuteNonQuery() |> ignore
+                  let valid = admitOk (newBuild org project $"valid-after-{poison}" [ "build" ])
+
+                  match poison with
+                  | "legacy-multi-node" ->
+                      use addNode = conn.CreateCommand()
+                      addNode.CommandText <-
+                          "INSERT INTO nodes
+                               (id, organization_id, build_id, name, ordinal, required_trust_pool,
+                                required_capabilities, status)
+                           VALUES (@id, @o, @b, 'legacy-second-stage', 1,
+                                   'trusted-linux', ARRAY['linux'], 'queued')"
+                      addNode.Parameters.AddWithValue("id", Guid.NewGuid()) |> ignore
+                      addNode.Parameters.AddWithValue("o", org.Value) |> ignore
+                      addNode.Parameters.AddWithValue("b", invalid.BuildId.Value) |> ignore
+                      Expect.equal (addNode.ExecuteNonQuery()) 1 "fixture added the incompatible second node"
+                  | "missing-definition"
+                  | "digest-mismatch" ->
+                      try
+                          use disable = conn.CreateCommand()
+                          disable.CommandText <-
+                              "ALTER TABLE build_definitions DISABLE TRIGGER build_definitions_guard"
+                          disable.ExecuteNonQuery() |> ignore
+
+                          use damage = conn.CreateCommand()
+                          damage.CommandText <-
+                              if poison = "missing-definition" then
+                                  "DELETE FROM build_definitions
+                                    WHERE organization_id = @o AND build_id = @b"
+                              else
+                                  "UPDATE build_definitions
+                                      SET source_digest = decode(repeat('00', 32), 'hex')
+                                    WHERE organization_id = @o AND build_id = @b"
+                          damage.Parameters.AddWithValue("o", org.Value) |> ignore
+                          damage.Parameters.AddWithValue("b", invalid.BuildId.Value) |> ignore
+                          Expect.equal (damage.ExecuteNonQuery()) 1 $"fixture planted {poison}"
+                      finally
+                          use enable = conn.CreateCommand()
+                          enable.CommandText <-
+                              "ALTER TABLE build_definitions ENABLE TRIGGER build_definitions_guard"
+                          enable.ExecuteNonQuery() |> ignore
+                  | other -> failtestf "unknown poison fixture %s" other
+
+                  use gate = new System.Threading.ManualResetEventSlim(false)
+                  let claimers =
+                      [| 1..8 |]
+                      |> Array.map (fun index ->
+                          System.Threading.Tasks.Task.Run(fun () ->
+                              gate.Wait()
+                              Store(connectionString).ClaimNextExecution(
+                                  org,
+                                  $"local:poison-race-{index}",
+                                  "trusted-linux",
+                                  [ "linux" ],
+                                  60)))
+                  gate.Set()
+                  claimers
+                  |> Array.map (fun task -> task :> System.Threading.Tasks.Task)
+                  |> System.Threading.Tasks.Task.WaitAll
+
+                  let results = claimers |> Array.map (fun task -> task.Result)
+                  let errors = results |> Array.choose (function Error error -> Some error | Ok _ -> None)
+                  Expect.isEmpty errors $"{poison} is durable state, not a recurring claim error"
+                  let claims =
+                      results
+                      |> Array.choose (function Ok(Some claim) -> Some claim | _ -> None)
+                  Expect.equal claims.Length 1 $"exactly one worker passed {poison} and claimed later work"
+                  Expect.equal claims.[0].AttemptId valid.AttemptId $"{poison} did not starve the valid FIFO row"
+
+                  Expect.equal
+                      (store.AttemptState(org, invalid.AttemptId))
+                      (Some("reconciliation_required", 0L, None))
+                      $"{poison} attempt was quarantined without acquiring execution authority"
+                  Expect.equal
+                      (store.BuildSnapshot(org, project, invalid.BuildId))
+                      (Some("reconciliation_required", false))
+                      $"{poison} is visible in public build truth"
+
+                  use truth = conn.CreateCommand()
+                  truth.CommandText <-
+                      "SELECT n.status,
+                              count(e.id),
+                              min(e.payload->>'reason')
+                         FROM nodes n
+                         LEFT JOIN events e
+                           ON e.organization_id = n.organization_id
+                          AND e.build_id = n.build_id
+                          AND e.attempt_id = @a
+                          AND e.kind = 'attempt.reconciliation_required'
+                        WHERE n.organization_id = @o AND n.id = @n
+                        GROUP BY n.status"
+                  truth.Parameters.AddWithValue("o", org.Value) |> ignore
+                  truth.Parameters.AddWithValue("n", invalid.NodeId.Value) |> ignore
+                  truth.Parameters.AddWithValue("a", invalid.AttemptId.Value) |> ignore
+                  use row = truth.ExecuteReader()
+                  Expect.isTrue (row.Read()) $"{poison} node/event truth exists"
+                  Expect.equal (row.GetString 0) "reconciliation_required" $"{poison} node was quarantined"
+                  Expect.equal (row.GetInt64 1) 1L $"{poison} emitted exactly one refusal event"
+                  Expect.equal (row.GetString 2) expectedReason $"{poison} event names the durable reason"
+                  row.Close()
+
+                  Expect.equal
+                      (store.CountEvents(org, invalid.BuildId, "attempt.reconciliation_required"))
+                      1
+                      $"later claimers did not duplicate the {poison} refusal event"
+          }
+
+          test "a materialization failure is quarantined and cannot starve later execution" {
+              let org, project = freshProject ()
+              let poisoned = admitOk (newBuild org project "materialization-poison" [ "build" ])
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use separateAdmissions = conn.CreateCommand()
+              separateAdmissions.CommandText <- "SELECT pg_sleep(0.01)"
+              separateAdmissions.ExecuteNonQuery() |> ignore
+
+              let valid = admitOk (newBuild org project "valid-after-materialization-poison" [ "build" ])
+              let poisonedOwner = "local:materialization-poison"
+
+              let poisonedClaim =
+                  match
+                      store.ClaimNextExecution(
+                          org,
+                          poisonedOwner,
+                          "trusted-linux",
+                          [ "linux" ],
+                          60)
+                  with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected poisoned FIFO claim, got %A" other
+
+              Expect.equal
+                  poisonedClaim.AttemptId
+                  poisoned.AttemptId
+                  "the materialization fixture owns the oldest offered attempt"
+
+              Expect.isTrue
+                  (store.RequireReconciliation(
+                      org,
+                      poisonedClaim.AttemptId,
+                      poisonedClaim.Fence,
+                      poisonedOwner))
+                  "the pre-execution materialization failure is durably quarantined"
+
+              Expect.equal
+                  (store.AttemptState(org, poisoned.AttemptId))
+                  (Some("reconciliation_required", poisonedClaim.Fence.Value, None))
+                  "the poisoned offer cannot become queued when its old lease expires"
+              Expect.equal
+                  (store.BuildSnapshot(org, project, poisoned.BuildId))
+                  (Some("reconciliation_required", false))
+                  "public build truth exposes the poisoned admission"
+              Expect.equal
+                  (store.RequeueExpiredLocalAttempts org)
+                  0
+                  "lease recovery has no offered poison left to requeue"
+
+              let validOwner = "local:after-materialization-poison"
+              let validClaim =
+                  match
+                      store.ClaimNextExecution(
+                          org,
+                          validOwner,
+                          "trusted-linux",
+                          [ "linux" ],
+                          60)
+                  with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected later valid claim, got %A" other
+
+              Expect.equal validClaim.AttemptId valid.AttemptId "FIFO advanced past the poison"
+              Expect.equal
+                  (store.BeginExecution(org, validClaim.AttemptId, validClaim.Fence, validOwner, 60))
+                  (Ok ExecutionStarted)
+                  "the later valid build remains executable"
+              Expect.isTrue
+                  (Result.isOk
+                      (store.PublishTerminal(
+                          org,
+                          validClaim.AttemptId,
+                          validClaim.Fence,
+                          validOwner,
+                          Success)))
+                  "the later valid build can publish terminal truth"
           }
 
           test "exactly one winner among 16 concurrent publishers" {
@@ -1983,6 +3057,194 @@ let logs =
               Expect.isTrue (store.AppendLog(org, a.BuildId, a.AttemptId, 0, "once")) "first"
               Expect.isFalse (store.AppendLog(org, a.BuildId, a.AttemptId, 0, "again")) "duplicate rejected"
               Expect.equal (readLog org project a.BuildId 0 |> List.length) 1 "still one chunk"
+          }
+
+          test "concurrent duplicate publication does not burn the next build cursor" {
+              let nextCursor (org: OrganizationId) (build: BuildId) =
+                  use conn = new Npgsql.NpgsqlConnection(connectionString)
+                  conn.Open()
+                  use tx = conn.BeginTransaction()
+                  use scope = conn.CreateCommand()
+                  scope.Transaction <- tx
+                  scope.CommandText <- "SELECT set_config('fogell.organization_id', @o, true)"
+                  scope.Parameters.AddWithValue("o", string org.Value) |> ignore
+                  scope.ExecuteScalar() |> ignore
+                  use read = conn.CreateCommand()
+                  read.Transaction <- tx
+                  read.CommandText <-
+                      "SELECT next_log_sequence FROM builds
+                        WHERE organization_id = @o AND id = @b"
+                  read.Parameters.AddWithValue("o", org.Value) |> ignore
+                  read.Parameters.AddWithValue("b", build.Value) |> ignore
+                  let value = read.ExecuteScalar() :?> int
+                  tx.Commit()
+                  value
+
+              let race (append: unit -> bool) =
+                  [ async { return append () }
+                    async { return append () } ]
+                  |> Async.Parallel
+                  |> Async.RunSynchronously
+
+              let org, project = freshProject ()
+              let unfenced = admitOk (newBuild org project "log-no-burn-unfenced" [ "b" ])
+              let unfencedResults =
+                  race (fun () ->
+                      Store(connectionString).AppendLog(
+                          org, unfenced.BuildId, unfenced.AttemptId, 0, "unfenced-zero"))
+
+              Expect.equal (unfencedResults |> Array.filter id |> Array.length) 1 "one unfenced publisher wins"
+              Expect.isTrue
+                  (store.AppendLog(org, unfenced.BuildId, unfenced.AttemptId, 1, "unfenced-one"))
+                  "next real unfenced chunk appends"
+              Expect.equal
+                  (readLog org project unfenced.BuildId 0)
+                  [ 0, "unfenced-zero"; 1, "unfenced-one" ]
+                  "unfenced replay burned no public cursor"
+              Expect.equal (nextCursor org unfenced.BuildId) 2 "unfenced counter advanced only for real chunks"
+
+              let fenced, fence = runningAttempt org project "log-no-burn-fenced" "log-no-burn-owner" 60
+              let fencedResults =
+                  race (fun () ->
+                      Store(connectionString).AppendLogFenced(
+                          org,
+                          fenced.BuildId,
+                          fenced.AttemptId,
+                          fence,
+                          "log-no-burn-owner",
+                          0,
+                          "fenced-zero"))
+
+              Expect.equal (fencedResults |> Array.filter id |> Array.length) 1 "one fenced publisher wins"
+              Expect.isTrue
+                  (store.AppendLogFenced(
+                      org,
+                      fenced.BuildId,
+                      fenced.AttemptId,
+                      fence,
+                      "log-no-burn-owner",
+                      1,
+                      "fenced-one"))
+                  "next real fenced chunk appends"
+              Expect.equal
+                  (readLog org project fenced.BuildId 0)
+                  [ 0, "fenced-zero"; 1, "fenced-one" ]
+                  "fenced replay burned no public cursor"
+              Expect.equal (nextCursor org fenced.BuildId) 2 "fenced counter advanced only for real chunks"
+          }
+
+          test "a concurrent node move cannot splice a log into the requested build" {
+              let org, project = freshProject ()
+              let source = admitOk (newBuild org project "log-node-move-source" [ "b" ])
+              let target = admitOk (newBuild org project "log-node-move-target" [ "b" ])
+              let applicationName = $"fogell-log-lineage-{Guid.NewGuid():N}"
+              let raceBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+              raceBuilder.ApplicationName <- applicationName
+
+              use mover = new Npgsql.NpgsqlConnection(connectionString)
+              mover.Open()
+              use moveTx = mover.BeginTransaction()
+              use scope = mover.CreateCommand()
+              scope.Transaction <- moveTx
+              scope.CommandText <- "SELECT set_config('fogell.organization_id', @o, true)"
+              scope.Parameters.AddWithValue("o", string org.Value) |> ignore
+              scope.ExecuteScalar() |> ignore
+              use move = mover.CreateCommand()
+              move.Transaction <- moveTx
+              move.CommandText <-
+                  "UPDATE nodes SET build_id = @target
+                    WHERE organization_id = @o AND id = @node"
+              move.Parameters.AddWithValue("target", target.BuildId.Value) |> ignore
+              move.Parameters.AddWithValue("o", org.Value) |> ignore
+              move.Parameters.AddWithValue("node", source.NodeId.Value) |> ignore
+              Expect.equal (move.ExecuteNonQuery()) 1 "node move holds the lineage row lock"
+
+              let append =
+                  System.Threading.Tasks.Task.Run(fun () ->
+                      Store(raceBuilder.ConnectionString).AppendLog(
+                          org, source.BuildId, source.AttemptId, 0, "must-not-splice"))
+
+              use observer = new Npgsql.NpgsqlConnection(connectionString)
+              observer.Open()
+
+              let rec waitForNodeLock deadline =
+                  use waiting = observer.CreateCommand()
+                  waiting.CommandText <-
+                      "SELECT EXISTS (
+                           SELECT 1 FROM pg_stat_activity
+                            WHERE application_name = @application
+                              AND wait_event_type = 'Lock'
+                              AND query LIKE 'SELECT build_id FROM nodes%'
+                       )"
+                  waiting.Parameters.AddWithValue("application", applicationName) |> ignore
+
+                  if waiting.ExecuteScalar() :?> bool then
+                      true
+                  elif DateTime.UtcNow >= deadline then
+                      false
+                  else
+                      System.Threading.Thread.Sleep 10
+                      waitForNodeLock deadline
+
+              Expect.isTrue
+                  (waitForNodeLock (DateTime.UtcNow.AddSeconds 5.0))
+                  "append reaches and waits on the explicitly locked node"
+
+              moveTx.Commit()
+              Expect.isFalse append.Result "moved lineage is re-read and rejected after the lock wait"
+              Expect.equal (readLog org project source.BuildId 0) [] "requested build received no spliced log"
+              Expect.equal (readLog org project target.BuildId 0) [] "actual moved-to build received no disguised log"
+
+              use verify = new Npgsql.NpgsqlConnection(connectionString)
+              verify.Open()
+              use verifyTx = verify.BeginTransaction()
+              use verifyScope = verify.CreateCommand()
+              verifyScope.Transaction <- verifyTx
+              verifyScope.CommandText <- "SELECT set_config('fogell.organization_id', @o, true)"
+              verifyScope.Parameters.AddWithValue("o", string org.Value) |> ignore
+              verifyScope.ExecuteScalar() |> ignore
+              use counters = verify.CreateCommand()
+              counters.Transaction <- verifyTx
+              counters.CommandText <-
+                  "SELECT next_log_sequence FROM builds
+                    WHERE organization_id = @o AND id IN (@source, @target)
+                    ORDER BY id"
+              counters.Parameters.AddWithValue("o", org.Value) |> ignore
+              counters.Parameters.AddWithValue("source", source.BuildId.Value) |> ignore
+              counters.Parameters.AddWithValue("target", target.BuildId.Value) |> ignore
+              use rows = counters.ExecuteReader()
+              let values = [ while rows.Read() do yield rows.GetInt32 0 ]
+              Expect.equal values [ 0; 0 ] "rejected splice consumed no cursor on either build"
+              rows.Close()
+              verifyTx.Commit()
+          }
+
+          test "build-wide pages do not skip retry chunks with the same attempt-local sequence" {
+              let org, project = freshProject ()
+              let parent = terminalAttempt org project "log-retry-page"
+
+              let child =
+                  let decision = decideRetryOk org parent.AttemptId 2 (AttemptId(Guid.NewGuid()))
+
+                  match decision.Persisted.Decision.Outcome with
+                  | BudgetExhausted -> failtest "retry budget unexpectedly exhausted"
+                  | ChildCreated child -> child
+
+              Expect.isTrue
+                  (store.AppendLog(org, parent.BuildId, parent.AttemptId, 0, "parent-zero"))
+                  "parent attempt publishes local sequence zero"
+
+              Expect.isTrue
+                  (store.AppendLog(org, parent.BuildId, child.Id, 0, "child-zero"))
+                  "retry attempt independently publishes local sequence zero"
+
+              let first = store.ReadLogPage(org, project, parent.BuildId, 0, 1)
+              let second = store.ReadLogPage(org, project, parent.BuildId, 1, 1)
+              let exhausted = store.ReadLogPage(org, project, parent.BuildId, 2, 1)
+
+              Expect.equal first (Some [ 0, "parent-zero" ]) "first page contains exactly the first attempt"
+              Expect.equal second (Some [ 1, "child-zero" ]) "next cursor contains exactly the retry"
+              Expect.equal exhausted (Some []) "advancing twice neither duplicates nor skips a chunk"
           }
 
           test "an attempt cannot append to another build or consume its real sequence" {

@@ -5,6 +5,7 @@ category: engineering-board
 purpose: Command board for taking Fogell from an empty F# workspace to a private prerelease with differential Jenkins evidence.
 lifecycle: live
 last-verified: 2026-08-14
+accounting-verified: 2026-08-26
 ---
 
 # Fogell — Execution Board
@@ -234,7 +235,7 @@ turned out to depend on what it TOUCHES rather than which subsystem it belongs t
 **THIS ORDERING IS NOW A WAVE-LEVEL STATEMENT ONLY, and it has been overtaken.** Steps
 1 and 2 are discharged, and step 3 stopped describing the work when `script { }` turned
 step coverage into interpreter coverage — a subsystem that had no wave until one was
-made for it below. Wave order does not resolve which of thirty open P1s goes next, and
+made for it below. Wave order does not resolve which open P1 goes next, and
 that question is now answered by defect class, in the section that follows. Read that
 section as the execution cycle's reference point; read this one for how the waves came
 to be sequenced.
@@ -259,14 +260,16 @@ of trusting the row.
 
 ## Live queue — the reference point for the execution cycle
 
-**WHY THIS SECTION EXISTS.** The board carries 192 rows, 103 of them DONE, and the open
-89 are spread 4 / 39 / 36 / 10 across P0–P3. (Was "187 rows … open 84 … 4 / 34 / 36 / 10"
+**BOARD ACCOUNTING (derived): rows=207; DONE=129; open=78; open P0–P3=5 / 25 / 36 / 12.**
+
+**WHY THIS SECTION EXISTS.** The derived accounting above is the single live source for
+ticket totals and priority distribution. (Was "187 rows … open 84 … 4 / 34 / 36 / 10"
 until 2026-08-14, and 189 / 86 / 4-36-36-10 for the length of that same pass — FG-198 is the row it filed against itself, and it is the ONLY row added — the rest of the movement is a recount, not new work. NOTHING REGRESSED: two ids each covered two
 different tickets, so a count of unique ids reported 187 while 189 rows existed, and the
 two hidden ones were both open P1. The renumber to FG-196/FG-197 did not create work, it
 made work that was already on the board countable — which is the argument for deriving
 these numbers instead of maintaining them, since the discrepancy was only ever visible as
-189 rows against 187 unique ids.) A tier holding thirty open items does not
+189 rows against 187 unique ids.) A priority tier with many open items does not
 order anything: FG-046b's silently skipped human approval gate and a closure's capture
 semantics were both P1, and the practical effect was that whichever ticket the last
 review round happened to touch went next. The waves below group by SUBSYSTEM, which is
@@ -276,7 +279,7 @@ accreted into **Wave 8 — Release gates** because that table was last in the fi
 **A QUEUE ROW GIVES THE RANKING ARGUMENT, NOT THE DIAGNOSIS.** Learned twice, the same way both times: a ticket's row and its queue row each described the defect, the ticket row was corrected, and the queue row kept the disproven version — FG-183's "a placement walk at admission, no interpreter change" and FG-180's two named constructs. Duplicated prose drifts, and the copy nobody edits is the one a reader meets first, at the top of the file. THE LINE, stated precisely enough to apply: a queue row may give the measured SYMPTOM — what each engine did — because that is a fact about a run and does not change when the code does. It must not name the CAUSE or predict the FIX, because both are hypotheses, and a hypothesis in the ranking table outlives its correction in the ticket. **THE TEST, AND THE OVER-GENERALISATION THAT NEARLY REPLACED IT.** The usable test is: **COULD THIS SENTENCE BECOME FALSE IF THE ROWS WERE REORDERED OR RE-RANKED, WITHOUT ANY CODE CHANGING?** If yes, the `#` column or another row already owns the fact. It catches what a deny-list kept missing — `head of the B block`, `Follows FG-195`, `this position is provisional`, `every other open row here was measured on a hand-written case`, `every class-A and class-B ticket is measured through a receipt` — the last two false the moment this branch ranked an unmeasured row, and one of them written into FG-114 by the patch removing a positional claim from it. **A STRICTER RULE WAS WRITTEN HERE ON 2026-08-15 AND IS RETRACTED IN THE SAME PASS: "a row may only make claims about its own ticket".** It is not satisfiable by a RANKING table, whose rows exist to be compared, and it condemned prose that is doing its job — FG-186 + FG-176's "PAIRED because both tickets argue they need the same one distinction" is a cross-row claim, it is the entire ranking argument for that row, and it stays true however the table is ordered. Nine review rounds went into escalating a narrow real defect into an absolute, then finding every row in violation of it. THE LESSON IS THE ONE FG-183 ALREADY CARRIES, arriving from the other direction: an estimate can be confidently too SMALL, and a rule can be confidently too BIG. What survives is the reorder test, which is falsifiable, and the original prohibition on naming a CAUSE or predicting a FIX. If yes it is a positional claim and the `#` column already owns it. That test passes words a deny-list keeps missing and fails phrasings a deny-list keeps flagging — `ranked on its row's argument`, `ranked as the gate`, `its ranking cost` all survive a reorder and are fine; `this position is provisional`, `every ticket above`, `head of the B block`, `Follows FG-195` do not. Every round of this on 2026-08-15 added one more word to a list; the test is what should have been written first. Every row that drifted did one of those two. **THE FIRST VERSION OF THIS PARAGRAPH THEN CLAIMED THE OTHER ROWS ALREADY COMPLIED, AND FOUR DID NOT** — FG-179 named its fix, FG-135 its cause, FG-186 the distinction it needs, FG-177 a schema. Writing a rule and asserting compliance in the same breath, without checking row by row, is the sixth instance of the exact class the rule was written to stop, committed in the act of stopping it. The rows are now swept: each gives a measured symptom and a ranking argument, and where a proposed fix IS the ranking argument — two tickets pairing because they share one — it is attributed to the ticket rather than asserted here. The same reasoning that produced `SSwitch` rather than a third guard: remove the duplication, not the instance. **THE SEVENTH INSTANCE WAS THE RANKING ITSELF, NOT A DIAGNOSIS**, found on 2026-08-14: FG-179's row still read "RANKED HERE because it is the blocker" a cycle after its ticket row was retitled to say it is BLOCKED, behind a ticket that had no queue row at all. So the rule generalises — a queue row's RANKING ARGUMENT goes stale exactly the way a diagnosis does, and it is the harder one to catch, because a reader who checks the ticket finds the diagnosis corrected and has no reason to re-read the ordering. The four rows added in that pass were checked against this paragraph one at a time rather than as a batch, which is the part the sixth instance skipped. **AND THAT WAS STILL NOT ENOUGH — THE VERIFIER FOUND THREE MORE IN TWO ROUNDS**, all of one previously unnamed sub-shape: a predicted SCOPE. FG-180 + FG-141 said the work "needs no interpreter change", FG-193 said an unrun construction "if real is class A", FG-196 said the defect "fires on any step that runs longer than two minutes". None names a cause and none names a fix, so each passed a row-by-row reading against the rule as it was then written, and all three are the same overclaim: a sentence about how BIG the thing is, asserted from a measurement that did not size it. **THE RULE THEREFORE COVERS SCOPE, SEVERITY AND BLAST RADIUS**, and the test is not "did I name the cause" but "could this sentence be wrong without the receipt being wrong". All 18 rows were then swept with a written checker rather than by reading — proven to catch three planted rows and to stay silent on a quoted retraction, since bare apostrophes in `FG-183's` defeat naive quote-pairing and the first version flagged a retraction as a live claim. Wiring that checker into the gate is **FG-198**; until it lands this sweep is a one-off and the rule is still enforced by whoever is looking.
 
 **The P column is left exactly as filed.** Each row's priority carries that row's own
-severity argument and re-typing thirty of them would add no evidence. What orders
+severity argument and re-typing them here would add no evidence. What orders
 execution is the CLASS and the queue below.
 
 ### Defect class (the ranking rule)
@@ -373,11 +376,11 @@ owner deciding where to spend; it is not a fact about Fogell's evidence.
 - **It does not claim the eleven are equivalent in quality.** McLoving having a crate is not
   McLoving having a working, proven feature; its own `DYNAMIC_PROVISIONER_V1.md` claims no
   certified production provider, and none of its platform work has a differential receipt.
-- **NO ROW CARRIES A BUCKET.** The withdrawn table named eleven; nothing replaced it, so all **89
-  open rows are untagged**. An earlier draft of this line said "eleven named, 78 untagged" and
+- **NO ROW CARRIES A BUCKET.** The withdrawn table named eleven; nothing replaced it, so all
+  open rows are untagged (the derived accounting above owns their count). An earlier draft of this line said "eleven named, 78 untagged" and
   kept both figures after the table that produced them was withdrawn — stale in the same pass
   that withdrew it. Tagging is the remaining work and it is per-row acceptance reading, not
-  inference. THAT READING NOW EXISTS AS RECOMMENDATIONS — [DUPLICATION-AXIS-RECOMMENDATIONS.md](DUPLICATION-AXIS-RECOMMENDATIONS.md) reads all 26 open platform-adjacent rows by acceptance field (2 UNIQUE, 1 provisional DUPLICATED, 17 DISTINCT, 6 NEITHER, each with its survey citation and depth). Still no tag is applied on this board: a recommendation is not a decision, and conversion remains the owner's.
+  inference. THAT READING NOW EXISTS AS RECOMMENDATIONS — [DUPLICATION-AXIS-RECOMMENDATIONS.md](DUPLICATION-AXIS-RECOMMENDATIONS.md) reads the 26 platform-adjacent rows selected for that snapshot by acceptance field (2 UNIQUE, 1 provisional DUPLICATED, 17 DISTINCT, 6 NEITHER, each with its survey citation and depth). Still no tag is applied on this board: a recommendation is not a decision, and conversion remains the owner's.
 - **The evidence has a stated depth limit.** The survey read ~15 crates at header depth and
   grepped the spine; eight cells are code-cited, and a few rows above lean on cells that were
   confirmed rather than deeply read. **Before dropping a P0 on the strength of "McLoving has
@@ -505,7 +508,7 @@ it. It is the one row here whose exclusion would flip if a duel ever came back s
 | id | pri | status | item | acceptance |
 |---|---|---|---|---|
 | FG-000 | P0 | **DONE** | Solution skeleton: `Fogell.slnx`, project graph, `Directory.Build.props` with FS0025/FS0026 as errors | `dotnet build` clean, zero warnings, on HeMan and luigi | — `dotnet build -c Release` clean, 0 warnings, 0 errors; `Fogell.slnx` + `Fogell.Domain` + tests wired
-| FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins SDK 10.0.100 rollForward latestFeature; built on HeMan SDK 10.0.301 and luigi 10.0.110
+| FG-001 | P0 | **DONE** | Pin toolchain: `global.json`, `rust-toolchain`-equivalent note, CI-reproducible SDK version | two hosts produce byte-identical build output for `Fogell.Domain` | — `global.json` pins exact SDK 10.0.301 with roll-forward disabled; all build and lockfile generation paths select that SDK
 | FG-002 | P0 | **DONE** | **Differential harness** (`adr/0004`) | **63/63 tier-1 PROVEN** — same terminal result, same normalised output, same real workspace hash on both sides. Contract printed into every receipt, including the FG-036 ordering relaxation for parallel runs and its cost. `scripts/run-differential.sh` exits non-zero unless every case is fully proven |
 | FG-002b | P0 | **DONE** | Collect Jenkins' workspace so the hash can actually be compared | `Trace.collectRemote` runs a caller-supplied command that hashes the workspace where it lives, through the *same* exclusion filter and manifest form as a local hash. Verified non-vacuous: `shell-and-file` matches on `artifact.txt` content hash `82bbb1ee`, and the workspace hash is not the empty-manifest hash |
 | FG-003 | P0 | **DONE** | Corpus gate: verify `CORPUS-SHA256SUMS` before any scoring run; refuse to score on drift | tampering with one corpus byte fails the gate non-zero | — `scripts/verify-corpus.sh`: clean corpus 228/228 exit 0; one appended byte -> exit 1 naming the file
@@ -577,7 +580,7 @@ and [FG-015b closure](../evidence/20260821T083100Z-fg-015b-list-index).
 | FG-026 | P0 | TODO | Fenced effect checkpoint ledger with `prepared`/`applied`/`confirmed`/`uncertain`; payload digest immutable | payload substitution rejected; uncertain effects listed for reconciliation |
 | FG-027 | P1 | TODO | Retry semantics: never rewrite an attempt; one child attempt with immutable link; exhausted budget → dead-letter | replaying the retry decision returns the same child |
 | FG-027a | P1 | **PARTIAL** | Pure immutable retry-decision foundation, intentionally outside `Fogell.Store` | Signed input `7399fa68f6092029563787c9882ad7f18d266ce7` (tree `935c24f91b9e11c7c68ecd5a51c2eac23d0b5750`) adds a Domain law that creates one queued child below a zero-based attempt limit, returns `BudgetExhausted` at the boundary, and validates an exact prior result before replaying it. The decision binds the parent organization, node, ordinal, ancestry, restore epoch and original limit; a child gets the next ordinal, immutable parent link, initial fence and no lease. This is foundation only: there is no Store persistence, transaction/concurrency arbitration, dead-letter or outbox record, or scheduler/controller wiring, and terminal-status retry policy remains external. Parent FG-027 therefore remains TODO. Publication, CI and merge remain — [→ detail](tickets/FG-027a.md) |
-| FG-028 | P1 | **DONE** | Tenant isolation: forced RLS, transaction-local org setting, composite foreign keys | A real `NOSUPERUSER NOBYPASSRLS` role sees zero rows without context across all 10 tenant tables; Store context is transaction-local and clears on reuse; malformed context fails closed; direct cross-tenant write is rejected; 2 remaining attempt-lineage FKs are tenant-composite — [→ detail](tickets/FG-028.md) |
+| FG-028 | P1 | **DONE** | Tenant isolation: forced RLS, transaction-local org setting, composite foreign keys | A real `NOSUPERUSER NOBYPASSRLS` role sees zero rows without context across all 11 tenant tables; Store context is transaction-local and clears on reuse; malformed context fails closed; direct cross-tenant write is rejected; 2 remaining attempt-lineage FKs are tenant-composite — [→ detail](tickets/FG-028.md) |
 | FG-029 | P2 | TODO | SQLite single-user mode, explicitly labelled non-production | `KNOWN-LIMITATIONS` states it; startup logs the mode |
 
 ## Wave 3 — Execution and process lifecycle
@@ -620,11 +623,12 @@ converts that recurring cost into a one-time cost.
 | FG-103 | P1 | **DONE** | **Width and fail-closed audit.** Every duration is int64 to the executor boundary; every "cannot decide" path refuses by name | **6 + 19 findings.** The int32 narrowing appeared twice — the second time because I silenced a compiler error rather than asking why the types differed. Acceptance: no `int` conversion on a duration before the executor call; a test with a 30-day timeout on every wrapper step **Done.** The last narrowing (a clamped Thread.Sleep) is retired — the CLASS is banned, not the instance; the 30-day-budget acceptance test runs a real process under a 2,592,000,000 ms budget. The fail-closed half found its target: `survivorsIn` returned 0 when the /proc read itself failed, making the leak check a gate that could not fail while FG-032's claim rested on it — unknown is -1 now, treated as still-populated downstream, and the diagnostic says the check was unavailable. Checklist question added: does any new failure path catch-and-default to the value that means all-clear? Merged with FG-102 in PR #24 (9ae194a); the round-47 drain-before-snapshot fix is this ticket's fail-closed shape applied to the Terminated dedup |
 | FG-104 | P1 | **DONE** | **Comment-as-specification drift.** A doc comment that describes behaviour must be covered by a test or receipt, or say it is unimplemented | Three times a comment of mine became the specification the code disagreed with — `resolveName` promising `env['X']`, a case comment asserting Jenki… [→ detail](tickets/FG-104.md) |
 
-## Wave 3.6 — Harness capability (unlocks five blocked tickets at once)
+## Wave 3.6 — Harness capability (unlocked the blocked tickets together)
 
-Five open tickets are blocked on the same thing: the differential harness can only produce
+These tickets were blocked on the same thing: the differential harness could only produce
 ONE build, of a plain job, on Linux, with no SCM. Each was filed separately as "needs a
-harness that can…". Doing them together is one push instead of five stalls.
+harness that can…". Grouping them turned repeated stalls into one harness expansion; the
+table below owns their current statuses.
 
 | id | pri | status | scope | acceptance |
 |---|---|---|---|---|
@@ -736,6 +740,7 @@ before their no-effect validation refusal. Compatibility counts are unchanged.
 | FG-062 | P1 | TODO | `Fogell.Agent.Protocol` + `Runtime` (`adr/0008`): mTLS, versioned, agent-local durable log, offset recovery | **network partition ≥ 45 s costs zero log lines** — the Jenkins parity bar |
 | FG-063 | P1 | TODO | Agent death handling: announce reconnect grace with a budget, then ABORTED with a named cause | matches Jenkins' behavior, which is exemplary here |
 | FG-064 | P1 | **DONE** | Progressive console over the API (`adr/0005` match) | `GET …/logs?from=N` returns chunks plus a `next_sequence` cursor, so a client tails a running build rather than waiting for completion |
+| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Local exact-tree acceptance closes the three prior review findings: engine-created inner step groups are registered before release and reaped across Run.Host death; progressive publication is FIFO-serialized outside the output lock and fails closed to reconciliation; invalid FIFO definitions are durably quarantined before scanning later work. The fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth. A replacement exact-head hosted gate, Copilot/Codex review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
 | FG-065 | P2 | TODO | Jenkins-shaped REST compatibility shim, **off by default**, explicitly bounded | enabled only via env var; limitations documented |
 | FG-066 | P2 | TODO | `Fogell.Cli`: validate / plan / run / build / resume / list / history | each subcommand has a golden-output test |
 | FG-067 | P3 | TODO | `Fogell.Web` read-only build UI | renders a build's stages and log |

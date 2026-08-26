@@ -24,6 +24,9 @@
       <_Parameter1>Fogell.Execution.Tests</_Parameter1>
     </AssemblyAttribute>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Fogell.Controller.Host</_Parameter1>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>Fogell.Differential.Tests</_Parameter1>
     </AssemblyAttribute>
   </ItemGroup>
