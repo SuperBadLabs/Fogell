@@ -102,6 +102,15 @@ let private send (method: HttpMethod) (url: string) (bearer: string option) (ide
     let text = r.Content.ReadAsStringAsync().Result
     int r.StatusCode, text
 
+let private sendBytes (url: string) (idem: string) (body: byte array) =
+    use req = new HttpRequestMessage(HttpMethod.Post, url)
+    req.Headers.TryAddWithoutValidation("authorization", $"Bearer {token}") |> ignore
+    req.Headers.TryAddWithoutValidation("idempotency-key", idem) |> ignore
+    req.Content <- new ByteArrayContent(body)
+    req.Content.Headers.TryAddWithoutValidation("content-type", "application/x-jenkinsfile") |> ignore
+    use response = client.Send req
+    int response.StatusCode, response.Content.ReadAsStringAsync().Result
+
 let private sendChunked (url: string) (idem: string) (body: byte array) =
     use req = new HttpRequestMessage(HttpMethod.Post, url)
     req.Headers.TryAddWithoutValidation("authorization", $"Bearer {token}") |> ignore
@@ -462,14 +471,45 @@ let endpoints =
               Expect.stringContains changedBody "idempotency_conflict" "conflict keeps its stable API code"
               Expect.equal (countBuilds legacyOrg legacyProject) 1 "conflict creates no build"
 
-              let freshOrg, freshProject = freshProject ()
+              let freshOrg, freshProjectId = freshProject ()
               let freshUrl =
-                  $"{baseUrl}/api/v1/organizations/{freshOrg.Value}/projects/{freshProject.Value}/builds"
+                  $"{baseUrl}/api/v1/organizations/{freshOrg.Value}/projects/{freshProjectId.Value}/builds"
               let freshCode, freshBody =
                   send HttpMethod.Post freshUrl (Some token) (Some "fresh-unsafe") (Some unsafeSource)
               Expect.equal freshCode 422 "the compatibility probe does not admit fresh unsafe source"
               Expect.stringContains freshBody "execution_unsupported" "fresh refusal keeps its stable API code"
-              Expect.equal (countBuilds freshOrg freshProject) 0 "fresh unsafe source creates no build"
+              Expect.equal (countBuilds freshOrg freshProjectId) 0 "fresh unsafe source creates no build"
+
+              let malformedOrg, malformedProject = freshProject ()
+              let malformedKey = "legacy-malformed-replay"
+              let malformedBytes = [| 0xffuy; 0xfeuy |]
+              let malformedInput: NewBuild =
+                  { OrganizationId = malformedOrg
+                    ProjectId = malformedProject
+                    IdempotencyKey = malformedKey
+                    PipelineSource = malformedBytes
+                    StageNames = [ "legacy-stage" ]
+                    RequiredTrustPool = "trusted-linux"
+                    RequiredCapabilities = [ "linux" ] }
+
+              let malformedSeeded =
+                  match store.AdmitBuild malformedInput with
+                  | Ok admission -> admission
+                  | Error why -> failtestf "malformed legacy direct seed failed: %s" why
+
+              let malformedUrl =
+                  $"{baseUrl}/api/v1/organizations/{malformedOrg.Value}/projects/{malformedProject.Value}/builds"
+              let malformedReplayCode, malformedReplayBody =
+                  sendBytes malformedUrl malformedKey malformedBytes
+              Expect.equal malformedReplayCode 200 "exact malformed legacy bytes replay before UTF-8 decoding"
+              Expect.stringContains malformedReplayBody (string malformedSeeded.BuildId.Value) "malformed replay returns its durable build"
+              Expect.stringContains malformedReplayBody "\"was_existing\":true" "malformed replay is idempotent"
+
+              let malformedConflictCode, malformedConflictBody =
+                  sendBytes malformedUrl malformedKey [| 0xffuy; 0xfduy |]
+              Expect.equal malformedConflictCode 409 "changed malformed bytes conflict before UTF-8 decoding"
+              Expect.stringContains malformedConflictBody "idempotency_conflict" "malformed conflict has the stable code"
+              Expect.equal (countBuilds malformedOrg malformedProject) 1 "malformed conflict creates no build"
           }
 
           test "one idempotency key cannot substitute different Jenkinsfile bytes" {
@@ -482,6 +522,87 @@ let endpoints =
                   send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some changed)
               Expect.equal conflictCode 409 "substitution conflicts"
               Expect.stringContains conflict "idempotency_conflict" "stable conflict code"
+
+              let malformedCode, malformedBody =
+                  send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some "pipeline {")
+              Expect.equal malformedCode 409 "a bound key conflicts before parser classification"
+              Expect.stringContains malformedBody "idempotency_conflict" "malformed replacement has the stable conflict code"
+
+              let emptyCode, emptyBody =
+                  send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some "")
+              Expect.equal emptyCode 409 "a bound key conflicts before empty-source classification"
+              Expect.stringContains emptyBody "idempotency_conflict" "empty replacement has the stable conflict code"
+
+              let invalidUtf8Code, invalidUtf8Body =
+                  sendBytes url "api-source-bound" [| 0xffuy; 0xfeuy |]
+              Expect.equal invalidUtf8Code 409 "a bound key conflicts before UTF-8 decoding"
+              Expect.stringContains invalidUtf8Body "idempotency_conflict" "invalid-byte replacement has the stable conflict code"
+
+              let freshMalformedCode, freshMalformedBody =
+                  send HttpMethod.Post url (Some token) (Some "fresh-malformed") (Some "pipeline {")
+              Expect.equal freshMalformedCode 422 "a fresh malformed request still reaches the parser"
+              Expect.stringContains freshMalformedBody "malformed_syntax" "fresh malformed request keeps its parser code"
+
+              let freshEmptyCode, freshEmptyBody =
+                  send HttpMethod.Post url (Some token) (Some "fresh-empty") (Some "")
+              Expect.equal freshEmptyCode 422 "a fresh empty request still reaches the parser"
+              Expect.stringContains freshEmptyBody "empty_source" "fresh empty request keeps its parser code"
+
+              let freshInvalidUtf8Code, freshInvalidUtf8Body =
+                  sendBytes url "fresh-invalid-utf8" [| 0xffuy; 0xfeuy |]
+              Expect.equal freshInvalidUtf8Code 400 "fresh invalid bytes still reach strict UTF-8 decoding"
+              Expect.stringContains freshInvalidUtf8Body "invalid_utf8" "fresh invalid bytes keep their decoding code"
+          }
+
+          test "concurrent mixed API submissions leave AdmitBuild as the one-key arbiter" {
+              let org, project = freshProject ()
+              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              let key = "api-mixed-race"
+              let sourceA = pipeline
+              let sourceB = pipeline.Replace("echo 'hi'", "echo 'other'")
+              use gate = new Threading.ManualResetEventSlim(false)
+
+              let requests =
+                  [| 0..7 |]
+                  |> Array.map (fun index ->
+                      Threading.Tasks.Task.Run(fun () ->
+                          gate.Wait()
+                          let source = if index % 2 = 0 then sourceA else sourceB
+                          source, send HttpMethod.Post url (Some token) (Some key) (Some source)))
+
+              gate.Set()
+              requests
+              |> Array.map (fun request -> request :> Threading.Tasks.Task)
+              |> Threading.Tasks.Task.WaitAll
+
+              let results = requests |> Array.map (fun request -> request.Result)
+              let accepted =
+                  results
+                  |> Array.choose (fun (source, (code, body)) ->
+                      if code = 200 || code = 201 then Some(source, code, body) else None)
+              let conflicts = results |> Array.filter (fun (_, (code, _)) -> code = 409)
+
+              Expect.equal accepted.Length 4 "all requests matching the winning bytes are admitted or replayed"
+              Expect.equal conflicts.Length 4 "all requests carrying the losing bytes conflict"
+              Expect.equal (accepted |> Array.filter (fun (_, code, _) -> code = 201) |> Array.length) 1 "one request creates"
+              Expect.equal (accepted |> Array.filter (fun (_, code, _) -> code = 200) |> Array.length) 3 "three exact requests replay"
+              Expect.equal (accepted |> Array.map (fun (source, _, _) -> source) |> Array.distinct |> Array.length) 1 "only one source wins"
+
+              let buildIds =
+                  accepted
+                  |> Array.map (fun (_, _, body) ->
+                      Text.RegularExpressions.Regex.Match(body, "\"build_id\":\"([^\"]+)\"").Groups[1].Value)
+                  |> Array.distinct
+              Expect.equal buildIds.Length 1 "all successful responses return the same durable build"
+
+              use connection = new Npgsql.NpgsqlConnection(connectionString)
+              connection.Open()
+              use count = connection.CreateCommand()
+              count.CommandText <-
+                  "SELECT count(*) FROM builds WHERE organization_id=@organization AND project_id=@project"
+              count.Parameters.AddWithValue("organization", org.Value) |> ignore
+              count.Parameters.AddWithValue("project", project.Value) |> ignore
+              Expect.equal (Convert.ToInt32(count.ExecuteScalar())) 1 "the mixed race creates exactly one build"
           }
 
           test "request placement override and oversized source both fail before admission" {

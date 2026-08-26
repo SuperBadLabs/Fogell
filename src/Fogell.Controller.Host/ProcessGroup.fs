@@ -31,6 +31,17 @@ type internal ChildHandoff =
     | NaturalTerminalAllowed
     | ReconciliationRequired
 
+type internal ProcessIdentity =
+    { ProcessId: int
+      StartTime: string }
+
+[<RequireQualifiedAccess>]
+type internal RecordedProcessState =
+    | SameIdentity of processGroupId: int
+    | Absent
+    | Changed
+    | Uncertain
+
 module internal ProcessGroup =
 
     [<Literal>]
@@ -107,6 +118,50 @@ module internal ProcessGroup =
             let result = kill(processId, signal)
             classifySignal result (Marshal.GetLastWin32Error())
 
+    let private readProcessStat pid =
+        let value = IO.File.ReadAllText($"/proc/{pid}/stat")
+        let close = value.LastIndexOf ')'
+
+        if close < 0 || close + 2 >= value.Length then
+            None
+        else
+            let fields =
+                value.Substring(close + 2).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+
+            if fields.Length <= 19 then None else Some fields
+
+    /// Capture the Linux process birth identity immediately after Start. The
+    /// launcher may not have called setsid yet, so PGID is deliberately not
+    /// part of the capture; every later observation returns its current PGID.
+    let tryCaptureIdentity pid =
+        if not (OperatingSystem.IsLinux()) || pid <= 1 then
+            None
+        else
+            try
+                readProcessStat pid
+                |> Option.map (fun fields ->
+                    { ProcessId = pid
+                      StartTime = fields[19] })
+            with _ ->
+                None
+
+    let private observeIdentity (identity: ProcessIdentity) =
+        try
+            match readProcessStat identity.ProcessId with
+            | None -> RecordedProcessState.Uncertain
+            | Some fields when fields[19] <> identity.StartTime ->
+                // The numeric PID was reused. It proves the recorded process is
+                // gone but grants no authority over the replacement.
+                RecordedProcessState.Changed
+            | Some fields ->
+                match Int32.TryParse fields[2] with
+                | true, processGroup -> RecordedProcessState.SameIdentity processGroup
+                | _ -> RecordedProcessState.Uncertain
+        with
+        | :? IO.FileNotFoundException
+        | :? IO.DirectoryNotFoundException -> RecordedProcessState.Absent
+        | _ -> RecordedProcessState.Uncertain
+
     /// Extinction means both the original setsid launcher and every member of
     /// its eventual process group are absent. Checking both closes the startup
     /// race where the launcher has not established its group yet.
@@ -158,36 +213,96 @@ module internal ProcessGroup =
                 else
                     classifyFinal ()
 
+    /// Apply the extinction state machine without ever probing or signalling a
+    /// numeric outer PGID as authority by itself. A matching birth identity may
+    /// signal its launcher before setsid, and may signal the group only after it
+    /// actually leads that group. Once the identity is absent or changed, group
+    /// absence can prove extinction but group presence is ambiguous with reuse.
+    let internal ensureIdentityBoundExtinguished
+        termChecks
+        killChecks
+        processId
+        (observe: unit -> RecordedProcessState)
+        (probeProcessGroup: unit -> ProcessPresence)
+        (sendProcessGroupSignal: int -> ProcessSignalResult)
+        (sendProcessSignal: int -> ProcessSignalResult)
+        (pause: unit -> unit)
+        =
+        let probeLeader () =
+            match observe () with
+            | RecordedProcessState.SameIdentity _ -> ProcessPresence.Present
+            | RecordedProcessState.Absent
+            | RecordedProcessState.Changed -> ProcessPresence.Absent
+            | RecordedProcessState.Uncertain -> ProcessPresence.Uncertain
+
+        let probeBoundGroup () =
+            match observe () with
+            | RecordedProcessState.SameIdentity processGroup when processGroup = processId ->
+                probeProcessGroup ()
+            | RecordedProcessState.SameIdentity _ -> ProcessPresence.Absent
+            | RecordedProcessState.Absent
+            | RecordedProcessState.Changed ->
+                match probeProcessGroup () with
+                | ProcessPresence.Absent -> ProcessPresence.Absent
+                | _ -> ProcessPresence.Uncertain
+            | RecordedProcessState.Uncertain -> ProcessPresence.Uncertain
+
+        let signalBoundGroup signal =
+            match observe () with
+            | RecordedProcessState.SameIdentity processGroup when processGroup = processId ->
+                sendProcessGroupSignal signal
+            | RecordedProcessState.SameIdentity _ -> ProcessSignalResult.TargetAbsent
+            | RecordedProcessState.Absent
+            | RecordedProcessState.Changed ->
+                match probeProcessGroup () with
+                | ProcessPresence.Absent -> ProcessSignalResult.TargetAbsent
+                | _ -> ProcessSignalResult.Uncertain
+            | RecordedProcessState.Uncertain -> ProcessSignalResult.Uncertain
+
+        let signalBoundLeader signal =
+            match observe () with
+            | RecordedProcessState.SameIdentity _ -> sendProcessSignal signal
+            | RecordedProcessState.Absent -> ProcessSignalResult.TargetAbsent
+            | RecordedProcessState.Changed
+            | RecordedProcessState.Uncertain -> ProcessSignalResult.Uncertain
+
+        ensureExtinguished
+            termChecks
+            killChecks
+            probeLeader
+            probeBoundGroup
+            signalBoundGroup
+            signalBoundLeader
+            pause
+
+    let stopIdentityBoundGroup termChecks killChecks identity pause =
+        ensureIdentityBoundExtinguished
+            termChecks
+            killChecks
+            identity.ProcessId
+            (fun () -> observeIdentity identity)
+            (fun () -> probeGroup identity.ProcessId)
+            (signalGroup identity.ProcessId)
+            (signalLeader identity.ProcessId)
+            pause
+
     type private RecordedIdentity =
         | IdentityMatches
         | IdentityAbsent
         | IdentityUncertain
 
     let private recordedIdentity pid expectedStartTime expectedProcessGroup =
-        try
-            let value = IO.File.ReadAllText($"/proc/{pid}/stat")
-            let close = value.LastIndexOf ')'
-
-            if close < 0 || close + 2 >= value.Length then
-                IdentityUncertain
-            else
-                let fields =
-                    value.Substring(close + 2).Split(' ', StringSplitOptions.RemoveEmptyEntries)
-
-                if fields.Length <= 19 then
-                    IdentityUncertain
-                elif
-                    fields[19] = expectedStartTime
-                    && fields[2] = string expectedProcessGroup
-                then
-                    IdentityMatches
-                else
-                    // The numeric pid has been reused. Never signal the new owner.
-                    IdentityUncertain
+        match
+            observeIdentity
+                { ProcessId = pid
+                  StartTime = expectedStartTime }
         with
-        | :? IO.FileNotFoundException
-        | :? IO.DirectoryNotFoundException -> IdentityAbsent
-        | _ -> IdentityUncertain
+        | RecordedProcessState.SameIdentity processGroup when processGroup = expectedProcessGroup ->
+            IdentityMatches
+        | RecordedProcessState.Absent -> IdentityAbsent
+        | RecordedProcessState.SameIdentity _
+        | RecordedProcessState.Changed
+        | RecordedProcessState.Uncertain -> IdentityUncertain
 
     /// Stop every inner setsid group durably registered before its user code was
     /// released. Records include Linux process start time, so a stale record can

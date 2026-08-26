@@ -815,19 +815,20 @@ let controllerProcessGroupExtinction =
           }
 
           test "the pre-setsid race terminates the leader even before its group exists" {
-              let mutable leader = ProcessPresence.Present
+              let mutable identity = RecordedProcessState.SameIdentity 17
               let mutable leaderSignals = []
 
               let signalLeader signal =
                   leaderSignals <- leaderSignals @ [ signal ]
-                  leader <- ProcessPresence.Absent
+                  identity <- RecordedProcessState.Absent
                   ProcessSignalResult.Delivered
 
               let result =
-                  ProcessGroup.ensureExtinguished
+                  ProcessGroup.ensureIdentityBoundExtinguished
                       1
                       1
-                      (fun () -> leader)
+                      4242
+                      (fun () -> identity)
                       (fun () -> ProcessPresence.Absent)
                       (fun _ -> ProcessSignalResult.TargetAbsent)
                       signalLeader
@@ -835,6 +836,33 @@ let controllerProcessGroupExtinction =
 
               Expect.equal result ProcessGroupStopResult.Extinguished "leader and not-yet-created group are both absent"
               Expect.equal leaderSignals [ 15 ] "TERM reaches the launcher directly"
+          }
+
+          test "a reused outer PID cannot authorize TERM or KILL of the replacement group" {
+              let mutable groupSignals = []
+              let mutable leaderSignals = []
+
+              let result =
+                  ProcessGroup.ensureIdentityBoundExtinguished
+                      0
+                      0
+                      4242
+                      (fun () -> RecordedProcessState.Changed)
+                      (fun () -> ProcessPresence.Present)
+                      (fun signal ->
+                          groupSignals <- groupSignals @ [ signal ]
+                          ProcessSignalResult.Delivered)
+                      (fun signal ->
+                          leaderSignals <- leaderSignals @ [ signal ]
+                          ProcessSignalResult.Delivered)
+                      noPause
+
+              Expect.equal
+                  result
+                  ProcessGroupStopResult.StatusUncertain
+                  "a populated numeric PGID after identity reuse fails closed"
+              Expect.isEmpty groupSignals "the replacement process group receives no signal"
+              Expect.isEmpty leaderSignals "the replacement process receives no signal"
           }
 
           test "a descendant surviving its leader is killed before extinction succeeds" {

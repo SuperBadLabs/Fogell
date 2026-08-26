@@ -123,62 +123,71 @@ module Router =
                                     fail ctx 413 "pipeline_too_large"
                                         $"pipeline source must be at most {state.MaxPipelineBytes} bytes" None
                             | Ok sourceBytes ->
-                                let sourceResult =
-                                    try
-                                        Ok(UTF8Encoding(false, true).GetString sourceBytes)
-                                    with :? DecoderFallbackException ->
-                                        Error "pipeline source must be valid UTF-8"
+                                let probe: AdmissionProbe =
+                                    { OrganizationId = OrganizationId org
+                                      ProjectId = ProjectId project
+                                      IdempotencyKey = key
+                                      PipelineSource = sourceBytes
+                                      RequiredTrustPool = state.TrustPool
+                                      RequiredCapabilities = [ "linux" ] }
 
-                                match sourceResult with
-                                | Error message -> return! fail ctx 400 "invalid_utf8" message None
-                                | Ok source ->
-                                    match Fogell.Pipeline.Parser.Parser.parse source with
-                                    | Result.Error e ->
-                                        return!
-                                            fail ctx 422
-                                                (Fogell.Admission.ErrorCode.toWireString e.Code)
-                                                (Fogell.Admission.AdmissionError.render source e)
-                                                (Some(string e.Position))
-                                    | Result.Ok pipeline ->
-                                        let stages =
-                                            Fogell.Ir.Pipeline.flattenStages pipeline.Stages
-                                            |> List.map (fun stage -> stage.Name)
+                                let respond (admission: Fogell.Store.Admission) =
+                                    let payload: AdmissionResponse =
+                                        { BuildId = string admission.BuildId.Value
+                                          NodeId = string admission.NodeId.Value
+                                          AttemptId = string admission.AttemptId.Value
+                                          Number = admission.Number
+                                          WasExisting = admission.WasExisting }
 
-                                        let input =
-                                            { OrganizationId = OrganizationId org
-                                              ProjectId = ProjectId project
-                                              IdempotencyKey = key
-                                              PipelineSource = sourceBytes
-                                              StageNames = stages
-                                              RequiredTrustPool = state.TrustPool
-                                              RequiredCapabilities = [ "linux" ] }
+                                    json ctx (if admission.WasExisting then 200 else 201) payload
 
-                                        let respond (admission: Fogell.Store.Admission) =
-                                            let payload: AdmissionResponse =
-                                                { BuildId = string admission.BuildId.Value
-                                                  NodeId = string admission.NodeId.Value
-                                                  AttemptId = string admission.AttemptId.Value
-                                                  Number = admission.Number
-                                                  WasExisting = admission.WasExisting }
+                                // Resolve an already-bound raw request before decoding, parsing, or
+                                // applying today's execution rules. Once a key is durable, every
+                                // different byte sequence or placement fingerprint is the same 409
+                                // conflict regardless of whether the replacement happens to parse.
+                                // A miss creates nothing and takes no authority: AdmitBuild remains
+                                // the race arbiter after fresh-source preflight.
+                                match state.Store.TryReplayAdmission probe with
+                                | Result.Error e when
+                                    e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
+                                    ->
+                                    return! fail ctx 409 "idempotency_conflict" e None
+                                | Result.Error _ ->
+                                    return!
+                                        fail ctx 503 "admission_unavailable"
+                                            "build admission is temporarily unavailable" None
+                                | Result.Ok(Some admission) -> return! respond admission
+                                | Result.Ok None ->
+                                    let sourceResult =
+                                        try
+                                            Ok(UTF8Encoding(false, true).GetString sourceBytes)
+                                        with :? DecoderFallbackException ->
+                                            Error "pipeline source must be valid UTF-8"
 
-                                            json ctx (if admission.WasExisting then 200 else 201) payload
-
-                                        // A release may tighten persisted execution preflight after a
-                                        // build was durably admitted. Preserve the immutable response
-                                        // for an exact legacy replay before applying today's rules.
-                                        // A miss creates nothing and takes no authority: AdmitBuild
-                                        // remains the race arbiter after fresh-source preflight.
-                                        match state.Store.TryReplayAdmission input with
-                                        | Result.Error e when
-                                            e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
-                                            ->
-                                            return! fail ctx 409 "idempotency_conflict" e None
-                                        | Result.Error _ ->
+                                    match sourceResult with
+                                    | Error message -> return! fail ctx 400 "invalid_utf8" message None
+                                    | Ok source ->
+                                        match Fogell.Pipeline.Parser.Parser.parse source with
+                                        | Result.Error e ->
                                             return!
-                                                fail ctx 503 "admission_unavailable"
-                                                    "build admission is temporarily unavailable" None
-                                        | Result.Ok(Some admission) -> return! respond admission
-                                        | Result.Ok None ->
+                                                fail ctx 422
+                                                    (Fogell.Admission.ErrorCode.toWireString e.Code)
+                                                    (Fogell.Admission.AdmissionError.render source e)
+                                                    (Some(string e.Position))
+                                        | Result.Ok pipeline ->
+                                            let stages =
+                                                Fogell.Ir.Pipeline.flattenStages pipeline.Stages
+                                                |> List.map (fun stage -> stage.Name)
+
+                                            let input: NewBuild =
+                                                { OrganizationId = probe.OrganizationId
+                                                  ProjectId = probe.ProjectId
+                                                  IdempotencyKey = probe.IdempotencyKey
+                                                  PipelineSource = probe.PipelineSource
+                                                  StageNames = stages
+                                                  RequiredTrustPool = probe.RequiredTrustPool
+                                                  RequiredCapabilities = probe.RequiredCapabilities }
+
                                             // Parse success is deliberately broader than execution
                                             // capability. Only a fresh key must satisfy the same
                                             // fail-closed persisted preflight as Run.Host before

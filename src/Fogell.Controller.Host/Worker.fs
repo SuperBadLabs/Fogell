@@ -44,27 +44,12 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
             File.WriteAllBytes(temporary, bytes)
             File.Move(temporary, path)
 
-    let stopGroup (child: Process) =
-        let probeLeader () =
-            try
-                if child.HasExited then ProcessPresence.Absent else ProcessPresence.Present
-            with _ ->
-                ProcessPresence.Uncertain
-
-        let signalLeader signal =
-            match probeLeader () with
-            | ProcessPresence.Absent -> ProcessSignalResult.TargetAbsent
-            | ProcessPresence.Present -> ProcessGroup.signalLeader child.Id signal
-            | ProcessPresence.Uncertain -> ProcessSignalResult.Uncertain
-
+    let stopGroup identity =
         try
-            ProcessGroup.ensureExtinguished
+            ProcessGroup.stopIdentityBoundGroup
                 processGroupTermChecks
                 processGroupKillChecks
-                probeLeader
-                (fun () -> ProcessGroup.probeGroup child.Id)
-                (ProcessGroup.signalGroup child.Id)
-                signalLeader
+                identity
                 (fun () -> Thread.Sleep processGroupProbeMilliseconds)
         with _ ->
             ProcessGroupStopResult.StatusUncertain
@@ -386,6 +371,29 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
 
                         false
 
+                let outerIdentity =
+                    if launched then
+                        let captured =
+                            try
+                                let identity = ProcessGroup.tryCaptureIdentity child.Id
+
+                                // An extremely short-lived launcher can exit before
+                                // /proc is read and let its numeric PID be reused. The
+                                // Process object still knows that original child exited;
+                                // never bind a replacement observed in that window.
+                                if child.HasExited then None else identity
+                            with _ ->
+                                None
+
+                        if Option.isNone captured then
+                            logger.LogError(
+                                "FG-224 could not bind outer process {ProcessId} to its Linux birth identity; cleanup will fail closed",
+                                child.Id)
+
+                        captured
+                    else
+                        None
+
                 if launched then
                     let mutable dispositionRecorded = false
 
@@ -397,7 +405,10 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             // finish every identity-bound registry entry. Memoize
                             // the entire pass: signalling numeric ids again from
                             // finally could target later pid reuse.
-                            let outer = stopGroup child
+                            let outer =
+                                match outerIdentity with
+                                | Some identity -> stopGroup identity
+                                | None -> ProcessGroupStopResult.StatusUncertain
                             let inner =
                                 ProcessGroup.stopRegisteredGroups
                                     processGroupTermChecks

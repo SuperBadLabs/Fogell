@@ -44,6 +44,17 @@ type NewBuild =
       RequiredTrustPool: string
       RequiredCapabilities: string list }
 
+/// The immutable request identity needed to resolve a durable admission before
+/// parsing. Parsed stage metadata is intentionally absent: exact source bytes
+/// and controller-owned placement policy are the complete idempotency binding.
+type AdmissionProbe =
+    { OrganizationId: OrganizationId
+      ProjectId: ProjectId
+      IdempotencyKey: string
+      PipelineSource: byte array
+      RequiredTrustPool: string
+      RequiredCapabilities: string list }
+
 /// One whole-pipeline execution owned by the local controller.  Nodes retain
 /// stage metadata, but the persisted runner executes the accepted definition
 /// exactly once per build rather than once per stage.
@@ -1177,10 +1188,10 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
     /// asking the current release to admit the source again. A miss is only a
     /// hint: the caller must still use AdmitBuild after preflight, because its
     /// transaction and unique constraint remain the create/race arbiter.
-    member _.TryReplayAdmission(input: NewBuild) : Result<Admission option, string> =
+    member _.TryReplayAdmission(input: AdmissionProbe) : Result<Admission option, string> =
         if String.IsNullOrWhiteSpace input.IdempotencyKey then
             Error "idempotency key is required"
-        elif isNull input.PipelineSource || input.PipelineSource.Length = 0 then
+        elif isNull input.PipelineSource then
             Error "pipeline source is required"
         elif String.IsNullOrWhiteSpace input.RequiredTrustPool then
             Error "a trust pool is required"
