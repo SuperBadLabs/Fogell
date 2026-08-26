@@ -1262,6 +1262,29 @@ let eventDrivenWaits =
               Expect.equal sleeps 0 "zero budget never sleeps"
           }
 
+          test "one quiet sample followed by output restarts the sustained quiet window" {
+              let mutable elapsed = 0L
+              let sleeps = ResizeArray<int>()
+              let samples =
+                  Collections.Generic.Queue<int * int>(
+                      [ (0, 0); (0, 0); (1, 0); (1, 0); (1, 0) ])
+
+              ProcessGroup.settleOutputUntilQuiet
+                  300
+                  (fun () -> elapsed)
+                  (fun milliseconds ->
+                      sleeps.Add milliseconds
+                      elapsed <- elapsed + int64 milliseconds)
+                  (fun () -> samples.Dequeue())
+
+              Expect.sequenceEqual
+                  sleeps
+                  [ 40; 40; 40; 40 ]
+                  "a change after one quiet interval resets the consecutive-quiet counter"
+              Expect.equal elapsed 160L "two fresh unchanged intervals close the window after the reset"
+              Expect.isEmpty samples "the retained sample sequence is consumed exactly"
+          }
+
           test "a delayed tail after the direct process exits is retained" {
               let result =
                   ProcessGroup.run
@@ -1281,14 +1304,16 @@ let eventDrivenWaits =
               let root = tempRoot ()
               let pidFile = Path.Combine(root, "escaped.pid")
               let sw = Diagnostics.Stopwatch.StartNew()
+              let streamed = Collections.Concurrent.ConcurrentQueue<string>()
 
               let result =
                   ProcessGroup.run
                       { RunRequest.create (
-                            $"setsid /bin/sh -c 'echo $$ > {pidFile}; sleep 30' & printf arrived",
+                            $"setsid /bin/sh -c 'echo $$ > {pidFile}; sleep 30' 2>/dev/null & printf arrived",
                             root) with
                           SuppressStdoutEcho = true
-                          ReapGroup = false }
+                          ReapGroup = false
+                          OnLine = Some streamed.Enqueue }
 
               sw.Stop()
               match waitForPidFile pidFile with
@@ -1300,6 +1325,76 @@ let eventDrivenWaits =
               Expect.equal result.Outcome (Completed 0) "the direct step completed"
               Expect.isLessThan sw.ElapsedMilliseconds 2_000L "capture reuses the reader bound instead of adding a second five-second wait"
               Expect.equal result.Stdout "arrived" "bytes received before the bound survive truncation"
+          }
+
+          test "a production containment anchor is reaped before callback EOF is required" {
+              let root = tempRoot ()
+              let registry = Path.Combine(root, "registry")
+              let durableRoot = root + "@tmp"
+              let previousRegistry = Environment.GetEnvironmentVariable "FOGELL_PROCESS_GROUP_REGISTRY"
+              let streamed = Collections.Concurrent.ConcurrentQueue<string>()
+              Directory.CreateDirectory registry |> ignore
+              Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
+
+              try
+                  let result =
+                      ProcessGroup.run
+                          { RunRequest.create ("printf 'controller-line\\n'", root) with
+                              OnLine = Some streamed.Enqueue }
+
+                  Expect.equal result.Outcome (Completed 0) "the controller-style step completes"
+                  Expect.isTrue
+                      (streamed.ToArray() |> Array.contains "controller-line")
+                      "the output callback is published before the run returns"
+                  Expect.isEmpty
+                      (Directory.EnumerateFiles registry)
+                      "normal reaping removes the controller containment record"
+              finally
+                  Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", previousRegistry)
+                  if Directory.Exists root then Directory.Delete(root, true)
+                  if Directory.Exists durableRoot then Directory.Delete(durableRoot, true)
+          }
+
+          test "an open callback reader fails closed and cannot enqueue a late line" {
+              let root = tempRoot ()
+              let pidFile = Path.Combine(root, "escaped-callback.pid")
+              let streamed = Collections.Concurrent.ConcurrentQueue<string>()
+              let sw = Diagnostics.Stopwatch.StartNew()
+
+              try
+                  Expect.throwsT<TimeoutException>
+                      (fun () ->
+                          ProcessGroup.run
+                              { RunRequest.create (
+                                    $"setsid /bin/sh -c 'echo $$ > {pidFile}; sleep 0.8; printf \"late-line\\n\" >&2; sleep 30' & i=0; while [ ! -s {pidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; sleep 0.01; done; printf \"early-line\\n\"",
+                                    root) with
+                                  SuppressStdoutEcho = true
+                                  ReapGroup = false
+                                  OnLine = Some streamed.Enqueue }
+                          |> ignore)
+                      "a callback-producing reader without EOF cannot return success"
+
+                  sw.Stop()
+                  Expect.isLessThan
+                      sw.ElapsedMilliseconds
+                      1_500L
+                      "reader noncompletion consumes only the existing output-drain bound"
+
+                  let countAtFailure = streamed.Count
+                  Threading.Thread.Sleep 600
+                  Expect.equal
+                      streamed.Count
+                      countAtFailure
+                      "callback admission closes before the tail snapshot"
+                  Expect.isFalse
+                      (streamed.ToArray() |> Array.contains "late-line")
+                      "the escaped writer cannot enqueue after the failed run"
+              finally
+                  match waitForPidFile pidFile with
+                  | Some pid ->
+                      Native.signalGroup pid Native.SIGKILL |> ignore
+                      Expect.isTrue (waitForReap pid) "the escaped callback fixture is cleaned up"
+                  | None -> failtest "the escaped callback writer never established its precondition"
           }
 
           test "capture timeout pays one post-signal reader bound and keeps partial output" {
@@ -1431,6 +1526,60 @@ let eventDrivenWaits =
                   terminatedCount
                   1
                   $"the delayed shell line suppresses synthetic duplicate narration: {transcript}"
+          }
+
+          test "an OnLine callback failure is sticky and escapes the run" {
+              let seen = ResizeArray<string>()
+
+              Expect.throwsT<IO.IOException>
+                  (fun () ->
+                      ProcessGroup.run
+                          { RunRequest.create ("printf 'first\\nsecond\\n'", tempRoot ()) with
+                              ReapGroup = false
+                              OnLine =
+                                  Some(fun line ->
+                                      seen.Add line
+                                      raise (IO.IOException "event sink unavailable")) }
+                      |> ignore)
+                  "a completed faulted callback tail must fail the run"
+
+              Expect.equal seen.Count 1 "successors do not publish after the first callback failure"
+          }
+
+          test "an incomplete OnLine callback tail fails within the shared bound" {
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              use callbackCompleted = new Threading.ManualResetEventSlim(false)
+              let sw = Diagnostics.Stopwatch.StartNew()
+
+              try
+                  Expect.throwsT<TimeoutException>
+                      (fun () ->
+                          ProcessGroup.run
+                              { RunRequest.create ("printf 'blocked\\n'", tempRoot ()) with
+                                  ReapGroup = false
+                                  OnLine =
+                                      Some(fun _ ->
+                                          callbackEntered.Set()
+
+                                          try
+                                              releaseCallback.Wait()
+                                          finally
+                                              callbackCompleted.Set()) }
+                          |> ignore)
+                      "an incomplete callback tail cannot return a successful RunResult"
+
+                  sw.Stop()
+                  Expect.isTrue callbackEntered.IsSet "the callback genuinely held the tail open"
+                  Expect.isLessThan
+                      sw.ElapsedMilliseconds
+                      1_500L
+                      "callback noncompletion preserves the existing bounded output-drain elapsed time"
+              finally
+                  releaseCallback.Set()
+                  Expect.isTrue
+                      (callbackCompleted.Wait 1_000)
+                      "the fixture releases the rejected callback task before the test exits"
           }
 
           test "fast completed steps do not pay a fixed reader-settlement window" {

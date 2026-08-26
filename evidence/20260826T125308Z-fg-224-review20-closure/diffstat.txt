@@ -1,0 +1,12 @@
+ docs/EXECUTION_BOARD.md                    |   3 +-
+ docs/runbooks/controller-host.md           |  14 ++-
+ docs/tickets/FG-224.md                     |  15 ++-
+ scripts/prove-runnable-controller.sh       |  98 ++++++++++++++-
+ src/Fogell.Controller.Host/Worker.fs       |  69 +++++++----
+ src/Fogell.Controller.Host/WorkerPaths.fs  |  13 ++
+ src/Fogell.Execution/ProcessGroup.fs       | 188 +++++++++++++++++++++++------
+ src/Fogell.Store/Store.fs                  |  59 ++++++++-
+ tests/Fogell.Controller.Api.Tests/Tests.fs |  26 ++++
+ tests/Fogell.Execution.Tests/Tests.fs      | 153 ++++++++++++++++++++++-
+ tests/Fogell.Store.Tests/Tests.fs          |  47 +++++++-
+ 11 files changed, 600 insertions(+), 85 deletions(-)

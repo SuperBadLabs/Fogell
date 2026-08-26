@@ -104,10 +104,14 @@ Expected final line begins `FG-224 PROOF PASS`. The script owns a uniquely named
 scratch database, role, state directory, and listener, and removes them on exit.
 If progressive event publication fails, Run.Host emits no terminal journal
 record; the failure remains infrastructure truth and the controller requires
-reconciliation instead of inventing a build failure. If an attempt becomes
-`reconciliation_required`, inspect its durable journal, reason event, and effect
-checkpoints before deciding recovery. Invalid queued definitions are quarantined
-as attempt/node/build reconciliation and claim scanning continues; never repair
-them by editing immutable `build_definitions` or force a terminal status directly.
+reconciliation instead of inventing a build failure. A local-worker
+`RequireReconciliation` transition atomically records its stable reason in an
+`attempt.reconciliation_required` event and a `build.reconciliation_required`
+outbox row, and preserves the fence-specific event file. Inspect those records,
+the durable journal, retained event frames, and effect checkpoints before
+deciding recovery. Invalid queued definitions have their own reason event;
+lease-expiry and restore transitions remain distinguishable by their transition
+and restore-epoch records. Never repair any of them by editing immutable
+`build_definitions` or force a terminal status directly.
 Both bypass the evidence the controller uses to refuse duplicate or substituted
 work.

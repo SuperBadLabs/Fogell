@@ -466,18 +466,29 @@ module ProcessGroup =
         (sleep: int -> unit)
         (snapshot: unit -> int * int)
         =
-        let mutable settled = false
+        let requiredQuietSamples = 2
 
-        while not settled && elapsedMilliseconds () < int64 budgetMs do
-            let before = snapshot ()
-            let remaining = max 0L (int64 budgetMs - elapsedMilliseconds ())
-            let sleepMs = int (min 40L remaining)
+        if elapsedMilliseconds () < int64 budgetMs then
+            let mutable previous = snapshot ()
+            let mutable consecutiveQuietSamples = 0
 
-            if sleepMs > 0 then
-                sleep sleepMs
+            while
+                consecutiveQuietSamples < requiredQuietSamples
+                && elapsedMilliseconds () < int64 budgetMs do
+                let remaining = max 0L (int64 budgetMs - elapsedMilliseconds ())
+                let sleepMs = int (min 40L remaining)
 
-            let after = snapshot ()
-            settled <- after = before
+                if sleepMs > 0 then
+                    sleep sleepMs
+
+                let current = snapshot ()
+
+                if current = previous then
+                    consecutiveQuietSamples <- consecutiveQuietSamples + 1
+                else
+                    consecutiveQuietSamples <- 0
+
+                previous <- current
 
     /// Run one command in its own process group.
     let run (request: RunRequest) : RunResult =
@@ -788,13 +799,45 @@ module ProcessGroup =
         let processExited = Tasks.TaskCompletionSource<unit>(completionOptions)
         let stdoutCallbackGate = obj ()
         let stderrCallbackGate = obj ()
+        let lineCallbackGate = obj ()
+        let mutable lineCallbackTail: Tasks.Task = Tasks.Task.CompletedTask
+        let mutable lineCallbacksOpen = true
 
         proc.Exited.Add(fun _ -> processExited.TrySetResult(()) |> ignore)
+
+        let publishLine line =
+            match request.OnLine with
+            | None -> ()
+            | Some callback ->
+                lock lineCallbackGate (fun () ->
+                    if lineCallbacksOpen then
+                        // Process invokes DataReceived handlers serially. Running a
+                        // hostile user callback in that handler therefore prevents an
+                        // already-written following line from reaching the buffer and
+                        // makes the pre-signal snapshot misclassify it. Keep delivery
+                        // serialized, but move it onto an asynchronous continuation so
+                        // reader ingestion and EOF can advance independently.
+                        lineCallbackTail <-
+                            lineCallbackTail.ContinueWith(
+                                Action<Tasks.Task>(fun previous ->
+                                    // Keep a failed output sink sticky. Awaiting only
+                                    // the final continuation is sufficient because
+                                    // every successor first propagates its antecedent.
+                                    previous.GetAwaiter().GetResult()
+                                    callback line),
+                                CancellationToken.None,
+                                Tasks.TaskContinuationOptions.None,
+                                Tasks.TaskScheduler.Default))
+
+        let closeAndGetLineCallbackTail () =
+            lock lineCallbackGate (fun () ->
+                lineCallbacksOpen <- false
+                lineCallbackTail)
 
         let emit (sink: Text.StringBuilder) (line: string) =
             if line <> null then
                 lock sink (fun () -> sink.AppendLine line |> ignore)
-                request.OnLine |> Option.iter (fun f -> f line)
+                publishLine line
 
         // CAPTURED STDOUT IS READ AS ONE STREAM, NOT REASSEMBLED FROM LINES.
         //
@@ -817,9 +860,9 @@ module ProcessGroup =
         // full pipe buffer deadlocks a process that writes to both.
         if not request.SuppressStdoutEcho then
             proc.OutputDataReceived.Add(fun e ->
-                // Process may dispatch EOF while an earlier user callback is
-                // still running. Serialize the whole callback, not only buffer
-                // mutation, so EOF is a real queue-drained barrier.
+                // Serialize the reader callback through buffer append and callback
+                // enqueue, so EOF is a real reader-drained barrier. User callback
+                // execution itself is deliberately outside this reader.
                 lock stdoutCallbackGate (fun () ->
                     match e.Data with
                     | null -> stdoutClosed.TrySetResult(()) |> ignore
@@ -900,6 +943,16 @@ module ProcessGroup =
 
         let allReadersCompleted =
             Tasks.Task.WhenAll [| stdoutReaderCompleted; stderrClosed.Task :> Tasks.Task |]
+
+        // Capture mode intentionally permits an escaped holder of the raw stdout
+        // pipe and retains the bytes already read. Stderr still publishes through
+        // DataReceived/OnLine, so its EOF is load-bearing before the callback-tail
+        // snapshot: otherwise an escaped stderr writer could enqueue after return.
+        let callbackReadersCompleted: Tasks.Task =
+            if request.SuppressStdoutEcho then
+                stderrClosed.Task :> Tasks.Task
+            else
+                allReadersCompleted
 
         let mutable identityAnchor: int option = None
 
@@ -1067,17 +1120,50 @@ module ProcessGroup =
 
             cause
 
+        let waitForTaskWithin (clock: Stopwatch) (budgetMs: int) (task: Tasks.Task) =
+            let remaining = max 0 (budgetMs - int clock.ElapsedMilliseconds)
+
+            if task.IsCompleted then
+                true
+            elif remaining <= 0 then
+                false
+            else
+                let completed =
+                    Tasks.Task.WhenAny(
+                        [| task
+                           Tasks.Task.Delay remaining |])
+                        .GetAwaiter()
+                        .GetResult()
+
+                obj.ReferenceEquals(completed, task)
+
         let waitForReaderCompletion (budgetMs: int) =
             // EOF/task completion, not an unchanged-length guess. A descendant
             // can hold a pipe open indefinitely, so completion is still bounded;
             // expiry keeps every byte already appended and never blocks the run.
-            if not allReadersCompleted.IsCompleted then
-                Tasks.Task.WhenAny(
-                    [| allReadersCompleted
-                       Tasks.Task.Delay budgetMs |])
-                    .GetAwaiter()
-                    .GetResult()
-                |> ignore
+            let clock = Stopwatch.StartNew()
+            let allReachedEof = waitForTaskWithin clock budgetMs allReadersCompleted
+            clock, allReachedEof, callbackReadersCompleted.IsCompletedSuccessfully
+
+        let waitForLineCallbackCompletion budgetMs clock callbackReadersReachedEof : exn option =
+            // Close callback admission under the same lock as enqueue before
+            // snapshotting the tail, so an escaped writer cannot append later.
+            let tail = closeAndGetLineCallbackTail ()
+
+            if Option.isSome request.OnLine && not callbackReadersReachedEof then
+                Some(
+                    TimeoutException(
+                        $"OnLine reader did not reach EOF within the shared {budgetMs}ms output-drain budget"))
+            elif waitForTaskWithin clock budgetMs tail then
+                try
+                    tail.GetAwaiter().GetResult()
+                    None
+                with error ->
+                    Some error
+            else
+                Some(
+                    TimeoutException(
+                        $"OnLine callback tail did not complete within the shared {budgetMs}ms output-drain budget"))
 
         let settleBeforeSignal (budgetMs: int) =
             // RESIDUAL, deliberately not described as event-driven. Process does
@@ -1093,10 +1179,10 @@ module ProcessGroup =
                 if Monitor.TryEnter(gate, remaining) then
                     Monitor.Exit gate
 
-            // A callback already executing is knowable and should not be left
-            // behind the snapshot. The shared clock keeps even hostile OnLine
-            // callbacks inside the same upper bound. The quiet sample still
-            // covers callbacks which Process has queued but not invoked yet.
+            // A reader callback already appending is knowable and should not be
+            // left behind the snapshot. User callbacks execute on their separate
+            // serialized tail, so they cannot stall ingestion. The quiet sample
+            // still covers reader callbacks Process has queued but not invoked yet.
             drainActiveCallback stdoutCallbackGate
             drainActiveCallback stderrCallbackGate
 
@@ -1110,9 +1196,8 @@ module ProcessGroup =
         let waitEnd = waitForProcessExit request.TimeoutMs
         let finished = waitEnd = WaitEnd.Exited
 
-        let outcome, termination =
+        let outcome, termination, outputCompletionClock, outputCompletionBudget, callbackReadersReachedEof =
             if finished then
-                waitForReaderCompletion 500
                 let code = proc.ExitCode
 
                 let t =
@@ -1124,6 +1209,13 @@ module ProcessGroup =
                             | None -> reap g request.GraceMs)
                     else
                         None
+                // A production containment anchor intentionally outlives the
+                // direct leader. Reap the group before requiring reader EOF;
+                // otherwise that controller-owned survivor makes every normal
+                // Run.Host shell look like an escaped callback writer. Readers
+                // stay active during reaping, then share the existing 500ms bound.
+                let completionClock, _, callbackReadersReachedEof = waitForReaderCompletion 500
+
 
                 // On Linux a process killed by signal N exits 128+N.
                 //
@@ -1141,7 +1233,7 @@ module ProcessGroup =
                 let outcome =
                     if code > 128 && code <= 192 then Signalled(code - 128) else Completed code
 
-                outcome, t
+                outcome, t, completionClock, 500, callbackReadersReachedEof
             else
                 // Jenkins' interrupt narration, in its words and its order — measured
                 // on 2.568.1 — so the two logs COMPARE (FG-102) instead of each
@@ -1149,9 +1241,9 @@ module ProcessGroup =
                 // the shell itself on both engines. The cause is the SNAPSHOT taken
                 // when the wait ended, never a fresh sample.
                 if waitEnd = WaitEnd.Expired then
-                    request.OnLine |> Option.iter (fun f -> f "Cancelling nested steps due to timeout")
+                    publishLine "Cancelling nested steps due to timeout"
 
-                request.OnLine |> Option.iter (fun f -> f "Sending interrupt signal to process")
+                publishLine "Sending interrupt signal to process"
 
                 settleBeforeSignal 300
                 let outputBeforeSignal = lock stdout (fun () -> stdout.ToString())
@@ -1162,7 +1254,7 @@ module ProcessGroup =
                         match identityAnchor with
                         | Some anchor -> terminateGroupWithAnchor g anchor request.GraceMs
                         | None -> terminateGroup g request.GraceMs)
-                waitForReaderCompletion 300
+                let completionClock, _, callbackReadersReachedEof = waitForReaderCompletion 300
 
                 // On Jenkins the wrapper shell survives to print `Terminated` for its
                 // killed child; Fogell's SIGTERM reaches the WHOLE group, so nobody is
@@ -1179,10 +1271,19 @@ module ProcessGroup =
                         |> Array.exists (fun line -> line.Trim() = "Terminated"))
 
                 if not shellSaidIt then
-                    request.OnLine |> Option.iter (fun f -> f "Terminated")
+                    publishLine "Terminated"
                 // Distinguish the two ways a step can fail to finish. Both take
                 // the same signal path; only the reported cause differs.
-                (if waitEnd = WaitEnd.Interrupted then Cancelled else TimedOut), t
+                (if waitEnd = WaitEnd.Interrupted then Cancelled else TimedOut), t, completionClock, 300, callbackReadersReachedEof
+
+        // Defer propagation until after process-group guard and secret-bearing
+        // script cleanup. The run still fails closed, but never trades an output
+        // publication failure for a leaked containment guard or durable script.
+        let lineCallbackFailure =
+            waitForLineCallbackCompletion
+                outputCompletionBudget
+                outputCompletionClock
+                callbackReadersReachedEof
 
         // The guard outlives the inner leader. This closes the interval between
         // leader exit and group reaping: if Run.Host dies there, stdin reaches
@@ -1244,11 +1345,18 @@ module ProcessGroup =
         let bufferedStdout = lock stdout (fun () -> stdout.ToString())
         let bufferedStderr = lock stderr (fun () -> stderr.ToString())
 
-        { Outcome = outcome
-          Stdout = defaultArg capturedText bufferedStdout
-          Stderr = bufferedStderr
-          DurationMs = sw.ElapsedMilliseconds
-          ProcessGroupId = pgid
-          Termination = termination
-          CleanupFailure = cleanupFailure
-          DurableId = mintedDurableId }
+        let result =
+            { Outcome = outcome
+              Stdout = defaultArg capturedText bufferedStdout
+              Stderr = bufferedStderr
+              DurationMs = sw.ElapsedMilliseconds
+              ProcessGroupId = pgid
+              Termination = termination
+              CleanupFailure = cleanupFailure
+              DurableId = mintedDurableId }
+
+        match lineCallbackFailure with
+        | None -> result
+        | Some error ->
+            Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw()
+            Unchecked.defaultof<RunResult>

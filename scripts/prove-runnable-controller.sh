@@ -578,6 +578,102 @@ IFS='|' read -r tail_begin tail_end tail_z tail_chunks <<<"$(admin "$database" -
 (( tail_chunks > 256 )) \
   || { echo "FG-224 REFUSED: tail proof did not cross enough bounded event frames ($tail_chunks)" >&2; exit 1; }
 
+# Terminal publication owns event-file cleanup. The successful tail attempt
+# must leave no fence file behind.
+IFS='|' read -r tail_attempt tail_fence <<<"$(admin "$database" -Atc \
+  "SELECT a.id, a.fence
+     FROM attempts a JOIN nodes n
+       ON n.organization_id=a.organization_id AND n.id=a.node_id
+    WHERE n.build_id='$tail_build_id'")"
+tail_event_file="$state_root/events/$organization_key/${tail_attempt//-/}-$tail_fence.events"
+[[ ! -e "$tail_event_file" ]] \
+  || { echo "FG-224 REFUSED: terminal publication retained its event file" >&2; exit 1; }
+
+# A graceful controller stop is not terminal truth. Start a build that has
+# already emitted a frame, stop the controller, and bind all three recovery
+# records: reason event, outbox, and byte-exact retained fence file.
+kill -TERM "$host_pid"
+wait "$host_pid"
+host_pid=""
+
+env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" "FOGELL_WORKER_POLL_MS=50" \
+  "$controller" >>"$host_log" 2>&1 &
+host_pid=$!
+
+ready=0
+for _ in $(seq 1 200); do
+  if curl -fsS "$base_url/health/ready" >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  kill -0 "$host_pid" 2>/dev/null || { echo "FG-224 REFUSED: shutdown-proof controller exited" >&2; exit 1; }
+  sleep 0.05
+done
+[[ $ready -eq 1 ]] || { echo "FG-224 REFUSED: shutdown-proof controller never became ready" >&2; exit 1; }
+
+shutdown_pipeline=$'pipeline {\n  agent any\n  stages {\n    stage(\'Shutdown\') {\n      steps {\n        sh \'echo FG224-SHUTDOWN-FRAME; sleep 30\'\n      }\n    }\n  }\n}'
+shutdown_response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-shutdown-recovery' \
+  -H 'content-type: application/x-jenkinsfile' --data-binary "$shutdown_pipeline" "$builds_url")
+shutdown_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$shutdown_response")
+[[ -n "$shutdown_build_id" ]] || { echo "FG-224 REFUSED: shutdown proof admission returned no build id" >&2; exit 1; }
+
+shutdown_attempt=""
+shutdown_fence=""
+shutdown_event_file=""
+# The first frame is step-started, before the shell has necessarily emitted
+# any output. Hash only after the exact final pre-sleep frame is durable, so
+# subsequent equality tests reconciliation retention rather than a live writer.
+shutdown_quiescent_frame=$(printf '%s' '+ sleep 30' | base64 -w0)
+for _ in $(seq 1 400); do
+  IFS='|' read -r shutdown_attempt shutdown_fence shutdown_state <<<"$(admin "$database" -Atc \
+    "SELECT a.id, a.fence, a.state
+       FROM attempts a JOIN nodes n
+         ON n.organization_id=a.organization_id AND n.id=a.node_id
+      WHERE n.build_id='$shutdown_build_id'")"
+  if [[ "$shutdown_state" = running ]]; then
+    shutdown_event_file="$state_root/events/$organization_key/${shutdown_attempt//-/}-$shutdown_fence.events"
+    [[ -s "$shutdown_event_file" ]] \
+      && grep -Fxq -- "$shutdown_quiescent_frame" "$shutdown_event_file" \
+      && break
+  fi
+  sleep 0.05
+done
+[[ -n "$shutdown_event_file" && -s "$shutdown_event_file" ]] \
+  && grep -Fxq -- "$shutdown_quiescent_frame" "$shutdown_event_file" \
+  || { echo "FG-224 REFUSED: shutdown proof never reached its running pre-sleep event frame" >&2; exit 1; }
+shutdown_sum_before=$(sha256sum "$shutdown_event_file" | cut -d' ' -f1)
+
+kill -TERM "$host_pid"
+wait "$host_pid"
+host_pid=""
+
+shutdown_truth=$(admin "$database" -Atc \
+  "SELECT a.state,
+          count(DISTINCT e.id) FILTER (WHERE e.payload->>'reason'='controller_shutdown'),
+          count(DISTINCT o.id) FILTER (WHERE o.topic='build.reconciliation_required'
+                                        AND o.body->>'attempt'=a.id::text
+                                        AND o.body->>'reason'='controller_shutdown'),
+          (a.lease_owner IS NULL AND a.lease_expires_at IS NULL)
+     FROM attempts a
+     JOIN nodes n ON n.organization_id=a.organization_id AND n.id=a.node_id
+     LEFT JOIN events e ON e.organization_id=a.organization_id
+                       AND e.attempt_id=a.id
+                       AND e.kind='attempt.reconciliation_required'
+     LEFT JOIN outbox o ON o.organization_id=a.organization_id
+    WHERE n.build_id='$shutdown_build_id'
+    GROUP BY a.state, a.id, a.lease_owner, a.lease_expires_at")
+[[ "$shutdown_truth" = "reconciliation_required|1|1|t" ]] \
+  || { echo "FG-224 REFUSED: shutdown recovery truth was $shutdown_truth" >&2; exit 1; }
+[[ -s "$shutdown_event_file" ]] \
+  || { echo "FG-224 REFUSED: reconciliation deleted the recovery event file" >&2; exit 1; }
+shutdown_sum_after=$(sha256sum "$shutdown_event_file" | cut -d' ' -f1)
+[[ "$shutdown_sum_after" = "$shutdown_sum_before" ]] \
+  || { echo "FG-224 REFUSED: reconciliation changed the retained recovery event bytes" >&2; exit 1; }
+sleep 0.2
+shutdown_sum_stable=$(sha256sum "$shutdown_event_file" | cut -d' ' -f1)
+[[ "$shutdown_sum_stable" = "$shutdown_sum_after" ]] \
+  || { echo "FG-224 REFUSED: retained event bytes changed after producer extinction" >&2; exit 1; }
+
 set +e
 admin "$database" -c "UPDATE build_definitions SET source_bytes = decode('00','hex') WHERE build_id='$build_id'" >/dev/null 2>&1
 mutate_rc=$?
@@ -589,4 +685,4 @@ if grep -Fq 'fg224-proof-token-0123456789abcdef' "$host_log" || grep -Fq 'Passwo
   exit 1
 fi
 
-echo "FG-224 PROOF PASS: safe timing refusal; exact execution-preflight admission and idempotency boundary; restart-discovered durable admission; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; attempt-keyed retry journals with same-child deterministic resume; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; atomic terminal roll-up"
+echo "FG-224 PROOF PASS: safe timing refusal; exact execution-preflight admission and idempotency boundary; restart-discovered durable admission; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; attempt-keyed retry journals with same-child deterministic resume; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; terminal event-file cleanup; graceful-shutdown reason event, outbox, and byte-exact recovery file; atomic terminal roll-up"

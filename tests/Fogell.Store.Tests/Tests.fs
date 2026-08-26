@@ -1550,6 +1550,7 @@ let fencing =
               separateAdmissions.ExecuteNonQuery() |> ignore
 
               let valid = admitOk (newBuild org project "valid-after-materialization-poison" [ "build" ])
+              let outboxBefore = store.CountOutbox org
               let poisonedOwner = "local:materialization-poison"
 
               let poisonedClaim =
@@ -1574,7 +1575,8 @@ let fencing =
                       org,
                       poisonedClaim.AttemptId,
                       poisonedClaim.Fence,
-                      poisonedOwner))
+                      poisonedOwner,
+                      "materialization_failed"))
                   "the pre-execution materialization failure is durably quarantined"
 
               Expect.equal
@@ -1585,6 +1587,49 @@ let fencing =
                   (store.BuildSnapshot(org, project, poisoned.BuildId))
                   (Some("reconciliation_required", false))
                   "public build truth exposes the poisoned admission"
+              Expect.equal
+                  (store.CountEvents(org, poisoned.BuildId, "attempt.reconciliation_required"))
+                  1
+                  "the transition emits one durable reason event"
+              Expect.equal (store.CountOutbox org) (outboxBefore + 1) "the same transaction emits one outbox row"
+
+              use reasonTruth = conn.CreateCommand()
+              reasonTruth.CommandText <-
+                  "SELECT e.payload->>'reason', o.topic, o.body->>'reason',
+                          o.body->>'build', o.body->>'attempt'
+                     FROM events e
+                     JOIN outbox o
+                       ON o.organization_id = e.organization_id
+                      AND o.topic = 'build.reconciliation_required'
+                      AND o.body->>'attempt' = e.attempt_id::text
+                    WHERE e.organization_id = @o AND e.build_id = @b
+                      AND e.attempt_id = @a
+                      AND e.kind = 'attempt.reconciliation_required'"
+              reasonTruth.Parameters.AddWithValue("o", org.Value) |> ignore
+              reasonTruth.Parameters.AddWithValue("b", poisoned.BuildId.Value) |> ignore
+              reasonTruth.Parameters.AddWithValue("a", poisoned.AttemptId.Value) |> ignore
+              use reasonRow = reasonTruth.ExecuteReader()
+              Expect.isTrue (reasonRow.Read()) "reason event and outbox are atomically observable"
+              Expect.equal (reasonRow.GetString 0) "materialization_failed" "event preserves the stable reason"
+              Expect.equal (reasonRow.GetString 1) "build.reconciliation_required" "outbox topic names the transition"
+              Expect.equal (reasonRow.GetString 2) "materialization_failed" "outbox preserves the same reason"
+              Expect.equal (reasonRow.GetString 3) (poisoned.BuildId.Value.ToString()) "outbox binds the build"
+              Expect.equal (reasonRow.GetString 4) (poisoned.AttemptId.Value.ToString()) "outbox binds the attempt"
+              reasonRow.Close()
+
+              Expect.isFalse
+                  (store.RequireReconciliation(
+                      org,
+                      poisonedClaim.AttemptId,
+                      poisonedClaim.Fence,
+                      poisonedOwner,
+                      "worker_exception"))
+                  "a repeated stale transition cannot emit a second reason"
+              Expect.equal
+                  (store.CountEvents(org, poisoned.BuildId, "attempt.reconciliation_required"))
+                  1
+                  "stale replay emits no duplicate event"
+              Expect.equal (store.CountOutbox org) (outboxBefore + 1) "stale replay emits no duplicate outbox"
               Expect.equal
                   (store.RequeueExpiredLocalAttempts org)
                   0

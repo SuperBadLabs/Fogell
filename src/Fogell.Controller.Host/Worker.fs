@@ -69,15 +69,6 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
         with _ ->
             ProcessGroupStopResult.StatusUncertain
 
-    let deleteEventFile (eventPath: string) =
-        { new IDisposable with
-            member _.Dispose() =
-                try
-                    File.Delete eventPath
-                with
-                | :? FileNotFoundException -> ()
-                | :? DirectoryNotFoundException -> () }
-
     let openEventStream (eventPath: string) () =
         if File.Exists eventPath then
             Some(
@@ -227,7 +218,11 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
             let workspaceRoot = Path.Combine(config.StateRoot, "workspaces", orgKey)
             let neutralHome = Path.Combine(config.StateRoot, "neutral-home")
             let tempRoot = Path.Combine(config.StateRoot, "tmp")
-            use _eventFile = deleteEventFile eventPath
+            let mutable terminalPublished = false
+            use _eventFile =
+                WorkerPaths.deleteEventFileAfterTerminalPublication
+                    (fun () -> terminalPublished)
+                    eventPath
 
             let mutable materialized = false
 
@@ -254,7 +249,8 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             claim.OrganizationId,
                             claim.AttemptId,
                             claim.Fence,
-                            owner))
+                            owner,
+                            "materialization_failed"))
                 then
                     logger.LogWarning(
                         "FG-224 materialization quarantine lost authority for {AttemptId}",
@@ -290,6 +286,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                 let mutable interrupted = false
                 let mutable leaseLost = false
                 let mutable terminalDrainConfirmed = false
+                let mutable reconciliationReason = "worker_exception"
 
                 use child = new Process()
                 let start = ProcessStartInfo(config.SetsidPath)
@@ -362,7 +359,8 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                     claim.OrganizationId,
                                     claim.AttemptId,
                                     claim.Fence,
-                                    owner)
+                                    owner,
+                                    "launcher_failed")
                             with ex ->
                                 logger.LogError(
                                     ex,
@@ -413,11 +411,20 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
 
                             result)
 
-                    let requireReconciliation () =
+                    let requireReconciliation reason =
                         if not dispositionRecorded then
+                            // Preserve the first classified cause if the durable
+                            // transition itself throws and finally retries it.
+                            reconciliationReason <- reason
+                            let recorded =
+                                store.RequireReconciliation(
+                                    claim.OrganizationId,
+                                    claim.AttemptId,
+                                    claim.Fence,
+                                    owner,
+                                    reason)
                             dispositionRecorded <- true
-                            store.RequireReconciliation(claim.OrganizationId, claim.AttemptId, claim.Fence, owner)
-                            |> ignore
+                            recorded |> ignore
 
                     try
                         // Run.Host publishes protocol logs through FOGELL_EVENT_FILE.
@@ -515,13 +522,17 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
 
                             match completion.Stop with
                             | EndOfStream -> ()
-                            | PublicationAuthorityLost -> leaseLost <- true
+                            | PublicationAuthorityLost ->
+                                leaseLost <- true
+                                reconciliationReason <- "lease_lost"
                             | ControlStopped -> ()
                             | StreamChangedAfterExtinction ->
+                                reconciliationReason <- "event_stream_changed"
                                 logger.LogError(
                                     "FG-224 event stream changed after producer extinction for {AttemptId}; reconciliation is required",
                                     claim.AttemptId.Value)
                             | IncompleteFrameAtEndOfStream ->
+                                reconciliationReason <- "incomplete_event_frame"
                                 logger.LogError(
                                     "FG-224 event stream ended with an incomplete frame for {AttemptId}; reconciliation is required",
                                     claim.AttemptId.Value)
@@ -532,6 +543,18 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             else
                                 exitKind
 
+                        let currentReconciliationReason () =
+                            if leaseLost then
+                                "lease_lost"
+                            elif cancelled then
+                                "build_cancelled"
+                            elif interrupted then
+                                "controller_shutdown"
+                            elif groupStop <> ProcessGroupStopResult.Extinguished then
+                                "process_extinction_unconfirmed"
+                            else
+                                reconciliationReason
+
                         match ProcessGroup.handoff finalExitKind groupStop with
                         | ChildHandoff.ReconciliationRequired ->
                             logger.LogError(
@@ -539,7 +562,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                 claim.AttemptId.Value,
                                 finalExitKind,
                                 groupStop)
-                            requireReconciliation ()
+                            requireReconciliation (currentReconciliationReason ())
                         | ChildHandoff.NaturalTerminalAllowed ->
                             // Close the drain-to-terminal race with a fresh lease.
                             refreshControl true
@@ -547,7 +570,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             if cancelled || interrupted || leaseLost then
                                 // A control change after natural leader exit is
                                 // still ambiguous with nested step sessions.
-                                requireReconciliation ()
+                                requireReconciliation (currentReconciliationReason ())
                             else
                                 Journal.repairTail journalPath
                                 let plan = journalPath |> Journal.read |> Resume.plan
@@ -555,18 +578,20 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                 match plan.Terminal with
                                 | Some status ->
                                     match store.PublishTerminal(claim.OrganizationId, claim.AttemptId, claim.Fence, owner, status) with
-                                    | Ok _ -> dispositionRecorded <- true
+                                    | Ok _ ->
+                                        dispositionRecorded <- true
+                                        terminalPublished <- true
                                     | Error _ ->
                                         logger.LogError("FG-224 terminal publication was refused for {AttemptId}", claim.AttemptId.Value)
-                                        requireReconciliation ()
+                                        requireReconciliation "terminal_publication_refused"
                                 | None ->
-                                    requireReconciliation ()
+                                    requireReconciliation "terminal_journal_missing"
                     finally
                         if not dispositionRecorded then
                             // Exceptions after child start are forced stops. The
                             // memoized cleanup prevents a second signal pass.
                             cleanupExecution () |> ignore
-                            requireReconciliation ()
+                            requireReconciliation reconciliationReason
         }
 
     let runClaim (claim: ExecutionClaim) (stoppingToken: CancellationToken) =

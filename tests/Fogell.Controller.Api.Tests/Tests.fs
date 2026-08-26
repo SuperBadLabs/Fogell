@@ -171,6 +171,32 @@ let private executionLauncherValidation =
                       Expect.equal error "trusted setsid launcher does not name an executable file" "stable refusal")
           }
 
+          test "reconciliation preserves event bytes while terminal publication deletes them" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-event-retention-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory root |> ignore
+              let eventPath = IO.Path.Combine(root, "attempt.events")
+              let exactBytes = [| 0uy; 1uy; 2uy; 255uy |]
+
+              try
+                  IO.File.WriteAllBytes(eventPath, exactBytes)
+                  let preserve =
+                      WorkerPaths.deleteEventFileAfterTerminalPublication
+                          (fun () -> false)
+                          eventPath
+                  preserve.Dispose()
+                  Expect.isTrue (IO.File.Exists eventPath) "reconciliation retains the fence-specific event file"
+                  Expect.sequenceEqual (IO.File.ReadAllBytes eventPath) exactBytes "retained recovery bytes stay exact"
+
+                  let remove =
+                      WorkerPaths.deleteEventFileAfterTerminalPublication
+                          (fun () -> true)
+                          eventPath
+                  remove.Dispose()
+                  Expect.isFalse (IO.File.Exists eventPath) "durable terminal publication permits cleanup"
+              finally
+                  IO.Directory.Delete(root, true)
+          }
+
           test "a non-executable trusted launcher refuses startup" {
               withConfiguration (fun root runHost ->
                   let nonExecutable = IO.Path.Combine(root, "non-executable-setsid")

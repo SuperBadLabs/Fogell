@@ -4,6 +4,7 @@ open System
 open System.Buffers.Binary
 open System.Security.Cryptography
 open System.Text
+open System.Text.Json
 open Npgsql
 open Fogell.Domain
 
@@ -2038,7 +2039,16 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             (try tx.Rollback() with _ -> ())
             reraise ()
 
-    member _.RequireReconciliation(org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string) : bool =
+    member _.RequireReconciliation
+        (org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string, reason: string)
+        : bool =
+        if
+            String.IsNullOrWhiteSpace reason
+            || reason.Length > 128
+            || not (reason |> Seq.forall (fun c -> Char.IsLower c || Char.IsDigit c || c = '_'))
+        then
+            invalidArg (nameof reason) "reconciliation reason must be a stable lowercase code of at most 128 characters"
+
         use conn = openConn ()
         use tx = beginTenantTransaction conn org
         use attemptCmd = conn.CreateCommand()
@@ -2067,14 +2077,51 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                         SET status = 'reconciliation_required'
                       WHERE organization_id = @o AND id = @n
                      RETURNING build_id
+                 ), changed_build AS (
+                     UPDATE builds b
+                        SET status = 'reconciliation_required'
+                       FROM changed_node n
+                      WHERE b.organization_id = @o AND b.id = n.build_id
+                     RETURNING b.id
                  )
-                 UPDATE builds b
-                    SET status = 'reconciliation_required'
-                   FROM changed_node n
-                  WHERE b.organization_id = @o AND b.id = n.build_id"
+                 SELECT id FROM changed_build"
             rollup.Parameters.AddWithValue("o", org.Value) |> ignore
             rollup.Parameters.AddWithValue("n", nodeId :?> Guid) |> ignore
-            rollup.ExecuteNonQuery() |> ignore
+            let buildId =
+                match rollup.ExecuteScalar() with
+                | :? Guid as value -> value
+                | _ -> failwith "reconciled attempt has no build lineage"
+
+            let eventPayload = JsonSerializer.Serialize(dict [ "reason", reason ])
+            use event = conn.CreateCommand()
+            event.Transaction <- tx
+            event.CommandText <-
+                "INSERT INTO events (organization_id, build_id, attempt_id, kind, payload)
+                 VALUES (@o, @b, @a, 'attempt.reconciliation_required', @payload)"
+            event.Parameters.AddWithValue("o", org.Value) |> ignore
+            event.Parameters.AddWithValue("b", buildId) |> ignore
+            event.Parameters.AddWithValue("a", attempt.Value) |> ignore
+            event.Parameters.Add(
+                NpgsqlParameter("payload", NpgsqlTypes.NpgsqlDbType.Jsonb, Value = eventPayload))
+            |> ignore
+            event.ExecuteNonQuery() |> ignore
+
+            let outboxBody =
+                JsonSerializer.Serialize(
+                    dict
+                        [ "build", buildId.ToString()
+                          "attempt", attempt.Value.ToString()
+                          "reason", reason ])
+            use outbox = conn.CreateCommand()
+            outbox.Transaction <- tx
+            outbox.CommandText <-
+                "INSERT INTO outbox (organization_id, topic, body)
+                 VALUES (@o, 'build.reconciliation_required', @body)"
+            outbox.Parameters.AddWithValue("o", org.Value) |> ignore
+            outbox.Parameters.Add(
+                NpgsqlParameter("body", NpgsqlTypes.NpgsqlDbType.Jsonb, Value = outboxBody))
+            |> ignore
+            outbox.ExecuteNonQuery() |> ignore
             tx.Commit()
             true
 

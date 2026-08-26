@@ -1,0 +1,1069 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index cec9254..eb0f3c6 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -740,7 +740,7 @@ before their no-effect validation refusal. Compatibility counts are unchanged.
+ | FG-062 | P1 | TODO | `Fogell.Agent.Protocol` + `Runtime` (`adr/0008`): mTLS, versioned, agent-local durable log, offset recovery | **network partition ≥ 45 s costs zero log lines** — the Jenkins parity bar |
+ | FG-063 | P1 | TODO | Agent death handling: announce reconnect grace with a budget, then ABORTED with a named cause | matches Jenkins' behavior, which is exemplary here |
+ | FG-064 | P1 | **DONE** | Progressive console over the API (`adr/0005` match) | `GET …/logs?from=N` returns chunks plus a `next_sequence` cursor, so a client tails a running build rather than waiting for completion |
+-| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Local exact-tree acceptance closes the three prior review findings: engine-created inner step groups are registered before release and reaped across Run.Host death; progressive publication is FIFO-serialized outside the output lock and fails closed to reconciliation; invalid FIFO definitions are durably quarantined before scanning later work. The fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth. A replacement exact-head hosted gate, Copilot/Codex review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
++| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Local exact-tree acceptance closes the prior review findings: engine-created inner step groups are registered before release and reaped across Run.Host death; progressive publication is FIFO-serialized outside the output lock; invalid definitions are durably quarantined before later FIFO work; and ambiguous post-launch exits enter reconciliation with a stable reason event and outbox while retaining the event fence until terminal publication. The fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth, plus graceful-shutdown reconciliation and byte-exact recovery evidence. A replacement exact-head hosted gate, Copilot/Codex review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
+ | FG-065 | P2 | TODO | Jenkins-shaped REST compatibility shim, **off by default**, explicitly bounded | enabled only via env var; limitations documented |
+ | FG-066 | P2 | TODO | `Fogell.Cli`: validate / plan / run / build / resume / list / history | each subcommand has a golden-output test |
+ | FG-067 | P3 | TODO | `Fogell.Web` read-only build UI | renders a build's stages and log |
+@@ -875,7 +875,6 @@ changed, and the queue above is what orders them.
+ 
+ | FG-222 | **P1** | **PARTIAL** | Build processes inherited controller environment through GString, shell, and Git launch paths | Technical acceptance is complete locally. The environment port clears every build process environment and applies only fixed system PATH, a run-scoped neutral Fogell HOME, synthetic Jenkins metadata, and explicit pipeline overlays; controller fetch and build Git remain type-separated profiles. The final workspace-lifecycle slice makes `dir` logical-only and materializes admitted shell/bat and SCM cwd paths at their effect boundary, after retained-history SCM admission. Execution 87/87, Differential 226/226, the real-host proof, and the authoritative 795/795 gate pass. The live 275-case oracle now produces **282/282 tier-1 receipt builds, zero partial**; the four former empty-`dir` residuals and the opposing shell-retains-empty control are fresh and retained under `evidence/20260825T170847Z-dir-lifecycle-completion/`. PARTIAL now means unpublished/unhosted only: exact-head hosted review/CI and publication remain. Same-UID filesystem/network containment and credential-free prepared private-SCM checkout remain explicit residuals — [→ detail](tickets/FG-222.md) |
+ | FG-223 | **P1** | **PARTIAL** | `seal-evidence.sh` emitted a checksum-valid bundle after failed corpus/build/test prerequisites | The sealer now validates ticket/extra inputs, stages transactionally, refuses every failed command, empty test inventory, or missing Expecto summary, verifies its manifest, and only then publishes the final directory with no-clobber directory semantics. A HeMan negative control proves the old script returned zero and sealed a forced corpus failure. The blocking scratch proof rejects an always-green fake first, plants prerequisite/inventory/input-boundary failures with no manifest/partial output, proves exactly one concurrent publisher wins, and verifies the positive path. The staged authoritative gate passes 795/795 plus every blocking lane; exact committed-head gate, hosted review/CI, and publication remain — [→ detail](tickets/FG-223.md) |
+-
+ ## Standing risks
+ 
+ 1. **Acceptance ≠ compatibility.** 93.9% inherited acceptance against 0 proven
+diff --git a/docs/runbooks/controller-host.md b/docs/runbooks/controller-host.md
+index 9213468..7114d11 100644
+--- a/docs/runbooks/controller-host.md
++++ b/docs/runbooks/controller-host.md
+@@ -104,10 +104,14 @@ Expected final line begins `FG-224 PROOF PASS`. The script owns a uniquely named
+ scratch database, role, state directory, and listener, and removes them on exit.
+ If progressive event publication fails, Run.Host emits no terminal journal
+ record; the failure remains infrastructure truth and the controller requires
+-reconciliation instead of inventing a build failure. If an attempt becomes
+-`reconciliation_required`, inspect its durable journal, reason event, and effect
+-checkpoints before deciding recovery. Invalid queued definitions are quarantined
+-as attempt/node/build reconciliation and claim scanning continues; never repair
+-them by editing immutable `build_definitions` or force a terminal status directly.
++reconciliation instead of inventing a build failure. A local-worker
++`RequireReconciliation` transition atomically records its stable reason in an
++`attempt.reconciliation_required` event and a `build.reconciliation_required`
++outbox row, and preserves the fence-specific event file. Inspect those records,
++the durable journal, retained event frames, and effect checkpoints before
++deciding recovery. Invalid queued definitions have their own reason event;
++lease-expiry and restore transitions remain distinguishable by their transition
++and restore-epoch records. Never repair any of them by editing immutable
++`build_definitions` or force a terminal status directly.
+ Both bypass the evidence the controller uses to refuse duplicate or substituted
+ work.
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index 80f0747..f46d3dd 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -98,20 +98,23 @@ roll-up, exact idempotent replay, source-substitution conflict, request placemen
+ denial, and a repeated parseable-but-execution-unsupported submission that
+ creates no build and leaves its idempotency key available to a supported source.
+ It also proves durable build-number metadata, terminal cancellation conflict,
+-immutable definition enforcement, and absence of configured token/password text
+-in host logs. Unsafe worker poll/lease combinations are refused at startup. The hosted
+-gate runs this proof against its PostgreSQL service.
++immutable definition enforcement, terminal-only event-file cleanup, and a
++graceful-shutdown transition carrying the exact reconciliation reason through
++the event, outbox, and retained byte-exact recovery file. Configured
++token/password text is absent from host logs. Unsafe worker poll/lease
++combinations are refused at startup. The hosted gate runs this proof against its
++PostgreSQL service.
+ 
+ Exact-tree HeMan acceptance on fresh databases:
+ 
+ - Store: 80/80 passed;
+-- Controller API: 27/27 passed;
++- Controller API: 28/28 passed;
+ - Differential: 265/265 passed;
+-- Execution: 95/95 passed; and
++- Execution: 100/100 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-locked repository gate also passes all 876 main-suite tests and every blocking
++locked repository gate also passes all 882 main-suite tests and every blocking
+ proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
+ recorded at publication rather than predicted here.
+ 
+diff --git a/scripts/prove-runnable-controller.sh b/scripts/prove-runnable-controller.sh
+index 20d7cb2..76d04f5 100755
+--- a/scripts/prove-runnable-controller.sh
++++ b/scripts/prove-runnable-controller.sh
+@@ -578,6 +578,102 @@ IFS='|' read -r tail_begin tail_end tail_z tail_chunks <<<"$(admin "$database" -
+ (( tail_chunks > 256 )) \
+   || { echo "FG-224 REFUSED: tail proof did not cross enough bounded event frames ($tail_chunks)" >&2; exit 1; }
+ 
++# Terminal publication owns event-file cleanup. The successful tail attempt
++# must leave no fence file behind.
++IFS='|' read -r tail_attempt tail_fence <<<"$(admin "$database" -Atc \
++  "SELECT a.id, a.fence
++     FROM attempts a JOIN nodes n
++       ON n.organization_id=a.organization_id AND n.id=a.node_id
++    WHERE n.build_id='$tail_build_id'")"
++tail_event_file="$state_root/events/$organization_key/${tail_attempt//-/}-$tail_fence.events"
++[[ ! -e "$tail_event_file" ]] \
++  || { echo "FG-224 REFUSED: terminal publication retained its event file" >&2; exit 1; }
++
++# A graceful controller stop is not terminal truth. Start a build that has
++# already emitted a frame, stop the controller, and bind all three recovery
++# records: reason event, outbox, and byte-exact retained fence file.
++kill -TERM "$host_pid"
++wait "$host_pid"
++host_pid=""
++
++env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" "FOGELL_WORKER_POLL_MS=50" \
++  "$controller" >>"$host_log" 2>&1 &
++host_pid=$!
++
++ready=0
++for _ in $(seq 1 200); do
++  if curl -fsS "$base_url/health/ready" >/dev/null 2>&1; then
++    ready=1
++    break
++  fi
++  kill -0 "$host_pid" 2>/dev/null || { echo "FG-224 REFUSED: shutdown-proof controller exited" >&2; exit 1; }
++  sleep 0.05
++done
++[[ $ready -eq 1 ]] || { echo "FG-224 REFUSED: shutdown-proof controller never became ready" >&2; exit 1; }
++
++shutdown_pipeline=$'pipeline {\n  agent any\n  stages {\n    stage(\'Shutdown\') {\n      steps {\n        sh \'echo FG224-SHUTDOWN-FRAME; sleep 30\'\n      }\n    }\n  }\n}'
++shutdown_response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-shutdown-recovery' \
++  -H 'content-type: application/x-jenkinsfile' --data-binary "$shutdown_pipeline" "$builds_url")
++shutdown_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$shutdown_response")
++[[ -n "$shutdown_build_id" ]] || { echo "FG-224 REFUSED: shutdown proof admission returned no build id" >&2; exit 1; }
++
++shutdown_attempt=""
++shutdown_fence=""
++shutdown_event_file=""
++# The first frame is step-started, before the shell has necessarily emitted
++# any output. Hash only after the exact final pre-sleep frame is durable, so
++# subsequent equality tests reconciliation retention rather than a live writer.
++shutdown_quiescent_frame=$(printf '%s' '+ sleep 30' | base64 -w0)
++for _ in $(seq 1 400); do
++  IFS='|' read -r shutdown_attempt shutdown_fence shutdown_state <<<"$(admin "$database" -Atc \
++    "SELECT a.id, a.fence, a.state
++       FROM attempts a JOIN nodes n
++         ON n.organization_id=a.organization_id AND n.id=a.node_id
++      WHERE n.build_id='$shutdown_build_id'")"
++  if [[ "$shutdown_state" = running ]]; then
++    shutdown_event_file="$state_root/events/$organization_key/${shutdown_attempt//-/}-$shutdown_fence.events"
++    [[ -s "$shutdown_event_file" ]] \
++      && grep -Fxq -- "$shutdown_quiescent_frame" "$shutdown_event_file" \
++      && break
++  fi
++  sleep 0.05
++done
++[[ -n "$shutdown_event_file" && -s "$shutdown_event_file" ]] \
++  && grep -Fxq -- "$shutdown_quiescent_frame" "$shutdown_event_file" \
++  || { echo "FG-224 REFUSED: shutdown proof never reached its running pre-sleep event frame" >&2; exit 1; }
++shutdown_sum_before=$(sha256sum "$shutdown_event_file" | cut -d' ' -f1)
++
++kill -TERM "$host_pid"
++wait "$host_pid"
++host_pid=""
++
++shutdown_truth=$(admin "$database" -Atc \
++  "SELECT a.state,
++          count(DISTINCT e.id) FILTER (WHERE e.payload->>'reason'='controller_shutdown'),
++          count(DISTINCT o.id) FILTER (WHERE o.topic='build.reconciliation_required'
++                                        AND o.body->>'attempt'=a.id::text
++                                        AND o.body->>'reason'='controller_shutdown'),
++          (a.lease_owner IS NULL AND a.lease_expires_at IS NULL)
++     FROM attempts a
++     JOIN nodes n ON n.organization_id=a.organization_id AND n.id=a.node_id
++     LEFT JOIN events e ON e.organization_id=a.organization_id
++                       AND e.attempt_id=a.id
++                       AND e.kind='attempt.reconciliation_required'
++     LEFT JOIN outbox o ON o.organization_id=a.organization_id
++    WHERE n.build_id='$shutdown_build_id'
++    GROUP BY a.state, a.id, a.lease_owner, a.lease_expires_at")
++[[ "$shutdown_truth" = "reconciliation_required|1|1|t" ]] \
++  || { echo "FG-224 REFUSED: shutdown recovery truth was $shutdown_truth" >&2; exit 1; }
++[[ -s "$shutdown_event_file" ]] \
++  || { echo "FG-224 REFUSED: reconciliation deleted the recovery event file" >&2; exit 1; }
++shutdown_sum_after=$(sha256sum "$shutdown_event_file" | cut -d' ' -f1)
++[[ "$shutdown_sum_after" = "$shutdown_sum_before" ]] \
++  || { echo "FG-224 REFUSED: reconciliation changed the retained recovery event bytes" >&2; exit 1; }
++sleep 0.2
++shutdown_sum_stable=$(sha256sum "$shutdown_event_file" | cut -d' ' -f1)
++[[ "$shutdown_sum_stable" = "$shutdown_sum_after" ]] \
++  || { echo "FG-224 REFUSED: retained event bytes changed after producer extinction" >&2; exit 1; }
++
+ set +e
+ admin "$database" -c "UPDATE build_definitions SET source_bytes = decode('00','hex') WHERE build_id='$build_id'" >/dev/null 2>&1
+ mutate_rc=$?
+@@ -589,4 +685,4 @@ if grep -Fq 'fg224-proof-token-0123456789abcdef' "$host_log" || grep -Fq 'Passwo
+   exit 1
+ fi
+ 
+-echo "FG-224 PROOF PASS: safe timing refusal; exact execution-preflight admission and idempotency boundary; restart-discovered durable admission; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; attempt-keyed retry journals with same-child deterministic resume; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; atomic terminal roll-up"
++echo "FG-224 PROOF PASS: safe timing refusal; exact execution-preflight admission and idempotency boundary; restart-discovered durable admission; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; attempt-keyed retry journals with same-child deterministic resume; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; terminal event-file cleanup; graceful-shutdown reason event, outbox, and byte-exact recovery file; atomic terminal roll-up"
+diff --git a/src/Fogell.Controller.Host/Worker.fs b/src/Fogell.Controller.Host/Worker.fs
+index a48b6ab..efbbf19 100644
+--- a/src/Fogell.Controller.Host/Worker.fs
++++ b/src/Fogell.Controller.Host/Worker.fs
+@@ -69,15 +69,6 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+         with _ ->
+             ProcessGroupStopResult.StatusUncertain
+ 
+-    let deleteEventFile (eventPath: string) =
+-        { new IDisposable with
+-            member _.Dispose() =
+-                try
+-                    File.Delete eventPath
+-                with
+-                | :? FileNotFoundException -> ()
+-                | :? DirectoryNotFoundException -> () }
+-
+     let openEventStream (eventPath: string) () =
+         if File.Exists eventPath then
+             Some(
+@@ -227,7 +218,11 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+             let workspaceRoot = Path.Combine(config.StateRoot, "workspaces", orgKey)
+             let neutralHome = Path.Combine(config.StateRoot, "neutral-home")
+             let tempRoot = Path.Combine(config.StateRoot, "tmp")
+-            use _eventFile = deleteEventFile eventPath
++            let mutable terminalPublished = false
++            use _eventFile =
++                WorkerPaths.deleteEventFileAfterTerminalPublication
++                    (fun () -> terminalPublished)
++                    eventPath
+ 
+             let mutable materialized = false
+ 
+@@ -254,7 +249,8 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                             claim.OrganizationId,
+                             claim.AttemptId,
+                             claim.Fence,
+-                            owner))
++                            owner,
++                            "materialization_failed"))
+                 then
+                     logger.LogWarning(
+                         "FG-224 materialization quarantine lost authority for {AttemptId}",
+@@ -290,6 +286,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                 let mutable interrupted = false
+                 let mutable leaseLost = false
+                 let mutable terminalDrainConfirmed = false
++                let mutable reconciliationReason = "worker_exception"
+ 
+                 use child = new Process()
+                 let start = ProcessStartInfo(config.SetsidPath)
+@@ -362,7 +359,8 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                                     claim.OrganizationId,
+                                     claim.AttemptId,
+                                     claim.Fence,
+-                                    owner)
++                                    owner,
++                                    "launcher_failed")
+                             with ex ->
+                                 logger.LogError(
+                                     ex,
+@@ -413,11 +411,20 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+ 
+                             result)
+ 
+-                    let requireReconciliation () =
++                    let requireReconciliation reason =
+                         if not dispositionRecorded then
++                            // Preserve the first classified cause if the durable
++                            // transition itself throws and finally retries it.
++                            reconciliationReason <- reason
++                            let recorded =
++                                store.RequireReconciliation(
++                                    claim.OrganizationId,
++                                    claim.AttemptId,
++                                    claim.Fence,
++                                    owner,
++                                    reason)
+                             dispositionRecorded <- true
+-                            store.RequireReconciliation(claim.OrganizationId, claim.AttemptId, claim.Fence, owner)
+-                            |> ignore
++                            recorded |> ignore
+ 
+                     try
+                         // Run.Host publishes protocol logs through FOGELL_EVENT_FILE.
+@@ -515,13 +522,17 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+ 
+                             match completion.Stop with
+                             | EndOfStream -> ()
+-                            | PublicationAuthorityLost -> leaseLost <- true
++                            | PublicationAuthorityLost ->
++                                leaseLost <- true
++                                reconciliationReason <- "lease_lost"
+                             | ControlStopped -> ()
+                             | StreamChangedAfterExtinction ->
++                                reconciliationReason <- "event_stream_changed"
+                                 logger.LogError(
+                                     "FG-224 event stream changed after producer extinction for {AttemptId}; reconciliation is required",
+                                     claim.AttemptId.Value)
+                             | IncompleteFrameAtEndOfStream ->
++                                reconciliationReason <- "incomplete_event_frame"
+                                 logger.LogError(
+                                     "FG-224 event stream ended with an incomplete frame for {AttemptId}; reconciliation is required",
+                                     claim.AttemptId.Value)
+@@ -532,6 +543,18 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                             else
+                                 exitKind
+ 
++                        let currentReconciliationReason () =
++                            if leaseLost then
++                                "lease_lost"
++                            elif cancelled then
++                                "build_cancelled"
++                            elif interrupted then
++                                "controller_shutdown"
++                            elif groupStop <> ProcessGroupStopResult.Extinguished then
++                                "process_extinction_unconfirmed"
++                            else
++                                reconciliationReason
++
+                         match ProcessGroup.handoff finalExitKind groupStop with
+                         | ChildHandoff.ReconciliationRequired ->
+                             logger.LogError(
+@@ -539,7 +562,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                                 claim.AttemptId.Value,
+                                 finalExitKind,
+                                 groupStop)
+-                            requireReconciliation ()
++                            requireReconciliation (currentReconciliationReason ())
+                         | ChildHandoff.NaturalTerminalAllowed ->
+                             // Close the drain-to-terminal race with a fresh lease.
+                             refreshControl true
+@@ -547,7 +570,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                             if cancelled || interrupted || leaseLost then
+                                 // A control change after natural leader exit is
+                                 // still ambiguous with nested step sessions.
+-                                requireReconciliation ()
++                                requireReconciliation (currentReconciliationReason ())
+                             else
+                                 Journal.repairTail journalPath
+                                 let plan = journalPath |> Journal.read |> Resume.plan
+@@ -555,18 +578,20 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                                 match plan.Terminal with
+                                 | Some status ->
+                                     match store.PublishTerminal(claim.OrganizationId, claim.AttemptId, claim.Fence, owner, status) with
+-                                    | Ok _ -> dispositionRecorded <- true
++                                    | Ok _ ->
++                                        dispositionRecorded <- true
++                                        terminalPublished <- true
+                                     | Error _ ->
+                                         logger.LogError("FG-224 terminal publication was refused for {AttemptId}", claim.AttemptId.Value)
+-                                        requireReconciliation ()
++                                        requireReconciliation "terminal_publication_refused"
+                                 | None ->
+-                                    requireReconciliation ()
++                                    requireReconciliation "terminal_journal_missing"
+                     finally
+                         if not dispositionRecorded then
+                             // Exceptions after child start are forced stops. The
+                             // memoized cleanup prevents a second signal pass.
+                             cleanupExecution () |> ignore
+-                            requireReconciliation ()
++                            requireReconciliation reconciliationReason
+         }
+ 
+     let runClaim (claim: ExecutionClaim) (stoppingToken: CancellationToken) =
+diff --git a/src/Fogell.Controller.Host/WorkerPaths.fs b/src/Fogell.Controller.Host/WorkerPaths.fs
+index fc807a5..34cfcd5 100644
+--- a/src/Fogell.Controller.Host/WorkerPaths.fs
++++ b/src/Fogell.Controller.Host/WorkerPaths.fs
+@@ -1,5 +1,6 @@
+ namespace Fogell.Controller.Host
+ 
++open System
+ open System.IO
+ open Fogell.Domain
+ 
+@@ -13,3 +14,15 @@ module WorkerPaths =
+             organizationId.Value.ToString "N",
+             "attempts",
+             attemptId.Value.ToString "N" + ".journal")
++
++    /// A fence-specific event file is recovery evidence until terminal truth is
++    /// durably published. Every reconciliation path preserves its exact bytes.
++    let deleteEventFileAfterTerminalPublication (terminalPublished: unit -> bool) eventPath =
++        { new IDisposable with
++            member _.Dispose() =
++                if terminalPublished () then
++                    try
++                        File.Delete eventPath
++                    with
++                    | :? FileNotFoundException -> ()
++                    | :? DirectoryNotFoundException -> () }
+diff --git a/src/Fogell.Execution/ProcessGroup.fs b/src/Fogell.Execution/ProcessGroup.fs
+index 6e335e1..6014ee1 100644
+--- a/src/Fogell.Execution/ProcessGroup.fs
++++ b/src/Fogell.Execution/ProcessGroup.fs
+@@ -466,18 +466,29 @@ module ProcessGroup =
+         (sleep: int -> unit)
+         (snapshot: unit -> int * int)
+         =
+-        let mutable settled = false
++        let requiredQuietSamples = 2
+ 
+-        while not settled && elapsedMilliseconds () < int64 budgetMs do
+-            let before = snapshot ()
+-            let remaining = max 0L (int64 budgetMs - elapsedMilliseconds ())
+-            let sleepMs = int (min 40L remaining)
++        if elapsedMilliseconds () < int64 budgetMs then
++            let mutable previous = snapshot ()
++            let mutable consecutiveQuietSamples = 0
+ 
+-            if sleepMs > 0 then
+-                sleep sleepMs
++            while
++                consecutiveQuietSamples < requiredQuietSamples
++                && elapsedMilliseconds () < int64 budgetMs do
++                let remaining = max 0L (int64 budgetMs - elapsedMilliseconds ())
++                let sleepMs = int (min 40L remaining)
+ 
+-            let after = snapshot ()
+-            settled <- after = before
++                if sleepMs > 0 then
++                    sleep sleepMs
++
++                let current = snapshot ()
++
++                if current = previous then
++                    consecutiveQuietSamples <- consecutiveQuietSamples + 1
++                else
++                    consecutiveQuietSamples <- 0
++
++                previous <- current
+ 
+     /// Run one command in its own process group.
+     let run (request: RunRequest) : RunResult =
+@@ -788,13 +799,45 @@ module ProcessGroup =
+         let processExited = Tasks.TaskCompletionSource<unit>(completionOptions)
+         let stdoutCallbackGate = obj ()
+         let stderrCallbackGate = obj ()
++        let lineCallbackGate = obj ()
++        let mutable lineCallbackTail: Tasks.Task = Tasks.Task.CompletedTask
++        let mutable lineCallbacksOpen = true
+ 
+         proc.Exited.Add(fun _ -> processExited.TrySetResult(()) |> ignore)
+ 
++        let publishLine line =
++            match request.OnLine with
++            | None -> ()
++            | Some callback ->
++                lock lineCallbackGate (fun () ->
++                    if lineCallbacksOpen then
++                        // Process invokes DataReceived handlers serially. Running a
++                        // hostile user callback in that handler therefore prevents an
++                        // already-written following line from reaching the buffer and
++                        // makes the pre-signal snapshot misclassify it. Keep delivery
++                        // serialized, but move it onto an asynchronous continuation so
++                        // reader ingestion and EOF can advance independently.
++                        lineCallbackTail <-
++                            lineCallbackTail.ContinueWith(
++                                Action<Tasks.Task>(fun previous ->
++                                    // Keep a failed output sink sticky. Awaiting only
++                                    // the final continuation is sufficient because
++                                    // every successor first propagates its antecedent.
++                                    previous.GetAwaiter().GetResult()
++                                    callback line),
++                                CancellationToken.None,
++                                Tasks.TaskContinuationOptions.None,
++                                Tasks.TaskScheduler.Default))
++
++        let closeAndGetLineCallbackTail () =
++            lock lineCallbackGate (fun () ->
++                lineCallbacksOpen <- false
++                lineCallbackTail)
++
+         let emit (sink: Text.StringBuilder) (line: string) =
+             if line <> null then
+                 lock sink (fun () -> sink.AppendLine line |> ignore)
+-                request.OnLine |> Option.iter (fun f -> f line)
++                publishLine line
+ 
+         // CAPTURED STDOUT IS READ AS ONE STREAM, NOT REASSEMBLED FROM LINES.
+         //
+@@ -817,9 +860,9 @@ module ProcessGroup =
+         // full pipe buffer deadlocks a process that writes to both.
+         if not request.SuppressStdoutEcho then
+             proc.OutputDataReceived.Add(fun e ->
+-                // Process may dispatch EOF while an earlier user callback is
+-                // still running. Serialize the whole callback, not only buffer
+-                // mutation, so EOF is a real queue-drained barrier.
++                // Serialize the reader callback through buffer append and callback
++                // enqueue, so EOF is a real reader-drained barrier. User callback
++                // execution itself is deliberately outside this reader.
+                 lock stdoutCallbackGate (fun () ->
+                     match e.Data with
+                     | null -> stdoutClosed.TrySetResult(()) |> ignore
+@@ -901,6 +944,16 @@ module ProcessGroup =
+         let allReadersCompleted =
+             Tasks.Task.WhenAll [| stdoutReaderCompleted; stderrClosed.Task :> Tasks.Task |]
+ 
++        // Capture mode intentionally permits an escaped holder of the raw stdout
++        // pipe and retains the bytes already read. Stderr still publishes through
++        // DataReceived/OnLine, so its EOF is load-bearing before the callback-tail
++        // snapshot: otherwise an escaped stderr writer could enqueue after return.
++        let callbackReadersCompleted: Tasks.Task =
++            if request.SuppressStdoutEcho then
++                stderrClosed.Task :> Tasks.Task
++            else
++                allReadersCompleted
++
+         let mutable identityAnchor: int option = None
+ 
+         // Wait for the leader marker or definitive stderr EOF, with the same
+@@ -1067,17 +1120,50 @@ module ProcessGroup =
+ 
+             cause
+ 
++        let waitForTaskWithin (clock: Stopwatch) (budgetMs: int) (task: Tasks.Task) =
++            let remaining = max 0 (budgetMs - int clock.ElapsedMilliseconds)
++
++            if task.IsCompleted then
++                true
++            elif remaining <= 0 then
++                false
++            else
++                let completed =
++                    Tasks.Task.WhenAny(
++                        [| task
++                           Tasks.Task.Delay remaining |])
++                        .GetAwaiter()
++                        .GetResult()
++
++                obj.ReferenceEquals(completed, task)
++
+         let waitForReaderCompletion (budgetMs: int) =
+             // EOF/task completion, not an unchanged-length guess. A descendant
+             // can hold a pipe open indefinitely, so completion is still bounded;
+             // expiry keeps every byte already appended and never blocks the run.
+-            if not allReadersCompleted.IsCompleted then
+-                Tasks.Task.WhenAny(
+-                    [| allReadersCompleted
+-                       Tasks.Task.Delay budgetMs |])
+-                    .GetAwaiter()
+-                    .GetResult()
+-                |> ignore
++            let clock = Stopwatch.StartNew()
++            let allReachedEof = waitForTaskWithin clock budgetMs allReadersCompleted
++            clock, allReachedEof, callbackReadersCompleted.IsCompletedSuccessfully
++
++        let waitForLineCallbackCompletion budgetMs clock callbackReadersReachedEof : exn option =
++            // Close callback admission under the same lock as enqueue before
++            // snapshotting the tail, so an escaped writer cannot append later.
++            let tail = closeAndGetLineCallbackTail ()
++
++            if Option.isSome request.OnLine && not callbackReadersReachedEof then
++                Some(
++                    TimeoutException(
++                        $"OnLine reader did not reach EOF within the shared {budgetMs}ms output-drain budget"))
++            elif waitForTaskWithin clock budgetMs tail then
++                try
++                    tail.GetAwaiter().GetResult()
++                    None
++                with error ->
++                    Some error
++            else
++                Some(
++                    TimeoutException(
++                        $"OnLine callback tail did not complete within the shared {budgetMs}ms output-drain budget"))
+ 
+         let settleBeforeSignal (budgetMs: int) =
+             // RESIDUAL, deliberately not described as event-driven. Process does
+@@ -1093,10 +1179,10 @@ module ProcessGroup =
+                 if Monitor.TryEnter(gate, remaining) then
+                     Monitor.Exit gate
+ 
+-            // A callback already executing is knowable and should not be left
+-            // behind the snapshot. The shared clock keeps even hostile OnLine
+-            // callbacks inside the same upper bound. The quiet sample still
+-            // covers callbacks which Process has queued but not invoked yet.
++            // A reader callback already appending is knowable and should not be
++            // left behind the snapshot. User callbacks execute on their separate
++            // serialized tail, so they cannot stall ingestion. The quiet sample
++            // still covers reader callbacks Process has queued but not invoked yet.
+             drainActiveCallback stdoutCallbackGate
+             drainActiveCallback stderrCallbackGate
+ 
+@@ -1110,9 +1196,8 @@ module ProcessGroup =
+         let waitEnd = waitForProcessExit request.TimeoutMs
+         let finished = waitEnd = WaitEnd.Exited
+ 
+-        let outcome, termination =
++        let outcome, termination, outputCompletionClock, outputCompletionBudget, callbackReadersReachedEof =
+             if finished then
+-                waitForReaderCompletion 500
+                 let code = proc.ExitCode
+ 
+                 let t =
+@@ -1124,6 +1209,13 @@ module ProcessGroup =
+                             | None -> reap g request.GraceMs)
+                     else
+                         None
++                // A production containment anchor intentionally outlives the
++                // direct leader. Reap the group before requiring reader EOF;
++                // otherwise that controller-owned survivor makes every normal
++                // Run.Host shell look like an escaped callback writer. Readers
++                // stay active during reaping, then share the existing 500ms bound.
++                let completionClock, _, callbackReadersReachedEof = waitForReaderCompletion 500
++
+ 
+                 // On Linux a process killed by signal N exits 128+N.
+                 //
+@@ -1141,7 +1233,7 @@ module ProcessGroup =
+                 let outcome =
+                     if code > 128 && code <= 192 then Signalled(code - 128) else Completed code
+ 
+-                outcome, t
++                outcome, t, completionClock, 500, callbackReadersReachedEof
+             else
+                 // Jenkins' interrupt narration, in its words and its order — measured
+                 // on 2.568.1 — so the two logs COMPARE (FG-102) instead of each
+@@ -1149,9 +1241,9 @@ module ProcessGroup =
+                 // the shell itself on both engines. The cause is the SNAPSHOT taken
+                 // when the wait ended, never a fresh sample.
+                 if waitEnd = WaitEnd.Expired then
+-                    request.OnLine |> Option.iter (fun f -> f "Cancelling nested steps due to timeout")
++                    publishLine "Cancelling nested steps due to timeout"
+ 
+-                request.OnLine |> Option.iter (fun f -> f "Sending interrupt signal to process")
++                publishLine "Sending interrupt signal to process"
+ 
+                 settleBeforeSignal 300
+                 let outputBeforeSignal = lock stdout (fun () -> stdout.ToString())
+@@ -1162,7 +1254,7 @@ module ProcessGroup =
+                         match identityAnchor with
+                         | Some anchor -> terminateGroupWithAnchor g anchor request.GraceMs
+                         | None -> terminateGroup g request.GraceMs)
+-                waitForReaderCompletion 300
++                let completionClock, _, callbackReadersReachedEof = waitForReaderCompletion 300
+ 
+                 // On Jenkins the wrapper shell survives to print `Terminated` for its
+                 // killed child; Fogell's SIGTERM reaches the WHOLE group, so nobody is
+@@ -1179,10 +1271,19 @@ module ProcessGroup =
+                         |> Array.exists (fun line -> line.Trim() = "Terminated"))
+ 
+                 if not shellSaidIt then
+-                    request.OnLine |> Option.iter (fun f -> f "Terminated")
++                    publishLine "Terminated"
+                 // Distinguish the two ways a step can fail to finish. Both take
+                 // the same signal path; only the reported cause differs.
+-                (if waitEnd = WaitEnd.Interrupted then Cancelled else TimedOut), t
++                (if waitEnd = WaitEnd.Interrupted then Cancelled else TimedOut), t, completionClock, 300, callbackReadersReachedEof
++
++        // Defer propagation until after process-group guard and secret-bearing
++        // script cleanup. The run still fails closed, but never trades an output
++        // publication failure for a leaked containment guard or durable script.
++        let lineCallbackFailure =
++            waitForLineCallbackCompletion
++                outputCompletionBudget
++                outputCompletionClock
++                callbackReadersReachedEof
+ 
+         // The guard outlives the inner leader. This closes the interval between
+         // leader exit and group reaping: if Run.Host dies there, stdin reaches
+@@ -1244,11 +1345,18 @@ module ProcessGroup =
+         let bufferedStdout = lock stdout (fun () -> stdout.ToString())
+         let bufferedStderr = lock stderr (fun () -> stderr.ToString())
+ 
+-        { Outcome = outcome
+-          Stdout = defaultArg capturedText bufferedStdout
+-          Stderr = bufferedStderr
+-          DurationMs = sw.ElapsedMilliseconds
+-          ProcessGroupId = pgid
+-          Termination = termination
+-          CleanupFailure = cleanupFailure
+-          DurableId = mintedDurableId }
++        let result =
++            { Outcome = outcome
++              Stdout = defaultArg capturedText bufferedStdout
++              Stderr = bufferedStderr
++              DurationMs = sw.ElapsedMilliseconds
++              ProcessGroupId = pgid
++              Termination = termination
++              CleanupFailure = cleanupFailure
++              DurableId = mintedDurableId }
++
++        match lineCallbackFailure with
++        | None -> result
++        | Some error ->
++            Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw()
++            Unchecked.defaultof<RunResult>
+diff --git a/src/Fogell.Store/Store.fs b/src/Fogell.Store/Store.fs
+index c0ad690..6e2fb79 100644
+--- a/src/Fogell.Store/Store.fs
++++ b/src/Fogell.Store/Store.fs
+@@ -4,6 +4,7 @@ open System
+ open System.Buffers.Binary
+ open System.Security.Cryptography
+ open System.Text
++open System.Text.Json
+ open Npgsql
+ open Fogell.Domain
+ 
+@@ -2038,7 +2039,16 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+             (try tx.Rollback() with _ -> ())
+             reraise ()
+ 
+-    member _.RequireReconciliation(org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string) : bool =
++    member _.RequireReconciliation
++        (org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string, reason: string)
++        : bool =
++        if
++            String.IsNullOrWhiteSpace reason
++            || reason.Length > 128
++            || not (reason |> Seq.forall (fun c -> Char.IsLower c || Char.IsDigit c || c = '_'))
++        then
++            invalidArg (nameof reason) "reconciliation reason must be a stable lowercase code of at most 128 characters"
++
+         use conn = openConn ()
+         use tx = beginTenantTransaction conn org
+         use attemptCmd = conn.CreateCommand()
+@@ -2067,14 +2077,51 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+                         SET status = 'reconciliation_required'
+                       WHERE organization_id = @o AND id = @n
+                      RETURNING build_id
++                 ), changed_build AS (
++                     UPDATE builds b
++                        SET status = 'reconciliation_required'
++                       FROM changed_node n
++                      WHERE b.organization_id = @o AND b.id = n.build_id
++                     RETURNING b.id
+                  )
+-                 UPDATE builds b
+-                    SET status = 'reconciliation_required'
+-                   FROM changed_node n
+-                  WHERE b.organization_id = @o AND b.id = n.build_id"
++                 SELECT id FROM changed_build"
+             rollup.Parameters.AddWithValue("o", org.Value) |> ignore
+             rollup.Parameters.AddWithValue("n", nodeId :?> Guid) |> ignore
+-            rollup.ExecuteNonQuery() |> ignore
++            let buildId =
++                match rollup.ExecuteScalar() with
++                | :? Guid as value -> value
++                | _ -> failwith "reconciled attempt has no build lineage"
++
++            let eventPayload = JsonSerializer.Serialize(dict [ "reason", reason ])
++            use event = conn.CreateCommand()
++            event.Transaction <- tx
++            event.CommandText <-
++                "INSERT INTO events (organization_id, build_id, attempt_id, kind, payload)
++                 VALUES (@o, @b, @a, 'attempt.reconciliation_required', @payload)"
++            event.Parameters.AddWithValue("o", org.Value) |> ignore
++            event.Parameters.AddWithValue("b", buildId) |> ignore
++            event.Parameters.AddWithValue("a", attempt.Value) |> ignore
++            event.Parameters.Add(
++                NpgsqlParameter("payload", NpgsqlTypes.NpgsqlDbType.Jsonb, Value = eventPayload))
++            |> ignore
++            event.ExecuteNonQuery() |> ignore
++
++            let outboxBody =
++                JsonSerializer.Serialize(
++                    dict
++                        [ "build", buildId.ToString()
++                          "attempt", attempt.Value.ToString()
++                          "reason", reason ])
++            use outbox = conn.CreateCommand()
++            outbox.Transaction <- tx
++            outbox.CommandText <-
++                "INSERT INTO outbox (organization_id, topic, body)
++                 VALUES (@o, 'build.reconciliation_required', @body)"
++            outbox.Parameters.AddWithValue("o", org.Value) |> ignore
++            outbox.Parameters.Add(
++                NpgsqlParameter("body", NpgsqlTypes.NpgsqlDbType.Jsonb, Value = outboxBody))
++            |> ignore
++            outbox.ExecuteNonQuery() |> ignore
+             tx.Commit()
+             true
+ 
+diff --git a/tests/Fogell.Controller.Api.Tests/Tests.fs b/tests/Fogell.Controller.Api.Tests/Tests.fs
+index 7addd56..2f6cf03 100644
+--- a/tests/Fogell.Controller.Api.Tests/Tests.fs
++++ b/tests/Fogell.Controller.Api.Tests/Tests.fs
+@@ -171,6 +171,32 @@ let private executionLauncherValidation =
+                       Expect.equal error "trusted setsid launcher does not name an executable file" "stable refusal")
+           }
+ 
++          test "reconciliation preserves event bytes while terminal publication deletes them" {
++              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-event-retention-{Guid.NewGuid():N}")
++              IO.Directory.CreateDirectory root |> ignore
++              let eventPath = IO.Path.Combine(root, "attempt.events")
++              let exactBytes = [| 0uy; 1uy; 2uy; 255uy |]
++
++              try
++                  IO.File.WriteAllBytes(eventPath, exactBytes)
++                  let preserve =
++                      WorkerPaths.deleteEventFileAfterTerminalPublication
++                          (fun () -> false)
++                          eventPath
++                  preserve.Dispose()
++                  Expect.isTrue (IO.File.Exists eventPath) "reconciliation retains the fence-specific event file"
++                  Expect.sequenceEqual (IO.File.ReadAllBytes eventPath) exactBytes "retained recovery bytes stay exact"
++
++                  let remove =
++                      WorkerPaths.deleteEventFileAfterTerminalPublication
++                          (fun () -> true)
++                          eventPath
++                  remove.Dispose()
++                  Expect.isFalse (IO.File.Exists eventPath) "durable terminal publication permits cleanup"
++              finally
++                  IO.Directory.Delete(root, true)
++          }
++
+           test "a non-executable trusted launcher refuses startup" {
+               withConfiguration (fun root runHost ->
+                   let nonExecutable = IO.Path.Combine(root, "non-executable-setsid")
+diff --git a/tests/Fogell.Execution.Tests/Tests.fs b/tests/Fogell.Execution.Tests/Tests.fs
+index 1d6f196..bc25d10 100644
+--- a/tests/Fogell.Execution.Tests/Tests.fs
++++ b/tests/Fogell.Execution.Tests/Tests.fs
+@@ -1262,6 +1262,29 @@ let eventDrivenWaits =
+               Expect.equal sleeps 0 "zero budget never sleeps"
+           }
+ 
++          test "one quiet sample followed by output restarts the sustained quiet window" {
++              let mutable elapsed = 0L
++              let sleeps = ResizeArray<int>()
++              let samples =
++                  Collections.Generic.Queue<int * int>(
++                      [ (0, 0); (0, 0); (1, 0); (1, 0); (1, 0) ])
++
++              ProcessGroup.settleOutputUntilQuiet
++                  300
++                  (fun () -> elapsed)
++                  (fun milliseconds ->
++                      sleeps.Add milliseconds
++                      elapsed <- elapsed + int64 milliseconds)
++                  (fun () -> samples.Dequeue())
++
++              Expect.sequenceEqual
++                  sleeps
++                  [ 40; 40; 40; 40 ]
++                  "a change after one quiet interval resets the consecutive-quiet counter"
++              Expect.equal elapsed 160L "two fresh unchanged intervals close the window after the reset"
++              Expect.isEmpty samples "the retained sample sequence is consumed exactly"
++          }
++
+           test "a delayed tail after the direct process exits is retained" {
+               let result =
+                   ProcessGroup.run
+@@ -1281,14 +1304,16 @@ let eventDrivenWaits =
+               let root = tempRoot ()
+               let pidFile = Path.Combine(root, "escaped.pid")
+               let sw = Diagnostics.Stopwatch.StartNew()
++              let streamed = Collections.Concurrent.ConcurrentQueue<string>()
+ 
+               let result =
+                   ProcessGroup.run
+                       { RunRequest.create (
+-                            $"setsid /bin/sh -c 'echo $$ > {pidFile}; sleep 30' & printf arrived",
++                            $"setsid /bin/sh -c 'echo $$ > {pidFile}; sleep 30' 2>/dev/null & printf arrived",
+                             root) with
+                           SuppressStdoutEcho = true
+-                          ReapGroup = false }
++                          ReapGroup = false
++                          OnLine = Some streamed.Enqueue }
+ 
+               sw.Stop()
+               match waitForPidFile pidFile with
+@@ -1302,6 +1327,76 @@ let eventDrivenWaits =
+               Expect.equal result.Stdout "arrived" "bytes received before the bound survive truncation"
+           }
+ 
++          test "a production containment anchor is reaped before callback EOF is required" {
++              let root = tempRoot ()
++              let registry = Path.Combine(root, "registry")
++              let durableRoot = root + "@tmp"
++              let previousRegistry = Environment.GetEnvironmentVariable "FOGELL_PROCESS_GROUP_REGISTRY"
++              let streamed = Collections.Concurrent.ConcurrentQueue<string>()
++              Directory.CreateDirectory registry |> ignore
++              Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
++
++              try
++                  let result =
++                      ProcessGroup.run
++                          { RunRequest.create ("printf 'controller-line\\n'", root) with
++                              OnLine = Some streamed.Enqueue }
++
++                  Expect.equal result.Outcome (Completed 0) "the controller-style step completes"
++                  Expect.isTrue
++                      (streamed.ToArray() |> Array.contains "controller-line")
++                      "the output callback is published before the run returns"
++                  Expect.isEmpty
++                      (Directory.EnumerateFiles registry)
++                      "normal reaping removes the controller containment record"
++              finally
++                  Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", previousRegistry)
++                  if Directory.Exists root then Directory.Delete(root, true)
++                  if Directory.Exists durableRoot then Directory.Delete(durableRoot, true)
++          }
++
++          test "an open callback reader fails closed and cannot enqueue a late line" {
++              let root = tempRoot ()
++              let pidFile = Path.Combine(root, "escaped-callback.pid")
++              let streamed = Collections.Concurrent.ConcurrentQueue<string>()
++              let sw = Diagnostics.Stopwatch.StartNew()
++
++              try
++                  Expect.throwsT<TimeoutException>
++                      (fun () ->
++                          ProcessGroup.run
++                              { RunRequest.create (
++                                    $"setsid /bin/sh -c 'echo $$ > {pidFile}; sleep 0.8; printf \"late-line\\n\" >&2; sleep 30' & i=0; while [ ! -s {pidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; sleep 0.01; done; printf \"early-line\\n\"",
++                                    root) with
++                                  SuppressStdoutEcho = true
++                                  ReapGroup = false
++                                  OnLine = Some streamed.Enqueue }
++                          |> ignore)
++                      "a callback-producing reader without EOF cannot return success"
++
++                  sw.Stop()
++                  Expect.isLessThan
++                      sw.ElapsedMilliseconds
++                      1_500L
++                      "reader noncompletion consumes only the existing output-drain bound"
++
++                  let countAtFailure = streamed.Count
++                  Threading.Thread.Sleep 600
++                  Expect.equal
++                      streamed.Count
++                      countAtFailure
++                      "callback admission closes before the tail snapshot"
++                  Expect.isFalse
++                      (streamed.ToArray() |> Array.contains "late-line")
++                      "the escaped writer cannot enqueue after the failed run"
++              finally
++                  match waitForPidFile pidFile with
++                  | Some pid ->
++                      Native.signalGroup pid Native.SIGKILL |> ignore
++                      Expect.isTrue (waitForReap pid) "the escaped callback fixture is cleaned up"
++                  | None -> failtest "the escaped callback writer never established its precondition"
++          }
++
+           test "capture timeout pays one post-signal reader bound and keeps partial output" {
+               let root = tempRoot ()
+               let pidFile = Path.Combine(root, "escaped-timeout.pid")
+@@ -1433,6 +1528,60 @@ let eventDrivenWaits =
+                   $"the delayed shell line suppresses synthetic duplicate narration: {transcript}"
+           }
+ 
++          test "an OnLine callback failure is sticky and escapes the run" {
++              let seen = ResizeArray<string>()
++
++              Expect.throwsT<IO.IOException>
++                  (fun () ->
++                      ProcessGroup.run
++                          { RunRequest.create ("printf 'first\\nsecond\\n'", tempRoot ()) with
++                              ReapGroup = false
++                              OnLine =
++                                  Some(fun line ->
++                                      seen.Add line
++                                      raise (IO.IOException "event sink unavailable")) }
++                      |> ignore)
++                  "a completed faulted callback tail must fail the run"
++
++              Expect.equal seen.Count 1 "successors do not publish after the first callback failure"
++          }
++
++          test "an incomplete OnLine callback tail fails within the shared bound" {
++              use callbackEntered = new Threading.ManualResetEventSlim(false)
++              use releaseCallback = new Threading.ManualResetEventSlim(false)
++              use callbackCompleted = new Threading.ManualResetEventSlim(false)
++              let sw = Diagnostics.Stopwatch.StartNew()
++
++              try
++                  Expect.throwsT<TimeoutException>
++                      (fun () ->
++                          ProcessGroup.run
++                              { RunRequest.create ("printf 'blocked\\n'", tempRoot ()) with
++                                  ReapGroup = false
++                                  OnLine =
++                                      Some(fun _ ->
++                                          callbackEntered.Set()
++
++                                          try
++                                              releaseCallback.Wait()
++                                          finally
++                                              callbackCompleted.Set()) }
++                          |> ignore)
++                      "an incomplete callback tail cannot return a successful RunResult"
++
++                  sw.Stop()
++                  Expect.isTrue callbackEntered.IsSet "the callback genuinely held the tail open"
++                  Expect.isLessThan
++                      sw.ElapsedMilliseconds
++                      1_500L
++                      "callback noncompletion preserves the existing bounded output-drain elapsed time"
++              finally
++                  releaseCallback.Set()
++                  Expect.isTrue
++                      (callbackCompleted.Wait 1_000)
++                      "the fixture releases the rejected callback task before the test exits"
++          }
++
+           test "fast completed steps do not pay a fixed reader-settlement window" {
+               let sw = Diagnostics.Stopwatch.StartNew()
+ 
+diff --git a/tests/Fogell.Store.Tests/Tests.fs b/tests/Fogell.Store.Tests/Tests.fs
+index 119f421..d4d7e3e 100644
+--- a/tests/Fogell.Store.Tests/Tests.fs
++++ b/tests/Fogell.Store.Tests/Tests.fs
+@@ -1550,6 +1550,7 @@ let fencing =
+               separateAdmissions.ExecuteNonQuery() |> ignore
+ 
+               let valid = admitOk (newBuild org project "valid-after-materialization-poison" [ "build" ])
++              let outboxBefore = store.CountOutbox org
+               let poisonedOwner = "local:materialization-poison"
+ 
+               let poisonedClaim =
+@@ -1574,7 +1575,8 @@ let fencing =
+                       org,
+                       poisonedClaim.AttemptId,
+                       poisonedClaim.Fence,
+-                      poisonedOwner))
++                      poisonedOwner,
++                      "materialization_failed"))
+                   "the pre-execution materialization failure is durably quarantined"
+ 
+               Expect.equal
+@@ -1585,6 +1587,49 @@ let fencing =
+                   (store.BuildSnapshot(org, project, poisoned.BuildId))
+                   (Some("reconciliation_required", false))
+                   "public build truth exposes the poisoned admission"
++              Expect.equal
++                  (store.CountEvents(org, poisoned.BuildId, "attempt.reconciliation_required"))
++                  1
++                  "the transition emits one durable reason event"
++              Expect.equal (store.CountOutbox org) (outboxBefore + 1) "the same transaction emits one outbox row"
++
++              use reasonTruth = conn.CreateCommand()
++              reasonTruth.CommandText <-
++                  "SELECT e.payload->>'reason', o.topic, o.body->>'reason',
++                          o.body->>'build', o.body->>'attempt'
++                     FROM events e
++                     JOIN outbox o
++                       ON o.organization_id = e.organization_id
++                      AND o.topic = 'build.reconciliation_required'
++                      AND o.body->>'attempt' = e.attempt_id::text
++                    WHERE e.organization_id = @o AND e.build_id = @b
++                      AND e.attempt_id = @a
++                      AND e.kind = 'attempt.reconciliation_required'"
++              reasonTruth.Parameters.AddWithValue("o", org.Value) |> ignore
++              reasonTruth.Parameters.AddWithValue("b", poisoned.BuildId.Value) |> ignore
++              reasonTruth.Parameters.AddWithValue("a", poisoned.AttemptId.Value) |> ignore
++              use reasonRow = reasonTruth.ExecuteReader()
++              Expect.isTrue (reasonRow.Read()) "reason event and outbox are atomically observable"
++              Expect.equal (reasonRow.GetString 0) "materialization_failed" "event preserves the stable reason"
++              Expect.equal (reasonRow.GetString 1) "build.reconciliation_required" "outbox topic names the transition"
++              Expect.equal (reasonRow.GetString 2) "materialization_failed" "outbox preserves the same reason"
++              Expect.equal (reasonRow.GetString 3) (poisoned.BuildId.Value.ToString()) "outbox binds the build"
++              Expect.equal (reasonRow.GetString 4) (poisoned.AttemptId.Value.ToString()) "outbox binds the attempt"
++              reasonRow.Close()
++
++              Expect.isFalse
++                  (store.RequireReconciliation(
++                      org,
++                      poisonedClaim.AttemptId,
++                      poisonedClaim.Fence,
++                      poisonedOwner,
++                      "worker_exception"))
++                  "a repeated stale transition cannot emit a second reason"
++              Expect.equal
++                  (store.CountEvents(org, poisoned.BuildId, "attempt.reconciliation_required"))
++                  1
++                  "stale replay emits no duplicate event"
++              Expect.equal (store.CountOutbox org) (outboxBefore + 1) "stale replay emits no duplicate outbox"
+               Expect.equal
+                   (store.RequeueExpiredLocalAttempts org)
+                   0
