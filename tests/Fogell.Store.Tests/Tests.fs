@@ -25,6 +25,18 @@ let private available =
 
 let private store = Store(connectionString)
 
+let private tenantTables =
+    [ "organizations", "id"
+      "projects", "organization_id"
+      "builds", "organization_id"
+      "nodes", "organization_id"
+      "attempts", "organization_id"
+      "events", "organization_id"
+      "outbox", "organization_id"
+      "log_chunks", "organization_id"
+      "effect_checkpoints", "organization_id"
+      "retry_decisions", "organization_id" ]
+
 let private freshProject () =
     let org = OrganizationId(Guid.NewGuid())
     let project = ProjectId(Guid.NewGuid())
@@ -200,6 +212,251 @@ let migrations =
                       (string value)
                       "cea314ca6fdbb18dd5fea9d3edb1efff2c9d61acee9bec4f68d4048c2e980096"
                       "migration 0004 exact source checksum"
+          }
+
+          test "tenant isolation migration 0005 is checksum-pinned" {
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use cmd = conn.CreateCommand()
+              cmd.CommandText <- "SELECT checksum FROM schema_migrations WHERE version = '0005'"
+
+              match cmd.ExecuteScalar() with
+              | null -> failtest "migration ledger has no 0005 row"
+              | value ->
+                  Expect.equal
+                      (string value)
+                      "af4f5fadfbccfdbba78b785753386b09f9385e1ac88167d18960b03d9635f920"
+                      "migration 0005 exact source checksum"
+          } ]
+
+let tenantIsolation =
+    testList
+        "FG-028 forced tenant isolation"
+        [ test "a real NOBYPASSRLS runtime role is fail-closed and Store sets only transaction-local context" {
+              let roleName = $"fogell_runtime_{Guid.NewGuid():N}"
+
+              let admin sql =
+                  use conn = new Npgsql.NpgsqlConnection(connectionString)
+                  conn.Open()
+                  use cmd = conn.CreateCommand()
+                  cmd.CommandText <- sql
+                  cmd.ExecuteNonQuery() |> ignore
+
+              admin $"CREATE ROLE {roleName} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"
+
+              try
+                  admin
+                      $"GRANT USAGE ON SCHEMA public TO {roleName};
+                        GRANT SELECT, UPDATE(singleton) ON controller_metadata TO {roleName};
+                        GRANT SELECT, INSERT, UPDATE, DELETE ON
+                          organizations, projects, builds, nodes, attempts,
+                          events, outbox, log_chunks, effect_checkpoints, retry_decisions
+                        TO {roleName};
+                        GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {roleName}"
+
+                  // Deliberately disable Npgsql's pool reset and force one physical
+                  // connection. Otherwise a session-scoped set_config mutant is
+                  // cleaned up by the client and this test falsely credits the
+                  // Store for transaction-local isolation PostgreSQL never got.
+                  let runtimeConnectionString =
+                      $"{connectionString};Options=-c role={roleName};No Reset On Close=true;Maximum Pool Size=1"
+                  let runtimeStore = Store(runtimeConnectionString, connectionString)
+
+                  do
+                      use identityConn = new Npgsql.NpgsqlConnection(runtimeConnectionString)
+                      identityConn.Open()
+                      use identity = identityConn.CreateCommand()
+                      identity.CommandText <-
+                          "SELECT current_user, rolsuper, rolbypassrls
+                           FROM pg_roles WHERE rolname = current_user"
+                      use identityReader = identity.ExecuteReader()
+                      Expect.isTrue (identityReader.Read()) "runtime identity exists"
+                      Expect.equal (identityReader.GetString 0) roleName "the connection actually assumed the application role"
+                      Expect.isFalse (identityReader.GetBoolean 1) "application role is not superuser"
+                      Expect.isFalse (identityReader.GetBoolean 2) "application role cannot bypass RLS"
+
+                  let seed key =
+                      let org = OrganizationId(Guid.NewGuid())
+                      let project = ProjectId(Guid.NewGuid())
+                      runtimeStore.CreateProject(org, $"org-{org.Value}", project, $"project-{key}")
+                      let admitted =
+                          match runtimeStore.AdmitBuild(newBuild org project key [ "tenant-proof" ]) with
+                          | Ok value -> value
+                          | Error error -> failtestf "runtime admission failed: %s" error
+                      let owner = $"agent-{key}"
+                      let fence =
+                          match runtimeStore.OfferAttempt(org, admitted.AttemptId, owner, 60) with
+                          | Ok value -> value
+                          | Error error -> failtestf "runtime offer failed: %s" error
+                      Expect.isTrue
+                          (runtimeStore.AcceptAttempt(org, admitted.AttemptId, fence, owner))
+                          "runtime role accepted its attempt"
+                      match runtimeStore.PrepareEffect(org, admitted.AttemptId, fence, owner, "publish", [| 1uy; 2uy |]) with
+                      | Error error -> failtestf "runtime effect preparation failed: %s" error
+                      | Ok _ -> ()
+                      Expect.isTrue
+                          (runtimeStore.AppendLog(org, admitted.BuildId, admitted.AttemptId, 0, key))
+                          "runtime role appended its log"
+                      match runtimeStore.PublishTerminal(org, admitted.AttemptId, fence, owner, Failure) with
+                      | Error error -> failtestf "runtime terminal publication failed: %s" error
+                      | Ok () -> ()
+                      match runtimeStore.DecideRetry(org, admitted.AttemptId, 2, AttemptId(Guid.NewGuid())) with
+                      | Error error -> failtestf "runtime retry decision failed: %A" error
+                      | Ok _ -> ()
+                      org, admitted
+
+                  let orgA, admissionA = seed "tenant-a"
+                  let orgB, admissionB = seed "tenant-b"
+
+                  let count (conn: Npgsql.NpgsqlConnection) (tx: Npgsql.NpgsqlTransaction option) table predicate =
+                      use cmd = conn.CreateCommand()
+                      tx |> Option.iter (fun value -> cmd.Transaction <- value)
+                      cmd.CommandText <- $"SELECT count(*) FROM {table} {predicate}"
+                      cmd.ExecuteScalar() :?> int64
+
+                  use runtime = new Npgsql.NpgsqlConnection(runtimeConnectionString)
+                  runtime.Open()
+
+                  for table, _ in tenantTables do
+                      Expect.equal (count runtime None table "") 0L $"{table} exposes no rows without context"
+
+                  use tenantTx = runtime.BeginTransaction()
+                  use setTenant = runtime.CreateCommand()
+                  setTenant.Transaction <- tenantTx
+                  setTenant.CommandText <- "SELECT set_config('fogell.organization_id', @o, true)"
+                  setTenant.Parameters.AddWithValue("o", orgA.Value.ToString()) |> ignore
+                  setTenant.ExecuteScalar() |> ignore
+
+                  for table, tenantColumn in tenantTables do
+                      Expect.isGreaterThan
+                          (count runtime (Some tenantTx) table "")
+                          0L
+                          $"{table} exposes the selected tenant's rows"
+                      Expect.equal
+                          (count runtime (Some tenantTx) table $"WHERE {tenantColumn} <> '{orgA.Value}'::uuid")
+                          0L
+                          $"{table} cannot expose another tenant"
+
+                  tenantTx.Commit()
+
+                  for table, _ in tenantTables do
+                      Expect.equal
+                          (count runtime None table "")
+                          0L
+                          $"{table} context did not leak past commit or pooled reuse"
+
+                  use malformedTx = runtime.BeginTransaction()
+                  use setMalformed = runtime.CreateCommand()
+                  setMalformed.Transaction <- malformedTx
+                  setMalformed.CommandText <- "SELECT set_config('fogell.organization_id', 'not-a-uuid', true)"
+                  setMalformed.ExecuteScalar() |> ignore
+
+                  let malformedRejected =
+                      try
+                          count runtime (Some malformedTx) "attempts" "" |> ignore
+                          false
+                      with :? Npgsql.PostgresException as error ->
+                          error.SqlState = "22P02"
+
+                  Expect.isTrue malformedRejected "malformed context fails closed instead of exposing rows"
+                  malformedTx.Rollback()
+
+                  use hostileTx = runtime.BeginTransaction()
+                  use setHostileTenant = runtime.CreateCommand()
+                  setHostileTenant.Transaction <- hostileTx
+                  setHostileTenant.CommandText <- "SELECT set_config('fogell.organization_id', @o, true)"
+                  setHostileTenant.Parameters.AddWithValue("o", orgA.Value.ToString()) |> ignore
+                  setHostileTenant.ExecuteScalar() |> ignore
+                  use crossTenantWrite = runtime.CreateCommand()
+                  crossTenantWrite.Transaction <- hostileTx
+                  crossTenantWrite.CommandText <-
+                      "INSERT INTO outbox (organization_id, topic, body)
+                       VALUES (@other, 'cross-tenant', '{}'::jsonb)"
+                  crossTenantWrite.Parameters.AddWithValue("other", orgB.Value) |> ignore
+
+                  let crossTenantRejected =
+                      try
+                          crossTenantWrite.ExecuteNonQuery() |> ignore
+                          false
+                      with :? Npgsql.PostgresException as error ->
+                          error.SqlState = "42501"
+
+                  Expect.isTrue crossTenantRejected "WITH CHECK rejects a cross-tenant write"
+                  hostileTx.Rollback()
+                  runtime.Close()
+
+                  let crossLineageRejected sql =
+                      use conn = new Npgsql.NpgsqlConnection(connectionString)
+                      conn.Open()
+                      use cmd = conn.CreateCommand()
+                      cmd.CommandText <- sql
+                      cmd.Parameters.AddWithValue("o", orgA.Value) |> ignore
+                      cmd.Parameters.AddWithValue("b", admissionA.BuildId.Value) |> ignore
+                      cmd.Parameters.AddWithValue("a", admissionB.AttemptId.Value) |> ignore
+
+                      try
+                          cmd.ExecuteNonQuery() |> ignore
+                          false
+                      with :? Npgsql.PostgresException as error ->
+                          error.SqlState = "23503"
+
+                  Expect.isTrue
+                      (crossLineageRejected
+                          "INSERT INTO events (organization_id, build_id, attempt_id, kind)
+                           VALUES (@o, @b, @a, 'cross-lineage')")
+                      "event cannot substitute another tenant's attempt"
+                  Expect.isTrue
+                      (crossLineageRejected
+                          "INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, body)
+                           VALUES (@o, @b, @a, 99, 'cross-lineage')")
+                      "log cannot substitute another tenant's attempt"
+
+                  use catalog = new Npgsql.NpgsqlConnection(connectionString)
+                  catalog.Open()
+                  use rls = catalog.CreateCommand()
+                  rls.CommandText <-
+                      "SELECT count(*)
+                       FROM pg_class c
+                       WHERE c.relname = ANY(@tables)
+                         AND c.relrowsecurity
+                         AND c.relforcerowsecurity"
+                  rls.Parameters.AddWithValue("tables", tenantTables |> List.map fst |> List.toArray) |> ignore
+                  Expect.equal (rls.ExecuteScalar() :?> int64) 10L "every tenant table enables and forces RLS"
+
+                  use policies = catalog.CreateCommand()
+                  policies.CommandText <-
+                      "SELECT count(*) FROM pg_policies
+                       WHERE tablename = ANY(@tables)
+                         AND policyname LIKE '%tenant_isolation'"
+                  policies.Parameters.AddWithValue("tables", tenantTables |> List.map fst |> List.toArray) |> ignore
+                  Expect.equal (policies.ExecuteScalar() :?> int64) 10L "every tenant table has an isolation policy"
+
+                  use lineage = catalog.CreateCommand()
+                  lineage.CommandText <-
+                      "SELECT count(*) FROM pg_constraint
+                       WHERE conname IN ('events_attempt_tenant_fk', 'log_chunks_attempt_tenant_fk')"
+                  Expect.equal (lineage.ExecuteScalar() :?> int64) 2L "remaining attempt lineage is tenant-composite"
+
+                  use forbidden = new Npgsql.NpgsqlConnection(runtimeConnectionString)
+                  forbidden.Open()
+                  use changeEpoch = forbidden.CreateCommand()
+                  changeEpoch.CommandText <-
+                      "UPDATE controller_metadata SET restore_epoch = restore_epoch + 1 WHERE singleton"
+                  let runtimeEpochWriteRejected =
+                      try
+                          changeEpoch.ExecuteNonQuery() |> ignore
+                          false
+                      with :? Npgsql.PostgresException as error ->
+                          error.SqlState = "42501"
+                  Expect.isTrue runtimeEpochWriteRejected "runtime role cannot alter the global restore epoch"
+                  forbidden.Close()
+
+                  let beforeRestore = runtimeStore.CurrentRestoreEpoch()
+                  let afterRestore = runtimeStore.ActivateRestore()
+                  Expect.equal afterRestore.Value (beforeRestore.Value + 1L) "maintenance connection performs global restore"
+              finally
+                  Npgsql.NpgsqlConnection.ClearAllPools()
+                  admin $"DROP OWNED BY {roleName}; DROP ROLE {roleName}"
           } ]
 
 let admission =
@@ -1962,6 +2219,7 @@ let main argv =
                     (testList
                         "Fogell.Store"
                         [ migrations
+                          tenantIsolation
                           admission
                           fencing
                           effectCheckpoints

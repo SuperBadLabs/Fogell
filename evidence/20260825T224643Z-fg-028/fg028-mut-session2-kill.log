@@ -1,0 +1,14 @@
+[37m[[37m23:25:25 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0m[1000D[?25h[37m[[37m23:25:25 [31mERR[37m] [36mFogell.Store.FG-028 forced tenant isolation.a real NOBYPASSRLS runtime role is fail-closed and Store sets only transaction-local context[37m failed in [32m00:00:00.0810000[37m. [36m
+organizations exposes no rows without context.
+[32mexpected[36m: [32m0[36mL
+[31m  actual[36m: [31m1[36mL
+   at Fogell.Store.Tests.tenantIsolation@320-2.Invoke(Tuple`2 _arg2) in /tmp/fogell-fg028-session-mutant-20260825/tests/Fogell.Store.Tests/Tests.fs:line 321
+   at Expecto.Tests.TestCaseBuilder.For[c](IEnumerable`1 sequence, FSharpFunc`2 f)
+   at Fogell.Store.Tests.tenantIsolation@318-1.Invoke(NpgsqlConnection runtime) in /tmp/fogell-fg028-session-mutant-20260825/tests/Fogell.Store.Tests/Tests.fs:line 320
+   at Microsoft.FSharp.Core.Operators.Using[T,TResult](T resource, FSharpFunc`2 action) in /__w/1/s/src/fsharp/src/FSharp.Core/prim-types.fs:line 5488
+   at Fogell.Store.Tests.f@1(String roleName, Unit unitVar) in /tmp/fogell-fg028-session-mutant-20260825/tests/Fogell.Store.Tests/Tests.fs:line 317[37m [37m<[37mExpecto[37m>[37m
+[0m[1000D[?25h[1000D[?25hFG026_LIVE_PG=1 FG026_SCHEMA=0003 FG026_CONCURRENCY=16
+[0m[1000D[?25hFG027B_LIVE_PG=1 FG027B_SCHEMA=0004 FG027B_CONCURRENCY=16
+[0m[1000D[?25h[37m[[37m23:25:26 [37mINF[37m] [37mEXPECTO! [36m57[37m tests run in [32m00:00:00.7363257[37m for [36mFogell.Store[37m – [36m56[37m passed, [36m0[37m ignored, [36m1[37m failed, [36m0[37m errored. [36m[37m [37m<[37mExpecto[37m>[37m
+[0m

@@ -81,14 +81,53 @@ type RetryPersistenceError =
     | RetryStorageFailure of string
 
 /// FG-021/FG-022. The controller's durable truth.
-type Store(connectionString: string) =
+type Store(connectionString: string, ?maintenanceConnectionString: string) =
 
     let retryDeadLetterReason = "attempt budget exhausted"
+    let maintenanceConnectionString = defaultArg maintenanceConnectionString connectionString
 
     let openConn () =
         let c = new NpgsqlConnection(connectionString)
         c.Open()
         c
+
+    let openMaintenanceConn () =
+        let c = new NpgsqlConnection(maintenanceConnectionString)
+        c.Open()
+        c
+
+    let setTenantContext
+        (conn: NpgsqlConnection)
+        (tx: NpgsqlTransaction)
+        (org: OrganizationId)
+        =
+        use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
+        cmd.CommandText <- "SELECT set_config('fogell.organization_id', @organization_id, true)"
+        cmd.Parameters.AddWithValue("organization_id", org.Value.ToString()) |> ignore
+        cmd.ExecuteScalar() |> ignore
+
+    let beginTenantTransaction (conn: NpgsqlConnection) (org: OrganizationId) =
+        let tx = conn.BeginTransaction()
+        try
+            setTenantContext conn tx org
+            tx
+        with _ ->
+            tx.Dispose()
+            reraise ()
+
+    let beginTenantTransactionAt
+        (conn: NpgsqlConnection)
+        (org: OrganizationId)
+        (isolationLevel: System.Data.IsolationLevel)
+        =
+        let tx = conn.BeginTransaction(isolationLevel)
+        try
+            setTenantContext conn tx org
+            tx
+        with _ ->
+            tx.Dispose()
+            reraise ()
 
     let effectProjection =
         "organization_id, attempt_id, effect_key, fence, authority_owner,
@@ -365,11 +404,11 @@ type Store(connectionString: string) =
         else
             None
 
-    member _.Migrate() = Migrations.run connectionString
+    member _.Migrate() = Migrations.run maintenanceConnectionString
 
     member _.CreateProject(org: OrganizationId, orgSlug: string, project: ProjectId, projectSlug: string) =
         use conn = openConn ()
-        use tx = conn.BeginTransaction()
+        use tx = beginTenantTransaction conn org
 
         use cmd = conn.CreateCommand()
         cmd.Transaction <- tx
@@ -402,7 +441,7 @@ type Store(connectionString: string) =
         // parent lock, this transaction must see the decision that caller just
         // committed and replay it. The explicit metadata/parent locks provide
         // the required serialization.
-        use tx = conn.BeginTransaction(System.Data.IsolationLevel.ReadCommitted)
+        use tx = beginTenantTransactionAt conn org System.Data.IsolationLevel.ReadCommitted
 
         let rollback error =
             try
@@ -592,7 +631,9 @@ type Store(connectionString: string) =
         : Result<PersistedRetryDecision list, RetryPersistenceError> =
         try
             use conn = openConn ()
+            use tx = beginTenantTransaction conn org
             use cmd = conn.CreateCommand()
+            cmd.Transaction <- tx
             cmd.CommandText <-
                 $"SELECT {retryProjection}
                   FROM retry_decisions d
@@ -615,9 +656,13 @@ type Store(connectionString: string) =
                 | Ok value -> values.Add value
                 | Error error -> failure <- Some error
 
-            match failure with
-            | Some error -> Error error
-            | None -> Ok(List.ofSeq values)
+            reader.Close()
+            let result =
+                match failure with
+                | Some error -> Error error
+                | None -> Ok(List.ofSeq values)
+            tx.Commit()
+            result
         with ex ->
             Error(RetryStorageFailure ex.Message)
 
@@ -636,7 +681,7 @@ type Store(connectionString: string) =
         | Some error -> Error error
         | None ->
             use conn = openConn ()
-            use tx = conn.BeginTransaction()
+            use tx = beginTenantTransaction conn org
 
             try
                 match tryLockEffectAuthority conn tx org attempt fence owner with
@@ -696,7 +741,7 @@ type Store(connectionString: string) =
         | Some error -> Error error
         | None ->
             use conn = openConn ()
-            use tx = conn.BeginTransaction()
+            use tx = beginTenantTransaction conn org
 
             try
                 match tryLockEffectAuthority conn tx org attempt fence owner with
@@ -763,7 +808,7 @@ type Store(connectionString: string) =
     member _.MarkStaleEffectsUncertain(org: OrganizationId) : Result<EffectCheckpoint list, string> =
         let markOnce () =
             use conn = openConn ()
-            use tx = conn.BeginTransaction(System.Data.IsolationLevel.RepeatableRead)
+            use tx = beginTenantTransactionAt conn org System.Data.IsolationLevel.RepeatableRead
 
             try
                 // RepeatableRead gives the lock and update statements one stable
@@ -837,7 +882,9 @@ type Store(connectionString: string) =
 
     member _.ListUncertainEffects(org: OrganizationId) : EffectCheckpoint list =
         use conn = openConn ()
+        use tx = beginTenantTransaction conn org
         use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
         cmd.CommandText <-
             $"SELECT {effectProjection}
               FROM effect_checkpoints
@@ -845,7 +892,10 @@ type Store(connectionString: string) =
               ORDER BY prepared_at, attempt_id, effect_key"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
         use reader = cmd.ExecuteReader()
-        [ while reader.Read() do yield readCheckpoint reader ]
+        let checkpoints = [ while reader.Read() do yield readCheckpoint reader ]
+        reader.Close()
+        tx.Commit()
+        checkpoints
 
     /// FG-021. Build, first node, first attempt, a durable event and an outbox
     /// message commit **together**. There is no window in which a build exists
@@ -862,7 +912,7 @@ type Store(connectionString: string) =
         else
 
         use conn = openConn ()
-        use tx = conn.BeginTransaction()
+        use tx = beginTenantTransaction conn input.OrganizationId
 
         try
             // Has this key already been admitted? Read inside the transaction so
@@ -992,7 +1042,9 @@ type Store(connectionString: string) =
     /// never publish against the next one.
     member _.OfferAttempt(org: OrganizationId, attempt: AttemptId, owner: string, leaseSeconds: int) : Result<Fence, string> =
         use conn = openConn ()
+        use tx = beginTenantTransaction conn org
         use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
         cmd.CommandText <-
             "UPDATE attempts
                 SET fence = fence + 1,
@@ -1007,13 +1059,18 @@ type Store(connectionString: string) =
         cmd.Parameters.AddWithValue("owner", owner) |> ignore
         cmd.Parameters.AddWithValue("secs", float leaseSeconds) |> ignore
 
-        match cmd.ExecuteScalar() with
-        | null -> Error "attempt is not offerable"
-        | v -> Ok(Fence(v :?> int64))
+        let result =
+            match cmd.ExecuteScalar() with
+            | null -> Error "attempt is not offerable"
+            | v -> Ok(Fence(v :?> int64))
+        tx.Commit()
+        result
 
     member _.AcceptAttempt(org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string) : bool =
         use conn = openConn ()
+        use tx = beginTenantTransaction conn org
         use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
         cmd.CommandText <-
             "UPDATE attempts SET state = 'running'
               WHERE organization_id = @o AND id = @a AND fence = @f AND lease_owner = @owner
@@ -1022,7 +1079,9 @@ type Store(connectionString: string) =
         cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
         cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
         cmd.Parameters.AddWithValue("owner", owner) |> ignore
-        cmd.ExecuteNonQuery() = 1
+        let accepted = cmd.ExecuteNonQuery() = 1
+        tx.Commit()
+        accepted
 
     /// FG-022. Publish a terminal result. Admissible only from the exact current
     /// fence, the exact lease owner, the current restore epoch, an unexpired
@@ -1036,7 +1095,7 @@ type Store(connectionString: string) =
         (org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string, result: BuildStatus)
         : Result<unit, string> =
         use conn = openConn ()
-        use tx = conn.BeginTransaction()
+        use tx = beginTenantTransaction conn org
 
         try
             use cmd = conn.CreateCommand()
@@ -1086,7 +1145,7 @@ type Store(connectionString: string) =
     /// A restore invalidates every lease issued before it. Pre-restore agents
     /// can no longer renew or publish; their attempts require reconciliation.
     member _.ActivateRestore() : RestoreEpoch =
-        use conn = openConn ()
+        use conn = openMaintenanceConn ()
         use tx = conn.BeginTransaction()
 
         use bump = conn.CreateCommand()
@@ -1111,7 +1170,9 @@ type Store(connectionString: string) =
 
     member _.AttemptState(org: OrganizationId, attempt: AttemptId) : (string * int64 * string option) option =
         use conn = openConn ()
+        use tx = beginTenantTransaction conn org
         use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
         cmd.CommandText <-
             "SELECT state, fence, result FROM attempts WHERE organization_id = @o AND id = @a"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
@@ -1119,20 +1180,28 @@ type Store(connectionString: string) =
 
         use r = cmd.ExecuteReader()
 
-        if r.Read() then
-            Some(r.GetString 0, r.GetInt64 1, (if r.IsDBNull 2 then None else Some(r.GetString 2)))
-        else
-            None
+        let state =
+            if r.Read() then
+                Some(r.GetString 0, r.GetInt64 1, (if r.IsDBNull 2 then None else Some(r.GetString 2)))
+            else
+                None
+        r.Close()
+        tx.Commit()
+        state
 
     member _.CountEvents(org: OrganizationId, build: BuildId, kind: string) : int =
         use conn = openConn ()
+        use tx = beginTenantTransaction conn org
         use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
         cmd.CommandText <-
             "SELECT count(*) FROM events WHERE organization_id = @o AND build_id = @b AND kind = @k"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
         cmd.Parameters.AddWithValue("b", build.Value) |> ignore
         cmd.Parameters.AddWithValue("k", kind) |> ignore
-        cmd.ExecuteScalar() :?> int64 |> int
+        let count = cmd.ExecuteScalar() :?> int64 |> int
+        tx.Commit()
+        count
 
     /// FG-061. Claim the next offerable attempt for an agent.
     ///
@@ -1144,7 +1213,7 @@ type Store(connectionString: string) =
         (org: OrganizationId, agentId: string, trustPool: string, capabilities: string list, leaseSeconds: int)
         : Result<(AttemptId * NodeId * BuildId * Fence) option, string> =
         use conn = openConn ()
-        use tx = conn.BeginTransaction()
+        use tx = beginTenantTransaction conn org
 
         try
             use lock = conn.CreateCommand()
@@ -1208,8 +1277,10 @@ type Store(connectionString: string) =
     /// (JB-AGT-004), and it is far better than an unexplained wait.
     member _.ExplainWait(org: OrganizationId, trustPool: string, capabilities: string list) : string =
         use conn = openConn ()
+        use tx = beginTenantTransaction conn org
 
         use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
         cmd.CommandText <-
             "SELECT count(*) FILTER (WHERE a.state = 'queued') AS queued,
                     count(*) FILTER (WHERE a.state = 'queued' AND n.required_trust_pool = @pool) AS pool_ok,
@@ -1231,26 +1302,32 @@ type Store(connectionString: string) =
 
         use r = cmd.ExecuteReader()
 
-        if not (r.Read()) then
-            "queue is empty"
-        else
-            let queued = r.GetInt64 0
-            let poolOk = r.GetInt64 1
-            let claimable = r.GetInt64 2
-            let missing = r.GetString 3
+        let explanation =
+            if not (r.Read()) then
+                "queue is empty"
+            else
+                let queued = r.GetInt64 0
+                let poolOk = r.GetInt64 1
+                let claimable = r.GetInt64 2
+                let missing = r.GetString 3
 
-            if queued = 0L then "queue is empty"
-            elif claimable > 0L then $"{claimable} attempt(s) claimable now"
-            elif poolOk = 0L then $"{queued} attempt(s) queued, none in trust pool '{trustPool}'"
-            elif missing <> "" then $"{queued} attempt(s) queued; missing capabilities: {missing}"
-            else $"{queued} attempt(s) queued, none claimable"
+                if queued = 0L then "queue is empty"
+                elif claimable > 0L then $"{claimable} attempt(s) claimable now"
+                elif poolOk = 0L then $"{queued} attempt(s) queued, none in trust pool '{trustPool}'"
+                elif missing <> "" then $"{queued} attempt(s) queued; missing capabilities: {missing}"
+                else $"{queued} attempt(s) queued, none claimable"
+        r.Close()
+        tx.Commit()
+        explanation
 
     /// FG-064a. The append and its attempt -> node -> build ownership check are
     /// one statement. IDs are tenant-composite, so the attempt predicate and
     /// node join both carry the tenant.
     member _.AppendLog(org: OrganizationId, build: BuildId, attempt: AttemptId, sequence: int, body: string) : bool =
         use conn = openConn ()
+        use tx = beginTenantTransaction conn org
         use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
         cmd.CommandText <-
             "INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, body)
              SELECT a.organization_id, n.build_id, a.id, @s, @body
@@ -1263,14 +1340,18 @@ type Store(connectionString: string) =
         cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
         cmd.Parameters.AddWithValue("s", sequence) |> ignore
         cmd.Parameters.AddWithValue("body", body) |> ignore
-        cmd.ExecuteNonQuery() = 1
+        let appended = cmd.ExecuteNonQuery() = 1
+        tx.Commit()
+        appended
 
     /// FG-060a/FG-064. The build lineage and progressive read are one query.
     /// Some [] therefore means a real build with no chunks at this offset,
     /// while None means that org/project/build lineage does not exist.
     member _.ReadLog(org: OrganizationId, project: ProjectId, build: BuildId, fromSequence: int) : (int * string) list option =
         use conn = openConn ()
+        use tx = beginTenantTransaction conn org
         use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
         cmd.CommandText <-
             "SELECT l.sequence, l.body
                FROM builds b
@@ -1297,7 +1378,10 @@ type Store(connectionString: string) =
                   if not (r.IsDBNull 0) then
                       yield r.GetInt32 0, r.GetString 1 ]
 
-        if lineageExists then Some chunks else None
+        r.Close()
+        let result = if lineageExists then Some chunks else None
+        tx.Commit()
+        result
 
     /// Cancellation is IDEMPOTENT by design. A retried request — after a client
     /// timeout, say — must not look like an error: the caller's intent is already
@@ -1305,7 +1389,9 @@ type Store(connectionString: string) =
     /// has already finished, or one that does not exist.
     member _.RequestCancellation(org: OrganizationId, project: ProjectId, build: BuildId) : CancellationOutcome =
         use conn = openConn ()
+        use tx = beginTenantTransaction conn org
         use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
         cmd.CommandText <-
             "SELECT status, cancellation_requested FROM builds
               WHERE organization_id = @o AND project_id = @p AND id = @b"
@@ -1324,6 +1410,7 @@ type Store(connectionString: string) =
         | Some(_, true) -> AlreadyRequested
         | Some _ ->
             use upd = conn.CreateCommand()
+            upd.Transaction <- tx
             upd.CommandText <-
                 "UPDATE builds SET cancellation_requested = true
                   WHERE organization_id = @o AND project_id = @p AND id = @b"
@@ -1332,10 +1419,15 @@ type Store(connectionString: string) =
             upd.Parameters.AddWithValue("b", build.Value) |> ignore
             upd.ExecuteNonQuery() |> ignore
             CancellationAccepted
+        |> fun outcome ->
+            tx.Commit()
+            outcome
 
     member _.BuildSnapshot(org: OrganizationId, project: ProjectId, build: BuildId) : (string * bool) option =
         use conn = openConn ()
+        use tx = beginTenantTransaction conn org
         use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
         cmd.CommandText <-
             "SELECT status, cancellation_requested FROM builds
               WHERE organization_id = @o AND project_id = @p AND id = @b"
@@ -1343,11 +1435,18 @@ type Store(connectionString: string) =
         cmd.Parameters.AddWithValue("p", project.Value) |> ignore
         cmd.Parameters.AddWithValue("b", build.Value) |> ignore
         use r = cmd.ExecuteReader()
-        if r.Read() then Some(r.GetString 0, r.GetBoolean 1) else None
+        let snapshot = if r.Read() then Some(r.GetString 0, r.GetBoolean 1) else None
+        r.Close()
+        tx.Commit()
+        snapshot
 
     member _.CountOutbox(org: OrganizationId) : int =
         use conn = openConn ()
+        use tx = beginTenantTransaction conn org
         use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
         cmd.CommandText <- "SELECT count(*) FROM outbox WHERE organization_id = @o"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
-        cmd.ExecuteScalar() :?> int64 |> int
+        let count = cmd.ExecuteScalar() :?> int64 |> int
+        tx.Commit()
+        count

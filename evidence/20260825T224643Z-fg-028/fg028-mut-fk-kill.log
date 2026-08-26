@@ -1,0 +1,14 @@
+[37m[[37m23:21:48 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0m[1000D[?25h[37m[[37m23:21:48 [31mERR[37m] [36mFogell.Store.FG-028 forced tenant isolation.a real NOBYPASSRLS runtime role is fail-closed and Store sets only transaction-local context[37m failed in [32m00:00:00.1020000[37m. [36m
+remaining attempt lineage is tenant-composite.
+[32mexpected[36m: [32m2[36mL
+[31m  actual[36m: [31m1[36mL
+   at Fogell.Store.Tests.tenantIsolation@403-20.Invoke(NpgsqlCommand lineage) in /home/srikanth/projects/fogell-worktrees/fg-028-forced-tenant-rls/tests/Fogell.Store.Tests/Tests.fs:line 406
+   at Microsoft.FSharp.Core.Operators.Using[T,TResult](T resource, FSharpFunc`2 action) in /__w/1/s/src/fsharp/src/FSharp.Core/prim-types.fs:line 5488
+   at Microsoft.FSharp.Core.Operators.Using[T,TResult](T resource, FSharpFunc`2 action) in /__w/1/s/src/fsharp/src/FSharp.Core/prim-types.fs:line 5488
+   at Microsoft.FSharp.Core.Operators.Using[T,TResult](T resource, FSharpFunc`2 action) in /__w/1/s/src/fsharp/src/FSharp.Core/prim-types.fs:line 5488
+   at Microsoft.FSharp.Core.Operators.Using[T,TResult](T resource, FSharpFunc`2 action) in /__w/1/s/src/fsharp/src/FSharp.Core/prim-types.fs:line 5488[37m [37m<[37mExpecto[37m>[37m
+[0m[1000D[?25h[1000D[?25hFG026_LIVE_PG=1 FG026_SCHEMA=0003 FG026_CONCURRENCY=16
+[0m[1000D[?25hFG027B_LIVE_PG=1 FG027B_SCHEMA=0004 FG027B_CONCURRENCY=16
+[0m[1000D[?25h[37m[[37m23:21:48 [37mINF[37m] [37mEXPECTO! [36m57[37m tests run in [32m00:00:00.7509583[37m for [36mFogell.Store[37m – [36m56[37m passed, [36m0[37m ignored, [36m1[37m failed, [36m0[37m errored. [36m[37m [37m<[37mExpecto[37m>[37m
+[0m

@@ -1,0 +1,6 @@
+M  docs/EXECUTION_BOARD.md
+A  docs/tickets/FG-028.md
+M  src/Fogell.Store/Store.fs
+A  src/Fogell.Store/migrations/0005_forced_tenant_rls.sql
+M  tests/Fogell.Store.Tests/Tests.fs
+?? evidence/.20260825T224643Z-fg-028.partial.77zXcs/
