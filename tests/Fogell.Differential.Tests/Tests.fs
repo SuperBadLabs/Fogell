@@ -508,6 +508,101 @@ let controllerWorkerTiming =
                   (ControllerConfig.validateWorkerTiming 60000 180)
                   (Ok())
                   "the configured poll maximum remains usable with a sufficient lease"
+          }
+
+          test "shutdown interrupts an active maximum-length poll immediately" {
+              use stopping = new System.Threading.CancellationTokenSource()
+              let activePoll = WorkerControl.waitForActivePoll 60000 stopping.Token
+
+              stopping.Cancel()
+
+              Expect.isTrue
+                  (activePoll.Wait(TimeSpan.FromSeconds 1.0))
+                  "a sixty-second active poll wakes inside the shutdown grace window"
+              Expect.equal
+                  activePoll.Result
+                  WorkerControl.ActivePollResult.ShutdownRequested
+                  "shutdown is returned as control flow rather than a cancelled worker task"
+          }
+
+          test "an interrupted active poll retains the durable shutdown disposition" {
+              Expect.equal
+                  (ProcessGroup.handoff ChildExitKind.Forced ProcessGroupStopResult.Extinguished)
+                  ChildHandoff.ReconciliationRequired
+                  "verified process extinction still cannot publish terminal truth after shutdown"
+              Expect.equal
+                  (WorkerControl.reconciliationReason
+                      false
+                      false
+                      true
+                      ProcessGroupStopResult.Extinguished
+                      "worker_exception")
+                  "controller_shutdown"
+                  "the non-throwing wake reaches the reason persisted by RequireReconciliation"
+          }
+
+          test "idle state-root readiness is probed at most once per second" {
+              let mutable now = 0L
+              let mutable probes = 0
+              let mutable ready = true
+              let cache =
+                  ControllerConfig.StateRootReadinessCache(
+                      ControllerConfig.stateRootProbeIntervalMilliseconds,
+                      (fun () -> now),
+                      (fun () ->
+                          probes <- probes + 1
+                          ready))
+
+              Expect.isTrue (cache.Cached()) "the first claim boundary probes readiness"
+              ready <- false
+              for poll in 1L..39L do
+                  now <- poll * 25L
+                  Expect.isTrue
+                      (cache.Cached())
+                      "each minimum-interval idle poll uses the cached result"
+              Expect.equal probes 1 "forty 25 ms loops would still perform one durable probe"
+              now <- 1000L
+              Expect.isFalse (cache.Cached()) "the cadence boundary refreshes readiness"
+              Expect.equal probes 2 "one new interval performs exactly one new probe"
+          }
+
+          test "a cached state-root failure recovers on the next cadence boundary" {
+              let mutable now = 0L
+              let mutable ready = false
+              let cache =
+                  ControllerConfig.StateRootReadinessCache(
+                      ControllerConfig.stateRootProbeIntervalMilliseconds,
+                      (fun () -> now),
+                      (fun () -> ready))
+
+              Expect.isFalse (cache.Cached()) "an unavailable root suppresses claims"
+              ready <- true
+              now <- 999L
+              Expect.isFalse (cache.Cached()) "recovery waits for the bounded probe cadence"
+              now <- 1000L
+              Expect.isTrue (cache.Cached()) "the next cadence probe admits recovered storage"
+          }
+
+          test "a post-offer fresh probe overrides cached readiness before materialization" {
+              let mutable now = 0L
+              let mutable probes = 0
+              let mutable ready = true
+              let cache =
+                  ControllerConfig.StateRootReadinessCache(
+                      ControllerConfig.stateRootProbeIntervalMilliseconds,
+                      (fun () -> now),
+                      (fun () ->
+                          probes <- probes + 1
+                          ready))
+
+              Expect.isTrue (cache.Cached()) "cached readiness may authorize an offer"
+              ready <- false
+              Expect.isFalse (cache.Fresh()) "the post-offer boundary always probes again"
+              Expect.equal probes 2 "the forced check bypasses the one-second cache"
+              Expect.isFalse
+                  (cache.Cached())
+                  "the failed fresh result prevents another claim without probing again"
+              Expect.equal probes 2 "the forced failure also updates the idle cache"
           } ]
 
 let controllerStateRoot =

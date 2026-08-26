@@ -1,0 +1,917 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 6f024f8..0f97a5b 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -740,7 +740,7 @@ before their no-effect validation refusal. Compatibility counts are unchanged.
+ | FG-062 | P1 | TODO | `Fogell.Agent.Protocol` + `Runtime` (`adr/0008`): mTLS, versioned, agent-local durable log, offset recovery | **network partition ≥ 45 s costs zero log lines** — the Jenkins parity bar |
+ | FG-063 | P1 | TODO | Agent death handling: announce reconnect grace with a budget, then ABORTED with a named cause | matches Jenkins' behavior, which is exemplary here |
+ | FG-064 | P1 | **DONE** | Progressive console over the API (`adr/0005` match) | `GET …/logs?from=N` returns chunks plus a `next_sequence` cursor, so a client tails a running build rather than waiting for completion |
+-| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Local exact-tree acceptance closes the review findings: outer Run.Host cleanup binds every leader/group signal to the launcher's captured Linux birth identity and fails closed on PID/PGID reuse; durable raw-byte idempotency is resolved before decoding or parsing, so an exact malformed legacy replay remains 200 while changed malformed bytes remain the bound key's 409 conflict; and Codex `3866743417` is closed by making invalid-definition FIFO quarantine atomically move attempt → node → build and emit exactly one definition-reasoned reconciliation event/outbox pair. The adjacent lease-expiry audit also closes: expired `accepted`/`running`/`finalizing`/`cancelling` attempts atomically emit one `lease_expired` pair, while safe `offered` → `queued` recovery emits neither. Engine-created inner step groups are registered before release and reaped across Run.Host death; progressive publication is FIFO-serialized outside the output lock; and ambiguous post-launch exits enter reconciliation with a stable reason event and outbox while retaining the event fence until terminal publication. The fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth, plus graceful-shutdown reconciliation and byte-exact recovery evidence. Store remains 88/88 and the aggregate locked gate remains 894/894. A replacement exact-head hosted gate, Copilot/Codex review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
++| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Local exact-tree acceptance closes the review findings: outer Run.Host cleanup binds every leader/group signal to the launcher's captured Linux birth identity and fails closed on PID/PGID reuse; durable raw-byte idempotency is resolved before decoding or parsing, so an exact malformed legacy replay remains 200 while changed malformed bytes remain the bound key's 409 conflict; and invalid-definition quarantine atomically moves attempt → node → build with exactly one reasoned event/outbox pair. Review25 closes Codex `3866957698`: shutdown interrupts the active poll promptly and retains the durable `controller_shutdown` disposition. It also closes `3866957703`: readiness detects a missing or unwritable state root beyond startup through lazy ordered dependency checks and a lock-protected one-second cache; the worker checks cached readiness before claiming, forces a fresh probe after an offer, and fenced-requeues an unstarted offer on failure, so cached success never authorizes materialization after storage loss. The adjacent lease-expiry audit remains closed: expired `accepted`/`running`/`finalizing`/`cancelling` attempts atomically emit one `lease_expired` pair, while safe `offered` → `queued` recovery emits neither. Engine-created inner step groups are registered before release and reaped across Run.Host death; progressive publication is FIFO-serialized outside the output lock; and ambiguous post-launch exits enter reconciliation with a stable reason event and outbox while retaining the event fence until terminal publication. The fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth, plus graceful-shutdown reconciliation and byte-exact recovery evidence. Controller API is 33/33, Differential is 271/271, Store is 89/89, and the aggregate locked gate is 902/902. A replacement exact-head hosted gate, Copilot/Codex review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
+ | FG-065 | P2 | TODO | Jenkins-shaped REST compatibility shim, **off by default**, explicitly bounded | enabled only via env var; limitations documented |
+ | FG-066 | P2 | TODO | `Fogell.Cli`: validate / plan / run / build / resume / list / history | each subcommand has a golden-output test |
+ | FG-067 | P3 | TODO | `Fogell.Web` read-only build UI | renders a build's stages and log |
+diff --git a/docs/runbooks/controller-host.md b/docs/runbooks/controller-host.md
+index fab6316..cf493f8 100644
+--- a/docs/runbooks/controller-host.md
++++ b/docs/runbooks/controller-host.md
+@@ -56,12 +56,20 @@ rather than resolved against the controller's current directory. Before startup
+ continues, the controller creates a uniquely named probe without replacement,
+ writes and durably flushes it, and removes it. A root that cannot complete that
+ cycle is refused before readiness; existing operator data is never used as the
+-probe target. The configured Run.Host path is likewise checked against the Linux
+-kernel using the service's effective identity, so unrelated execute permission
+-bits do not authorize startup. The outer process-group launcher is fixed
++probe target. Runtime readiness repeats that exact effective-identity probe
++without creating a missing root. Readiness and worker claim admission each use
++a lock-protected cache of that probe, with results retained for at most one
++second to bound durable flushes under concurrent health checks and the worker's
++minimum 25 ms idle poll. The configured Run.Host path is likewise
++checked against the Linux kernel using the service's effective identity, so
++unrelated execute permission bits do not authorize startup. The outer
++process-group launcher is fixed
+ to `/usr/bin/setsid`; startup refuses before binding unless that exact file is
+ executable by the service identity. Readiness and the worker claim boundary
+-recheck both executables, so later removal returns 503 and cannot start new work.
++recheck both executables and the state root, so later removal returns 503 and
++cannot start new work. A cached state-root success may permit an offer, but the
++worker forces a fresh probe before materialization and fenced-requeues the
++unstarted offer if that probe fails. It never recreates a missing root.
+ Put the state root on storage whose loss/recovery policy matches the PostgreSQL
+ database; an incomplete journal is a reconciliation
+ event, not permission to guess success.
+@@ -74,8 +82,13 @@ Build the solution in locked mode, export the variables above, then start:
+ src/Fogell.Controller.Host/bin/Release/net10.0/Fogell.Controller.Host
+ ```
+ 
+-Use `/health/live` for process liveness and `/health/ready` for runtime database
+-reachability. Do not send traffic until readiness returns 200. Before an
++Use `/health/live` for HTTP-process liveness; it remains 200 when dependencies
++are unavailable. `/health/ready` lazily checks database reachability, runtime
++database capabilities, both execution launchers, and then state-root
++availability in that order, returning 503 at the first failure. Do not send
++traffic until readiness returns 200. The one-second readiness cache is a bounded
++point-in-time observation, not a transactional guarantee against storage loss
++immediately after a check. Before an
+ engine-created inner `setsid` step may execute user code, Run.Host records its
+ pid and Linux start ticks and observes the same process stopped. An EOF watchdog
+ bound to Run.Host liveness and the controller's outer-plus-registered-inner
+@@ -85,7 +98,10 @@ from authorizing a signal to a reused pid.
+ 
+ A graceful or ungraceful forced stop still moves started work to
+ `reconciliation_required`: proving every process extinct does not prove whether
+-an external effect or journal write completed. It never requeues a started
++an external effect or journal write completed. Shutdown cancellation interrupts
++the active worker poll promptly, including when it is configured for 60 seconds,
++then follows the ordinary cleanup path and records reason `controller_shutdown`.
++It never requeues a started
+ execution automatically. An expired never-started offer may be queued again,
+ while an expired `accepted`, `running`, `finalizing`, or `cancelling` lease
+ enters reconciliation. Each ambiguous expiry atomically moves attempt, node,
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index 25b4b76..c780a84 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -73,6 +73,19 @@ proved extinct: process extinction cannot prove whether an external effect or
+ journal write completed. Only an unforced natural `Run.Host` exit may publish its
+ journal terminal result.
+ 
++State-root availability remains a runtime condition, not a startup memory. The
++readiness route evaluates database reachability, runtime capabilities, launcher
++availability, and then the state-root probe lazily in that order. The full
++create-new, write, durable-flush, unlink, and verified-cleanup probe is protected
++by a lock and cached for at most one second, bounding durable I/O under concurrent
++health traffic while detecting a missing or newly unwritable root continuously.
++The worker uses its own instance of the same cache before claiming. After an
++offer it always forces a fresh probe before materialization; a failed fresh probe
++fenced-requeues the still-unstarted attempt instead of recreating a missing root
++or quarantining known storage unavailability as a corrupt definition. A cached
++success can therefore permit at most an offer; materialization still requires a
++fresh point-in-time probe.
++
+ Progressive output is masked, leak-screened, assigned FIFO order under the
+ walker's output lock, and delivered by one publisher outside that lock. Slow or
+ reentrant callbacks cannot freeze concurrent emitters. The first callback
+@@ -145,6 +158,22 @@ is reconciled by restore; an insert that waits is born in the new epoch.
+   `lease_expired`. An expired pre-launch `offered` attempt is safely returned to
+   `queued` and emits neither record; repeated scans publish nothing further.
+ 
++## Review 25 closure
++
++- Codex finding `3866957698` is closed by making the active child poll wait
++  cancellation-aware without letting cancellation escape as a generic worker
++  failure. Shutdown interrupts even a configured 60-second poll promptly, sets
++  the existing interrupted disposition, performs the ordinary identity-bound
++  cleanup, and durably records `controller_shutdown` reconciliation.
++- Codex finding `3866957703` is closed by extending state-root readiness beyond
++  startup. `/health/ready` checks database, capabilities, launchers, and state
++  root lazily in order; the lock-protected monotonic cache limits the full
++  create/write/flush/unlink probe to once per second and recovers on the next
++  cadence boundary. The worker uses cached readiness before claiming and a
++  forced fresh probe after every offer but before materialization. Fresh failure
++  fenced-requeues that unstarted offer, so cached readiness cannot authorize
++  execution after the root disappears or becomes unwritable.
++
+ These are local exact-tree closure claims only. Exact-head hosted gates and
+ review coverage, publication, and merge remain outstanding.
+ 
+@@ -169,14 +198,14 @@ PostgreSQL service.
+ 
+ Exact-tree HeMan acceptance on fresh databases:
+ 
+-- Store: 88/88 passed;
+-- Controller API: 31/31 passed;
+-- Differential: 266/266 passed;
++- Store: 89/89 passed;
++- Controller API: 33/33 passed;
++- Differential: 271/271 passed;
+ - Execution: 100/100 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-locked repository gate also passes all 894 main-suite tests and every blocking
++locked repository gate also passes all 902 main-suite tests and every blocking
+ proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
+ recorded at publication rather than predicted here.
+ 
+diff --git a/src/Fogell.Controller.Host/Config.fs b/src/Fogell.Controller.Host/Config.fs
+index 11dbb8d..2b2595c 100644
+--- a/src/Fogell.Controller.Host/Config.fs
++++ b/src/Fogell.Controller.Host/Config.fs
+@@ -58,25 +58,114 @@ module ControllerConfig =
+     let internal executionLaunchersReady (config: ControllerConfig) =
+         executionLaunchersReadyAt config.RunHostPath config.SetsidPath
+ 
++    let private writeStateRootProbe probePath =
++        let options =
++            FileStreamOptions(
++                Mode = FileMode.CreateNew,
++                Access = FileAccess.Write,
++                Share = FileShare.None,
++                Options = (FileOptions.DeleteOnClose ||| FileOptions.WriteThrough),
++                UnixCreateMode = (UnixFileMode.UserRead ||| UnixFileMode.UserWrite))
++
++        use probe = File.Open(probePath, options)
++        probe.WriteByte 0uy
++        probe.Flush true
++
++    let private probePathAbsent probePath =
++        try
++            use _probe = File.Open(probePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite ||| FileShare.Delete)
++            false
++        with
++        | :? FileNotFoundException -> true
++        | _ -> false
++
++    let internal stateRootReadyAtWith writeProbe path =
++        // Readiness must not recreate a missing configured root: doing so could
++        // put durable controller state somewhere the operator did not restore.
++        if not (Directory.Exists path) then
++            false
++        else
++            let probePath =
++                Path.Combine(path, $".fogell-readiness-{Guid.NewGuid():N}.tmp")
++
++            let mutable written = false
++            let mutable cleaned = false
++
++            try
++                try
++                    writeProbe probePath
++                    written <- true
++                with _ ->
++                    ()
++
++                try
++                    File.Delete probePath
++                    cleaned <- probePathAbsent probePath
++                with _ ->
++                    cleaned <- false
++
++                written && cleaned && Directory.Exists path
++            with _ ->
++                false
++
++    let internal stateRootReadyAt path =
++        stateRootReadyAtWith writeStateRootProbe path
++
++    let internal stateRootReady (config: ControllerConfig) =
++        stateRootReadyAt config.StateRoot
++
++    [<Literal>]
++    let internal stateRootProbeIntervalMilliseconds = 1000L
++
++    type internal StateRootReadinessCache
++        (
++            probeIntervalMilliseconds: int64,
++            monotonicMilliseconds: unit -> int64,
++            probe: unit -> bool
++        ) =
++        do
++            if probeIntervalMilliseconds <= 0L then
++                invalidArg (nameof probeIntervalMilliseconds) "probe interval must be positive"
++
++        let gate = obj ()
++        let mutable lastProbeAt: int64 option = None
++        let mutable cachedReady = false
++
++        let runProbe now =
++            let ready =
++                try probe () with _ -> false
++
++            lastProbeAt <- Some now
++            cachedReady <- ready
++            ready
++
++        member _.Cached() =
++            lock gate (fun () ->
++                let now = monotonicMilliseconds ()
++
++                match lastProbeAt with
++                | None -> runProbe now
++                | Some last when now < last || now - last >= probeIntervalMilliseconds ->
++                    runProbe now
++                | Some _ -> cachedReady)
++
++        member _.Fresh() =
++            lock gate (fun () -> runProbe (monotonicMilliseconds ()))
++
++    let internal createStateRootReadinessCache (config: ControllerConfig) =
++        StateRootReadinessCache(
++            stateRootProbeIntervalMilliseconds,
++            (fun () -> Environment.TickCount64),
++            (fun () -> stateRootReady config))
++
+     let internal prepareStateRoot path =
+         try
+             Directory.CreateDirectory path |> ignore
+ 
+-            let probePath =
+-                Path.Combine(path, $".fogell-readiness-{Guid.NewGuid():N}.tmp")
+-
+-            let options =
+-                FileStreamOptions(
+-                    Mode = FileMode.CreateNew,
+-                    Access = FileAccess.Write,
+-                    Share = FileShare.None,
+-                    Options = (FileOptions.DeleteOnClose ||| FileOptions.WriteThrough),
+-                    UnixCreateMode = (UnixFileMode.UserRead ||| UnixFileMode.UserWrite))
+-
+-            use probe = File.Open(probePath, options)
+-            probe.WriteByte 0uy
+-            probe.Flush true
+-            Ok()
++            if stateRootReadyAt path then
++                Ok()
++            else
++                Error "FOGELL_STATE_ROOT cannot be created and written by the service identity"
+         with _ ->
+             Error "FOGELL_STATE_ROOT cannot be created and written by the service identity"
+ 
+diff --git a/src/Fogell.Controller.Host/Program.fs b/src/Fogell.Controller.Host/Program.fs
+index a0613cf..17e67d6 100644
+--- a/src/Fogell.Controller.Host/Program.fs
++++ b/src/Fogell.Controller.Host/Program.fs
+@@ -13,6 +13,9 @@ let private health status (ctx: HttpContext) =
+     ctx.Response.ContentType <- "application/json; charset=utf-8"
+     ctx.Response.WriteAsync(if status = 200 then "{\"status\":\"ready\"}" else "{\"status\":\"unavailable\"}")
+ 
++let internal readinessStatus databaseReady capabilitiesReady launchersReady stateRootReady =
++    if databaseReady () && capabilitiesReady () && launchersReady () && stateRootReady () then 200 else 503
++
+ [<EntryPoint>]
+ let main _ =
+     match ControllerConfig.load () with
+@@ -48,6 +51,9 @@ let main _ =
+                     eprintfn "FG-224 startup refused: runtime database capability is incomplete"
+                     3
+                 | Ok _, Ok _ ->
++                    let stateRootReadiness =
++                        ControllerConfig.createStateRootReadinessCache config
++
+                     let auth =
+                         match Authorization.configure config.ApiToken with
+                         | Ok value -> value
+@@ -80,12 +86,11 @@ let main _ =
+                         "/health/ready",
+                         RequestDelegate(fun ctx ->
+                             health
+-                                (if
+-                                     runtimeStore.Ping()
+-                                     && runtimeStore.RuntimeCapabilities()
+-                                     && ControllerConfig.executionLaunchersReady config
+-                                 then 200
+-                                 else 503)
++                                (readinessStatus
++                                    runtimeStore.Ping
++                                    runtimeStore.RuntimeCapabilities
++                                    (fun () -> ControllerConfig.executionLaunchersReady config)
++                                    (fun () -> stateRootReadiness.Cached()))
+                                 ctx))
+                     |> ignore
+ 
+diff --git a/src/Fogell.Controller.Host/Worker.fs b/src/Fogell.Controller.Host/Worker.fs
+index d8669f8..580298d 100644
+--- a/src/Fogell.Controller.Host/Worker.fs
++++ b/src/Fogell.Controller.Host/Worker.fs
+@@ -12,10 +12,41 @@ open Fogell.Domain
+ open Fogell.Journal
+ open Fogell.Store
+ 
++module internal WorkerControl =
++    [<RequireQualifiedAccess>]
++    type ActivePollResult =
++        | PollElapsed
++        | ShutdownRequested
++
++    let waitForActivePoll (pollMilliseconds: int) (stoppingToken: CancellationToken) =
++        task {
++            try
++                do! Task.Delay(pollMilliseconds, stoppingToken)
++                return ActivePollResult.PollElapsed
++            with :? OperationCanceledException when stoppingToken.IsCancellationRequested ->
++                // Cancellation is control flow here, not a worker failure. Return
++                // normally so the caller reaches its forced cleanup and durable
++                // controller_shutdown reconciliation path immediately.
++                return ActivePollResult.ShutdownRequested
++        }
++
++    let reconciliationReason leaseLost cancelled interrupted groupStop fallback =
++        if leaseLost then
++            "lease_lost"
++        elif cancelled then
++            "build_cancelled"
++        elif interrupted then
++            "controller_shutdown"
++        elif groupStop <> ProcessGroupStopResult.Extinguished then
++            "process_extinction_unconfirmed"
++        else
++            fallback
++
+ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWorker>) =
+     inherit BackgroundService()
+ 
+     let owner = $"local:{Environment.MachineName}:{Environment.ProcessId}:{Guid.NewGuid():N}"
++    let stateRootReadiness = ControllerConfig.createStateRootReadinessCache config
+     let diagnosticDrainBufferBytes = 64 * 1024
+     let diagnosticDrainGraceMilliseconds = 2000
+     let eventReadBufferBytes = 64 * 1024
+@@ -481,15 +512,22 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                                 nextRenewal <- DateTimeOffset.UtcNow.AddSeconds(float config.LeaseSeconds / 3.0)
+ 
+                         while not child.HasExited && not cancelled && not interrupted && not leaseLost do
+-                            do! Task.Delay(config.PollMilliseconds)
+-                            refreshControl false
+-
+-                            if not cancelled && not interrupted && not leaseLost then
+-                                let next, batch = drainEvents claim eventPath eventState sequence
+-                                sequence <- next
+-                                leaseLost <- batch.AuthorityLost
++                            match!
++                                WorkerControl.waitForActivePoll
++                                    config.PollMilliseconds
++                                    stoppingToken
++                            with
++                            | WorkerControl.ActivePollResult.ShutdownRequested ->
++                                interrupted <- true
++                            | WorkerControl.ActivePollResult.PollElapsed ->
+                                 refreshControl false
+ 
++                                if not cancelled && not interrupted && not leaseLost then
++                                    let next, batch = drainEvents claim eventPath eventState sequence
++                                    sequence <- next
++                                    leaseLost <- batch.AuthorityLost
++                                    refreshControl false
++
+                         if not cancelled && not interrupted && not leaseLost then
+                             child.WaitForExit()
+ 
+@@ -555,15 +593,11 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                                 exitKind
+ 
+                         let currentReconciliationReason () =
+-                            if leaseLost then
+-                                "lease_lost"
+-                            elif cancelled then
+-                                "build_cancelled"
+-                            elif interrupted then
+-                                "controller_shutdown"
+-                            elif groupStop <> ProcessGroupStopResult.Extinguished then
+-                                "process_extinction_unconfirmed"
+-                            else
++                            WorkerControl.reconciliationReason
++                                leaseLost
++                                cancelled
++                                interrupted
++                                groupStop
+                                 reconciliationReason
+ 
+                         match ProcessGroup.handoff finalExitKind groupStop with
+@@ -607,16 +641,43 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+ 
+     let runClaim (claim: ExecutionClaim) (stoppingToken: CancellationToken) =
+         task {
+-            // Recheck after the offer and before definition materialization or
+-            // BeginExecution. If an operator removes either trusted executable
+-            // after startup, the offered lease may expire safely; the attempt
+-            // never enters running and therefore needs no reconciliation.
+-            if ControllerConfig.executionLaunchersReady config then
+-                do! runReadyClaim claim stoppingToken
+-            else
++            // Recheck every runtime dependency after the offer and before
++            // definition materialization or BeginExecution. No child exists at
++            // this boundary, so unavailable durable storage can return the
++            // fenced offer to FIFO immediately rather than waiting for expiry.
++            if not (ControllerConfig.executionLaunchersReady config) then
+                 logger.LogError(
+                     "FG-224 execution launchers became unavailable before claim {AttemptId}; the attempt was not started",
+                     claim.AttemptId.Value)
++            elif not (stateRootReadiness.Fresh()) then
++                logger.LogError(
++                    "FG-224 state root became unavailable before claim {AttemptId}; the attempt was not started",
++                    claim.AttemptId.Value)
++
++                let requeued =
++                    try
++                        store.RequeueOwnedAttempt(
++                            claim.OrganizationId,
++                            claim.AttemptId,
++                            claim.Fence,
++                            owner)
++                    with ex ->
++                        logger.LogError(
++                            ex,
++                            "FG-224 state-root requeue failed for {AttemptId}",
++                            claim.AttemptId.Value)
++                        false
++
++                if requeued then
++                    logger.LogInformation(
++                        "FG-224 unavailable state root requeued unstarted claim {AttemptId}",
++                        claim.AttemptId.Value)
++                else
++                    logger.LogWarning(
++                        "FG-224 unavailable state-root requeue lost authority for {AttemptId}",
++                        claim.AttemptId.Value)
++            else
++                do! runReadyClaim claim stoppingToken
+         }
+ 
+     override _.ExecuteAsync(stoppingToken: CancellationToken) =
+@@ -628,6 +689,9 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                     if not (ControllerConfig.executionLaunchersReady config) then
+                         logger.LogError(
+                             "FG-224 execution launchers are unavailable; no work will be claimed")
++                    elif not (stateRootReadiness.Cached()) then
++                        logger.LogError(
++                            "FG-224 state root is unavailable; no work will be claimed")
+                     else
+                         for org in
+                             store.OrganizationIds()
+diff --git a/tests/Fogell.Controller.Api.Tests/Tests.fs b/tests/Fogell.Controller.Api.Tests/Tests.fs
+index dbc5188..73cd5a3 100644
+--- a/tests/Fogell.Controller.Api.Tests/Tests.fs
++++ b/tests/Fogell.Controller.Api.Tests/Tests.fs
+@@ -3,6 +3,7 @@ module Fogell.Controller.Api.Tests
+ open System
+ open System.Net
+ open System.Net.Http
++open System.Runtime.InteropServices
+ open System.Text
+ open System.Text.Json
+ open Expecto
+@@ -15,6 +16,11 @@ open Fogell.Store
+ open Fogell.Controller.Api
+ open Fogell.Controller.Host
+ 
++[<DllImport("libc")>]
++extern uint32 private geteuid()
++
++let private effectiveIdentityIsRoot () = geteuid() = 0u
++
+ let private connectionString =
+     match Environment.GetEnvironmentVariable "FOGELL_TEST_DATABASE_URL" with
+     | null | "" -> "Host=127.0.0.1;Port=55440;Username=fogell;Database=fogell"
+@@ -121,6 +127,206 @@ let private sendChunked (url: string) (idem: string) (body: byte array) =
+     use response = client.Send req
+     int response.StatusCode, response.Content.ReadAsStringAsync().Result
+ 
++let private stateRootReadiness =
++    let status databaseReady capabilitiesReady launchersReady stateRootReady =
++        Fogell.Controller.Host.Program.readinessStatus
++            (fun () -> databaseReady)
++            (fun () -> capabilitiesReady)
++            (fun () -> launchersReady)
++            (fun () -> stateRootReady)
++
++    testList
++        "FG-224 runtime state-root readiness"
++        [ test "a removed root stays unavailable until the operator restores it" {
++              let root =
++                  IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-runtime-state-{Guid.NewGuid():N}")
++
++              let evaluated = ResizeArray<string>()
++              let check name result () =
++                  evaluated.Add name
++                  result
++
++              Expect.equal
++                  (Fogell.Controller.Host.Program.readinessStatus
++                      (check "database" true)
++                      (check "capabilities" true)
++                      (check "launchers" false)
++                      (check "state-root" true))
++                  503
++                  "an earlier readiness failure is unavailable"
++              Expect.sequenceEqual
++                  evaluated
++                  [| "database"; "capabilities"; "launchers" |]
++                  "ordered readiness short-circuits before the durable state-root probe"
++
++              let mutable now = 0L
++              let mutable probes = 0
++              let mutable cachedReady = true
++              let readinessCache =
++                  ControllerConfig.StateRootReadinessCache(
++                      ControllerConfig.stateRootProbeIntervalMilliseconds,
++                      (fun () -> now),
++                      (fun () ->
++                          probes <- probes + 1
++                          cachedReady))
++
++              let cachedStatus () =
++                  Fogell.Controller.Host.Program.readinessStatus
++                      (fun () -> true)
++                      (fun () -> true)
++                      (fun () -> true)
++                      (fun () -> readinessCache.Cached())
++
++              for poll in 0L..39L do
++                  now <- poll * 25L
++                  Expect.equal (cachedStatus ()) 200 "healthy readiness uses the cached state-root result"
++
++              Expect.equal probes 1 "forty minimum-interval requests perform one durable probe"
++              cachedReady <- false
++              now <- 1000L
++              Expect.equal (cachedStatus ()) 503 "the cadence boundary observes a failed probe"
++              Expect.equal probes 2 "one elapsed cadence performs one additional probe"
++              cachedReady <- true
++              now <- 1999L
++              Expect.equal (cachedStatus ()) 503 "failure remains cached for less than one cadence"
++              now <- 2000L
++              Expect.equal (cachedStatus ()) 200 "readiness recovers at the next cadence boundary"
++              Expect.equal probes 3 "recovery performs exactly one additional probe"
++
++              use startCalls = new Threading.ManualResetEventSlim(false)
++              use probeEntered = new Threading.ManualResetEventSlim(false)
++              use releaseProbe = new Threading.ManualResetEventSlim(false)
++              let probeCountGate = obj ()
++              let mutable concurrentProbes = 0
++              let concurrentCache =
++                  ControllerConfig.StateRootReadinessCache(
++                      ControllerConfig.stateRootProbeIntervalMilliseconds,
++                      (fun () -> 0L),
++                      (fun () ->
++                          lock probeCountGate (fun () -> concurrentProbes <- concurrentProbes + 1)
++                          probeEntered.Set()
++                          releaseProbe.Wait()
++                          true))
++
++              let concurrentCalls =
++                  [| 1..32 |]
++                  |> Array.map (fun _ ->
++                      Threading.Tasks.Task.Run(fun () ->
++                          startCalls.Wait()
++                          concurrentCache.Cached()))
++
++              startCalls.Set()
++              Expect.isTrue (probeEntered.Wait 2000) "one concurrent request enters the durable probe"
++              Threading.Thread.Sleep 50
++              releaseProbe.Set()
++              Expect.isTrue
++                  (Threading.Tasks.Task.WaitAll(
++                      concurrentCalls |> Array.map (fun call -> call :> Threading.Tasks.Task),
++                      2000))
++                  "all concurrent readiness callers receive the cached result"
++              Expect.isTrue
++                  (concurrentCalls |> Array.forall (fun call -> call.Result))
++                  "the shared cached result remains ready"
++              Expect.equal concurrentProbes 1 "concurrent callers cannot stampede the durable probe"
++
++              try
++                  IO.Directory.CreateDirectory root |> ignore
++                  Expect.isTrue (ControllerConfig.stateRootReadyAt root) "the available root accepts a durable probe"
++                  Expect.isEmpty
++                      (IO.Directory.GetFileSystemEntries root)
++                      "the successful probe leaves no sentinel"
++                  Expect.equal
++                      (status true true true true)
++                      200
++                      "all runtime dependencies produce ready"
++
++                  IO.Directory.Delete root
++                  Expect.isFalse (ControllerConfig.stateRootReadyAt root) "a removed root is unavailable"
++                  Expect.isFalse
++                      (IO.Directory.Exists root)
++                      "the runtime probe never recreates a missing configured root"
++                  Expect.equal
++                      (status true true true false)
++                      503
++                      "the endpoint fails closed when only the state root is unavailable"
++
++                  IO.Directory.CreateDirectory root |> ignore
++                  Expect.isTrue (ControllerConfig.stateRootReadyAt root) "an operator-restored root recovers"
++                  Expect.equal
++                      (status true true true true)
++                      200
++                      "readiness recovers without restarting the controller"
++                  Expect.isEmpty
++                      (IO.Directory.GetFileSystemEntries root)
++                      "the recovery probe leaves no sentinel"
++              finally
++                  if IO.Directory.Exists root then
++                      IO.Directory.Delete(root, true)
++          }
++
++          test "a failed write probe is unavailable, cleaned, and recoverable" {
++              let root =
++                  IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-runtime-unwritable-{Guid.NewGuid():N}")
++
++              let operatorData = IO.Path.Combine(root, "operator-data")
++
++              try
++                  IO.Directory.CreateDirectory root |> ignore
++                  IO.File.WriteAllText(operatorData, "preserve me")
++
++                  let partialWriteThenFail probePath =
++                      IO.File.WriteAllText(probePath, "partial probe")
++                      raise (UnauthorizedAccessException "simulated read-only state volume")
++
++                  Expect.isFalse
++                      (ControllerConfig.stateRootReadyAtWith partialWriteThenFail root)
++                      "a write or flush failure makes the state dependency unavailable"
++                  Expect.equal
++                      (status true true true false)
++                      503
++                      "the endpoint fails closed on the write-probe result"
++                  Expect.sequenceEqual
++                      (IO.Directory.GetFileSystemEntries root)
++                      [| operatorData |]
++                      "failure cleanup removes the partial probe without changing operator data"
++                  Expect.equal (IO.File.ReadAllText operatorData) "preserve me" "existing durable state is untouched"
++
++                  IO.File.SetUnixFileMode(root, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserExecute)
++
++                  if not (effectiveIdentityIsRoot ()) then
++                      Expect.isFalse
++                          (ControllerConfig.stateRootReadyAt root)
++                          "the production probe follows the service identity on a read-only root"
++                      Expect.sequenceEqual
++                          (IO.Directory.GetFileSystemEntries root)
++                          [| operatorData |]
++                          "a refused production probe leaves no artifact"
++
++                  IO.File.SetUnixFileMode(
++                      root,
++                      IO.UnixFileMode.UserRead
++                      ||| IO.UnixFileMode.UserWrite
++                      ||| IO.UnixFileMode.UserExecute)
++
++                  Expect.isTrue (ControllerConfig.stateRootReadyAt root) "the real probe succeeds after recovery"
++                  Expect.equal
++                      (status true true true true)
++                      200
++                      "readiness recovers after write access returns"
++                  Expect.sequenceEqual
++                      (IO.Directory.GetFileSystemEntries root)
++                      [| operatorData |]
++                      "the successful recovery probe also leaves no artifact"
++              finally
++                  if IO.Directory.Exists root then
++                      IO.File.SetUnixFileMode(
++                          root,
++                          IO.UnixFileMode.UserRead
++                          ||| IO.UnixFileMode.UserWrite
++                          ||| IO.UnixFileMode.UserExecute)
++                      IO.Directory.Delete(root, true)
++          } ]
++
+ let private executionLauncherValidation =
+     let variables =
+         [ "FOGELL_DATABASE_URL"; "FOGELL_MAINTENANCE_DATABASE_URL"
+@@ -961,4 +1167,13 @@ let main argv =
+             eprintfn $"migrate failed: {e}"
+             1
+         | Ok _ ->
+-            runTestsWithCLIArgs [] argv (testSequenced (testList "Fogell.Controller.Api" [ executionLauncherValidation; authorization; endpoints ]))
++            runTestsWithCLIArgs
++                []
++                argv
++                (testSequenced
++                    (testList
++                        "Fogell.Controller.Api"
++                        [ stateRootReadiness
++                          executionLauncherValidation
++                          authorization
++                          endpoints ]))
+diff --git a/tests/Fogell.Differential.Tests/Tests.fs b/tests/Fogell.Differential.Tests/Tests.fs
+index 85b89a2..61edc21 100644
+--- a/tests/Fogell.Differential.Tests/Tests.fs
++++ b/tests/Fogell.Differential.Tests/Tests.fs
+@@ -508,6 +508,101 @@ let controllerWorkerTiming =
+                   (ControllerConfig.validateWorkerTiming 60000 180)
+                   (Ok())
+                   "the configured poll maximum remains usable with a sufficient lease"
++          }
++
++          test "shutdown interrupts an active maximum-length poll immediately" {
++              use stopping = new System.Threading.CancellationTokenSource()
++              let activePoll = WorkerControl.waitForActivePoll 60000 stopping.Token
++
++              stopping.Cancel()
++
++              Expect.isTrue
++                  (activePoll.Wait(TimeSpan.FromSeconds 1.0))
++                  "a sixty-second active poll wakes inside the shutdown grace window"
++              Expect.equal
++                  activePoll.Result
++                  WorkerControl.ActivePollResult.ShutdownRequested
++                  "shutdown is returned as control flow rather than a cancelled worker task"
++          }
++
++          test "an interrupted active poll retains the durable shutdown disposition" {
++              Expect.equal
++                  (ProcessGroup.handoff ChildExitKind.Forced ProcessGroupStopResult.Extinguished)
++                  ChildHandoff.ReconciliationRequired
++                  "verified process extinction still cannot publish terminal truth after shutdown"
++              Expect.equal
++                  (WorkerControl.reconciliationReason
++                      false
++                      false
++                      true
++                      ProcessGroupStopResult.Extinguished
++                      "worker_exception")
++                  "controller_shutdown"
++                  "the non-throwing wake reaches the reason persisted by RequireReconciliation"
++          }
++
++          test "idle state-root readiness is probed at most once per second" {
++              let mutable now = 0L
++              let mutable probes = 0
++              let mutable ready = true
++              let cache =
++                  ControllerConfig.StateRootReadinessCache(
++                      ControllerConfig.stateRootProbeIntervalMilliseconds,
++                      (fun () -> now),
++                      (fun () ->
++                          probes <- probes + 1
++                          ready))
++
++              Expect.isTrue (cache.Cached()) "the first claim boundary probes readiness"
++              ready <- false
++              for poll in 1L..39L do
++                  now <- poll * 25L
++                  Expect.isTrue
++                      (cache.Cached())
++                      "each minimum-interval idle poll uses the cached result"
++              Expect.equal probes 1 "forty 25 ms loops would still perform one durable probe"
++              now <- 1000L
++              Expect.isFalse (cache.Cached()) "the cadence boundary refreshes readiness"
++              Expect.equal probes 2 "one new interval performs exactly one new probe"
++          }
++
++          test "a cached state-root failure recovers on the next cadence boundary" {
++              let mutable now = 0L
++              let mutable ready = false
++              let cache =
++                  ControllerConfig.StateRootReadinessCache(
++                      ControllerConfig.stateRootProbeIntervalMilliseconds,
++                      (fun () -> now),
++                      (fun () -> ready))
++
++              Expect.isFalse (cache.Cached()) "an unavailable root suppresses claims"
++              ready <- true
++              now <- 999L
++              Expect.isFalse (cache.Cached()) "recovery waits for the bounded probe cadence"
++              now <- 1000L
++              Expect.isTrue (cache.Cached()) "the next cadence probe admits recovered storage"
++          }
++
++          test "a post-offer fresh probe overrides cached readiness before materialization" {
++              let mutable now = 0L
++              let mutable probes = 0
++              let mutable ready = true
++              let cache =
++                  ControllerConfig.StateRootReadinessCache(
++                      ControllerConfig.stateRootProbeIntervalMilliseconds,
++                      (fun () -> now),
++                      (fun () ->
++                          probes <- probes + 1
++                          ready))
++
++              Expect.isTrue (cache.Cached()) "cached readiness may authorize an offer"
++              ready <- false
++              Expect.isFalse (cache.Fresh()) "the post-offer boundary always probes again"
++              Expect.equal probes 2 "the forced check bypasses the one-second cache"
++              Expect.isFalse
++                  (cache.Cached())
++                  "the failed fresh result prevents another claim without probing again"
++              Expect.equal probes 2 "the forced failure also updates the idle cache"
+           } ]
+ 
+ let controllerStateRoot =
+diff --git a/tests/Fogell.Store.Tests/Tests.fs b/tests/Fogell.Store.Tests/Tests.fs
+index 5e01fb4..5bd023f 100644
+--- a/tests/Fogell.Store.Tests/Tests.fs
++++ b/tests/Fogell.Store.Tests/Tests.fs
+@@ -2009,6 +2009,90 @@ let fencing =
+               Expect.equal (store.CountOutbox org) (outboxBefore + 1) "the scan race emits one outbox row total"
+           }
+ 
++          test "an unstarted offered claim requeues without reconciliation and advances its replacement fence" {
++              let org, project = freshProject ()
++              let admitted = admitOk (newBuild org project "offered-readiness-requeue" [ "build" ])
++              let owner = "local:unavailable-state-root"
++
++              let claim =
++                  match store.ClaimNextExecution(org, owner, "trusted-linux", [ "linux" ], 60) with
++                  | Ok(Some value) -> value
++                  | other -> failtestf "expected offered claim, got %A" other
++
++              Expect.equal
++                  (store.AttemptState(org, admitted.AttemptId))
++                  (Some("offered", claim.Fence.Value, None))
++                  "the readiness boundary has not begun or completed the offered attempt"
++
++              let outboxBefore = store.CountOutbox org
++
++              Expect.isTrue
++                  (store.RequeueOwnedAttempt(org, claim.AttemptId, claim.Fence, owner))
++                  "the exact unstarted owner and fence may return the offer immediately"
++
++              use conn = new Npgsql.NpgsqlConnection(connectionString)
++              conn.Open()
++              use lineage = conn.CreateCommand()
++              lineage.CommandText <-
++                  "SELECT a.state, n.status, b.status, a.lease_owner, a.lease_expires_at
++                     FROM attempts a
++                     JOIN nodes n
++                       ON n.organization_id = a.organization_id AND n.id = a.node_id
++                     JOIN builds b
++                       ON b.organization_id = n.organization_id AND b.id = n.build_id
++                    WHERE a.organization_id = @o AND a.id = @a"
++              lineage.Parameters.AddWithValue("o", org.Value) |> ignore
++              lineage.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
++              use row = lineage.ExecuteReader()
++              Expect.isTrue (row.Read()) "the requeued offered lineage exists"
++              Expect.equal (row.GetString 0) "queued" "attempt returned to queued"
++              Expect.equal (row.GetString 1) "queued" "node remained queued"
++              Expect.equal (row.GetString 2) "queued" "build remained queued"
++              Expect.isTrue (row.IsDBNull 3) "requeue cleared the offer owner"
++              Expect.isTrue (row.IsDBNull 4) "requeue cleared the offer expiry"
++              row.Close()
++
++              Expect.equal
++                  (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
++                  0
++                  "an unstarted offer emits no reconciliation event"
++              Expect.equal
++                  (store.CountOutbox org)
++                  outboxBefore
++                  "an unstarted offer emits no reconciliation outbox"
++
++              let replacementOwner = "local:restored-state-root"
++              let replacement =
++                  match
++                      store.ClaimNextExecution(
++                          org,
++                          replacementOwner,
++                          "trusted-linux",
++                          [ "linux" ],
++                          60)
++                  with
++                  | Ok(Some value) -> value
++                  | other -> failtestf "expected replacement claim, got %A" other
++
++              Expect.equal replacement.AttemptId claim.AttemptId "replacement receives the same queued attempt"
++              Expect.equal
++                  replacement.Fence.Value
++                  (claim.Fence.Value + 1L)
++                  "replacement offer advances the stale owner's fence exactly once"
++              Expect.equal
++                  (store.AttemptState(org, admitted.AttemptId))
++                  (Some("offered", replacement.Fence.Value, None))
++                  "replacement owns a new offer with no terminal result"
++              Expect.equal
++                  (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
++                  0
++                  "replacement claim still emits no reconciliation event"
++              Expect.equal
++                  (store.CountOutbox org)
++                  outboxBefore
++                  "replacement claim still emits no reconciliation outbox"
++          }
++
+           test "verified-extinction requeue rolls the whole lineage back to queued" {
+               let org, project = freshProject ()
+               let admitted = admitOk (newBuild org project "owned-requeue-rollup" [ "build" ])

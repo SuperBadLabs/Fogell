@@ -2009,6 +2009,90 @@ let fencing =
               Expect.equal (store.CountOutbox org) (outboxBefore + 1) "the scan race emits one outbox row total"
           }
 
+          test "an unstarted offered claim requeues without reconciliation and advances its replacement fence" {
+              let org, project = freshProject ()
+              let admitted = admitOk (newBuild org project "offered-readiness-requeue" [ "build" ])
+              let owner = "local:unavailable-state-root"
+
+              let claim =
+                  match store.ClaimNextExecution(org, owner, "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected offered claim, got %A" other
+
+              Expect.equal
+                  (store.AttemptState(org, admitted.AttemptId))
+                  (Some("offered", claim.Fence.Value, None))
+                  "the readiness boundary has not begun or completed the offered attempt"
+
+              let outboxBefore = store.CountOutbox org
+
+              Expect.isTrue
+                  (store.RequeueOwnedAttempt(org, claim.AttemptId, claim.Fence, owner))
+                  "the exact unstarted owner and fence may return the offer immediately"
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use lineage = conn.CreateCommand()
+              lineage.CommandText <-
+                  "SELECT a.state, n.status, b.status, a.lease_owner, a.lease_expires_at
+                     FROM attempts a
+                     JOIN nodes n
+                       ON n.organization_id = a.organization_id AND n.id = a.node_id
+                     JOIN builds b
+                       ON b.organization_id = n.organization_id AND b.id = n.build_id
+                    WHERE a.organization_id = @o AND a.id = @a"
+              lineage.Parameters.AddWithValue("o", org.Value) |> ignore
+              lineage.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+              use row = lineage.ExecuteReader()
+              Expect.isTrue (row.Read()) "the requeued offered lineage exists"
+              Expect.equal (row.GetString 0) "queued" "attempt returned to queued"
+              Expect.equal (row.GetString 1) "queued" "node remained queued"
+              Expect.equal (row.GetString 2) "queued" "build remained queued"
+              Expect.isTrue (row.IsDBNull 3) "requeue cleared the offer owner"
+              Expect.isTrue (row.IsDBNull 4) "requeue cleared the offer expiry"
+              row.Close()
+
+              Expect.equal
+                  (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
+                  0
+                  "an unstarted offer emits no reconciliation event"
+              Expect.equal
+                  (store.CountOutbox org)
+                  outboxBefore
+                  "an unstarted offer emits no reconciliation outbox"
+
+              let replacementOwner = "local:restored-state-root"
+              let replacement =
+                  match
+                      store.ClaimNextExecution(
+                          org,
+                          replacementOwner,
+                          "trusted-linux",
+                          [ "linux" ],
+                          60)
+                  with
+                  | Ok(Some value) -> value
+                  | other -> failtestf "expected replacement claim, got %A" other
+
+              Expect.equal replacement.AttemptId claim.AttemptId "replacement receives the same queued attempt"
+              Expect.equal
+                  replacement.Fence.Value
+                  (claim.Fence.Value + 1L)
+                  "replacement offer advances the stale owner's fence exactly once"
+              Expect.equal
+                  (store.AttemptState(org, admitted.AttemptId))
+                  (Some("offered", replacement.Fence.Value, None))
+                  "replacement owns a new offer with no terminal result"
+              Expect.equal
+                  (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
+                  0
+                  "replacement claim still emits no reconciliation event"
+              Expect.equal
+                  (store.CountOutbox org)
+                  outboxBefore
+                  "replacement claim still emits no reconciliation outbox"
+          }
+
           test "verified-extinction requeue rolls the whole lineage back to queued" {
               let org, project = freshProject ()
               let admitted = admitOk (newBuild org project "owned-requeue-rollup" [ "build" ])

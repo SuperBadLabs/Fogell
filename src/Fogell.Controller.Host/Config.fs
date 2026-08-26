@@ -58,25 +58,114 @@ module ControllerConfig =
     let internal executionLaunchersReady (config: ControllerConfig) =
         executionLaunchersReadyAt config.RunHostPath config.SetsidPath
 
+    let private writeStateRootProbe probePath =
+        let options =
+            FileStreamOptions(
+                Mode = FileMode.CreateNew,
+                Access = FileAccess.Write,
+                Share = FileShare.None,
+                Options = (FileOptions.DeleteOnClose ||| FileOptions.WriteThrough),
+                UnixCreateMode = (UnixFileMode.UserRead ||| UnixFileMode.UserWrite))
+
+        use probe = File.Open(probePath, options)
+        probe.WriteByte 0uy
+        probe.Flush true
+
+    let private probePathAbsent probePath =
+        try
+            use _probe = File.Open(probePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite ||| FileShare.Delete)
+            false
+        with
+        | :? FileNotFoundException -> true
+        | _ -> false
+
+    let internal stateRootReadyAtWith writeProbe path =
+        // Readiness must not recreate a missing configured root: doing so could
+        // put durable controller state somewhere the operator did not restore.
+        if not (Directory.Exists path) then
+            false
+        else
+            let probePath =
+                Path.Combine(path, $".fogell-readiness-{Guid.NewGuid():N}.tmp")
+
+            let mutable written = false
+            let mutable cleaned = false
+
+            try
+                try
+                    writeProbe probePath
+                    written <- true
+                with _ ->
+                    ()
+
+                try
+                    File.Delete probePath
+                    cleaned <- probePathAbsent probePath
+                with _ ->
+                    cleaned <- false
+
+                written && cleaned && Directory.Exists path
+            with _ ->
+                false
+
+    let internal stateRootReadyAt path =
+        stateRootReadyAtWith writeStateRootProbe path
+
+    let internal stateRootReady (config: ControllerConfig) =
+        stateRootReadyAt config.StateRoot
+
+    [<Literal>]
+    let internal stateRootProbeIntervalMilliseconds = 1000L
+
+    type internal StateRootReadinessCache
+        (
+            probeIntervalMilliseconds: int64,
+            monotonicMilliseconds: unit -> int64,
+            probe: unit -> bool
+        ) =
+        do
+            if probeIntervalMilliseconds <= 0L then
+                invalidArg (nameof probeIntervalMilliseconds) "probe interval must be positive"
+
+        let gate = obj ()
+        let mutable lastProbeAt: int64 option = None
+        let mutable cachedReady = false
+
+        let runProbe now =
+            let ready =
+                try probe () with _ -> false
+
+            lastProbeAt <- Some now
+            cachedReady <- ready
+            ready
+
+        member _.Cached() =
+            lock gate (fun () ->
+                let now = monotonicMilliseconds ()
+
+                match lastProbeAt with
+                | None -> runProbe now
+                | Some last when now < last || now - last >= probeIntervalMilliseconds ->
+                    runProbe now
+                | Some _ -> cachedReady)
+
+        member _.Fresh() =
+            lock gate (fun () -> runProbe (monotonicMilliseconds ()))
+
+    let internal createStateRootReadinessCache (config: ControllerConfig) =
+        StateRootReadinessCache(
+            stateRootProbeIntervalMilliseconds,
+            (fun () -> Environment.TickCount64),
+            (fun () -> stateRootReady config))
+
     let internal prepareStateRoot path =
         try
             Directory.CreateDirectory path |> ignore
 
-            let probePath =
-                Path.Combine(path, $".fogell-readiness-{Guid.NewGuid():N}.tmp")
-
-            let options =
-                FileStreamOptions(
-                    Mode = FileMode.CreateNew,
-                    Access = FileAccess.Write,
-                    Share = FileShare.None,
-                    Options = (FileOptions.DeleteOnClose ||| FileOptions.WriteThrough),
-                    UnixCreateMode = (UnixFileMode.UserRead ||| UnixFileMode.UserWrite))
-
-            use probe = File.Open(probePath, options)
-            probe.WriteByte 0uy
-            probe.Flush true
-            Ok()
+            if stateRootReadyAt path then
+                Ok()
+            else
+                Error "FOGELL_STATE_ROOT cannot be created and written by the service identity"
         with _ ->
             Error "FOGELL_STATE_ROOT cannot be created and written by the service identity"
 

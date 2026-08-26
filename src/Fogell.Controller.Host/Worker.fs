@@ -12,10 +12,41 @@ open Fogell.Domain
 open Fogell.Journal
 open Fogell.Store
 
+module internal WorkerControl =
+    [<RequireQualifiedAccess>]
+    type ActivePollResult =
+        | PollElapsed
+        | ShutdownRequested
+
+    let waitForActivePoll (pollMilliseconds: int) (stoppingToken: CancellationToken) =
+        task {
+            try
+                do! Task.Delay(pollMilliseconds, stoppingToken)
+                return ActivePollResult.PollElapsed
+            with :? OperationCanceledException when stoppingToken.IsCancellationRequested ->
+                // Cancellation is control flow here, not a worker failure. Return
+                // normally so the caller reaches its forced cleanup and durable
+                // controller_shutdown reconciliation path immediately.
+                return ActivePollResult.ShutdownRequested
+        }
+
+    let reconciliationReason leaseLost cancelled interrupted groupStop fallback =
+        if leaseLost then
+            "lease_lost"
+        elif cancelled then
+            "build_cancelled"
+        elif interrupted then
+            "controller_shutdown"
+        elif groupStop <> ProcessGroupStopResult.Extinguished then
+            "process_extinction_unconfirmed"
+        else
+            fallback
+
 type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWorker>) =
     inherit BackgroundService()
 
     let owner = $"local:{Environment.MachineName}:{Environment.ProcessId}:{Guid.NewGuid():N}"
+    let stateRootReadiness = ControllerConfig.createStateRootReadinessCache config
     let diagnosticDrainBufferBytes = 64 * 1024
     let diagnosticDrainGraceMilliseconds = 2000
     let eventReadBufferBytes = 64 * 1024
@@ -481,14 +512,21 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                 nextRenewal <- DateTimeOffset.UtcNow.AddSeconds(float config.LeaseSeconds / 3.0)
 
                         while not child.HasExited && not cancelled && not interrupted && not leaseLost do
-                            do! Task.Delay(config.PollMilliseconds)
-                            refreshControl false
-
-                            if not cancelled && not interrupted && not leaseLost then
-                                let next, batch = drainEvents claim eventPath eventState sequence
-                                sequence <- next
-                                leaseLost <- batch.AuthorityLost
+                            match!
+                                WorkerControl.waitForActivePoll
+                                    config.PollMilliseconds
+                                    stoppingToken
+                            with
+                            | WorkerControl.ActivePollResult.ShutdownRequested ->
+                                interrupted <- true
+                            | WorkerControl.ActivePollResult.PollElapsed ->
                                 refreshControl false
+
+                                if not cancelled && not interrupted && not leaseLost then
+                                    let next, batch = drainEvents claim eventPath eventState sequence
+                                    sequence <- next
+                                    leaseLost <- batch.AuthorityLost
+                                    refreshControl false
 
                         if not cancelled && not interrupted && not leaseLost then
                             child.WaitForExit()
@@ -555,15 +593,11 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                 exitKind
 
                         let currentReconciliationReason () =
-                            if leaseLost then
-                                "lease_lost"
-                            elif cancelled then
-                                "build_cancelled"
-                            elif interrupted then
-                                "controller_shutdown"
-                            elif groupStop <> ProcessGroupStopResult.Extinguished then
-                                "process_extinction_unconfirmed"
-                            else
+                            WorkerControl.reconciliationReason
+                                leaseLost
+                                cancelled
+                                interrupted
+                                groupStop
                                 reconciliationReason
 
                         match ProcessGroup.handoff finalExitKind groupStop with
@@ -607,16 +641,43 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
 
     let runClaim (claim: ExecutionClaim) (stoppingToken: CancellationToken) =
         task {
-            // Recheck after the offer and before definition materialization or
-            // BeginExecution. If an operator removes either trusted executable
-            // after startup, the offered lease may expire safely; the attempt
-            // never enters running and therefore needs no reconciliation.
-            if ControllerConfig.executionLaunchersReady config then
-                do! runReadyClaim claim stoppingToken
-            else
+            // Recheck every runtime dependency after the offer and before
+            // definition materialization or BeginExecution. No child exists at
+            // this boundary, so unavailable durable storage can return the
+            // fenced offer to FIFO immediately rather than waiting for expiry.
+            if not (ControllerConfig.executionLaunchersReady config) then
                 logger.LogError(
                     "FG-224 execution launchers became unavailable before claim {AttemptId}; the attempt was not started",
                     claim.AttemptId.Value)
+            elif not (stateRootReadiness.Fresh()) then
+                logger.LogError(
+                    "FG-224 state root became unavailable before claim {AttemptId}; the attempt was not started",
+                    claim.AttemptId.Value)
+
+                let requeued =
+                    try
+                        store.RequeueOwnedAttempt(
+                            claim.OrganizationId,
+                            claim.AttemptId,
+                            claim.Fence,
+                            owner)
+                    with ex ->
+                        logger.LogError(
+                            ex,
+                            "FG-224 state-root requeue failed for {AttemptId}",
+                            claim.AttemptId.Value)
+                        false
+
+                if requeued then
+                    logger.LogInformation(
+                        "FG-224 unavailable state root requeued unstarted claim {AttemptId}",
+                        claim.AttemptId.Value)
+                else
+                    logger.LogWarning(
+                        "FG-224 unavailable state-root requeue lost authority for {AttemptId}",
+                        claim.AttemptId.Value)
+            else
+                do! runReadyClaim claim stoppingToken
         }
 
     override _.ExecuteAsync(stoppingToken: CancellationToken) =
@@ -628,6 +689,9 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                     if not (ControllerConfig.executionLaunchersReady config) then
                         logger.LogError(
                             "FG-224 execution launchers are unavailable; no work will be claimed")
+                    elif not (stateRootReadiness.Cached()) then
+                        logger.LogError(
+                            "FG-224 state root is unavailable; no work will be claimed")
                     else
                         for org in
                             store.OrganizationIds()

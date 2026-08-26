@@ -3,6 +3,7 @@ module Fogell.Controller.Api.Tests
 open System
 open System.Net
 open System.Net.Http
+open System.Runtime.InteropServices
 open System.Text
 open System.Text.Json
 open Expecto
@@ -14,6 +15,11 @@ open Fogell.Domain
 open Fogell.Store
 open Fogell.Controller.Api
 open Fogell.Controller.Host
+
+[<DllImport("libc")>]
+extern uint32 private geteuid()
+
+let private effectiveIdentityIsRoot () = geteuid() = 0u
 
 let private connectionString =
     match Environment.GetEnvironmentVariable "FOGELL_TEST_DATABASE_URL" with
@@ -120,6 +126,206 @@ let private sendChunked (url: string) (idem: string) (body: byte array) =
     req.Content.Headers.TryAddWithoutValidation("content-type", "application/x-jenkinsfile") |> ignore
     use response = client.Send req
     int response.StatusCode, response.Content.ReadAsStringAsync().Result
+
+let private stateRootReadiness =
+    let status databaseReady capabilitiesReady launchersReady stateRootReady =
+        Fogell.Controller.Host.Program.readinessStatus
+            (fun () -> databaseReady)
+            (fun () -> capabilitiesReady)
+            (fun () -> launchersReady)
+            (fun () -> stateRootReady)
+
+    testList
+        "FG-224 runtime state-root readiness"
+        [ test "a removed root stays unavailable until the operator restores it" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-runtime-state-{Guid.NewGuid():N}")
+
+              let evaluated = ResizeArray<string>()
+              let check name result () =
+                  evaluated.Add name
+                  result
+
+              Expect.equal
+                  (Fogell.Controller.Host.Program.readinessStatus
+                      (check "database" true)
+                      (check "capabilities" true)
+                      (check "launchers" false)
+                      (check "state-root" true))
+                  503
+                  "an earlier readiness failure is unavailable"
+              Expect.sequenceEqual
+                  evaluated
+                  [| "database"; "capabilities"; "launchers" |]
+                  "ordered readiness short-circuits before the durable state-root probe"
+
+              let mutable now = 0L
+              let mutable probes = 0
+              let mutable cachedReady = true
+              let readinessCache =
+                  ControllerConfig.StateRootReadinessCache(
+                      ControllerConfig.stateRootProbeIntervalMilliseconds,
+                      (fun () -> now),
+                      (fun () ->
+                          probes <- probes + 1
+                          cachedReady))
+
+              let cachedStatus () =
+                  Fogell.Controller.Host.Program.readinessStatus
+                      (fun () -> true)
+                      (fun () -> true)
+                      (fun () -> true)
+                      (fun () -> readinessCache.Cached())
+
+              for poll in 0L..39L do
+                  now <- poll * 25L
+                  Expect.equal (cachedStatus ()) 200 "healthy readiness uses the cached state-root result"
+
+              Expect.equal probes 1 "forty minimum-interval requests perform one durable probe"
+              cachedReady <- false
+              now <- 1000L
+              Expect.equal (cachedStatus ()) 503 "the cadence boundary observes a failed probe"
+              Expect.equal probes 2 "one elapsed cadence performs one additional probe"
+              cachedReady <- true
+              now <- 1999L
+              Expect.equal (cachedStatus ()) 503 "failure remains cached for less than one cadence"
+              now <- 2000L
+              Expect.equal (cachedStatus ()) 200 "readiness recovers at the next cadence boundary"
+              Expect.equal probes 3 "recovery performs exactly one additional probe"
+
+              use startCalls = new Threading.ManualResetEventSlim(false)
+              use probeEntered = new Threading.ManualResetEventSlim(false)
+              use releaseProbe = new Threading.ManualResetEventSlim(false)
+              let probeCountGate = obj ()
+              let mutable concurrentProbes = 0
+              let concurrentCache =
+                  ControllerConfig.StateRootReadinessCache(
+                      ControllerConfig.stateRootProbeIntervalMilliseconds,
+                      (fun () -> 0L),
+                      (fun () ->
+                          lock probeCountGate (fun () -> concurrentProbes <- concurrentProbes + 1)
+                          probeEntered.Set()
+                          releaseProbe.Wait()
+                          true))
+
+              let concurrentCalls =
+                  [| 1..32 |]
+                  |> Array.map (fun _ ->
+                      Threading.Tasks.Task.Run(fun () ->
+                          startCalls.Wait()
+                          concurrentCache.Cached()))
+
+              startCalls.Set()
+              Expect.isTrue (probeEntered.Wait 2000) "one concurrent request enters the durable probe"
+              Threading.Thread.Sleep 50
+              releaseProbe.Set()
+              Expect.isTrue
+                  (Threading.Tasks.Task.WaitAll(
+                      concurrentCalls |> Array.map (fun call -> call :> Threading.Tasks.Task),
+                      2000))
+                  "all concurrent readiness callers receive the cached result"
+              Expect.isTrue
+                  (concurrentCalls |> Array.forall (fun call -> call.Result))
+                  "the shared cached result remains ready"
+              Expect.equal concurrentProbes 1 "concurrent callers cannot stampede the durable probe"
+
+              try
+                  IO.Directory.CreateDirectory root |> ignore
+                  Expect.isTrue (ControllerConfig.stateRootReadyAt root) "the available root accepts a durable probe"
+                  Expect.isEmpty
+                      (IO.Directory.GetFileSystemEntries root)
+                      "the successful probe leaves no sentinel"
+                  Expect.equal
+                      (status true true true true)
+                      200
+                      "all runtime dependencies produce ready"
+
+                  IO.Directory.Delete root
+                  Expect.isFalse (ControllerConfig.stateRootReadyAt root) "a removed root is unavailable"
+                  Expect.isFalse
+                      (IO.Directory.Exists root)
+                      "the runtime probe never recreates a missing configured root"
+                  Expect.equal
+                      (status true true true false)
+                      503
+                      "the endpoint fails closed when only the state root is unavailable"
+
+                  IO.Directory.CreateDirectory root |> ignore
+                  Expect.isTrue (ControllerConfig.stateRootReadyAt root) "an operator-restored root recovers"
+                  Expect.equal
+                      (status true true true true)
+                      200
+                      "readiness recovers without restarting the controller"
+                  Expect.isEmpty
+                      (IO.Directory.GetFileSystemEntries root)
+                      "the recovery probe leaves no sentinel"
+              finally
+                  if IO.Directory.Exists root then
+                      IO.Directory.Delete(root, true)
+          }
+
+          test "a failed write probe is unavailable, cleaned, and recoverable" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-runtime-unwritable-{Guid.NewGuid():N}")
+
+              let operatorData = IO.Path.Combine(root, "operator-data")
+
+              try
+                  IO.Directory.CreateDirectory root |> ignore
+                  IO.File.WriteAllText(operatorData, "preserve me")
+
+                  let partialWriteThenFail probePath =
+                      IO.File.WriteAllText(probePath, "partial probe")
+                      raise (UnauthorizedAccessException "simulated read-only state volume")
+
+                  Expect.isFalse
+                      (ControllerConfig.stateRootReadyAtWith partialWriteThenFail root)
+                      "a write or flush failure makes the state dependency unavailable"
+                  Expect.equal
+                      (status true true true false)
+                      503
+                      "the endpoint fails closed on the write-probe result"
+                  Expect.sequenceEqual
+                      (IO.Directory.GetFileSystemEntries root)
+                      [| operatorData |]
+                      "failure cleanup removes the partial probe without changing operator data"
+                  Expect.equal (IO.File.ReadAllText operatorData) "preserve me" "existing durable state is untouched"
+
+                  IO.File.SetUnixFileMode(root, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserExecute)
+
+                  if not (effectiveIdentityIsRoot ()) then
+                      Expect.isFalse
+                          (ControllerConfig.stateRootReadyAt root)
+                          "the production probe follows the service identity on a read-only root"
+                      Expect.sequenceEqual
+                          (IO.Directory.GetFileSystemEntries root)
+                          [| operatorData |]
+                          "a refused production probe leaves no artifact"
+
+                  IO.File.SetUnixFileMode(
+                      root,
+                      IO.UnixFileMode.UserRead
+                      ||| IO.UnixFileMode.UserWrite
+                      ||| IO.UnixFileMode.UserExecute)
+
+                  Expect.isTrue (ControllerConfig.stateRootReadyAt root) "the real probe succeeds after recovery"
+                  Expect.equal
+                      (status true true true true)
+                      200
+                      "readiness recovers after write access returns"
+                  Expect.sequenceEqual
+                      (IO.Directory.GetFileSystemEntries root)
+                      [| operatorData |]
+                      "the successful recovery probe also leaves no artifact"
+              finally
+                  if IO.Directory.Exists root then
+                      IO.File.SetUnixFileMode(
+                          root,
+                          IO.UnixFileMode.UserRead
+                          ||| IO.UnixFileMode.UserWrite
+                          ||| IO.UnixFileMode.UserExecute)
+                      IO.Directory.Delete(root, true)
+          } ]
 
 let private executionLauncherValidation =
     let variables =
@@ -961,4 +1167,13 @@ let main argv =
             eprintfn $"migrate failed: {e}"
             1
         | Ok _ ->
-            runTestsWithCLIArgs [] argv (testSequenced (testList "Fogell.Controller.Api" [ executionLauncherValidation; authorization; endpoints ]))
+            runTestsWithCLIArgs
+                []
+                argv
+                (testSequenced
+                    (testList
+                        "Fogell.Controller.Api"
+                        [ stateRootReadiness
+                          executionLauncherValidation
+                          authorization
+                          endpoints ]))

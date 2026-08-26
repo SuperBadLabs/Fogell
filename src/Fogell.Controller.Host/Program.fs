@@ -13,6 +13,9 @@ let private health status (ctx: HttpContext) =
     ctx.Response.ContentType <- "application/json; charset=utf-8"
     ctx.Response.WriteAsync(if status = 200 then "{\"status\":\"ready\"}" else "{\"status\":\"unavailable\"}")
 
+let internal readinessStatus databaseReady capabilitiesReady launchersReady stateRootReady =
+    if databaseReady () && capabilitiesReady () && launchersReady () && stateRootReady () then 200 else 503
+
 [<EntryPoint>]
 let main _ =
     match ControllerConfig.load () with
@@ -48,6 +51,9 @@ let main _ =
                     eprintfn "FG-224 startup refused: runtime database capability is incomplete"
                     3
                 | Ok _, Ok _ ->
+                    let stateRootReadiness =
+                        ControllerConfig.createStateRootReadinessCache config
+
                     let auth =
                         match Authorization.configure config.ApiToken with
                         | Ok value -> value
@@ -80,12 +86,11 @@ let main _ =
                         "/health/ready",
                         RequestDelegate(fun ctx ->
                             health
-                                (if
-                                     runtimeStore.Ping()
-                                     && runtimeStore.RuntimeCapabilities()
-                                     && ControllerConfig.executionLaunchersReady config
-                                 then 200
-                                 else 503)
+                                (readinessStatus
+                                    runtimeStore.Ping
+                                    runtimeStore.RuntimeCapabilities
+                                    (fun () -> ControllerConfig.executionLaunchersReady config)
+                                    (fun () -> stateRootReadiness.Cached()))
                                 ctx))
                     |> ignore
 

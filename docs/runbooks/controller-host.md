@@ -56,12 +56,20 @@ rather than resolved against the controller's current directory. Before startup
 continues, the controller creates a uniquely named probe without replacement,
 writes and durably flushes it, and removes it. A root that cannot complete that
 cycle is refused before readiness; existing operator data is never used as the
-probe target. The configured Run.Host path is likewise checked against the Linux
-kernel using the service's effective identity, so unrelated execute permission
-bits do not authorize startup. The outer process-group launcher is fixed
+probe target. Runtime readiness repeats that exact effective-identity probe
+without creating a missing root. Readiness and worker claim admission each use
+a lock-protected cache of that probe, with results retained for at most one
+second to bound durable flushes under concurrent health checks and the worker's
+minimum 25 ms idle poll. The configured Run.Host path is likewise
+checked against the Linux kernel using the service's effective identity, so
+unrelated execute permission bits do not authorize startup. The outer
+process-group launcher is fixed
 to `/usr/bin/setsid`; startup refuses before binding unless that exact file is
 executable by the service identity. Readiness and the worker claim boundary
-recheck both executables, so later removal returns 503 and cannot start new work.
+recheck both executables and the state root, so later removal returns 503 and
+cannot start new work. A cached state-root success may permit an offer, but the
+worker forces a fresh probe before materialization and fenced-requeues the
+unstarted offer if that probe fails. It never recreates a missing root.
 Put the state root on storage whose loss/recovery policy matches the PostgreSQL
 database; an incomplete journal is a reconciliation
 event, not permission to guess success.
@@ -74,8 +82,13 @@ Build the solution in locked mode, export the variables above, then start:
 src/Fogell.Controller.Host/bin/Release/net10.0/Fogell.Controller.Host
 ```
 
-Use `/health/live` for process liveness and `/health/ready` for runtime database
-reachability. Do not send traffic until readiness returns 200. Before an
+Use `/health/live` for HTTP-process liveness; it remains 200 when dependencies
+are unavailable. `/health/ready` lazily checks database reachability, runtime
+database capabilities, both execution launchers, and then state-root
+availability in that order, returning 503 at the first failure. Do not send
+traffic until readiness returns 200. The one-second readiness cache is a bounded
+point-in-time observation, not a transactional guarantee against storage loss
+immediately after a check. Before an
 engine-created inner `setsid` step may execute user code, Run.Host records its
 pid and Linux start ticks and observes the same process stopped. An EOF watchdog
 bound to Run.Host liveness and the controller's outer-plus-registered-inner
@@ -85,7 +98,10 @@ from authorizing a signal to a reused pid.
 
 A graceful or ungraceful forced stop still moves started work to
 `reconciliation_required`: proving every process extinct does not prove whether
-an external effect or journal write completed. It never requeues a started
+an external effect or journal write completed. Shutdown cancellation interrupts
+the active worker poll promptly, including when it is configured for 60 seconds,
+then follows the ordinary cleanup path and records reason `controller_shutdown`.
+It never requeues a started
 execution automatically. An expired never-started offer may be queued again,
 while an expired `accepted`, `running`, `finalizing`, or `cancelling` lease
 enters reconciliation. Each ambiguous expiry atomically moves attempt, node,
