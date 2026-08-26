@@ -91,7 +91,9 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          # The checked-in NuGet graphs contain the F# SDK's implicit
+          # FSharp.Core reference, so the SDK and locks are one versioned unit.
+          global-json-file: global.json
 
       - name: install babashka and ripgrep
         # Pinned release + checksum, never a mutable-branch installer piped to sudo:
@@ -122,6 +124,16 @@ jobs:
           if echo "$out" | grep -q "^skipped:"; then
             echo "Store tests were SKIPPED — postgres service not reachable"; exit 1
           fi
+
+      - name: runnable controller vertical slice (FG-224)
+        # This is the product seam the project suites cannot prove independently:
+        # least-privilege startup, real HTTP admission, supervised Run.Host child,
+        # fenced progressive logs and atomic terminal roll-up on a fresh database.
+        env:
+          FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
+          FOGELL_PG_PORT: 55440
+          FOGELL_BUILD_CONFIGURATION: Release
+        run: ./scripts/prove-runnable-controller.sh
 
       - name: backup/restore drill and hostile proof (FG-085a)
         # The postgres:16 service is also the client-tool distribution. Keeping

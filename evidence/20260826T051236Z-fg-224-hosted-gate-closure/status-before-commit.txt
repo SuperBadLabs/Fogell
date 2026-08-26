@@ -1,0 +1,3 @@
+M  scripts/prove-backup-restore-drill.sh
+A  src/Fogell.Store/migrations/0007_canonical_effect_key_check.sql
+?? evidence/.20260826T051236Z-fg-224-hosted-gate-closure.partial.GYtSAE/

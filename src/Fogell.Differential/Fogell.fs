@@ -515,7 +515,11 @@ module FogellSide =
             // FG-105: the run-scoped mutable state lives in WalkerCtx — one record,
             // one stated contract (see WalkerCtx.fs for its two-lock discipline).
             // These rebinds keep call sites unchanged.
-            let runCtx = WalkerCtx.create buildStartTimeInMillis isRestartedRun
+            let runCtx =
+                WalkerCtx.create
+                    buildStartTimeInMillis
+                    isRestartedRun
+                    (persistence |> Option.map (fun hooks -> hooks.OnOutput))
 
             // FG-053. The SCRIPT decides whether a timestamp-shaped prefix is
             // engine decoration or the build's own output — nothing in a line's
@@ -1293,11 +1297,14 @@ module FogellSide =
             Result.Error ex.Message
 
     /// FG-112. Run one build with durability hooks — the restart lane's entry.
-    /// Same walker, same semantics; the hooks journal top-level steps.
+    /// Same walker, same semantics; the hooks journal top-level steps. The
+    /// caller supplies the durable project build number because persisted runs
+    /// are not necessarily the first build of a job.
     let runPersisted
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
+        (buildNumber: int)
         (freshWorkspace: bool)
         (hooks: PersistenceHooks)
         (script: string)
@@ -1341,7 +1348,7 @@ module FogellSide =
                         + String.concat ", " unsafe
                     )
 
-            runWith envReplacements workspaceRoot jobName 1 None freshWorkspace None (Some hooks) script
+            runWith envReplacements workspaceRoot jobName buildNumber None freshWorkspace None (Some hooks) script
         with ex ->
             Result.Error ex.Message
 

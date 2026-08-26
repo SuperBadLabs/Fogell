@@ -31,6 +31,7 @@ let private available =
 let private token = String.replicate 32 "k"
 
 let private store = Store(connectionString)
+let private maxPipelineBytes = 1024
 
 let private startServer () =
     let auth =
@@ -40,13 +41,18 @@ let private startServer () =
 
     let builder = WebApplication.CreateBuilder()
     builder.WebHost.UseUrls "http://127.0.0.1:0" |> ignore
+    builder.WebHost.ConfigureKestrel(fun options ->
+        options.Limits.MaxRequestBodySize <- Nullable())
+    |> ignore
     builder.Logging.ClearProviders() |> ignore
     let app = builder.Build()
 
     Router.map
         { Store = store
           Auth = auth
-          DefaultTrustPool = "trusted-linux" }
+          TrustPool = "trusted-linux"
+          MaxPipelineBytes = maxPipelineBytes
+          MaxLogChunks = 1000 }
         app
     |> ignore
 
@@ -68,6 +74,24 @@ let private pipeline =
 
 let private client = new HttpClient()
 
+/// ByteArrayContent can re-derive Content-Length while HttpClient prepares the
+/// request, even after the header was cleared. This fixture deliberately cannot
+/// report a length, so HTTP/1.1 must exercise real chunk framing and Kestrel's
+/// unknown-length body path.
+type private UnknownLengthContent(body: byte array) =
+    inherit HttpContent()
+
+    override _.SerializeToStream(stream, _context, cancellationToken) =
+        cancellationToken.ThrowIfCancellationRequested()
+        stream.Write(body, 0, body.Length)
+
+    override _.SerializeToStreamAsync(stream, _context) =
+        stream.WriteAsync(body, 0, body.Length)
+
+    override _.TryComputeLength(length: byref<int64>) =
+        length <- 0L
+        false
+
 let private send (method: HttpMethod) (url: string) (bearer: string option) (idem: string option) (body: string option) =
     let req = new HttpRequestMessage(method, url)
     bearer |> Option.iter (fun t -> req.Headers.TryAddWithoutValidation("authorization", $"Bearer {t}") |> ignore)
@@ -76,6 +100,16 @@ let private send (method: HttpMethod) (url: string) (bearer: string option) (ide
     let r = client.Send req
     let text = r.Content.ReadAsStringAsync().Result
     int r.StatusCode, text
+
+let private sendChunked (url: string) (idem: string) (body: byte array) =
+    use req = new HttpRequestMessage(HttpMethod.Post, url)
+    req.Headers.TryAddWithoutValidation("authorization", $"Bearer {token}") |> ignore
+    req.Headers.TryAddWithoutValidation("idempotency-key", idem) |> ignore
+    req.Headers.TransferEncodingChunked <- Nullable true
+    req.Content <- new UnknownLengthContent(body)
+    req.Content.Headers.TryAddWithoutValidation("content-type", "application/x-jenkinsfile") |> ignore
+    use response = client.Send req
+    int response.StatusCode, response.Content.ReadAsStringAsync().Result
 
 /// FG-060. Authorization is proven BEFORE anything else, because every other
 /// test would otherwise be running against an open endpoint.
@@ -150,6 +184,61 @@ let endpoints =
               let code2, body2 = send HttpMethod.Post url (Some token) (Some "api-1") (Some pipeline)
               Expect.equal code2 200 "replay is 200, not a second 201"
               Expect.stringContains body2 "\"was_existing\":true" "recognised as existing"
+          }
+
+          test "one idempotency key cannot substitute different Jenkinsfile bytes" {
+              let org, project = freshProject ()
+              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              let firstCode, _ = send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some pipeline)
+              Expect.equal firstCode 201 "control admitted"
+              let changed = pipeline.Replace("echo 'hi'", "echo 'different'")
+              let conflictCode, conflict =
+                  send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some changed)
+              Expect.equal conflictCode 409 "substitution conflicts"
+              Expect.stringContains conflict "idempotency_conflict" "stable conflict code"
+          }
+
+          test "request placement override and oversized source both fail before admission" {
+              let org, project = freshProject ()
+              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              use request = new HttpRequestMessage(HttpMethod.Post, url)
+              request.Headers.TryAddWithoutValidation("authorization", $"Bearer {token}") |> ignore
+              request.Headers.TryAddWithoutValidation("idempotency-key", "placement-denied") |> ignore
+              request.Headers.TryAddWithoutValidation("fogell-trust-pool", "privileged") |> ignore
+              request.Content <- new StringContent(pipeline, Encoding.UTF8, "application/x-jenkinsfile")
+              use response = client.Send request
+              let denied = response.Content.ReadAsStringAsync().Result
+              Expect.equal (int response.StatusCode) 400 "placement header denied"
+              Expect.stringContains denied "placement_override_forbidden" "stable placement code"
+
+              let oversized = String('x', maxPipelineBytes + 1)
+              let tooLargeCode, tooLarge =
+                  send HttpMethod.Post url (Some token) (Some "oversized") (Some oversized)
+              Expect.equal tooLargeCode 413 "raw byte limit enforced"
+              Expect.stringContains tooLarge "pipeline_too_large" "stable size code"
+          }
+
+          test "chunked bodies retain the exact source limit and classify the sentinel byte as 413" {
+              let org, project = freshProject ()
+              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              let padding = String(' ', maxPipelineBytes - Encoding.UTF8.GetByteCount pipeline)
+              let exact = Encoding.UTF8.GetBytes(pipeline + padding)
+
+              Expect.equal exact.Length maxPipelineBytes "fixture reaches the byte boundary exactly"
+              let exactCode, exactBody = sendChunked url "chunked-exact" exact
+              Expect.equal
+                  exactCode
+                  201
+                  $"an unknown-length body at the public limit is admitted; response={exactBody}"
+              Expect.stringContains exactBody "\"was_existing\":false" "exact-limit source reached admission"
+
+              let overflow = Array.append exact [| byte ' ' |]
+              let overflowCode, overflowBody = sendChunked url "chunked-overflow" overflow
+              Expect.equal
+                  overflowCode
+                  413
+                  $"the one-byte sentinel is classified by the router, not faulted by Kestrel; response={overflowBody}"
+              Expect.stringContains overflowBody "pipeline_too_large" "chunked overflow keeps the stable error code"
           }
 
           test "a missing idempotency key is refused with a named code" {
@@ -257,6 +346,16 @@ let endpoints =
               Expect.stringContains missingBody "not_found" "unknown build is named"
           }
 
+          test "a malformed log cursor is refused instead of silently reading from zero" {
+              let org, project = freshProject ()
+              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              let _, body = send HttpMethod.Post url (Some token) (Some "bad-cursor-api") (Some pipeline)
+              let buildId = Text.RegularExpressions.Regex.Match(body, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
+              let code, response = send HttpMethod.Get $"{url}/{buildId}/logs?from=banana" (Some token) None None
+              Expect.equal code 400 "invalid cursor"
+              Expect.stringContains response "invalid_log_cursor" "stable cursor code"
+          }
+
           test "an unknown build is 404, not 500" {
               let org, project = freshProject ()
               let code, body =
@@ -323,6 +422,7 @@ let endpoints =
               let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
               let _, body = send HttpMethod.Post url (Some token) (Some "can-1") (Some pipeline)
               let buildId = Text.RegularExpressions.Regex.Match(body, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
+              let attemptId = Text.RegularExpressions.Regex.Match(body, "\"attempt_id\":\"([^\"]+)\"").Groups[1].Value
 
               let code1, b1 = send HttpMethod.Post $"{url}/{buildId}/cancel" (Some token) None None
               Expect.equal code1 202 "accepted"
@@ -332,16 +432,16 @@ let endpoints =
               Expect.equal code2 202 "a retry is idempotent, not an error"
               Expect.stringContains b2 "\"already_requested\":true" "reports that it was already requested"
 
-              use conn = new Npgsql.NpgsqlConnection(connectionString)
-              conn.Open()
-              use terminal = conn.CreateCommand()
-              terminal.CommandText <-
-                  "UPDATE builds SET status = 'succeeded', cancellation_requested = false
-                    WHERE organization_id = @o AND project_id = @p AND id = @b"
-              terminal.Parameters.AddWithValue("o", org.Value) |> ignore
-              terminal.Parameters.AddWithValue("p", project.Value) |> ignore
-              terminal.Parameters.AddWithValue("b", Guid.Parse buildId) |> ignore
-              Expect.equal (terminal.ExecuteNonQuery()) 1 "terminal control updates the exact build"
+              let fence =
+                  match store.OfferAttempt(org, AttemptId(Guid.Parse attemptId), "api-terminal", 60) with
+                  | Ok value -> value
+                  | Error error -> failtestf "offer failed: %s" error
+              Expect.isTrue
+                  (store.AcceptAttempt(org, AttemptId(Guid.Parse attemptId), fence, "api-terminal"))
+                  "accepted"
+              match store.PublishTerminal(org, AttemptId(Guid.Parse attemptId), fence, "api-terminal", Success) with
+              | Ok _ -> ()
+              | Error error -> failtestf "terminal roll-up failed: %s" error
 
               let terminalCode, terminalBody =
                   send HttpMethod.Post $"{url}/{buildId}/cancel" (Some token) None None

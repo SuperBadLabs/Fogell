@@ -151,7 +151,11 @@ module WalkerCtx =
 
     /// Build the run-scoped state. Everything mutable lives inside this call's
     /// closures; the returned record is the only handle.
-    let create (buildStartTimeInMillis: int64) (isRestartedRun: bool) : WalkerCtx =
+    let create
+        (buildStartTimeInMillis: int64)
+        (isRestartedRun: bool)
+        (onOutput: (string -> unit) option)
+        : WalkerCtx =
         let output = System.Collections.Generic.List<string>()
         // Parallel branches append from several threads at once; this one lock
         // also orders output against secret registration and the fired-set.
@@ -199,6 +203,17 @@ module WalkerCtx =
                         else
                             Secrets.mask (boundSecrets |> Seq.map fst |> List.ofSeq) line
 
+                    // A transformed secret can survive the ordinary masker.
+                    // The terminal trace refuses those lines later, but a
+                    // progressive callback happens NOW and must not publish the
+                    // bytes first. Executor emits the safe warning separately;
+                    // retain the line for the terminal leak guard and suppress
+                    // only its external publication.
+                    let safeToPublish =
+                        boundSecrets.Count = 0
+                        || (Secrets.detectLeaks (boundSecrets |> Seq.map fst |> List.ofSeq) safe
+                            |> List.isEmpty)
+
                     // AFTER masking, deliberately. The prefix carries no secret,
                     // and masking a line whose start has already moved would let
                     // an offset-based masker act on the wrong span.
@@ -219,7 +234,13 @@ module WalkerCtx =
                         else
                             safe
 
-                    output.Add stamped)
+                    output.Add stamped
+                    // Keep the external stream under the same lock as the
+                    // in-memory trace so parallel branches cannot publish in a
+                    // different order from Output(). The line is already masked,
+                    // leak-screened and timestamped at this boundary.
+                    if safeToPublish then
+                        onOutput |> Option.iter (fun publish -> publish stamped))
           EnableTimestamps = fun () -> lock outputLock (fun () -> timestamps <- true)
           BindSecrets =
             fun bindings ->

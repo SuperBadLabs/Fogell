@@ -2,10 +2,414 @@ module Fogell.Differential.Tests
 
 open System
 open Expecto
+open Fogell.Controller.Host
 open Fogell.Differential
 open Fogell.Execution
 open Fogell.Groovy.Interpreter
 open Fogell.Ir
+
+/// FG-224. Progressive output leaves the engine at WalkerCtx.Emit, which is
+/// also the one run-scoped masking and ordering boundary.  These tests pin the
+/// publication contract directly so a future transport cannot accidentally
+/// publish raw bytes, reorder parallel lines, or replay the terminal snapshot.
+let progressiveOutputPublication =
+    let binding =
+        { ValueVariable = "TOKEN"
+          PathVariable = "TOKEN_FILE"
+          FilePath = "/not-used-by-this-test"
+          Value = "s3cr3t-value"
+          ValueVariableCarriesPath = false }
+
+    testList
+        "FG-224 progressive output publication"
+        [ test "OnOutput receives each safe line once, in trace order, after masking" {
+              let published = ResizeArray<string>()
+              let ctx = WalkerCtx.create 0L false (Some published.Add)
+
+              ctx.Emit "before"
+              ctx.BindSecrets [ binding ]
+              ctx.Emit "token=s3cr3t-value"
+              ctx.Emit "after"
+
+              let expected = [ "before"; "token=****"; "after" ]
+              Expect.equal (ctx.Output()) expected "the terminal trace stores the masked lines"
+              Expect.equal (List.ofSeq published) expected "progress is masked, ordered, and not replayed"
+          }
+
+          test "parallel publication has exactly the terminal trace order and cardinality" {
+              let published = ResizeArray<string>()
+              let ctx = WalkerCtx.create 0L false (Some published.Add)
+
+              System.Threading.Tasks.Parallel.For(
+                  0,
+                  256,
+                  Action<int>(fun i -> ctx.Emit $"parallel-{i}"))
+              |> ignore
+
+              let terminal = ctx.Output()
+              let progressive = List.ofSeq published
+              Expect.equal progressive terminal "the callback is ordered by the same lock as the trace"
+              Expect.equal progressive.Length 256 "every emission is published once"
+              Expect.equal
+                  (progressive |> Set.ofList |> Set.count)
+                  256
+                  "no emission is duplicated or lost"
+          }
+
+          test "a transformed secret is retained for terminal refusal but never published" {
+              let published = ResizeArray<string>()
+              let ctx = WalkerCtx.create 0L false (Some published.Add)
+              ctx.BindSecrets [ binding ]
+
+              ctx.Emit "eulav-t3rc3s"
+
+              Expect.equal
+                  (ctx.Output())
+                  [ "eulav-t3rc3s" ]
+                  "the terminal leak guard still receives the evidence"
+              Expect.isEmpty published "unsafe transformed bytes never cross the progressive boundary"
+          } ]
+
+let controllerEventDrainBudgets =
+    let frame (value: string) =
+        Text.Encoding.ASCII.GetBytes(Convert.ToBase64String(Text.Encoding.UTF8.GetBytes value) + "\n")
+
+    let state () =
+        { Offset = 0L
+          Tail = Array.empty
+          DiscardingOversizedFrame = false }
+
+    testList
+        "FG-224 controller event drain budgets"
+        [ test "a fixed backlog is consumed in bounded, exactly-once batches" {
+              let expected = [ for i in 0 .. 99 -> $"line-{i}" ]
+              let bytes = expected |> List.collect (frame >> Array.toList) |> Array.ofList
+              use stream = new IO.MemoryStream(bytes)
+              let cursor = state ()
+              let observed = ResizeArray<string>()
+              let mutable batches = 0
+              let mutable reachedEof = false
+
+              while not reachedEof do
+                  let result =
+                      EventStream.drainBatch stream cursor 1024 4096 3 (function
+                          | Encoded value ->
+                              value
+                              |> Text.Encoding.ASCII.GetString
+                              |> Convert.FromBase64String
+                              |> Text.Encoding.UTF8.GetString
+                              |> observed.Add
+                              true
+                          | Oversized -> false)
+
+                  batches <- batches + 1
+                  Expect.isTrue (result.FramesProcessed <= 3) "one poll never exceeds its frame budget"
+                  Expect.isTrue (result.BytesProcessed <= 4096) "one poll never exceeds its byte budget"
+                  reachedEof <- result.ReachedEof
+
+              Expect.isGreaterThan batches 1 "the backlog cannot be drained by one unbounded poll"
+              Expect.equal (List.ofSeq observed) expected "offset and tail preserve exact order without replay"
+          }
+
+          test "a producer extending the stream during every callback cannot extend one poll forever" {
+              use stream = new IO.MemoryStream()
+              let seed = frame "seed"
+              stream.Write(seed, 0, seed.Length)
+              stream.Position <- 0L
+              let cursor = state ()
+              let mutable published = 0
+
+              let result =
+                  EventStream.drainBatch stream cursor 1024 4096 5 (fun _ ->
+                      published <- published + 1
+
+                      if published <= 100 then
+                          let position = stream.Position
+                          stream.Position <- stream.Length
+                          stream.Write(seed, 0, seed.Length)
+                          stream.Position <- position
+
+                      true)
+
+              Expect.equal published 5 "the frame budget returns control while output is still arriving"
+              Expect.equal result.FramesProcessed 5 "exactly the configured work was performed"
+              Expect.isFalse result.ReachedEof "new backlog is left for the next control-plane turn"
+          }
+
+          test "a byte budget split inside a frame preserves its tail for the next poll" {
+              let encoded = frame (String('x', 200))
+              use stream = new IO.MemoryStream(encoded)
+              let cursor = state ()
+              let observed = ResizeArray<byte array>()
+              let first = EventStream.drainBatch stream cursor 1024 17 10 (fun value ->
+                  match value with Encoded bytes -> observed.Add bytes | Oversized -> ()
+                  true)
+
+              Expect.equal first.FramesProcessed 0 "an incomplete frame is not published"
+              Expect.equal cursor.Tail.Length 17 "only the inspected prefix is retained"
+
+              let mutable reachedEof = first.ReachedEof
+              while not reachedEof do
+                  let next = EventStream.drainBatch stream cursor 1024 17 10 (fun value ->
+                      match value with Encoded bytes -> observed.Add bytes | Oversized -> ()
+                      true)
+                  reachedEof <- next.ReachedEof
+
+              Expect.equal observed.Count 1 "the completed frame is published once"
+              Expect.equal observed[0] encoded[.. encoded.Length - 2] "the carried bytes are exact"
+          }
+
+          test "an oversized frame spanning slices emits one refusal marker" {
+              let bytes = Array.append (Array.create 40 (byte 'A')) [| byte '\n' |]
+              use stream = new IO.MemoryStream(bytes)
+              let cursor = state ()
+              let mutable markers = 0
+              let mutable encoded = 0
+              let mutable reachedEof = false
+
+              while not reachedEof do
+                  let result = EventStream.drainBatch stream cursor 10 7 4 (function
+                      | Oversized -> markers <- markers + 1; true
+                      | Encoded _ -> encoded <- encoded + 1; true)
+                  reachedEof <- result.ReachedEof
+
+              Expect.equal markers 1 "discard mode ends with exactly one named marker"
+              Expect.equal encoded 0 "no oversized payload fragment is mispublished as a frame"
+          }
+
+          test "a refused fenced append leaves its newline and every later frame unconsumed" {
+              let first = frame "first"
+              let second = frame "second"
+              let third = frame "third"
+              let bytes = Array.concat [ first; second; third ]
+              use stream = new IO.MemoryStream(bytes)
+              let cursor = state ()
+              let observed = ResizeArray<string>()
+
+              let result = EventStream.drainBatch stream cursor 1024 4096 10 (function
+                  | Oversized -> false
+                  | Encoded value ->
+                      let text =
+                          value
+                          |> Text.Encoding.ASCII.GetString
+                          |> Convert.FromBase64String
+                          |> Text.Encoding.UTF8.GetString
+                      observed.Add text
+                      text = "first")
+
+              Expect.isTrue result.AuthorityLost "publication refusal is surfaced immediately"
+              Expect.equal (List.ofSeq observed) [ "first"; "second" ] "the later third frame was never attempted"
+              Expect.equal
+                  cursor.Offset
+                  (int64 (first.Length + second.Length - 1))
+                  "the refused frame's newline is not consumed"
+              Expect.equal cursor.Tail second[.. second.Length - 2] "the refused frame remains an exact retry boundary"
+          }
+
+          test "post-exit draining terminates at its cumulative cap under a hot writer" {
+              let seed = frame "hot"
+              let mutable backing = seed
+              let cursor = state ()
+              let mutable published = 0
+              let mutable controlChecks = 0
+
+              let openStream () =
+                  Some(new IO.MemoryStream(backing) :> IO.Stream)
+
+              let completion =
+                  EventStream.drainToBoundary
+                      openStream
+                      cursor
+                      1024
+                      4096
+                      1
+                      65536
+                      7
+                      (fun () -> controlChecks <- controlChecks + 1; true)
+                      (fun _ ->
+                          published <- published + 1
+                          backing <- Array.append backing seed
+                          true)
+
+              Expect.equal completion.Stop CumulativeBudgetExhausted "a writer cannot postpone terminal work forever"
+              Expect.equal published 7 "the cumulative frame cap is exact"
+              Expect.isGreaterThan controlChecks 1 "control is interleaved between bounded slices"
+          } ]
+
+let controllerWorkerTiming =
+    testList
+        "FG-224 controller worker timing"
+        [ test "a poll at the one-third lease boundary is accepted" {
+              Expect.equal
+                  (ControllerConfig.validateWorkerTiming 3333 10)
+                  (Ok())
+                  "the integer boundary retains a full final-third renewal margin"
+          }
+
+          test "a poll one millisecond beyond the one-third lease boundary is rejected" {
+              Expect.equal
+                  (ControllerConfig.validateWorkerTiming 3334 10)
+                  (Error
+                      "FOGELL_WORKER_POLL_MS must be no more than one third of FOGELL_WORKER_LEASE_SECONDS (3333 ms for 10 s)")
+                  "startup names both variables and the exact safe bound"
+          }
+
+          test "a longer lease admits a proportionally longer poll" {
+              Expect.equal
+                  (ControllerConfig.validateWorkerTiming 60000 180)
+                  (Ok())
+                  "the configured poll maximum remains usable with a sufficient lease"
+          } ]
+
+let controllerProcessGroupExtinction =
+    let delivered _ = ProcessSignalResult.Delivered
+    let noPause () = ()
+
+    testList
+        "FG-224 controller process-group extinction"
+        [ test "Linux probe errno distinguishes absence, presence, and uncertainty" {
+              Expect.equal
+                  (ProcessGroup.classifyProbe -1 3)
+                  ProcessPresence.Absent
+                  "ESRCH is the only absent process-group result"
+              Expect.equal
+                  (ProcessGroup.classifyProbe -1 1)
+                  ProcessPresence.Present
+                  "EPERM proves a target exists even though it cannot be signalled"
+              Expect.equal
+                  (ProcessGroup.classifyProbe -1 22)
+                  ProcessPresence.Uncertain
+                  "unexpected errno cannot authorize a handoff"
+          }
+
+          test "an already absent leader and group need no signals" {
+              let mutable signals = 0
+              let signal _ = signals <- signals + 1; ProcessSignalResult.Delivered
+
+              let result =
+                  ProcessGroup.ensureExtinguished
+                      1
+                      1
+                      (fun () -> ProcessPresence.Absent)
+                      (fun () -> ProcessPresence.Absent)
+                      signal
+                      signal
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.Extinguished "absence is verified directly"
+              Expect.equal signals 0 "a dead process group is never signalled"
+          }
+
+          test "outer cleanup is executed exactly once" {
+              let mutable cleanups = 0
+              let cleanup =
+                  ProcessGroup.once (fun () ->
+                      cleanups <- cleanups + 1
+                      ProcessGroupStopResult.Extinguished)
+
+              Expect.equal (cleanup ()) ProcessGroupStopResult.Extinguished "first caller performs cleanup"
+              Expect.equal (cleanup ()) ProcessGroupStopResult.Extinguished "finally receives the cached result"
+              Expect.equal cleanups 1 "a reused numeric process-group id is never signalled twice"
+          }
+
+          test "the pre-setsid race terminates the leader even before its group exists" {
+              let mutable leader = ProcessPresence.Present
+              let mutable leaderSignals = []
+
+              let signalLeader signal =
+                  leaderSignals <- leaderSignals @ [ signal ]
+                  leader <- ProcessPresence.Absent
+                  ProcessSignalResult.Delivered
+
+              let result =
+                  ProcessGroup.ensureExtinguished
+                      1
+                      1
+                      (fun () -> leader)
+                      (fun () -> ProcessPresence.Absent)
+                      (fun _ -> ProcessSignalResult.TargetAbsent)
+                      signalLeader
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.Extinguished "leader and not-yet-created group are both absent"
+              Expect.equal leaderSignals [ 15 ] "TERM reaches the launcher directly"
+          }
+
+          test "a descendant surviving its leader is killed before extinction succeeds" {
+              let mutable group = ProcessPresence.Present
+              let mutable groupSignals = []
+
+              let signalGroup signal =
+                  groupSignals <- groupSignals @ [ signal ]
+
+                  if signal = 9 then
+                      group <- ProcessPresence.Absent
+
+                  ProcessSignalResult.Delivered
+
+              let result =
+                  ProcessGroup.ensureExtinguished
+                      1
+                      1
+                      (fun () -> ProcessPresence.Absent)
+                      (fun () -> group)
+                      signalGroup
+                      delivered
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.Extinguished "KILL is followed by a verified absent probe"
+              Expect.equal groupSignals [ 15; 9 ] "the whole group receives TERM then KILL"
+          }
+
+          test "a persistent group fails closed" {
+              let result =
+                  ProcessGroup.ensureExtinguished
+                      0
+                      0
+                      (fun () -> ProcessPresence.Absent)
+                      (fun () -> ProcessPresence.Present)
+                      delivered
+                      delivered
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.Persisted "persistence cannot authorize handoff"
+          }
+
+          test "an ambiguous final probe fails closed" {
+              let result =
+                  ProcessGroup.ensureExtinguished
+                      0
+                      0
+                      (fun () -> ProcessPresence.Absent)
+                      (fun () -> ProcessPresence.Uncertain)
+                      delivered
+                      delivered
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.StatusUncertain "unknown status cannot authorize handoff"
+          }
+
+          test "outer extinction permits only natural terminal publication" {
+              Expect.equal
+                  (ProcessGroup.handoff ChildExitKind.Natural ProcessGroupStopResult.Extinguished)
+                  ChildHandoff.NaturalTerminalAllowed
+                  "a naturally completed Run.Host may publish its journal terminal"
+              Expect.equal
+                  (ProcessGroup.handoff ChildExitKind.Forced ProcessGroupStopResult.Extinguished)
+                  ChildHandoff.ReconciliationRequired
+                  "outer extinction cannot prove nested step sessions ended after a forced stop"
+          }
+
+          test "natural exit still fails closed when outer cleanup is not certain" {
+              Expect.equal
+                  (ProcessGroup.handoff ChildExitKind.Natural ProcessGroupStopResult.Persisted)
+                  ChildHandoff.ReconciliationRequired
+                  "a persistent outer group blocks terminal publication"
+              Expect.equal
+                  (ProcessGroup.handoff ChildExitKind.Natural ProcessGroupStopResult.StatusUncertain)
+                  ChildHandoff.ReconciliationRequired
+                  "an uncertain outer probe blocks terminal publication"
+          } ]
 
 /// FG-002f. The acceptance this ticket actually demanded: emit each look-alike FROM A
 /// BUILD and assert it survives normalisation.
@@ -6470,7 +6874,11 @@ let main argv =
         argv
         (testList
             "Fogell.Differential"
-            [ hostedSignatures
+            [ progressiveOutputPublication
+              controllerEventDrainBudgets
+              controllerWorkerTiming
+              controllerProcessGroupExtinction
+              hostedSignatures
               stepDescriptorValidation
               genuineNullRuntime
               liveEnvAliasRestoration
