@@ -16,7 +16,6 @@
   <ItemGroup>
     <ProjectReference Include="../Fogell.Controller.Api/Fogell.Controller.Api.fsproj" />
     <ProjectReference Include="../Fogell.Store/Fogell.Store.fsproj" />
-    <ProjectReference Include="../Fogell.Execution/Fogell.Execution.fsproj" />
     <ProjectReference Include="../Fogell.Journal/Fogell.Journal.fsproj" />
   </ItemGroup>
   <ItemGroup>
