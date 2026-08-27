@@ -66,6 +66,23 @@ if bash "$identity_checker" 2.568.1 2.568.1 \
 fi
 echo "  rejected a controller session change across the live run"
 
+fake_bin=$scratch/fake-bin
+mkdir -p "$fake_bin"
+printf '#!/usr/bin/env bash\nexit 9\n' >"$fake_bin/base64"
+chmod +x "$fake_bin/base64"
+set +e
+PATH="$fake_bin:$PATH" bash -c \
+  'source "$1"; fogell_configure_jenkins_workspace_v2 luigi jenkins-lab' \
+  _ scripts/jenkins-workspace-v2.sh >"$scratch/base64-failure.log" 2>&1
+base64_rc=$?
+set -e
+if [ "$base64_rc" -ne 2 ]; then
+  echo "FAIL: shared collector configuration accepted a Base64 encoder failure" >&2
+  sed -n '1,80p' "$scratch/base64-failure.log" >&2
+  exit 1
+fi
+echo "  rejected a shared-collector Base64 encoder failure"
+
 fresh
 sed -i 's/^jenkins-core: 2\.568\.1$/jenkins-core: 9.99.9/' \
   "$scratch/case/receipts/fg037-251-steps.receipt.txt"
@@ -142,4 +159,4 @@ if [ "$probe_rc" -ne 2 ] \
 fi
 echo "  refused a dirty shared workspace collector before evidence creation"
 
-echo "FG-037 proof PASS (9 semantic + 3 controller-identity + 1 collector-drift rejection arms)"
+echo "FG-037 proof PASS (9 semantic + 3 controller-identity + 2 collector/configuration rejection arms)"

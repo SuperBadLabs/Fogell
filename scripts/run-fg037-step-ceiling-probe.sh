@@ -111,9 +111,13 @@ require_stable_inputs() {
 }
 
 jenkins_api_url=${FOGELL_JENKINS_URL%/}/api/json
+printf -v jenkins_host_q '%q' "$FOGELL_JENKINS_HOST"
+printf -v jenkins_container_q '%q' "$FOGELL_JENKINS_CONTAINER"
+# The quoted container word intentionally expands on HeMan for Luigi's shell.
+# shellcheck disable=SC2029
 actual_core=$(ssh "$FOGELL_JENKINS_HOST" \
-  podman exec "$FOGELL_JENKINS_CONTAINER" \
-  java -jar /usr/share/jenkins/jenkins.war --version 2>/dev/null)
+  "podman exec $jenkins_container_q java -jar /usr/share/jenkins/jenkins.war --version" \
+  2>/dev/null)
 if [ "$actual_core" != "$FOGELL_JENKINS_CORE" ]; then
   echo "REFUSED: live Jenkins core is $actual_core, expected $FOGELL_JENKINS_CORE" >&2
   exit 2
@@ -124,7 +128,6 @@ observe_endpoint() {
     -w '%header{x-jenkins}\t%header{x-jenkins-session}' "$jenkins_api_url"
 }
 
-printf -v jenkins_container_q '%q' "$FOGELL_JENKINS_CONTAINER"
 observe_container() {
   # The validated/quoted container argument intentionally expands on HeMan;
   # the resulting shell word and quoted curl format are interpreted on Luigi.
@@ -148,8 +151,8 @@ jenkins_session=$(bash "$identity_checker_snapshot" \
 # shellcheck source=scripts/jenkins-workspace-v2.sh disable=SC1091
 source "$collector_snapshot"
 fogell_configure_jenkins_workspace_v2 "$FOGELL_JENKINS_HOST" "$FOGELL_JENKINS_CONTAINER"
-export FOGELL_JENKINS_ENV_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} env\""
-export FOGELL_JENKINS_GIT_VERSION_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} git --version\""
+export FOGELL_JENKINS_ENV_CMD="ssh ${jenkins_host_q} \"podman exec ${jenkins_container_q} env\""
+export FOGELL_JENKINS_GIT_VERSION_CMD="ssh ${jenkins_host_q} \"podman exec ${jenkins_container_q} git --version\""
 
 mkdir -p "$output/cases" "$output/receipts"
 

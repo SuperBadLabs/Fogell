@@ -14,8 +14,13 @@ fogell_configure_jenkins_workspace_v2() {
 
   local jenkins_host=$1
   local jenkins_container=$2
+  local jenkins_host_q
+  local jenkins_container_q
   local collector_source
   local collector_b64
+
+  printf -v jenkins_host_q '%q' "$jenkins_host" || return 2
+  printf -v jenkins_container_q '%q' "$jenkins_container" || return 2
 
   read -r -d '' collector_source <<'FOGELL_WORKSPACE_COLLECTOR' || true
 set -uo pipefail
@@ -45,11 +50,14 @@ done <"$inventory"
 printf 'END\t%s\n' "$count"
 FOGELL_WORKSPACE_COLLECTOR
 
-  collector_b64=$(printf '%s' "$collector_source" | base64 -w 0)
-  export FOGELL_JENKINS_WORKSPACE_CMD="ssh ${jenkins_host} \"podman exec ${jenkins_container} bash -c \\\"printf %s ${collector_b64} | base64 -d | bash -s -- '/var/jenkins_home/workspace/{job}'\\\"\""
+  collector_b64=$(printf '%s' "$collector_source" | base64 -w 0) || {
+    echo "REFUSED: shared Jenkins workspace collector could not be encoded" >&2
+    return 2
+  }
+  export FOGELL_JENKINS_WORKSPACE_CMD="ssh ${jenkins_host_q} \"podman exec ${jenkins_container_q} bash -c \\\"printf %s ${collector_b64} | base64 -d | bash -s -- '/var/jenkins_home/workspace/{job}'\\\"\""
 
   # A compile-time refusal may never allocate a workspace. Precreate the empty
   # root so protocol v2 observes a real empty tree instead of treating a failed
   # `cd` as evidence.
-  export FOGELL_JENKINS_WIPE_CMD="ssh ${jenkins_host} \"podman exec ${jenkins_container} sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp && mkdir -p /var/jenkins_home/workspace/{job}\\\"\""
+  export FOGELL_JENKINS_WIPE_CMD="ssh ${jenkins_host_q} \"podman exec ${jenkins_container_q} sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp && mkdir -p /var/jenkins_home/workspace/{job}\\\"\""
 }
