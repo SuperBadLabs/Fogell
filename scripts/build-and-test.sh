@@ -121,6 +121,15 @@ echo "=== fail-closed evidence sealer proof (FG-223, blocking) ==="
 ./scripts/prove-seal-evidence.sh \
   || { echo "FAIL-CLOSED EVIDENCE SEALER PROOF FAILED"; exit 1; }
 
+# FG-037. The live 250/251/400 comparison stays off CI because it needs the
+# pinned Jenkins lab. Its fail-closed evidence boundaries are pure: nine receipt
+# mutations, three controller-identity substitutions and a dirty shared
+# workspace collector must all be rejected before publication.
+echo "=== step-ceiling evidence-boundary proof (FG-037, blocking) ==="
+./scripts/prove-fg037-step-ceiling.sh \
+  evidence/20260827T160955Z-fg037-step-ceiling \
+  || { echo "STEP-CEILING EVIDENCE-BOUNDARY PROOF FAILED"; exit 1; }
+
 # FG-162. Board rows quoting generated counts are re-derived from the committed
 # ledger. Runs EVERYWHERE including CI — both files are in the repo, unlike the
 # corpus-dependent scorecard check below.

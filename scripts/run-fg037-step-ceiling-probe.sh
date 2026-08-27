@@ -31,12 +31,18 @@ if [ "$FOGELL_JENKINS_CORE" != "2.568.1" ]; then
   exit 2
 fi
 
-# A dirty execution engine would make the receipt's HEAD identity false. Test,
-# docs and this probe may be uncommitted while the slice is developed; engine,
-# differential-harness, SDK-selection and repository build-policy changes may
-# not be. The glob pathspecs deliberately include FUTURE root-level
+# A dirty execution engine or evidence collector would make the receipt's HEAD
+# identity false. Tests and docs may be uncommitted while the slice is developed;
+# engine, differential-harness, probe/checker and repository build-policy changes
+# may not be. The glob pathspecs deliberately include FUTURE root-level
 # Directory.Build.* / Directory.Packages.* candidates, tracked or untracked.
-for required in Fogell.slnx global.json Directory.Build.props tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj; do
+for required in \
+  Fogell.slnx \
+  global.json \
+  Directory.Build.props \
+  tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj \
+  scripts/check-fg037-jenkins-identity.sh \
+  scripts/jenkins-workspace-v2.sh; do
   if [ ! -f "$required" ]; then
     echo "REFUSED: required FG-037 engine/build input is absent: $required" >&2
     exit 2
@@ -53,12 +59,75 @@ engine_input_pathspecs=(
   tools
 )
 
-engine_status=$(git status --porcelain=v1 --untracked-files=all -- "${engine_input_pathspecs[@]}")
-if [ -n "$engine_status" ]; then
-  echo "REFUSED: engine/build inputs differ from HEAD; commit or identify them before probing" >&2
-  printf '%s\n' "$engine_status" >&2
+probe_input_pathspecs=(
+  scripts/check-fg037-jenkins-identity.sh
+  scripts/check-fg037-step-ceiling.py
+  scripts/jenkins-workspace-v2.sh
+  scripts/prove-fg037-step-ceiling.sh
+  scripts/run-fg037-step-ceiling-probe.sh
+)
+
+input_status=$(git status --porcelain=v1 --untracked-files=all -- \
+  "${engine_input_pathspecs[@]}" "${probe_input_pathspecs[@]}")
+if [ -n "$input_status" ]; then
+  echo "REFUSED: engine/build or probe inputs differ from HEAD; commit or identify them before probing" >&2
+  printf '%s\n' "$input_status" >&2
   exit 2
 fi
+
+collector_snapshot=$(mktemp)
+identity_checker_snapshot=$(mktemp)
+trap 'rm -f "$collector_snapshot" "$identity_checker_snapshot"' EXIT
+git show HEAD:scripts/jenkins-workspace-v2.sh >"$collector_snapshot"
+git show HEAD:scripts/check-fg037-jenkins-identity.sh >"$identity_checker_snapshot"
+if ! cmp -s "$collector_snapshot" scripts/jenkins-workspace-v2.sh \
+  || ! cmp -s "$identity_checker_snapshot" scripts/check-fg037-jenkins-identity.sh; then
+  echo "REFUSED: load-bearing probe input changed after the clean-input check" >&2
+  exit 2
+fi
+collector_sha=$(sha256sum "$collector_snapshot" | awk '{print $1}')
+identity_checker_sha=$(sha256sum "$identity_checker_snapshot" | awk '{print $1}')
+
+jenkins_api_url=${FOGELL_JENKINS_URL%/}/api/json
+actual_core=$(ssh "$FOGELL_JENKINS_HOST" \
+  podman exec "$FOGELL_JENKINS_CONTAINER" \
+  java -jar /usr/share/jenkins/jenkins.war --version 2>/dev/null)
+if [ "$actual_core" != "$FOGELL_JENKINS_CORE" ]; then
+  echo "REFUSED: live Jenkins core is $actual_core, expected $FOGELL_JENKINS_CORE" >&2
+  exit 2
+fi
+
+observe_endpoint() {
+  curl -fsS --max-time 10 --max-redirs 0 -o /dev/null \
+    -w '%header{x-jenkins}\t%header{x-jenkins-session}' "$jenkins_api_url"
+}
+
+printf -v jenkins_container_q '%q' "$FOGELL_JENKINS_CONTAINER"
+observe_container() {
+  # The validated/quoted container argument intentionally expands on HeMan;
+  # the resulting shell word and quoted curl format are interpreted on Luigi.
+  # shellcheck disable=SC2029
+  ssh "$FOGELL_JENKINS_HOST" \
+    "podman exec $jenkins_container_q curl -fsS --max-time 10 --max-redirs 0 -o /dev/null -w '%header{x-jenkins}\\t%header{x-jenkins-session}' http://127.0.0.1:8080/api/json"
+}
+
+endpoint_identity=$(observe_endpoint) || {
+  echo "REFUSED: build endpoint did not expose Jenkins identity" >&2
+  exit 2
+}
+container_identity=$(observe_container) || {
+  echo "REFUSED: selected Jenkins container did not expose HTTP identity" >&2
+  exit 2
+}
+jenkins_session=$(bash "$identity_checker_snapshot" \
+  "$FOGELL_JENKINS_CORE" "$actual_core" \
+  "$endpoint_identity" "$container_identity") || exit $?
+
+# shellcheck source=scripts/jenkins-workspace-v2.sh disable=SC1091
+source "$collector_snapshot"
+fogell_configure_jenkins_workspace_v2 "$FOGELL_JENKINS_HOST" "$FOGELL_JENKINS_CONTAINER"
+export FOGELL_JENKINS_ENV_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} env\""
+export FOGELL_JENKINS_GIT_VERSION_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} git --version\""
 
 mkdir -p "$output/cases" "$output/receipts"
 
@@ -91,20 +160,6 @@ python3 scripts/check-fg037-step-ceiling.py \
     exit 1
   }
 
-curl -fsS --max-time 10 "$FOGELL_JENKINS_URL/api/json" >/dev/null
-actual_core=$(ssh "$FOGELL_JENKINS_HOST" \
-  podman exec "$FOGELL_JENKINS_CONTAINER" \
-  java -jar /usr/share/jenkins/jenkins.war --version 2>/dev/null)
-if [ "$actual_core" != "$FOGELL_JENKINS_CORE" ]; then
-  echo "REFUSED: live Jenkins core is $actual_core, expected $FOGELL_JENKINS_CORE" >&2
-  exit 2
-fi
-
-source scripts/jenkins-workspace-v2.sh
-fogell_configure_jenkins_workspace_v2 "$FOGELL_JENKINS_HOST" "$FOGELL_JENKINS_CONTAINER"
-export FOGELL_JENKINS_ENV_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} env\""
-export FOGELL_JENKINS_GIT_VERSION_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} git --version\""
-
 cli_project=tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj
 
 # Build the exact executable used below, including its transitive engine
@@ -131,12 +186,27 @@ if [ "$run_rc" -ne 1 ]; then
   exit 1
 fi
 
+endpoint_identity=$(observe_endpoint) || {
+  echo "REFUSED: build endpoint identity disappeared after the live probe" >&2
+  exit 2
+}
+container_identity=$(observe_container) || {
+  echo "REFUSED: selected container identity disappeared after the live probe" >&2
+  exit 2
+}
+bash "$identity_checker_snapshot" \
+  "$FOGELL_JENKINS_CORE" "$actual_core" \
+  "$endpoint_identity" "$container_identity" "$jenkins_session" >/dev/null \
+  || exit $?
+
 python3 scripts/check-fg037-step-ceiling.py \
   --cases "$output/cases" --receipts "$output/receipts" \
   --jenkins-core "$FOGELL_JENKINS_CORE" | tee "$output/semantic-check.log"
 
 dotnet run --project "$cli_project" -c Release --no-build -- \
   --verify-seals "$output/receipts" >"$output/seal-verification.log" 2>&1
+
+scripts/prove-fg037-step-ceiling.sh "$output" >"$output/proof.log"
 
 {
   echo "utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -145,7 +215,8 @@ dotnet run --project "$cli_project" -c Release --no-build -- \
   echo "tree: $(git rev-parse 'HEAD^{tree}')"
   echo "dotnet: $(dotnet --version)"
   echo "jenkins-url: $FOGELL_JENKINS_URL"
-  echo "jenkins-core: $actual_core"
+  echo "jenkins-core: $actual_core (artifact, endpoint, and container-loopback agree)"
+  echo "jenkins-session: $jenkins_session (endpoint and container-loopback agree before and after builds)"
   echo "jenkins-host: $FOGELL_JENKINS_HOST"
   echo "jenkins-container: $FOGELL_JENKINS_CONTAINER"
   echo -n "jenkins-image-name: "
@@ -160,6 +231,8 @@ dotnet run --project "$cli_project" -c Release --no-build -- \
   echo "engine-build-mode: --no-incremental (no stale output reuse)"
   echo "engine-build-pathspecs:"
   printf '  %s\n' "${engine_input_pathspecs[@]}"
+  echo "probe-input-pathspecs:"
+  printf '  %s\n' "${probe_input_pathspecs[@]}"
   echo ""
   echo "implementation-sha256:"
   sha256sum \
@@ -167,6 +240,10 @@ dotnet run --project "$cli_project" -c Release --no-build -- \
     scripts/check-fg037-step-ceiling.py \
     scripts/prove-fg037-step-ceiling.sh \
     scripts/run-fg037-step-ceiling-probe.sh
+  printf '%s  %s\n' "$identity_checker_sha" \
+    "scripts/check-fg037-jenkins-identity.sh (executed HEAD snapshot)"
+  printf '%s  %s\n' "$collector_sha" \
+    "scripts/jenkins-workspace-v2.sh (executed HEAD snapshot)"
   echo ""
   echo "worktree-status:"
   git status --short
