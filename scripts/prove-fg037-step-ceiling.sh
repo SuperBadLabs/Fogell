@@ -37,9 +37,18 @@ check "$source_dir" >/dev/null
 echo "  accepted the unmodified retained evidence"
 
 manifest_checker=scripts/check-fg037-manifest.py
-python3 "$manifest_checker" "$source_dir" >/dev/null
 manifest_case=$scratch/manifest-case
 cp -a "$source_dir" "$manifest_case"
+rm -f "$manifest_case/manifest.sha256"
+manifest_case_tmp=$scratch/manifest-case.sha256
+(
+  cd "$manifest_case"
+  find . -type f ! -name manifest.sha256 -print0 \
+    | LC_ALL=C sort -z \
+    | xargs -0 sha256sum >"$manifest_case_tmp"
+)
+mv "$manifest_case_tmp" "$manifest_case/manifest.sha256"
+python3 "$manifest_checker" "$manifest_case" >/dev/null
 printf 'unlisted\n' >"$manifest_case/unlisted.txt"
 if python3 "$manifest_checker" "$manifest_case" >/dev/null 2>&1; then
   echo "FAIL: manifest checker accepted an unlisted evidence file" >&2
