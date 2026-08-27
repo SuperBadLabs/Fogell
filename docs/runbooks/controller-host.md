@@ -78,8 +78,8 @@ entire file. It removes only trailing CR/LF characters, then requires at least
 failure aborts startup but is not yet normalized into the named configuration
 refusals. Startup also does not reject a symlink or a permissive file mode. The
 operator must provide a service-owned regular, non-symlink file with mode `0400`
-or `0600`. On Linux, check that deployment obligation under the service identity
-before starting:
+or `0600`. On Linux with `python3`, check that deployment obligation under the
+service identity before starting:
 
 ```bash
 if [[ ! -f "$FOGELL_API_TOKEN_FILE" || -L "$FOGELL_API_TOKEN_FILE" ]]; then
@@ -94,6 +94,22 @@ case "$(stat -c '%a' "$FOGELL_API_TOKEN_FILE")" in
   400|600) ;;
   *) printf 'token file mode must be 0400 or 0600\n' >&2; exit 1 ;;
 esac
+
+# The documented curl workflow deliberately supports a narrower portable token
+# format than startup: one line of visible ASCII, at least 32 characters, with
+# only optional trailing CR/LF bytes. Keep the file unchanged while the
+# controller is running so this client credential matches the value in memory.
+python3 - "$FOGELL_API_TOKEN_FILE" <<'PY'
+import pathlib
+import sys
+
+raw = pathlib.Path(sys.argv[1]).read_bytes()
+token = raw.rstrip(b"\r\n")
+if len(token) < 32 or any(byte < 0x21 or byte > 0x7e for byte in token):
+    raise SystemExit(
+        "token must be one visible-ASCII line of at least 32 characters"
+    )
+PY
 ```
 
 The runtime state root holds immutable definitions, journals, event frames,
@@ -161,11 +177,16 @@ from authorizing a signal to a reused pid.
 
 ### Submit and follow one build
 
-The current slice does not provision organizations or projects over HTTP. First
-load the maintenance connection into libpq's `PGHOST`, `PGPORT`, `PGDATABASE`,
-`PGUSER`, and `PGPASSWORD` variables from the deployment secret store, then seed
-one tenant and project. This is a maintenance-plane action; the controller still
-uses only its restricted runtime identity for requests and worker operations.
+The current slice does not provision organizations or projects over HTTP.
+Generate the non-secret identities in the calling shell, then load the
+maintenance connection into libpq's `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`,
+and `PGPASSWORD` variables from the deployment secret store **inside** the
+fail-fast subshell below. Values loaded there disappear when seeding ends. The
+later client subshell also clears any libpq variables and both controller
+database URLs inherited from the calling shell before it starts a child process.
+This is a maintenance-plane action; the controller still uses only its
+restricted runtime identity for requests and worker operations. The seed block
+requires the PostgreSQL `psql` client.
 
 ```bash
 FOGELL_ORGANIZATION_ID=$(cat /proc/sys/kernel/random/uuid)
@@ -174,28 +195,56 @@ export FOGELL_ORGANIZATION_ID FOGELL_PROJECT_ID
 export FOGELL_ORGANIZATION_SLUG="hello-$FOGELL_ORGANIZATION_ID"
 export FOGELL_PROJECT_SLUG="hello-$FOGELL_PROJECT_ID"
 
+(
+set -euo pipefail
+
+for FOGELL_PG_VARIABLE in "${!PG@}"; do
+  [[ -n "$FOGELL_PG_VARIABLE" ]] || continue
+  unset "$FOGELL_PG_VARIABLE"
+done
+unset FOGELL_PG_VARIABLE
+# Load PGHOST, PGPORT, PGDATABASE, PGUSER, and PGPASSWORD from the deployment
+# secret store here, inside this subshell. Do not set them in the calling shell.
+: "${PGHOST:?load PGHOST inside the maintenance subshell}"
+: "${PGPORT:?load PGPORT inside the maintenance subshell}"
+: "${PGDATABASE:?load PGDATABASE inside the maintenance subshell}"
+: "${PGUSER:?load PGUSER inside the maintenance subshell}"
+: "${PGPASSWORD:?load PGPASSWORD inside the maintenance subshell}"
+export PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD
+
 psql -X -v ON_ERROR_STOP=1 \
   --set=organization_id="$FOGELL_ORGANIZATION_ID" \
   --set=project_id="$FOGELL_PROJECT_ID" \
   --set=organization_slug="$FOGELL_ORGANIZATION_SLUG" \
   --set=project_slug="$FOGELL_PROJECT_SLUG" <<'SQL'
 BEGIN;
+SELECT set_config('fogell.organization_id', :'organization_id', true);
 INSERT INTO organizations (id, slug)
 VALUES (:'organization_id'::uuid, :'organization_slug');
 INSERT INTO projects (id, organization_id, slug)
 VALUES (:'project_id'::uuid, :'organization_id'::uuid, :'project_slug');
 COMMIT;
 SQL
+)
 ```
 
-This Bash session requires `curl` and `jq`. It keeps the bearer token out of
-`curl`'s argument list by building a mode-`0600` header file inside one private
-scratch directory. The trap removes both temporary files on success, error, or
-interruption:
+This Bash session requires `curl`, `jq`, and `python3`. It keeps the bearer token
+out of `curl`'s argument list by building a mode-`0600` header file inside one
+private scratch directory. The Python step enforces the portable token contract
+above and copies the exact accepted token bytes into the header. The trap
+removes both temporary files on success, error, or interruption:
 
 ```bash
 (
 set -euo pipefail
+
+# Do not pass an ambient maintenance capability to client-only child processes.
+for FOGELL_PG_VARIABLE in "${!PG@}"; do
+  [[ -n "$FOGELL_PG_VARIABLE" ]] || continue
+  unset "$FOGELL_PG_VARIABLE"
+done
+unset FOGELL_PG_VARIABLE
+unset FOGELL_DATABASE_URL FOGELL_MAINTENANCE_DATABASE_URL
 
 # The client origin may differ from a wildcard/proxied FOGELL_LISTEN_URL.
 export FOGELL_CLIENT_URL=http://127.0.0.1:8080
@@ -222,11 +271,22 @@ trap cleanup_fogell_quickstart EXIT
 trap 'exit 130' HUP INT TERM
 FOGELL_AUTH_HEADER="$FOGELL_QUICKSTART_DIR/auth-header"
 FOGELL_PIPELINE_FILE="$FOGELL_QUICKSTART_DIR/Jenkinsfile"
-{
-  printf 'Authorization: Bearer '
-  tr -d '\r\n' <"$FOGELL_API_TOKEN_FILE"
-  printf '\n'
-} >"$FOGELL_AUTH_HEADER"
+python3 - "$FOGELL_API_TOKEN_FILE" "$FOGELL_AUTH_HEADER" <<'PY'
+import os
+import pathlib
+import sys
+
+raw = pathlib.Path(sys.argv[1]).read_bytes()
+token = raw.rstrip(b"\r\n")
+if len(token) < 32 or any(byte < 0x21 or byte > 0x7e for byte in token):
+    raise SystemExit(
+        "token must be one visible-ASCII line of at least 32 characters"
+    )
+
+fd = os.open(sys.argv[2], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "wb") as header:
+    header.write(b"Authorization: Bearer " + token + b"\n")
+PY
 
 cat >"$FOGELL_PIPELINE_FILE" <<'JENKINSFILE'
 pipeline {
