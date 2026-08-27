@@ -1,7 +1,7 @@
-utc: 2026-08-27T16:47:45Z
+utc: 2026-08-27T17:05:49Z
 host: HeMan
-head: 220e70a7ddbff44b811745946bfee4e43a9a44a7
-tree: 1e0d4096ad121c7912ffc5244097bdb239701b9a
+head: 821521d92b6997211fb58be62174a1c602f4b089
+tree: 23c4da2acc8eb42079d14cd14e67435623b7d8b2
 dotnet: 10.0.301
 jenkins-url: http://127.0.0.1:18099
 jenkins-core: 2.568.1 (artifact, endpoint, and container-loopback agree)
@@ -10,7 +10,7 @@ jenkins-host: luigi
 jenkins-container: jenkins-lab
 jenkins-image-name: localhost/jenkins-rich:local
 jenkins-image-id: 7a193ff741388715adcb359f604ea7da4e9c5de7c87105e390af1410b3677602
-engine-build-input-status: clean against HEAD (tracked and untracked)
+engine-build-input-status: clean against the recorded HEAD before and after the live run
 engine-build-project: tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj
 engine-build-configuration: Release
 engine-build-mode: --no-incremental (no stale output reuse)
@@ -33,7 +33,7 @@ implementation-sha256:
 b18c2dc9ff22c3cc79fe998fd275423b9adafe1f7144124fc72345c229630422  tests/Fogell.Differential.Tests/Tests.fs
 eb68a76e5a0d9ec460c8b92809db01d12db506ca3f9d52be19141a64c9d0857e  scripts/check-fg037-step-ceiling.py
 dc5d47521f4768e0d0b2e0539cb49e475c1a4aab60bc72d1b7f2cdffc6759c0c  scripts/prove-fg037-step-ceiling.sh
-60b00c44bffbf6d65a6f6d5f0655cff595f697b0c9c0063ce1c7e444f1e25250  scripts/run-fg037-step-ceiling-probe.sh
+1f8eab349a0f3384891fd003cba20a9b6d7fbf5ca967ff191692f44372670ad9  scripts/run-fg037-step-ceiling-probe.sh
 3c60d292c08d6bcfc03d357c80ccc32014b2473ef85cae7a90e0578ff105f14d  scripts/check-fg037-jenkins-identity.sh (executed HEAD snapshot)
 ec0e7703544d973cfcfb472608f2a311813d1d6694557f5e27914b1081ae8884  scripts/jenkins-workspace-v2.sh (executed HEAD snapshot)
 
