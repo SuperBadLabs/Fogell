@@ -1,0 +1,8 @@
+M  docs/COMPARISON-MATRIX.md
+M  docs/DUPLICATION-AXIS-RECOMMENDATIONS.md
+M  docs/EXECUTION_BOARD.md
+M  docs/tickets/FG-072.md
+M  scripts/build-and-test.sh
+M  scripts/prove-sandbox-denials.sh
+M  tests/Fogell.Groovy.Tests/Tests.fs
+?? evidence/.20260827T011642Z-fg-072.partial.uOMvUB/

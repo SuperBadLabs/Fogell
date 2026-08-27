@@ -1,0 +1,611 @@
+diff --git a/docs/COMPARISON-MATRIX.md b/docs/COMPARISON-MATRIX.md
+index 0b73e6d..e1ba599 100644
+--- a/docs/COMPARISON-MATRIX.md
++++ b/docs/COMPARISON-MATRIX.md
+@@ -137,7 +137,7 @@ system designed around fail-closed admission, admission is accepting something u
+ | Agent transport | JNLP/SSH | absent `[S]` — `FG-062` | mTLS mandatory, **plaintext impossible** `[S]` — `bins/controller/src/main.rs:1216` builds `ServerTlsConfig` unconditionally; per-RPC rejection `:1377`; no optional-TLS branch |
+ | Agent death handling | yes | absent `[S]` — `FG-063` | process-group revalidation `[S]` — `bins/agent/src/lib.rs:848` binds boot-id + `/proc/<pid>/stat` start-ticks; mismatch → `RetireStale` `:748`, so a recycled PGID is never `killpg`-ed |
+ | Tenant isolation | folders/RBAC | absent `[S]` — `FG-028` | org/project scoping + `FORCE ROW LEVEL SECURITY` in **19 migrations** `[S]` — e.g. `migrations/0003_public_api.sql:27` |
+-| Sandbox | Groovy sandbox | structural — no host object in `Value` `[S]`; `FG-072` open, unproven | n/a — no interpreter |
++| Sandbox | Groovy sandbox | structural interpreter boundary `[S]` — `src/Fogell.Groovy.Interpreter/Value.fs`, `src/Fogell.Groovy.Interpreter/Sandbox.fs`, `src/Fogell.Groovy.Interpreter/Interpreter.fs`, `tests/Fogell.Groovy.Tests/Tests.fs`, and `scripts/prove-sandbox-denials.sh`; the type graph reachable from `Value` is exact-gated and named plus generic calls are denied through the real host (`FG-072`, executed receipt in the ticket); sanctioned-step internals and OS/egress/VM controls are outside this claim | n/a — no interpreter |
+ 
+ ## 6. Operability
+ 
+diff --git a/docs/DUPLICATION-AXIS-RECOMMENDATIONS.md b/docs/DUPLICATION-AXIS-RECOMMENDATIONS.md
+index ef37ab6..9561b49 100644
+--- a/docs/DUPLICATION-AXIS-RECOMMENDATIONS.md
++++ b/docs/DUPLICATION-AXIS-RECOMMENDATIONS.md
+@@ -36,7 +36,7 @@ the cost of the opposite bias.
+ | FG-065 | 5 | P2 | TODO | Shim enabled only via env var; limitations documented | Full REST API `[S]` `controller-api/src/lib.rs:311-468`, but its own shape, not Jenkins-shaped (matrix §6) | **DISTINCT** | The acceptance governs a **Jenkins-shaped** facade over Fogell's own controller. McLoving's REST is neither Jenkins-shaped nor a facade over Fogell; nothing it has could be enabled by this env var. |
+ | FG-066 | 5 | P2 | TODO | Each subcommand (validate/plan/run/build/resume/list/history) has a golden-output test | `mcloving-cli`, 22 subcommands `[S]` `bins/cli/src/lib.rs:236-563` (survey §5) | **DISTINCT** | The subcommands under acceptance operate Fogell builds (run/resume/history); `mcloving-cli` speaks McLoving's REST API and cannot run or resume a Fogell build, so its existing work cannot discharge the golden-output tests. Doubt noted: command design/UX is borrowable, but that informs the build rather than discharging acceptance. |
+ | FG-067 | 5 | P3 | TODO | Renders a build's stages and log | UI served at `/`, `/app.js`, `/app.css` `[S]` `controller-api/src/lib.rs:466-468`; API has `builds/{id}/logs` and `builds/{id}/graph` routes `[S]` (survey §5, matrix §6) | **DUPLICATED (provisional)** | The acceptance is the only one in this set with **no Fogell-specific evidence demand** — "renders a build's stages and log" names no differential, no threat model, no byte-identity. What would be borrowed: McLoving's served UI assets (`app.js`/`app.css`), adapted to Fogell's API (FG-060/FG-064 already serve status and progressive logs). Provisional because the survey confirms only that a UI is *served*, not what it renders — read `app.js` before acting. |
+-| FG-072 | 6 | P0 | TODO | Escape-attempt suite fully rejected with named codes | No interpreter to sandbox: matrix §5 sandbox cell is `N/A — no interpreter`; compiler "never evaluates" `[S]` `compiler.clj:133` stops at `CompilePhase/CONVERSION` | **UNIQUE** | The acceptance is a proof suite against Fogell's Groovy interpreter — the runtime Groovy breadth the board names as the one UNIQUE thing. McLoving has no interpreter and provably evaluates no Groovy; there is nothing even adjacent to borrow. |
++| FG-072 | 6 | P0 | DONE | Closed transitive `Value` carrier schema plus real-host named and generic denial/halt proof | No interpreter to sandbox: matrix §5 sandbox cell is `N/A — no interpreter`; compiler "never evaluates" `[S]` `compiler.clj:133` stops at `CompilePhase/CONVERSION` | **UNIQUE** | The acceptance is a proof suite against Fogell's Groovy interpreter — the runtime Groovy breadth the board names as the one UNIQUE thing. McLoving has no interpreter and provably evaluates no Groovy; there is nothing even adjacent to borrow. [→ detail](tickets/FG-072.md) |
+ | FG-073 | 6 | P1 | TODO | Threat model reviewed and committed (untrusted Jenkinsfile, hostile agent, multi-tenant boundary) | McLoving has security *mechanisms* (mTLS `[S]`, RLS `[S]`, secret broker `[S]`) but no cited Fogell-applicable threat model | **DISTINCT** | The board's rule names "a named threat model discharged **for Fogell**" as the canonical engine-specific acceptance — a document about McLoving's boundaries cannot be reviewed-and-committed as Fogell's. The topics are platform topics, hence DISTINCT rather than NEITHER; McLoving's docs are reference material, not discharge. |
+ | FG-074 | 6 | P1 | TODO | Offline build succeeds from a warm cache | Release provenance / SBOM from `Cargo.lock` `[S]` — for **McLoving's own crates** (survey §3) | **NEITHER** | Acceptance is about Fogell's own repository building offline with pinned deps (.NET/NuGet). That is repo hygiene for this codebase, not platform capability; McLoving's Cargo lockfile audits its own tree and cannot touch Fogell's. |
+ | FG-080 | 7 | P1 | TODO | Two builds of the same commit produce the same digest | `release-provenance`: signed releases, SBOM, deployment receipts `[S]` (survey §3, matrix §4) | **DISTINCT** | Already adjudicated by the withdrawn-table review: acceptance is **reproducibility evidence — byte-identical Fogell output** — and "signed releases and an SBOM are not that." Byte-identical rebuild of Fogell is the rule's own example of an undischargeable engine-specific acceptance. |
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 5046703..9b4b936 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -5,7 +5,7 @@ category: engineering-board
+ purpose: Command board for taking Fogell from an empty F# workspace to a private prerelease with differential Jenkins evidence.
+ lifecycle: live
+ last-verified: 2026-08-14
+-accounting-verified: 2026-08-26
++accounting-verified: 2026-08-27
+ ---
+ 
+ # Fogell — Execution Board
+@@ -260,7 +260,7 @@ of trusting the row.
+ 
+ ## Live queue — the reference point for the execution cycle
+ 
+-**BOARD ACCOUNTING (derived): rows=209; DONE=129; open=80; open P0–P3=5 / 27 / 36 / 12.**
++**BOARD ACCOUNTING (derived): rows=209; DONE=130; open=79; open P0–P3=4 / 27 / 36 / 12.**
+ 
+ **WHY THIS SECTION EXISTS.** The derived accounting above is the single live source for
+ ticket totals and priority distribution. (Was "187 rows … open 84 … 4 / 34 / 36 / 10"
+@@ -472,7 +472,7 @@ HeMan until its commit is ready to publish.
+ | — | **C** | FG-114 | **DONE** | Landed 2026-08-18: an additive `step-reason` record journals the refusal's own wording beside the failed or aborted finish it explains, and approval-lane E, O and Z6 now assert WHICH rule refused from the journal. Captured at four sites only; the ticket row names the scope and the residuals |
+ | 11 | **B** | FG-180 + FG-141 | PARTIAL | Earlier parser work recovered fifteen parse-only corpus admissions and closed FG-141; the current narrow FG-180 candidate adds one further parse-only admission while the neighboring targeted corpus file remains refused. The detailed diagnosis and remaining grammar limits live on FG-180, not in this ranking row. Ranked by the demonstrated corpus-admission movement, with no corpus-execution or parity claim |
+ | 12 | **B** | FG-190 + FG-192 | **PARTIAL** | Local paired candidate replaces FG-187's backward comment scan with forward, Groovy-non-nesting trivia state. A break fact is live only at its exact stream index; expression groups admit a continued postfix index while statement bodies reset depth, and command-expression/statement, typed-function, and return seams stay strict. Tier-1 receipts `script-comment-marker-split` and `script-index-grouped-newline` are PROVEN; the generated case scorecard is 279/279. FG-190/192 itself changed no corpus tier; in this later worktree the regenerated totals are `tier1=1`, `admitted=199`, `tier3=28` after FG-180's separate one-row recovery. FG-190/192 changed only rejection expectation categories while preserving physical line/columns. Exact staged-tree architecture/security review and the full local gate are clear; formal PR review coverage, CI, publication, and merge remain before DONE |
+-| 13 | **C** | FG-072 | PARTIAL | P0 and still open until publication. Null-safe method calls now pass sandbox admission before a null receiver short-circuits, closing a path where `target?.getClass()` ran its successor. The closed-value/deny-by-default mechanism also has a blocking two-sided host proof over the exact 30-name escape inventory: every admitted-to-evaluation escape has exactly one failed terminal record, is denied by typed code, names the attempt, states the capability boundary, and halts before a successor, while registered steps, a script helper, and a pure builtin remain reachable. The checker rejects eight planted states: timeout and signal status plus non-failure-terminal, extra-terminal, generic-failure, unnamed, no-boundary-reason, and no-halt record/workspace mutations. The exact current-worktree net10 Release host is fixed rather than ambient. The exact staged tree passed the full HeMan gate: 581 tests and all blocking lanes in 196.67 seconds. A local candidate commit records that gated tree; exact-head formal review/coverage, CI, and merge remain |
++| — | — | FG-072 | **DONE** | Closed by a ticket-specific current-tree seal and exact-head closure: the type graph reachable from `Value` is exact-gated, named and generic denial paths reach the real host, and hostile nested-host-object fixtures prove the structural checker fails closed. PR #148 remains historical ingress rather than retroactive closure evidence — [→ detail](tickets/FG-072.md) |
+ 
+ ### Track 2 — Evidence
+ 
+@@ -752,7 +752,7 @@ before their no-effect validation refusal. Compatibility counts are unchanged.
+ |---|---|---|---|---|
+ | FG-070 | P0 | **DONE** | Secret delivery: value bound as Jenkins binds it, plus a file companion | **Re-scoped.** **Measured first:** a secret in the environment is readable from `/proc/<pid>/environ` by any process running as the same user, for the whole life… [→ detail](tickets/FG-070.md) |
+ | FG-071 | P0 | **DONE** | Masking is defence-in-depth and **never silent** (`adr/0005` beat) | **Now genuinely wired to the output path.** A Codex review on PR #11 found the masker and detector were reachable only from their own tests — `Executor.runShell` forwarded `OnLine` and returned stdout/stderr untouched, so a step running `cat "$TOKEN_FILE"` streamed the literal secret while this row claimed masking was done. Masking now happens on the **streaming** path and the buffered stdout/stderr, and three tests fail if that wiring is removed. Masks the same forms Jenkins was measured to handle (literal, base64, case-folded), and uppercase hex was added to the detector after a Copilot review found only lowercase was generated. It does **not** mask reverse/hex/char-split — masking every encoding is impossible — but it **detects** them and names the encoding. That is the difference between a known gap and a silent one: Jenkins leaks these with the build green and no warning |
+-| FG-072 | P0 | **PARTIAL** | Interpreter sandbox: no reflection, file/network/process access except through sanctioned steps. The pre-existing mechanism was not enough to close the ticket: FG-160 leans on this boundary, and a null-safe call on a null receiver skipped method admission entirely. Admission now precedes that short-circuit while admitted-call arguments remain lazy. `prove-sandbox-denials.sh` derives and exercises the exact 30-name `Sandbox.knownEscapes` inventory through parser, interpreter, and the fixed current-worktree net10 Release host; it requires exactly one failed terminal record, typed `Denied`, the attempted name, a capability-boundary reason, and no successor effect. A registered-step/script-helper/pure-builtin control prevents blanket refusal. Six planted record/workspace states independently hold terminal value, terminal uniqueness, type, name, reason, and halt; two planted statuses hold timeout/signal rejection through the shared host-status validator. ADR 0002 and the ticket state the non-goals: sanctioned step internals, OS/no-egress/VM policy, secrets, parser-rejected syntax, and evaluator budgets. Focused proof passes; the exact staged tree also passed the full HeMan gate with 581 tests and all blocking lanes in 196.67 seconds. A local candidate commit records that gated tree; exact-head formal review/coverage, CI, and merge remain | escape-attempt suite fully rejected with named codes; checker rejects eight known-bad states (six record/workspace, two status) |
++| FG-072 | P0 | **DONE** | Interpreter sandbox assurance — [→ detail](tickets/FG-072.md) | Exact schema for every type reachable from `Value`; named-inventory and generic fallback denials through the real host; successor halt and sanctioned-call controls; thirteen independent known-bad states |
+ | FG-073 | P1 | TODO | Threat model document: untrusted Jenkinsfile, hostile agent, multi-tenant boundary | reviewed and committed |
+ | FG-074 | P1 | **PARTIAL** | Dependency audit + project-local NuGet lock graphs. Signed local commit `485bf59ff45d5124850920efd099f10b60db936e` (tree `f717179223d8fda5fe20d9e878f972111ba9eceb`) is the pre-reconciliation input; the status follow-up is included in the current signed local candidate, whose amended identity is bound in external handoff rather than self-referenced here. The 28-path implementation boundary is `Directory.Build.props`, one blocking proof, its build-gate wiring, and 25 `packages.lock.json` files for the 25 solution projects. The proof reconciles the repo-wide project/solution/lock inventory (with named generated-tree prunes), evaluates both lock properties on every project, populates a new empty isolated cache through a network-enabled locked restore, regenerates and compares every lock with sources cleared, then performs a source-cleared locked restore and `--no-restore` build against that cache. Seven planted states are rejected: two non-first-project policy overrides, an out-of-solution project, a missing lock, PackageReference drift, content-hash tampering, and dependency-edge tampering. This is bounded source-cleared warm-cache evidence, not OS no-egress, a whole-gate offline/cold-airgap result, vulnerability freshness, an SBOM/provenance claim, or an attestation of cache/package trust. `global.json` disables roll-forward and pins SDK `10.0.301` exactly; changing the SDK-owned `FSharp.Core` graph therefore requires an intentional SDK change and lock regeneration. The exact pre-reconciliation commit passed the authoritative full HeMan gate, including every blocking lane. Exact-head formal review/coverage, CI, publication, and merge remain | 25/25 project locks; empty→populated isolated cache; source-cleared locked restore and no-restore build pass; all seven proof mutations reject [→ detail](tickets/FG-074.md) |
+ 
+diff --git a/docs/tickets/FG-072.md b/docs/tickets/FG-072.md
+index 29b793c..a852e58 100644
+--- a/docs/tickets/FG-072.md
++++ b/docs/tickets/FG-072.md
+@@ -1,12 +1,14 @@
+ # FG-072 — interpreter sandbox assurance
+ 
+-Status: **PARTIAL**. Most of the deny-by-default mechanism predates this ticket.
+-This candidate closes the null-safe-call admission bypass and adds a blocking,
+-two-sided host proof over the exact `Sandbox.knownEscapes` inventory, plus an
+-explicit statement of the boundary it does and does not cover. The exact staged
+-tree passed the authoritative full HeMan gate: 581 tests, the sandbox proof, and
+-all blocking lanes in 196.67 seconds. A local candidate commit records that
+-gated tree; exact-head formal review/coverage, CI, and merge remain before DONE.
++Status: **DONE**. The original implementation commit `8007f5090e03bc3954c713d781a4fa39a851b420`
++entered `main` inside PR #148, but that PR is historical ingress rather than
++closure evidence: its exact head lacks Copilot coverage, and FG-072 had no
++standalone seal. This closure independently hardens the current boundary with a
++transitive exact-schema audit of every type reachable from `Value`, hostile nested-host-object
++fixtures, and real-host generic free-call/member-call denials. The current-tree
++HeMan gate passes 921/921 tests and every blocking lane. The standalone receipt
++is `evidence/20260827T011642Z-fg-072`; the closure head, not PR #148, is the unit
++required to receive exact-head review coverage and hosted gates before merge.
+ 
+ ## Security claim
+ 
+@@ -19,13 +21,16 @@ class-loading, evaluation, thread, and unsafe attempts the more specific
+ diagnostic rather than the generic unknown-call reason.
+ 
+ `scripts/prove-sandbox-denials.sh` derives the production inventory from
+-`Sandbox.fs` and requires its vectors to cover all 30 names exactly as a set.
+-Every vector traverses the real parser, interpreter, and the exact current-worktree
++`Sandbox.fs` and requires its named vectors to cover all 30 names exactly as a
++set. Two additional vectors stay outside that inventory and exercise the generic
++deny-by-default free-call and member-call fallbacks; putting those made-up names
++in `knownEscapes` would turn a structural boundary into a deny-list claim. Every
++vector traverses the real parser, interpreter, and the exact current-worktree
+ `tools/Fogell.Run.Host/bin/Release/net10.0/Fogell.Run.Host`; there is no ambient
+ host-binary override, and a direct call to `admitCall` is not accepted as
+-end-to-end proof. Constructors, free calls, ordinary member calls, and a
+-null-safe call on a null receiver are represented. For each spelling the lane
+-requires:
++end-to-end proof. Constructors, named and generic free calls, ordinary and
++generic member calls, and a null-safe call on a null receiver are represented.
++For each spelling the lane requires:
+ 
+ - a journaled `Denied` step reason;
+ - the exact attempted capability name;
+@@ -44,9 +49,30 @@ short-circuit; arguments remain lazy, so an admitted builtin on a null receiver
+ still evaluates no argument effects. The lane failed on the pre-fix host binary
+ and passed only after the corrected interpreter was rebuilt.
+ 
++## Transitive carrier proof
++
++The sandbox is structural only while the type graph reachable from `Value` contains no
++unreviewed CLR carrier or arbitrary host-object reference. This does not claim that
++scalar data such as strings cannot name paths, commands, or bearer tokens. The old test froze the union case names and rejected a field
++typed directly as `System.Object`; it would still pass if an existing case's
++record, tuple, AST node, ref, list, option, or map gained a nested host object.
++
++The replacement audit recursively walks the concrete type graph rooted at
++`Value`. Reviewed scalar and F# container shapes are transparent; every reachable
++F# union and record contributes a deterministic, exact checked-in schema; cycles
++through `Value`, `Env`, closures, and the Groovy AST terminate at the first
++definition. Any other CLR leaf is a finding with its full discovery path. A
++schema change is therefore an explicit security-review change even when the
++outer `Value` case name stays the same.
++
++The proof-of-proof preserves the existing `VScmMap`-shaped outer carrier and
++nests a host object below record and map edges. One fixture carries `obj`; another
++carries `System.IO.FileInfo`. Both must be rejected at their exact transitive
++paths. The previous direct-field-only test would accept both.
++
+ ## Proof of the proof
+ 
+-The lane first accepts one real denial result, then copies it into eight
++The lane first accepts one real denial result, then copies it into eleven
+ known-bad scratch states. It must reject two execution-status mutations:
+ 
+ 1. **timeout-status** — the captured host status is replaced by GNU `timeout`'s
+@@ -54,7 +80,7 @@ known-bad scratch states. It must reject two execution-status mutations:
+ 2. **signal-status** — the captured host status is replaced by `143`, the
+    conventional status for termination by signal 15.
+ 
+-It must also reject six record/workspace mutations:
++It must also reject nine record/workspace mutations:
+ 
+ 3. **non-failure-terminal** — the unique terminal record is changed from
+    `failure` to `success`, with no second terminal record;
+@@ -65,7 +91,13 @@ It must also reject six record/workspace mutations:
+ 6. **unnamed** — the attempted capability is replaced by `redacted`;
+ 7. **no-boundary-reason** — the reason is replaced by generic policy wording;
+    and
+-8. **no-halt** — an `escaped.txt` successor marker is planted in the workspace.
++8. **reason-free-crosswire** — a named escape's exact boundary reason is replaced
++   by the generic free-call reason;
++9. **reason-member-crosswire** — the same named reason is replaced by the generic
++   member-call reason, whose wording also contains "not reachable";
++10. **split-record** — type, attempted name, and reason are distributed across two
++    sandbox records so whole-journal greps would assemble a false pass; and
++11. **no-halt** — an `escaped.txt` successor marker is planted in the workspace.
+ 
+ The terminal judge reads the first terminal value independently from the count.
+ That makes the two terminal mutations load-bearing in opposite directions:
+@@ -118,7 +150,9 @@ bash -n scripts/prove-sandbox-denials.sh
+ scripts/prove-sandbox-denials.sh
+ ```
+ 
+-The proof reports 31 denial vectors covering 30/30 names, one allowed control,
+-and rejection of all eight planted false-pass states: two status mutations and
+-six record/workspace mutations. The full pre-publication gate result recorded
+-above binds the exact staged tree independently of these focused results.
++The host proof reports 31 named denial vectors covering 30/30 names, two generic
++fallback vectors, one allowed control, and rejection of all eleven planted
++false-pass states: two status mutations and nine record/workspace mutations. The
++carrier audit's two hostile nested-host-object fixtures are independent known-bad
++states. The receipt and full pre-publication gate bind the exact closure tree
++independently of these focused results.
+diff --git a/scripts/build-and-test.sh b/scripts/build-and-test.sh
+index dfc0b35..f83ffeb 100755
+--- a/scripts/build-and-test.sh
++++ b/scripts/build-and-test.sh
+@@ -94,10 +94,12 @@ echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
+ 
+ # FG-072. The interpreter sandbox is a load-bearing security boundary, not a
+ # unit-test implementation detail. Exercise every name in Sandbox.knownEscapes
+-# through the real parser/interpreter/host path, prove sanctioned calls still
+-# work, and prove the checker rejects timeout/signal execution states plus six
++# through the real parser/interpreter/host path, exercise generic default-deny
++# fallbacks, prove sanctioned calls still work, and prove the checker rejects
++# timeout/signal execution states plus nine
+ # record/workspace mutations: unique non-failure terminal, extra terminal,
+-# generic-failure, unnamed, missing-boundary-reason, and no-halt. The proof binds
++# generic-failure, unnamed, missing-boundary-reason, both reason-class crosswires,
++# split-record predicate aggregation, and no-halt. The proof binds
+ # the exact current-worktree net10 Release host; no ambient binary override exists.
+ echo "=== sandbox-denial proof (FG-072, blocking) ==="
+ ./scripts/prove-sandbox-denials.sh || { echo "SANDBOX-DENIAL PROOF FAILED"; exit 1; }
+diff --git a/scripts/prove-sandbox-denials.sh b/scripts/prove-sandbox-denials.sh
+index 4322cd0..0cdebac 100755
+--- a/scripts/prove-sandbox-denials.sh
++++ b/scripts/prove-sandbox-denials.sh
+@@ -4,10 +4,11 @@
+ #
+ # This lane is intentionally two-sided. The live matrix proves denials, and the
+ # allowed control proves that an implementation which refuses every script does
+-# not pass. The final eight arms mutate one accepted denial result into two bad
+-# execution states (timeout and signal) and six bad record/workspace states
++# not pass. The final eleven arms mutate one accepted denial result into two bad
++# execution states (timeout and signal) and nine bad record/workspace states
+ # (non-failure terminal, extra terminal, generic rather than typed, unnamed,
+-# missing its boundary reason, and not halted).
++# both wrong generic reason classes, split predicates across records, missing its
++# boundary reason, and not halted).
+ set -euo pipefail
+ 
+ cd "$(dirname "${BASH_SOURCE[0]}")/.."
+@@ -58,6 +59,15 @@ CASES=(
+   "exec|exec|'id'.exec()"
+ )
+ 
++# The named inventory exists only to make common escape attempts diagnostic.
++# The actual security boundary is deny-by-default, so exercise both generic
++# fallback arms through the real host as well. Keep these OUT of CASES: adding a
++# made-up name to knownEscapes would turn this proof into a deny-list claim.
++FALLBACK_CASES=(
++  "unknown-free|fg072UnknownCapability|generic-free|fg072UnknownCapability()"
++  "unknown-member|fg072UnknownMember|generic-member|'value'.fg072UnknownMember()"
++)
++
+ inventory_from_source() {
+   sed -n '/let knownEscapes/,/Decide whether/p' src/Fogell.Groovy.Interpreter/Sandbox.fs \
+     | rg -o '"[^"]+"' \
+@@ -150,9 +160,10 @@ run_denial() {
+ }
+ 
+ judge_denial() {
+-  local target=$1 expected=$2 label=$3 failed=0
++  local target=$1 expected=$2 label=$3 reason_class=${4:-named} failed=0
+   local journal="$target/build.journal"
+-  local run_status=
++  local run_status= reason_line=
++  local -a reason_lines=()
+ 
+   if [ ! -s "$target/run.status" ]; then
+     echo "  FAIL $label: missing host exit status"
+@@ -168,12 +179,35 @@ judge_denial() {
+   fi
+ 
+   judge_terminal "$journal" failure "$label" || failed=1
+-  grep -q $'step-reason\tsandbox\t0\tscript block: Denied' "$journal" \
+-    || { echo "  FAIL $label: no typed Denied step reason"; failed=1; }
+-  grep -Fq "Attempted = \"$expected\"" "$journal" \
+-    || { echo "  FAIL $label: denial did not name attempted capability [$expected]"; failed=1; }
+-  grep -q 'not reachable\|not a pure builtin' "$journal" \
+-    || { echo "  FAIL $label: denial did not state the capability boundary"; failed=1; }
++  mapfile -t reason_lines < <(awk -F '\t' '$1 == "step-reason" && $2 == "sandbox" && $3 == "0" { print }' "$journal")
++  if [ "${#reason_lines[@]}" -ne 1 ]; then
++    echo "  FAIL $label: expected exactly one sandbox step-reason record, found ${#reason_lines[@]}"
++    failed=1
++  else
++    reason_line=${reason_lines[0]}
++  fi
++  [[ "$reason_line" == *"script block: Denied"* ]] \
++    || { echo "  FAIL $label: sandbox record is not typed Denied"; failed=1; }
++  [[ "$reason_line" == *"Attempted = \"$expected\""* ]] \
++    || { echo "  FAIL $label: sandbox record did not name attempted capability [$expected]"; failed=1; }
++  case "$reason_class" in
++    named)
++      [[ "$reason_line" == *"not reachable from a pipeline script"* ]] \
++        || { echo "  FAIL $label: named escape did not use its specific boundary reason"; failed=1; }
++      ;;
++    generic-free)
++      [[ "$reason_line" == *"not a registered step, a script-defined function, or a pure builtin"* ]] \
++        || { echo "  FAIL $label: generic free call did not use the default-deny reason"; failed=1; }
++      ;;
++    generic-member)
++      [[ "$reason_line" == *"not a pure builtin; host methods are not reachable"* ]] \
++        || { echo "  FAIL $label: generic member call did not use the default-deny reason"; failed=1; }
++      ;;
++    *)
++      echo "  FAIL $label: unknown expected reason class [$reason_class]"
++      failed=1
++      ;;
++  esac
+   if find "$target/ws" -name escaped.txt -type f -print -quit 2>/dev/null | grep -q .; then
+     echo "  FAIL $label: successor step ran after denial"
+     failed=1
+@@ -189,7 +223,7 @@ REFERENCE_EXPECTED=
+ for row in "${CASES[@]}"; do
+   IFS='|' read -r id expected expression <<<"$row"
+   run_denial "$id" "$expression"
+-  judge_denial "$LAB/$id" "$expected" "$id"
++  judge_denial "$LAB/$id" "$expected" "$id" named
+   printf '  denied %s as %s\n' "$id" "$expected"
+   if [ -z "$REFERENCE_TARGET" ]; then
+     REFERENCE_TARGET="$LAB/$id"
+@@ -197,6 +231,14 @@ for row in "${CASES[@]}"; do
+   fi
+ done
+ 
++echo "=== FG-072 generic deny-by-default fallbacks (${#FALLBACK_CASES[@]} vectors) ==="
++for row in "${FALLBACK_CASES[@]}"; do
++  IFS='|' read -r id expected reason_class expression <<<"$row"
++  run_denial "$id" "$expression"
++  judge_denial "$LAB/$id" "$expected" "$id" "$reason_class"
++  printf '  denied %s as %s\n' "$id" "$expected"
++done
++
+ echo "=== sanctioned-call control ==="
+ CONTROL="$LAB/allowed-control"
+ mkdir -p "$CONTROL"
+@@ -231,7 +273,7 @@ echo "  allowed control: registered steps + script function + trim builtin"
+ 
+ expect_planted_failure() {
+   local label=$1 target=$2 expected=$3
+-  if judge_denial "$target" "$expected" "planted-$label" >/dev/null 2>&1; then
++  if judge_denial "$target" "$expected" "planted-$label" named >/dev/null 2>&1; then
+     echo "  FAIL: checker accepted planted $label state"
+     exit 1
+   fi
+@@ -285,11 +327,43 @@ cp -a "$REFERENCE_TARGET" "$UNNAMED"
+ sed -i "s/Attempted = \"$REFERENCE_EXPECTED\"/Attempted = \"redacted\"/" "$UNNAMED/build.journal"
+ expect_planted_failure unnamed "$UNNAMED" "$REFERENCE_EXPECTED"
+ 
++REASON_FREE_CROSSWIRE="$LAB/planted-reason-free-crosswire"
++cp -a "$REFERENCE_TARGET" "$REASON_FREE_CROSSWIRE"
++sed -i -E 's#Reason = +"[^"]*"#Reason = "not a registered step, a script-defined function, or a pure builtin"#' "$REASON_FREE_CROSSWIRE/build.journal"
++if ! grep -q 'not a registered step, a script-defined function, or a pure builtin' "$REASON_FREE_CROSSWIRE/build.journal"; then
++  echo "  FAIL: could not plant generic-free reason crosswire"
++  exit 1
++fi
++expect_planted_failure reason-free-crosswire "$REASON_FREE_CROSSWIRE" "$REFERENCE_EXPECTED"
++
++REASON_MEMBER_CROSSWIRE="$LAB/planted-reason-member-crosswire"
++cp -a "$REFERENCE_TARGET" "$REASON_MEMBER_CROSSWIRE"
++sed -i -E 's#Reason = +"[^"]*"#Reason = "not a pure builtin; host methods are not reachable"#' "$REASON_MEMBER_CROSSWIRE/build.journal"
++if ! grep -q 'not a pure builtin; host methods are not reachable' "$REASON_MEMBER_CROSSWIRE/build.journal"; then
++  echo "  FAIL: could not plant generic-member reason crosswire"
++  exit 1
++fi
++expect_planted_failure reason-member-crosswire "$REASON_MEMBER_CROSSWIRE" "$REFERENCE_EXPECTED"
++
++SPLIT_RECORD="$LAB/planted-split-record"
++cp -a "$REFERENCE_TARGET" "$SPLIT_RECORD"
++sed -i "s/Attempted = \"$REFERENCE_EXPECTED\"/Attempted = \"redacted\"/" "$SPLIT_RECORD/build.journal"
++awk -F '\t' '$1 == "step-reason" && $2 == "sandbox" && $3 == "0" { print }' "$REFERENCE_TARGET/build.journal" \
++  | sed 's/script block: Denied/script block: Failure/' >> "$SPLIT_RECORD/build.journal"
++if [ "$(awk -F '\t' '$1 == "step-reason" && $2 == "sandbox" && $3 == "0" { count++ } END { print count + 0 }' "$SPLIT_RECORD/build.journal")" -ne 2 ] \
++  || ! grep -q 'script block: Denied.*Attempted = "redacted"' "$SPLIT_RECORD/build.journal" \
++  || ! grep -q "script block: Failure.*Attempted = \"$REFERENCE_EXPECTED\"" "$SPLIT_RECORD/build.journal"; then
++  echo "  FAIL: could not plant split-record state"
++  exit 1
++fi
++expect_planted_failure split-record "$SPLIT_RECORD" "$REFERENCE_EXPECTED"
++
+ NO_BOUNDARY_REASON="$LAB/planted-no-boundary-reason"
+ cp -a "$REFERENCE_TARGET" "$NO_BOUNDARY_REASON"
+ sed -i -e 's/not reachable/capability denied/g' \
+-  -e 's/not a pure builtin/capability denied/g' "$NO_BOUNDARY_REASON/build.journal"
+-if grep -q 'not reachable\|not a pure builtin' "$NO_BOUNDARY_REASON/build.journal" \
++  -e 's/not a pure builtin/capability denied/g' \
++  -e 's/not a registered step/capability denied/g' "$NO_BOUNDARY_REASON/build.journal"
++if grep -q 'not reachable\|not a pure builtin\|not a registered step' "$NO_BOUNDARY_REASON/build.journal" \
+   || ! grep -q 'capability denied' "$NO_BOUNDARY_REASON/build.journal"; then
+   echo "  FAIL: could not plant missing-boundary-reason state"
+   exit 1
+diff --git a/tests/Fogell.Groovy.Tests/Tests.fs b/tests/Fogell.Groovy.Tests/Tests.fs
+index d3799d2..2e22fea 100644
+--- a/tests/Fogell.Groovy.Tests/Tests.fs
++++ b/tests/Fogell.Groovy.Tests/Tests.fs
+@@ -28,6 +28,155 @@ let private stepArgs (o: Outcome) =
+     |> List.map (function
+         | StepCall(n, pos, _) -> n, pos |> List.map Value.toDisplay)
+ 
++module CarrierFixtures =
++
++    type NestedHostCarrier<'host> =
++        { HostObject: 'host }
++
++    // Keep the reviewed VScmMap -> record -> Entries shape intact, then plant
++    // an arbitrary host-object reference below another record/container edge. A direct-field-only audit
++    // accepts both fixtures and therefore cannot satisfy FG-072.
++    type PreservedScmMap<'host> =
++        { Entries: Map<string, string>
++          Metadata: Map<string, NestedHostCarrier<'host>> }
++
++    type PreservedCarrierShape<'host> =
++        | VScmMap of PreservedScmMap<'host>
++
++module private CarrierSchema =
++
++    type Finding =
++        { Path: string
++          TypeName: string
++          Reason: string }
++
++    type Audit =
++        { Manifest: string list
++          Findings: Finding list }
++
++    let private optionType = typedefof<option<_>>
++    let private listType = typedefof<list<_>>
++    let private mapType = typedefof<Map<_, _>>
++    let private refType = typeof<int ref>.GetGenericTypeDefinition()
++
++    let private fullName (candidate: System.Type) =
++        if isNull candidate.FullName then candidate.Name else candidate.FullName
++
++    let private genericName (candidate: System.Type) =
++        let definitionName = fullName (candidate.GetGenericTypeDefinition())
++        let marker = definitionName.IndexOf('`')
++        if marker < 0 then definitionName else definitionName.Substring(0, marker)
++
++    let private isGeneric (definition: System.Type) (candidate: System.Type) =
++        candidate.IsGenericType && candidate.GetGenericTypeDefinition() = definition
++
++    let rec private renderType (candidate: System.Type) =
++        if Microsoft.FSharp.Reflection.FSharpType.IsTuple candidate then
++            Microsoft.FSharp.Reflection.FSharpType.GetTupleElements candidate
++            |> Array.map renderType
++            |> String.concat " * "
++            |> sprintf "tuple<%s>"
++        elif isGeneric optionType candidate then
++            $"option<{renderType (candidate.GetGenericArguments().[0])}>"
++        elif isGeneric listType candidate then
++            $"list<{renderType (candidate.GetGenericArguments().[0])}>"
++        elif isGeneric mapType candidate then
++            let arguments = candidate.GetGenericArguments()
++            $"map<{renderType arguments.[0]}, {renderType arguments.[1]}>"
++        elif isGeneric refType candidate then
++            $"ref<{renderType (candidate.GetGenericArguments().[0])}>"
++        elif candidate.IsGenericType then
++            candidate.GetGenericArguments()
++            |> Array.map renderType
++            |> String.concat ", "
++            |> fun arguments -> $"{genericName candidate}<{arguments}>"
++        else
++            fullName candidate
++
++    let private formatUnion (candidate: System.Type) =
++        Microsoft.FSharp.Reflection.FSharpType.GetUnionCases candidate
++        |> Array.map (fun unionCase ->
++            let fields =
++                unionCase.GetFields()
++                |> Array.map (fun field -> $"{field.Name}:{renderType field.PropertyType}")
++                |> String.concat ", "
++
++            if fields = "" then unionCase.Name else $"{unionCase.Name}({fields})")
++        |> String.concat " | "
++        |> sprintf "union %s"
++
++    let private formatRecord (candidate: System.Type) =
++        Microsoft.FSharp.Reflection.FSharpType.GetRecordFields candidate
++        |> Array.map (fun field -> $"{field.Name}:{renderType field.PropertyType}")
++        |> String.concat "; "
++        |> sprintf "record { %s }"
++
++    let audit (root: System.Type) =
++        // The dictionary is both the cycle fence (Value -> Env -> Value and the
++        // recursive AST) and the first full discovery path for each definition.
++        // Reviewed containers are transparent; every F# union/record schema is
++        // manifested; every other transitive type fails closed as a finding.
++        let definitions = System.Collections.Generic.Dictionary<System.Type, string>()
++        let findings = ResizeArray<Finding>()
++
++        let addFinding path candidate reason =
++            findings.Add(
++                { Path = path
++                  TypeName = renderType candidate
++                  Reason = reason }
++            )
++
++        let rec visit path (candidate: System.Type) =
++            if
++                candidate = typeof<bool>
++                || candidate = typeof<int64>
++                || candidate = typeof<single>
++                || candidate = typeof<string>
++            then
++                ()
++            elif Microsoft.FSharp.Reflection.FSharpType.IsTuple candidate then
++                Microsoft.FSharp.Reflection.FSharpType.GetTupleElements candidate
++                |> Array.iteri (fun index item -> visit $"{path}.tuple[{index}]" item)
++            elif isGeneric optionType candidate then
++                visit $"{path}.option" (candidate.GetGenericArguments().[0])
++            elif isGeneric listType candidate then
++                visit $"{path}.list" (candidate.GetGenericArguments().[0])
++            elif isGeneric mapType candidate then
++                let arguments = candidate.GetGenericArguments()
++                visit $"{path}.map-key" arguments.[0]
++                visit $"{path}.map-value" arguments.[1]
++            elif isGeneric refType candidate then
++                visit $"{path}.ref" (candidate.GetGenericArguments().[0])
++            elif Microsoft.FSharp.Reflection.FSharpType.IsUnion candidate then
++                if definitions.TryAdd(candidate, path) then
++                    for unionCase in Microsoft.FSharp.Reflection.FSharpType.GetUnionCases candidate do
++                        for field in unionCase.GetFields() do
++                            visit $"{path}.{unionCase.Name}.{field.Name}" field.PropertyType
++            elif Microsoft.FSharp.Reflection.FSharpType.IsRecord candidate then
++                if definitions.TryAdd(candidate, path) then
++                    for field in Microsoft.FSharp.Reflection.FSharpType.GetRecordFields candidate do
++                        visit $"{path}.{field.Name}" field.PropertyType
++            else
++                addFinding path candidate "unreviewed transitive carrier type"
++
++        visit (renderType root) root
++
++        let manifest =
++            definitions
++            |> Seq.map (fun entry ->
++                let schema =
++                    if Microsoft.FSharp.Reflection.FSharpType.IsUnion entry.Key then
++                        formatUnion entry.Key
++                    else
++                        formatRecord entry.Key
++
++                $"{entry.Value} :: {renderType entry.Key} = {schema}")
++            |> Seq.sort
++            |> Seq.toList
++
++        { Manifest = manifest
++          Findings = findings |> Seq.sortBy (fun finding -> finding.Path) |> Seq.toList }
++
+ /// FG-011: every construct below was confirmed necessary by measuring the real
+ /// corpus. Grammar coverage is demand-driven, not speculative.
+ let grammar =
+@@ -599,41 +748,46 @@ let sandbox =
+               Expect.equal (stepArgs helper) [ "sh", [ "successor" ] ] "helper returned without blocking later work"
+           }
+ 
+-          test "Value union remains an explicitly reviewed closed boundary" {
+-              // The exact case-name snapshot makes a new runtime carrier (especially a
+-              // host-object wrapper) an intentional security-review change rather than
+-              // an unnoticed expansion of the interpreter's authority.
+-              let expectedCases =
+-                  set
+-                      [ "VNull"
+-                        "VBool"
+-                        "VInt"
+-                        "VInteger"
+-                        "VArithmeticInteger"
+-                        "VFloat"
+-                        "VStr"
+-                        "VList"
+-                        "VRange"
+-                        "VMap"
+-                        "VScmMap"
+-                        "VScmKeySet"
+-                        "VJUnitSummary"
+-                        "VClosure"
+-                        "VFunc" ]
++          test "Value carrier schema is exact and transitively free of unreviewed CLR carriers" {
++              let audit = CarrierSchema.audit typeof<Value>
+ 
+-              let cases =
+-                  Microsoft.FSharp.Reflection.FSharpType.GetUnionCases typeof<Value>
++              let expectedManifest =
++                  [ "Fogell.Groovy.Interpreter.Value :: Fogell.Groovy.Interpreter.Value = union VNull | VBool(Item:System.Boolean) | VInt(Item:System.Int64) | VInteger(Item:System.Int64) | VArithmeticInteger(Item:System.Int64) | VFloat(Item:System.Single) | VStr(Item:System.String) | VList(Item:ref<list<Fogell.Groovy.Interpreter.Value>>) | VRange(Item:list<System.Int64>) | VMap(Item:ref<map<System.String, Fogell.Groovy.Interpreter.Value>>) | VScmMap(Item:Fogell.Groovy.Interpreter.ScmMap) | VScmKeySet(Item:list<System.String>) | VJUnitSummary(Item:ref<Fogell.Groovy.Interpreter.JUnitSummary>) | VClosure(Item1:Fogell.Groovy.Closure, Item2:Fogell.Groovy.Interpreter.Env) | VFunc(name:System.String, parameters:list<System.String>, body:list<Fogell.Groovy.Stmt>)"
++                    "Fogell.Groovy.Interpreter.Value.VClosure.Item1 :: Fogell.Groovy.Closure = record { Params:list<System.String>; Body:list<Fogell.Groovy.Stmt> }"
++                    "Fogell.Groovy.Interpreter.Value.VClosure.Item1.Body.list :: Fogell.Groovy.Stmt = union SExpr(Item:Fogell.Groovy.Expr) | SDef(name:System.String, value:option<Fogell.Groovy.Expr>) | SAssign(target:Fogell.Groovy.Expr, value:Fogell.Groovy.Expr) | SIndexCompoundAssign(target:Fogell.Groovy.Expr, op:System.String, value:Fogell.Groovy.Expr) | SIndexPostfixAssign(target:Fogell.Groovy.Expr, op:System.String) | SIf(cond:Fogell.Groovy.Expr, thenBranch:list<Fogell.Groovy.Stmt>, elseBranch:list<Fogell.Groovy.Stmt>) | SForIn(var:System.String, source:Fogell.Groovy.Expr, body:list<Fogell.Groovy.Stmt>) | SWhile(cond:Fogell.Groovy.Expr, body:list<Fogell.Groovy.Stmt>) | SSwitch(subject:Fogell.Groovy.Expr, arms:list<tuple<option<Fogell.Groovy.Expr> * list<Fogell.Groovy.Stmt>>>) | SReturn(Item:option<Fogell.Groovy.Expr>) | SBreak | SContinue | SThrow(Item:Fogell.Groovy.Expr) | STry(body:list<Fogell.Groovy.Stmt>, catch:option<tuple<option<System.String> * option<System.String> * list<Fogell.Groovy.Stmt>>>, finallyBlock:list<Fogell.Groovy.Stmt>) | SFunc(name:System.String, parameters:list<System.String>, body:list<Fogell.Groovy.Stmt>)"
++                    "Fogell.Groovy.Interpreter.Value.VClosure.Item1.Body.list.SExpr.Item :: Fogell.Groovy.Expr = union ENull | EBool(Item:System.Boolean) | EInt(Item:System.Int64) | EStr(Item:System.String) | EGString(Item:list<Fogell.Groovy.GStringPart>) | EList(Item:list<Fogell.Groovy.Expr>) | EMap(Item:list<tuple<System.String * Fogell.Groovy.Expr>>) | EVar(Item:System.String) | EProp(target:Fogell.Groovy.Expr, name:System.String) | ESpreadProp(target:Fogell.Groovy.Expr, name:System.String) | ESafeProp(target:Fogell.Groovy.Expr, name:System.String) | EIndex(target:Fogell.Groovy.Expr, index:Fogell.Groovy.Expr) | EUnary(op:System.String, operand:Fogell.Groovy.Expr) | EBinary(op:System.String, left:Fogell.Groovy.Expr, right:Fogell.Groovy.Expr) | ETernary(cond:Fogell.Groovy.Expr, ifTrue:Fogell.Groovy.Expr, ifFalse:Fogell.Groovy.Expr) | EElvis(Item1:Fogell.Groovy.Expr, Item2:Fogell.Groovy.Expr) | ECall(target:Fogell.Groovy.CallTarget, args:list<Fogell.Groovy.Arg>, trailing:option<Fogell.Groovy.Closure>) | EClosure(Item:Fogell.Groovy.Closure)"
++                    "Fogell.Groovy.Interpreter.Value.VClosure.Item1.Body.list.SExpr.Item.ECall.args.list :: Fogell.Groovy.Arg = union APos(Item:Fogell.Groovy.Expr) | ANamed(name:System.String, value:Fogell.Groovy.Expr)"
++                    "Fogell.Groovy.Interpreter.Value.VClosure.Item1.Body.list.SExpr.Item.ECall.target :: Fogell.Groovy.CallTarget = union FreeCall(name:System.String) | MethodCall(target:Fogell.Groovy.Expr, name:System.String) | SafeMethodCall(target:Fogell.Groovy.Expr, name:System.String)"
++                    "Fogell.Groovy.Interpreter.Value.VClosure.Item1.Body.list.SExpr.Item.EGString.Item.list :: Fogell.Groovy.GStringPart = union GLit(Item:System.String) | GExpr(Item:Fogell.Groovy.Expr)"
++                    "Fogell.Groovy.Interpreter.Value.VClosure.Item2 :: Fogell.Groovy.Interpreter.Env = record { Vars:map<System.String, ref<Fogell.Groovy.Interpreter.Value>>; Funcs:map<System.String, list<tuple<list<System.String> * list<Fogell.Groovy.Stmt>>>> }"
++                    "Fogell.Groovy.Interpreter.Value.VJUnitSummary.Item.ref :: Fogell.Groovy.Interpreter.JUnitSummary = record { TotalCount:System.Int64; FailCount:System.Int64; SkipCount:System.Int64; PassCount:System.Int64; Duration:option<System.Single> }"
++                    "Fogell.Groovy.Interpreter.Value.VScmMap.Item :: Fogell.Groovy.Interpreter.ScmMap = record { Entries:map<System.String, System.String> }" ]
+ 
+-              let actualCases =
+-                  cases |> Array.map (fun case -> case.Name) |> Set.ofArray
++              Expect.isEmpty audit.Findings "the reviewed Value graph has no unreviewed carrier type"
++              Expect.equal audit.Manifest expectedManifest "the complete transitive Value schema is reviewed exactly"
++          }
+ 
+-              Expect.equal actualCases expectedCases "every Value carrier is explicitly security-reviewed"
++          test "carrier audit rejects nested host objects without changing the outer shape" {
++              let objectAudit = CarrierSchema.audit typeof<CarrierFixtures.PreservedCarrierShape<obj>>
+ 
+-              for case in cases do
+-                  for field in case.GetFields() do
+-                      Expect.isFalse
+-                          (field.PropertyType = typeof<obj>)
+-                          $"{case.Name}.{field.Name} must not directly wrap System.Object"
++              let fileInfoAudit =
++                  CarrierSchema.audit typeof<CarrierFixtures.PreservedCarrierShape<System.IO.FileInfo>>
++
++              Expect.equal objectAudit.Findings.Length 1 "nested System.Object is rejected"
++              Expect.equal objectAudit.Findings.Head.TypeName "System.Object" "object leaf is named"
++
++              Expect.equal
++                  objectAudit.Findings.Head.Path
++                  "Fogell.Groovy.Tests+CarrierFixtures+PreservedCarrierShape<System.Object>.VScmMap.Item.Metadata.map-value.HostObject"
++                  "object path is complete"
++
++              Expect.equal fileInfoAudit.Findings.Length 1 "nested FileInfo is rejected"
++              Expect.equal fileInfoAudit.Findings.Head.TypeName "System.IO.FileInfo" "host leaf is named"
++
++              Expect.equal
++                  fileInfoAudit.Findings.Head.Path
++                  "Fogell.Groovy.Tests+CarrierFixtures+PreservedCarrierShape<System.IO.FileInfo>.VScmMap.Item.Metadata.map-value.HostObject"
++                  "host path is complete"
+           } ]
+ 
+ /// Budgets: the interpreter runs on the admission path, so a runaway script is

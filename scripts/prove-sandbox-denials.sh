@@ -4,10 +4,11 @@
 #
 # This lane is intentionally two-sided. The live matrix proves denials, and the
 # allowed control proves that an implementation which refuses every script does
-# not pass. The final eight arms mutate one accepted denial result into two bad
-# execution states (timeout and signal) and six bad record/workspace states
+# not pass. The final eleven arms mutate one accepted denial result into two bad
+# execution states (timeout and signal) and nine bad record/workspace states
 # (non-failure terminal, extra terminal, generic rather than typed, unnamed,
-# missing its boundary reason, and not halted).
+# both wrong generic reason classes, split predicates across records, missing its
+# boundary reason, and not halted).
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -56,6 +57,15 @@ CASES=(
   "invoke|invoke|'value'.invoke()"
   "execute|execute|'id'.execute()"
   "exec|exec|'id'.exec()"
+)
+
+# The named inventory exists only to make common escape attempts diagnostic.
+# The actual security boundary is deny-by-default, so exercise both generic
+# fallback arms through the real host as well. Keep these OUT of CASES: adding a
+# made-up name to knownEscapes would turn this proof into a deny-list claim.
+FALLBACK_CASES=(
+  "unknown-free|fg072UnknownCapability|generic-free|fg072UnknownCapability()"
+  "unknown-member|fg072UnknownMember|generic-member|'value'.fg072UnknownMember()"
 )
 
 inventory_from_source() {
@@ -150,9 +160,10 @@ run_denial() {
 }
 
 judge_denial() {
-  local target=$1 expected=$2 label=$3 failed=0
+  local target=$1 expected=$2 label=$3 reason_class=${4:-named} failed=0
   local journal="$target/build.journal"
-  local run_status=
+  local run_status= reason_line=
+  local -a reason_lines=()
 
   if [ ! -s "$target/run.status" ]; then
     echo "  FAIL $label: missing host exit status"
@@ -168,12 +179,35 @@ judge_denial() {
   fi
 
   judge_terminal "$journal" failure "$label" || failed=1
-  grep -q $'step-reason\tsandbox\t0\tscript block: Denied' "$journal" \
-    || { echo "  FAIL $label: no typed Denied step reason"; failed=1; }
-  grep -Fq "Attempted = \"$expected\"" "$journal" \
-    || { echo "  FAIL $label: denial did not name attempted capability [$expected]"; failed=1; }
-  grep -q 'not reachable\|not a pure builtin' "$journal" \
-    || { echo "  FAIL $label: denial did not state the capability boundary"; failed=1; }
+  mapfile -t reason_lines < <(awk -F '\t' '$1 == "step-reason" && $2 == "sandbox" && $3 == "0" { print }' "$journal")
+  if [ "${#reason_lines[@]}" -ne 1 ]; then
+    echo "  FAIL $label: expected exactly one sandbox step-reason record, found ${#reason_lines[@]}"
+    failed=1
+  else
+    reason_line=${reason_lines[0]}
+  fi
+  [[ "$reason_line" == *"script block: Denied"* ]] \
+    || { echo "  FAIL $label: sandbox record is not typed Denied"; failed=1; }
+  [[ "$reason_line" == *"Attempted = \"$expected\""* ]] \
+    || { echo "  FAIL $label: sandbox record did not name attempted capability [$expected]"; failed=1; }
+  case "$reason_class" in
+    named)
+      [[ "$reason_line" == *"not reachable from a pipeline script"* ]] \
+        || { echo "  FAIL $label: named escape did not use its specific boundary reason"; failed=1; }
+      ;;
+    generic-free)
+      [[ "$reason_line" == *"not a registered step, a script-defined function, or a pure builtin"* ]] \
+        || { echo "  FAIL $label: generic free call did not use the default-deny reason"; failed=1; }
+      ;;
+    generic-member)
+      [[ "$reason_line" == *"not a pure builtin; host methods are not reachable"* ]] \
+        || { echo "  FAIL $label: generic member call did not use the default-deny reason"; failed=1; }
+      ;;
+    *)
+      echo "  FAIL $label: unknown expected reason class [$reason_class]"
+      failed=1
+      ;;
+  esac
   if find "$target/ws" -name escaped.txt -type f -print -quit 2>/dev/null | grep -q .; then
     echo "  FAIL $label: successor step ran after denial"
     failed=1
@@ -189,12 +223,20 @@ REFERENCE_EXPECTED=
 for row in "${CASES[@]}"; do
   IFS='|' read -r id expected expression <<<"$row"
   run_denial "$id" "$expression"
-  judge_denial "$LAB/$id" "$expected" "$id"
+  judge_denial "$LAB/$id" "$expected" "$id" named
   printf '  denied %s as %s\n' "$id" "$expected"
   if [ -z "$REFERENCE_TARGET" ]; then
     REFERENCE_TARGET="$LAB/$id"
     REFERENCE_EXPECTED=$expected
   fi
+done
+
+echo "=== FG-072 generic deny-by-default fallbacks (${#FALLBACK_CASES[@]} vectors) ==="
+for row in "${FALLBACK_CASES[@]}"; do
+  IFS='|' read -r id expected reason_class expression <<<"$row"
+  run_denial "$id" "$expression"
+  judge_denial "$LAB/$id" "$expected" "$id" "$reason_class"
+  printf '  denied %s as %s\n' "$id" "$expected"
 done
 
 echo "=== sanctioned-call control ==="
@@ -231,7 +273,7 @@ echo "  allowed control: registered steps + script function + trim builtin"
 
 expect_planted_failure() {
   local label=$1 target=$2 expected=$3
-  if judge_denial "$target" "$expected" "planted-$label" >/dev/null 2>&1; then
+  if judge_denial "$target" "$expected" "planted-$label" named >/dev/null 2>&1; then
     echo "  FAIL: checker accepted planted $label state"
     exit 1
   fi
@@ -285,11 +327,43 @@ cp -a "$REFERENCE_TARGET" "$UNNAMED"
 sed -i "s/Attempted = \"$REFERENCE_EXPECTED\"/Attempted = \"redacted\"/" "$UNNAMED/build.journal"
 expect_planted_failure unnamed "$UNNAMED" "$REFERENCE_EXPECTED"
 
+REASON_FREE_CROSSWIRE="$LAB/planted-reason-free-crosswire"
+cp -a "$REFERENCE_TARGET" "$REASON_FREE_CROSSWIRE"
+sed -i -E 's#Reason = +"[^"]*"#Reason = "not a registered step, a script-defined function, or a pure builtin"#' "$REASON_FREE_CROSSWIRE/build.journal"
+if ! grep -q 'not a registered step, a script-defined function, or a pure builtin' "$REASON_FREE_CROSSWIRE/build.journal"; then
+  echo "  FAIL: could not plant generic-free reason crosswire"
+  exit 1
+fi
+expect_planted_failure reason-free-crosswire "$REASON_FREE_CROSSWIRE" "$REFERENCE_EXPECTED"
+
+REASON_MEMBER_CROSSWIRE="$LAB/planted-reason-member-crosswire"
+cp -a "$REFERENCE_TARGET" "$REASON_MEMBER_CROSSWIRE"
+sed -i -E 's#Reason = +"[^"]*"#Reason = "not a pure builtin; host methods are not reachable"#' "$REASON_MEMBER_CROSSWIRE/build.journal"
+if ! grep -q 'not a pure builtin; host methods are not reachable' "$REASON_MEMBER_CROSSWIRE/build.journal"; then
+  echo "  FAIL: could not plant generic-member reason crosswire"
+  exit 1
+fi
+expect_planted_failure reason-member-crosswire "$REASON_MEMBER_CROSSWIRE" "$REFERENCE_EXPECTED"
+
+SPLIT_RECORD="$LAB/planted-split-record"
+cp -a "$REFERENCE_TARGET" "$SPLIT_RECORD"
+sed -i "s/Attempted = \"$REFERENCE_EXPECTED\"/Attempted = \"redacted\"/" "$SPLIT_RECORD/build.journal"
+awk -F '\t' '$1 == "step-reason" && $2 == "sandbox" && $3 == "0" { print }' "$REFERENCE_TARGET/build.journal" \
+  | sed 's/script block: Denied/script block: Failure/' >> "$SPLIT_RECORD/build.journal"
+if [ "$(awk -F '\t' '$1 == "step-reason" && $2 == "sandbox" && $3 == "0" { count++ } END { print count + 0 }' "$SPLIT_RECORD/build.journal")" -ne 2 ] \
+  || ! grep -q 'script block: Denied.*Attempted = "redacted"' "$SPLIT_RECORD/build.journal" \
+  || ! grep -q "script block: Failure.*Attempted = \"$REFERENCE_EXPECTED\"" "$SPLIT_RECORD/build.journal"; then
+  echo "  FAIL: could not plant split-record state"
+  exit 1
+fi
+expect_planted_failure split-record "$SPLIT_RECORD" "$REFERENCE_EXPECTED"
+
 NO_BOUNDARY_REASON="$LAB/planted-no-boundary-reason"
 cp -a "$REFERENCE_TARGET" "$NO_BOUNDARY_REASON"
 sed -i -e 's/not reachable/capability denied/g' \
-  -e 's/not a pure builtin/capability denied/g' "$NO_BOUNDARY_REASON/build.journal"
-if grep -q 'not reachable\|not a pure builtin' "$NO_BOUNDARY_REASON/build.journal" \
+  -e 's/not a pure builtin/capability denied/g' \
+  -e 's/not a registered step/capability denied/g' "$NO_BOUNDARY_REASON/build.journal"
+if grep -q 'not reachable\|not a pure builtin\|not a registered step' "$NO_BOUNDARY_REASON/build.journal" \
   || ! grep -q 'capability denied' "$NO_BOUNDARY_REASON/build.journal"; then
   echo "  FAIL: could not plant missing-boundary-reason state"
   exit 1
