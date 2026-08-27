@@ -91,6 +91,28 @@ module internal WorkerControl =
         | PublishTerminal
         | RequireReconciliation
 
+    let continueExtinguishedDrain (cancelled: bool) interrupted leaseLost =
+        // The finite boundary is entered only after natural exit and verified
+        // producer extinction. A cancellation first observed between its
+        // bounded slices cannot make the remaining bytes ambiguous; drain them
+        // to EOF and let PublishTerminal arbitrate the cancelled build. Shutdown
+        // and lost publication authority still stop immediately.
+        let _ = cancelled
+        not interrupted && not leaseLost
+
+    let finalExitKind exitKind terminalDrainConfirmed (cancelled: bool) interrupted leaseLost =
+        // Cancellation is ignored only as a new classification input at the
+        // post-extinction boundary. The captured exitKind still preserves any
+        // pre-extinction forced exit; a late cancellation does not turn a
+        // complete natural drain into one. Every incomplete or authority-lost
+        // path remains conservative reconciliation.
+        let _ = cancelled
+
+        if interrupted || leaseLost || not terminalDrainConfirmed then
+            ChildExitKind.Forced
+        else
+            exitKind
+
     let naturalExitFinalAction (cancelled: bool) interrupted leaseLost =
         // This decision is reached only after a natural leader exit, verified
         // process extinction, and a complete terminal event drain. A cancellation
@@ -659,9 +681,10 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             let continueFinalDrain () =
                                 refreshControl false
 
-                                not leaseLost
-                                && not cancelled
-                                && not interrupted
+                                WorkerControl.continueExtinguishedDrain
+                                    cancelled
+                                    interrupted
+                                    leaseLost
 
                             let next, completion =
                                 drainFinalEvents
@@ -693,10 +716,12 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                     claim.AttemptId.Value)
 
                         let finalExitKind =
-                            if cancelled || interrupted || leaseLost || not terminalDrainConfirmed then
-                                ChildExitKind.Forced
-                            else
+                            WorkerControl.finalExitKind
                                 exitKind
+                                terminalDrainConfirmed
+                                cancelled
+                                interrupted
+                                leaseLost
 
                         let currentReconciliationReason () =
                             WorkerControl.reconciliationReason

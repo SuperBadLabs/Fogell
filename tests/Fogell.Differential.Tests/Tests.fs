@@ -386,6 +386,72 @@ let controllerEventDrainBudgets =
               Expect.isGreaterThan controlChecks 1 "control is interleaved between bounded slices"
           }
 
+          test "late cancellation drains the frozen post-exit boundary before terminal arbitration" {
+              let expected = [ "first"; "second"; "third" ]
+              let backing = expected |> List.collect (frame >> Array.toList) |> Array.ofList
+              let cursor = state ()
+              let observed = ResizeArray<string>()
+              let mutable controlChecks = 0
+              let mutable cancelled = false
+
+              let completion =
+                  EventStream.drainExtinguishedBoundary
+                      (fun () -> Some(new IO.MemoryStream(backing) :> IO.Stream))
+                      cursor
+                      1024
+                      4096
+                      1
+                      (fun () ->
+                          controlChecks <- controlChecks + 1
+
+                          if controlChecks = 2 then
+                              cancelled <- true
+
+                          WorkerControl.continueExtinguishedDrain cancelled false false)
+                      (function
+                      | Encoded value ->
+                          value
+                          |> Text.Encoding.ASCII.GetString
+                          |> Convert.FromBase64String
+                          |> Text.Encoding.UTF8.GetString
+                          |> observed.Add
+                          true
+                      | Oversized -> false)
+
+              Expect.isTrue cancelled "cancellation is first observed between bounded drain slices"
+              Expect.isGreaterThan controlChecks 2 "the control plane remains interleaved after cancellation"
+              Expect.equal completion.Stop EndOfStream "late cancellation does not truncate extinct evidence"
+              Expect.equal (List.ofSeq observed) expected "every frozen frame is published exactly once"
+              Expect.equal
+                  (WorkerControl.finalExitKind ChildExitKind.Natural true cancelled false false)
+                  ChildExitKind.Natural
+                  "a complete extinct drain stays eligible for terminal Store arbitration"
+              Expect.equal
+                  (WorkerControl.naturalExitFinalAction cancelled false false)
+                  WorkerControl.NaturalExitFinalAction.PublishTerminal
+                  "the accepted cancellation is delegated to PublishTerminal"
+
+              for cause, interrupted, leaseLost in
+                  [ "shutdown", true, false
+                    "lease loss", false, true ] do
+                  Expect.isFalse
+                      (WorkerControl.continueExtinguishedDrain cancelled interrupted leaseLost)
+                      $"{cause} still stops the finite drain immediately"
+                  Expect.equal
+                      (WorkerControl.finalExitKind ChildExitKind.Natural true cancelled interrupted leaseLost)
+                      ChildExitKind.Forced
+                      $"{cause} still requires conservative reconciliation"
+
+              Expect.equal
+                  (WorkerControl.finalExitKind ChildExitKind.Natural false cancelled false false)
+                  ChildExitKind.Forced
+                  "cancellation cannot authorize an incomplete terminal drain"
+              Expect.equal
+                  (WorkerControl.finalExitKind ChildExitKind.Forced true cancelled false false)
+                  ChildExitKind.Forced
+                  "the captured exit kind preserves a pre-extinction forced boundary"
+          }
+
           test "growth after the extinction snapshot fails closed" {
               let seed = frame "hot"
               let stream = new IO.MemoryStream()
