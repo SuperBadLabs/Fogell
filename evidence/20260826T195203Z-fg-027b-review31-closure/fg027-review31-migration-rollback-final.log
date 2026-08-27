@@ -1,0 +1,13 @@
+=== FG-081 positive live control ===
+=== FG-081 candidate fault refusals ===
+  refused archive-tamper               rollback archive changed after its hash was recorded
+  refused rollback-drift               rollback logical hash differs from the pre-upgrade state
+  refused missing-forward-fk           latest migration did not install both tenant-composite attempt keys
+  refused skipped-second-forward       second forward logical hash differs from the first forward state
+=== FG-081 direct comparison mutants ===
+  killed archive-rehash mutant
+  killed rollback-hash mutant
+  killed forward-hash mutant
+  killed database-namespace mutant
+FG-081 PROOF PASS: positive forward/back/forward rehearsal; 4 fault controls refused; 4 byte-changing mutants killed
+FG-081 PASS previous=0010 latest=0011 pre=0192cb0bce624dbbc5a568d51690c887cb263b38aba675fd4f6530b458005e3e rollback=0192cb0bce624dbbc5a568d51690c887cb263b38aba675fd4f6530b458005e3e forward1=7bc3bd8557f7b1951ad966ba9d96ecf1bdc7b01a2cbd5c920f458d63191c24c1 forward2=7bc3bd8557f7b1951ad966ba9d96ecf1bdc7b01a2cbd5c920f458d63191c24c1 archive-sha256=927079bb51521bb4de9388e8c2366b156d5cc62d3fc681092b6a4885acfd23f3 fk-phases=4

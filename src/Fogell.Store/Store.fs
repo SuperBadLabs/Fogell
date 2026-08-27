@@ -827,6 +827,47 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                             | Ok decision ->
                                 match decision.Outcome with
                                 | ChildCreated child ->
+                                    // A terminal publication rolls the same lineage up to its
+                                    // result. A queued retry must reopen that public aggregate in
+                                    // this transaction; otherwise the child is claimable while the
+                                    // build still reports terminal and refuses cancellation. Keep
+                                    // the canonical attempt -> node -> build lock order and refuse
+                                    // an aggregate that no longer matches the immutable parent.
+                                    let parentResult =
+                                        match parent.State with
+                                        | Terminal result -> BuildStatus.toWireString result
+                                        | state -> failwithf "retry parent became non-terminal: %A" state
+
+                                    use reopenNode = conn.CreateCommand()
+                                    reopenNode.Transaction <- tx
+                                    reopenNode.CommandText <-
+                                        "UPDATE nodes
+                                            SET status = 'queued'
+                                          WHERE organization_id = @o AND id = @n AND status = @terminal
+                                          RETURNING build_id"
+                                    reopenNode.Parameters.AddWithValue("o", child.OrganizationId.Value) |> ignore
+                                    reopenNode.Parameters.AddWithValue("n", child.NodeId.Value) |> ignore
+                                    reopenNode.Parameters.AddWithValue("terminal", parentResult) |> ignore
+
+                                    let buildId =
+                                        match reopenNode.ExecuteScalar() with
+                                        | :? Guid as value -> value
+                                        | _ -> failwith "retry parent node is not at its terminal result"
+
+                                    use reopenBuild = conn.CreateCommand()
+                                    reopenBuild.Transaction <- tx
+                                    reopenBuild.CommandText <-
+                                        "UPDATE builds
+                                            SET status = 'queued'
+                                          WHERE organization_id = @o AND id = @b
+                                            AND status = @terminal"
+                                    reopenBuild.Parameters.AddWithValue("o", child.OrganizationId.Value) |> ignore
+                                    reopenBuild.Parameters.AddWithValue("b", buildId) |> ignore
+                                    reopenBuild.Parameters.AddWithValue("terminal", parentResult) |> ignore
+
+                                    if reopenBuild.ExecuteNonQuery() <> 1 then
+                                        failwith "retry parent build is not at its terminal result"
+
                                     use childCmd = conn.CreateCommand()
                                     childCmd.Transaction <- tx
                                     childCmd.CommandText <-
@@ -1999,6 +2040,8 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                          ON d.build_id = b.id AND d.organization_id = b.organization_id
                       WHERE a.organization_id = @o
                         AND a.state = 'queued'
+                        AND n.status = 'queued'
+                        AND b.status = 'queued'
                         AND n.required_trust_pool = @pool
                         AND n.required_capabilities <@ @caps
                       ORDER BY a.created_at, a.id

@@ -294,10 +294,30 @@ let migrations =
                       "migration 0010 exact source checksum"
           }
 
+          test "retry lineage reopening migration 0011 is checksum-pinned" {
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use cmd = conn.CreateCommand()
+              cmd.CommandText <- "SELECT checksum FROM schema_migrations WHERE version = '0011'"
+
+              match cmd.ExecuteScalar() with
+              | null -> failtest "migration ledger has no 0011 row"
+              | value ->
+                  Expect.equal
+                      (string value)
+                      "16ceebc066113d5fc2c7b223c6332bb48fc57021c9a64e76d940ea9557fc415d"
+                      "migration 0011 exact source checksum"
+          }
+
           test "migration 0009 repairs preexisting roots as a NOBYPASSRLS schema owner" {
               let databaseName = $"fogell_root_upgrade_{Guid.NewGuid():N}"
               let roleName = $"fogell_migration_owner_{Guid.NewGuid():N}"
               let organization = Guid.NewGuid()
+              let project = Guid.NewGuid()
+              let build = Guid.NewGuid()
+              let node = Guid.NewGuid()
+              let parent = Guid.NewGuid()
+              let child = Guid.NewGuid()
               let adminBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
               adminBuilder.Database <- "postgres"
               let targetBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
@@ -343,8 +363,41 @@ let migrations =
                   use seed = target.CreateCommand()
                   seed.CommandText <-
                       "INSERT INTO organizations (id, slug)
-                       VALUES (@organization, 'pre-forced-rls')"
+                       VALUES (@organization, 'pre-forced-rls');
+                       INSERT INTO projects (id, organization_id, slug)
+                       VALUES (@project, @organization, 'upgrade');
+                       INSERT INTO builds
+                           (id, organization_id, project_id, number, idempotency_key, status)
+                       VALUES (@build, @organization, @project, 1, 'pre-0011-retry', 'failure');
+                       INSERT INTO nodes
+                           (id, organization_id, build_id, name, ordinal,
+                            required_trust_pool, required_capabilities, status)
+                       VALUES
+                           (@node, @organization, @build, 'pipeline', 0,
+                            'trusted-linux', ARRAY['linux'], 'failure');
+                       INSERT INTO attempts
+                           (id, organization_id, node_id, ordinal, state, fence,
+                            restore_epoch, result)
+                       VALUES
+                           (@parent, @organization, @node, 0, 'terminal', 1, 0, 'failure');
+                       INSERT INTO attempts
+                           (id, organization_id, node_id, ordinal, retry_of, state,
+                            fence, restore_epoch)
+                       VALUES
+                           (@child, @organization, @node, 1, @parent, 'queued', 0, 0);
+                       INSERT INTO retry_decisions
+                           (organization_id, parent_attempt_id, parent_node_id,
+                            parent_ordinal, parent_retry_of, parent_restore_epoch,
+                            attempt_limit, outcome, child_attempt_id, dead_letter_reason)
+                       VALUES
+                           (@organization, @parent, @node, 0, NULL, 0,
+                            2, 'child_created', @child, NULL)"
                   seed.Parameters.AddWithValue("organization", organization) |> ignore
+                  seed.Parameters.AddWithValue("project", project) |> ignore
+                  seed.Parameters.AddWithValue("build", build) |> ignore
+                  seed.Parameters.AddWithValue("node", node) |> ignore
+                  seed.Parameters.AddWithValue("parent", parent) |> ignore
+                  seed.Parameters.AddWithValue("child", child) |> ignore
                   seed.ExecuteNonQuery() |> ignore
 
                   let legacyMigrations =
@@ -393,14 +446,63 @@ let migrations =
                           (applied
                            |> List.filter (fun item -> not item.AlreadyPresent)
                            |> List.map (fun item -> item.Version))
-                          [ "0009"; "0010" ]
-                          "only the forward repair and attempt guard migrations are pending"
+                          [ "0009"; "0010"; "0011" ]
+                          "only the forward repair and invariant guard migrations are pending"
 
                   use repaired = target.CreateCommand()
                   repaired.CommandText <-
                       "SELECT count(*) FROM organization_work_roots WHERE organization_id = @organization"
                   repaired.Parameters.AddWithValue("organization", organization) |> ignore
                   Expect.equal (repaired.ExecuteScalar() :?> int64) 1L "the missed legacy root is repaired exactly once"
+
+                  use tenantTx = target.BeginTransaction()
+                  use tenant = target.CreateCommand()
+                  tenant.Transaction <- tenantTx
+                  tenant.CommandText <-
+                      "SELECT set_config('fogell.organization_id', @organization, true)"
+                  tenant.Parameters.AddWithValue("organization", organization.ToString()) |> ignore
+                  tenant.ExecuteScalar() |> ignore
+
+                  use retryRepair = target.CreateCommand()
+                  retryRepair.Transaction <- tenantTx
+                  retryRepair.CommandText <-
+                      "SELECT n.status, b.status, a.state,
+                              (SELECT count(*) FROM events
+                                WHERE organization_id = @organization
+                                  AND build_id = @build
+                                  AND kind = 'build.reopened'),
+                              (SELECT count(*) FROM outbox
+                                WHERE organization_id = @organization
+                                  AND topic = 'build.reopened'
+                                  AND body->>'build' = @build_text)
+                         FROM nodes n
+                         JOIN builds b
+                           ON b.organization_id = n.organization_id AND b.id = n.build_id
+                         JOIN attempts a
+                           ON a.organization_id = n.organization_id AND a.id = @child
+                        WHERE n.organization_id = @organization AND n.id = @node"
+                  retryRepair.Parameters.AddWithValue("organization", organization) |> ignore
+                  retryRepair.Parameters.AddWithValue("build", build) |> ignore
+                  retryRepair.Parameters.AddWithValue("build_text", build.ToString()) |> ignore
+                  retryRepair.Parameters.AddWithValue("child", child) |> ignore
+                  retryRepair.Parameters.AddWithValue("node", node) |> ignore
+                  use retryRepairRow = retryRepair.ExecuteReader()
+                  Expect.isTrue (retryRepairRow.Read()) "pre-0011 retry lineage remains visible"
+                  Expect.equal (retryRepairRow.GetString 0) "queued" "migration reopens the legacy node"
+                  Expect.equal (retryRepairRow.GetString 1) "queued" "migration reopens the legacy build"
+                  Expect.equal (retryRepairRow.GetString 2) "queued" "migration preserves the queued child"
+                  Expect.equal (retryRepairRow.GetInt64 3) 1L "migration emits one repair event"
+                  Expect.equal (retryRepairRow.GetInt64 4) 1L "migration emits one repair outbox record"
+                  retryRepairRow.Close()
+                  tenantTx.Commit()
+
+                  Expect.equal
+                      (Store(ownerConnectionString).RequestCancellation(
+                          OrganizationId organization,
+                          ProjectId project,
+                          BuildId build))
+                      CancellationAccepted
+                      "the repaired pre-0011 build accepts cancellation"
 
                   use protection = target.CreateCommand()
                   protection.CommandText <-
@@ -411,6 +513,20 @@ let migrations =
                   Expect.isTrue (protectionRow.GetBoolean 0) "tenant RLS is enabled again before commit"
                   Expect.isTrue (protectionRow.GetBoolean 1) "tenant RLS is forced again before commit"
                   protectionRow.Close()
+
+                  use retryProtection = target.CreateCommand()
+                  retryProtection.CommandText <-
+                      "SELECT count(*)::integer, bool_and(relrowsecurity), bool_and(relforcerowsecurity)
+                         FROM pg_class
+                        WHERE relname = ANY(ARRAY[
+                            'retry_decisions', 'attempts', 'nodes',
+                            'builds', 'events', 'outbox'])"
+                  use retryProtectionRow = retryProtection.ExecuteReader()
+                  Expect.isTrue (retryProtectionRow.Read()) "retry repair protection metadata exists"
+                  Expect.equal (retryProtectionRow.GetInt32 0) 6 "all six repair tables are present"
+                  Expect.isTrue (retryProtectionRow.GetBoolean 1) "tenant RLS is re-enabled on every repair table"
+                  Expect.isTrue (retryProtectionRow.GetBoolean 2) "tenant RLS is re-forced on every repair table"
+                  retryProtectionRow.Close()
 
                   use stillHidden = target.CreateCommand()
                   stillHidden.CommandText <- "SELECT count(*) FROM organizations"
@@ -3511,12 +3627,14 @@ let retryDecisions =
               use cmd = conn.CreateCommand()
               cmd.CommandText <-
                   "SELECT current_setting('server_version_num')::int,
-                          EXISTS (SELECT 1 FROM schema_migrations WHERE version = '0004')"
+                          EXISTS (SELECT 1 FROM schema_migrations WHERE version = '0004'),
+                          EXISTS (SELECT 1 FROM schema_migrations WHERE version = '0011')"
               use reader = cmd.ExecuteReader()
               Expect.isTrue (reader.Read()) "live PostgreSQL returned one marker row"
               Expect.isGreaterThan (reader.GetInt32 0) 0 "real server version"
               Expect.isTrue (reader.GetBoolean 1) "migration 0004 installed"
-              printfn "FG027B_LIVE_PG=1 FG027B_SCHEMA=0004 FG027B_CONCURRENCY=16"
+              Expect.isTrue (reader.GetBoolean 2) "migration 0011 installed"
+              printfn "FG027B_LIVE_PG=1 FG027B_SCHEMA=0011 FG027B_CONCURRENCY=16"
           }
 
           test "fresh child decision atomically creates child decision event and outbox" {
@@ -3544,9 +3662,14 @@ let retryDecisions =
               use cmd = conn.CreateCommand()
               cmd.CommandText <-
                   "SELECT state, fence, retry_of, result IS NULL,
-                          lease_owner IS NULL AND lease_expires_at IS NULL
-                   FROM attempts
-                   WHERE organization_id = @o AND id = @a"
+                          lease_owner IS NULL AND lease_expires_at IS NULL,
+                          n.status, b.status, b.cancellation_requested
+                     FROM attempts a
+                     JOIN nodes n
+                       ON n.organization_id = a.organization_id AND n.id = a.node_id
+                     JOIN builds b
+                       ON b.organization_id = n.organization_id AND b.id = n.build_id
+                    WHERE a.organization_id = @o AND a.id = @a"
               cmd.Parameters.AddWithValue("o", org.Value) |> ignore
               cmd.Parameters.AddWithValue("a", childId.Value) |> ignore
               use reader = cmd.ExecuteReader()
@@ -3556,9 +3679,157 @@ let retryDecisions =
               Expect.equal (reader.GetGuid 2) parent.AttemptId.Value "durable ancestry"
               Expect.isTrue (reader.GetBoolean 3) "child has no result"
               Expect.isTrue (reader.GetBoolean 4) "child has no lease"
+              Expect.equal (reader.GetString 5) "queued" "retry reopens the node"
+              Expect.equal (reader.GetString 6) "queued" "retry reopens the build"
+              Expect.isFalse (reader.GetBoolean 7) "retry does not manufacture cancellation"
               Expect.equal (retryDecisionCount org parent.AttemptId) 1 "one decision row"
               Expect.equal (store.CountEvents(org, parent.BuildId, "retry.decided")) 1 "one event"
               Expect.equal (store.CountOutbox org) (outboxBefore + 1) "one outbox addition"
+          }
+
+          test "retry reopening makes cancellation effective before child launch" {
+              let org, project = freshProject ()
+              let parent = terminalAttempt org project "retry-cancel-child"
+              let childId = AttemptId(Guid.NewGuid())
+              decideRetryOk org parent.AttemptId 2 childId |> ignore
+
+              Expect.equal
+                  (store.BuildSnapshot(org, project, parent.BuildId))
+                  (Some("queued", false))
+                  "fresh retry is publicly queued"
+              Expect.equal
+                  (store.RequestCancellation(org, project, parent.BuildId))
+                  CancellationAccepted
+                  "reopened build accepts cancellation"
+
+              let claim =
+                  match
+                      store.ClaimNextExecution(
+                          org,
+                          "local:retry-cancel-child",
+                          "trusted-linux",
+                          [ "linux" ],
+                          60)
+                  with
+                  | Ok(Some value) -> value
+                  | Ok None -> failtest "queued retry child was not claimable"
+                  | Error error -> failtestf "retry child claim failed: %s" error
+
+              Expect.equal claim.AttemptId childId "the retry child was claimed"
+              Expect.equal
+                  (store.BeginExecution(
+                      org,
+                      claim.AttemptId,
+                      claim.Fence,
+                      "local:retry-cancel-child",
+                      60))
+                  (Ok ExecutionCancelledBeforeStart)
+                  "accepted cancellation prevents child launch"
+              Expect.equal
+                  (store.AttemptState(org, childId))
+                  (Some("terminal", claim.Fence.Value, Some "aborted"))
+                  "retry child terminates without running"
+              Expect.equal
+                  (store.BuildSnapshot(org, project, parent.BuildId))
+                  (Some("aborted", false))
+                  "public state records the pre-launch abort"
+          }
+
+          test "database retry invariant reopens direct SQL child creation and publishes its build" {
+              let org, project = freshProject ()
+              let parent = terminalAttempt org project "retry-sql-invariant"
+              let childId = Guid.NewGuid()
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use tx = conn.BeginTransaction()
+              use create = conn.CreateCommand()
+              create.Transaction <- tx
+              create.CommandText <-
+                  "INSERT INTO attempts
+                       (id, organization_id, node_id, ordinal, retry_of,
+                        state, fence, restore_epoch, lease_owner, lease_expires_at, result)
+                   VALUES
+                       (@child, @o, @node, 1, @parent,
+                        'queued', 0,
+                        (SELECT restore_epoch FROM controller_metadata WHERE singleton),
+                        NULL, NULL, NULL);
+                   INSERT INTO retry_decisions
+                       (organization_id, parent_attempt_id, parent_node_id,
+                        parent_ordinal, parent_retry_of, parent_restore_epoch,
+                        attempt_limit, outcome, child_attempt_id, dead_letter_reason)
+                   VALUES
+                       (@o, @parent, @node, 0, NULL,
+                        (SELECT restore_epoch FROM controller_metadata WHERE singleton),
+                        2, 'child_created', @child, NULL)"
+              create.Parameters.AddWithValue("child", childId) |> ignore
+              create.Parameters.AddWithValue("o", org.Value) |> ignore
+              create.Parameters.AddWithValue("node", parent.NodeId.Value) |> ignore
+              create.Parameters.AddWithValue("parent", parent.AttemptId.Value) |> ignore
+              create.ExecuteNonQuery() |> ignore
+              tx.Commit()
+
+              Expect.equal
+                  (store.BuildSnapshot(org, project, parent.BuildId))
+                  (Some("queued", false))
+                  "database trigger owns aggregate reopening"
+
+              use publication = conn.CreateCommand()
+              publication.CommandText <-
+                  "SELECT body->>'build', body->>'buildStatus'
+                     FROM outbox
+                    WHERE organization_id = @o
+                      AND topic = 'retry.decided'
+                      AND body->>'parentAttempt' = @parent"
+              publication.Parameters.AddWithValue("o", org.Value) |> ignore
+              publication.Parameters.AddWithValue("parent", parent.AttemptId.Value.ToString()) |> ignore
+              use row = publication.ExecuteReader()
+              Expect.isTrue (row.Read()) "direct decision published one compensating transition"
+              Expect.equal (row.GetString 0) (parent.BuildId.Value.ToString()) "publication binds the build"
+              Expect.equal (row.GetString 1) "queued" "publication carries the reopened state"
+              Expect.isFalse (row.Read()) "direct decision has one publication"
+          }
+
+          test "execution claim requires both queued node and queued build aggregates" {
+              let nodeOrg, nodeProject = freshProject ()
+              let nodeMismatch =
+                  admitOk (newBuild nodeOrg nodeProject "retry-node-mismatch" [ "retry" ])
+              let buildOrg, buildProject = freshProject ()
+              let buildMismatch =
+                  admitOk (newBuild buildOrg buildProject "retry-build-mismatch" [ "retry" ])
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use poison = conn.CreateCommand()
+              poison.CommandText <-
+                  "UPDATE nodes SET status = 'failure'
+                    WHERE organization_id = @node_org AND id = @node;
+                   UPDATE builds SET status = 'failure'
+                    WHERE organization_id = @build_org AND id = @build"
+              poison.Parameters.AddWithValue("node_org", nodeOrg.Value) |> ignore
+              poison.Parameters.AddWithValue("node", nodeMismatch.NodeId.Value) |> ignore
+              poison.Parameters.AddWithValue("build_org", buildOrg.Value) |> ignore
+              poison.Parameters.AddWithValue("build", buildMismatch.BuildId.Value) |> ignore
+              poison.ExecuteNonQuery() |> ignore
+
+              Expect.equal
+                  (store.ClaimNextExecution(
+                      nodeOrg,
+                      "local:retry-node-mismatch",
+                      "trusted-linux",
+                      [ "linux" ],
+                      60))
+                  (Ok None)
+                  "terminal node aggregate prevents a queued attempt claim"
+              Expect.equal
+                  (store.ClaimNextExecution(
+                      buildOrg,
+                      "local:retry-build-mismatch",
+                      "trusted-linux",
+                      [ "linux" ],
+                      60))
+                  (Ok None)
+                  "terminal build aggregate prevents a queued attempt claim"
           }
 
           test "replay ignores hostile fresh inputs and returns exact prior bytes" {
@@ -3589,6 +3860,10 @@ let retryDecisions =
                   | Error error -> failtestf "child offer failed: %s" error
 
               Expect.equal liveFence.Value 1L "live child advanced its fence"
+              Expect.equal
+                  (store.BeginExecution(org, child.Id, liveFence, "child-agent", 60))
+                  (Ok ExecutionStarted)
+                  "live child entered running state"
               let replay = decideRetryOk org parent.AttemptId 1 parent.AttemptId
 
               match replay.Persisted.Decision.Outcome with
@@ -3597,6 +3872,10 @@ let retryDecisions =
                   Expect.equal snapshot child "queued creation snapshot is retained"
 
               Expect.equal replay.Persisted first.Persisted "live state cannot rewrite creation history"
+              Expect.equal
+                  (store.BuildSnapshot(org, project, parent.BuildId))
+                  (Some("running", false))
+                  "replay cannot reopen or regress the live aggregate"
           }
 
           test "16 concurrent callers converge on one immutable result" {
@@ -3765,6 +4044,15 @@ let retryDecisions =
                       exhausted.Persisted.DeadLetterReason
                       (Some "attempt budget exhausted")
                       "exact dead-letter reason"
+
+              Expect.equal
+                  (store.BuildSnapshot(org, project, at.BuildId))
+                  (Some("failure", false))
+                  "budget exhaustion leaves the terminal aggregate closed"
+              Expect.equal
+                  (store.RequestCancellation(org, project, at.BuildId))
+                  (AlreadyTerminal "failure")
+                  "budget exhaustion does not reopen cancellation"
           }
 
           test "dead-letter replay is exact and emits no second publication" {
