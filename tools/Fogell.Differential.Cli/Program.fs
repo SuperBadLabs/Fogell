@@ -99,7 +99,8 @@ let main argv =
                     Some
                         { JobName = job
                           BuildNumber = buildNumber
-                          Path = Path.GetFullPath path }
+                          Path = Path.GetFullPath path
+                          Observed = false }
                 | _ ->
                     eprintfn
                         "raw-console export refused: JOB must be one safe Jenkins job name, BUILD a positive integer, and PATH absolute"
@@ -756,9 +757,20 @@ let main argv =
         printfn "tier-1 proven (incl. workspace): %d / %d" full receipts.Length
         printfn "proven-partial (result+output):  %d / %d" partial receipts.Length
 
-        // Exit non-zero unless every file is fully proven. A partial pass is not
-        // a pass: it is a claim with a hole in it.
-        if full = receipts.Length then 0 else 1
+        // A configured evidence export is a REQUIRED observation, not a hint.
+        // A safe but stale job/build selector used to do nothing and could leave
+        // an older target file looking current even when the comparison passed.
+        // Refuse the whole run unless the exact selected console was published.
+        match rawConsoleExport with
+        | Some configured when not configured.Observed ->
+            eprintfn
+                $"raw-console export refused: selected build was not observed: {configured.JobName} #{configured.BuildNumber}"
+
+            2
+        | _ ->
+            // Exit non-zero unless every file is fully proven. A partial pass is not
+            // a pass: it is a claim with a hole in it.
+            if full = receipts.Length then 0 else 1
     | _ ->
         eprintfn "usage: fogell-diff <jenkins-url> <jenkins-core> <receipt-dir> <file...>"
         2

@@ -7058,13 +7058,16 @@ let compileRefusalDisposition =
                       Some
                           { JobName = "diff-boundary"
                             BuildNumber = 1
-                            Path = target }
+                            Path = target
+                            Observed = false }
 
                   Jenkins.exportRawConsole export "diff-other" 1 "wrong job\n"
                   Jenkins.exportRawConsole export "diff-boundary" 2 "wrong build\n"
                   Expect.isFalse (IO.File.Exists target) "non-selected builds cannot publish"
+                  Expect.isFalse export.Value.Observed "an unmatched selector remains visibly unsatisfied"
 
                   Jenkins.exportRawConsole export "diff-boundary" 1 "first π console\n"
+                  Expect.isTrue export.Value.Observed "the exact selected build satisfies the export"
                   Expect.equal
                       (IO.File.ReadAllText(target, Text.Encoding.UTF8))
                       "first π console\n"
@@ -7085,7 +7088,8 @@ let compileRefusalDisposition =
                       Some
                           { JobName = "diff-boundary"
                             BuildNumber = 1
-                            Path = IO.Path.Combine(root, "missing", "console.txt") }
+                            Path = IO.Path.Combine(root, "missing", "console.txt")
+                            Observed = false }
 
                   Expect.throws
                       (fun () -> Jenkins.exportRawConsole unavailable "diff-boundary" 1 "must fail\n")
@@ -7095,7 +7099,8 @@ let compileRefusalDisposition =
                       Some
                           { JobName = "diff-boundary"
                             BuildNumber = 1
-                            Path = "relative-console.txt" }
+                            Path = "relative-console.txt"
+                            Observed = false }
 
                   Expect.throws
                       (fun () -> Jenkins.exportRawConsole relative "diff-boundary" 1 "must fail\n")
@@ -7105,7 +7110,8 @@ let compileRefusalDisposition =
                       Some
                           { JobName = "diff-boundary"
                             BuildNumber = 1
-                            Path = root }
+                            Path = root
+                            Observed = false }
 
                   Expect.throws
                       (fun () -> Jenkins.exportRawConsole directoryTarget "diff-boundary" 1 "must fail\n")

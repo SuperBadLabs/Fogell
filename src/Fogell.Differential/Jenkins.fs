@@ -49,7 +49,11 @@ type JenkinsConfig =
 and RawConsoleExport =
     { JobName: string
       BuildNumber: int
-      Path: string }
+      Path: string
+      /// Set only after the selected console has been atomically published.
+      /// The CLI checks this after every requested case, so a selector that
+      /// matched no executed build cannot silently report success.
+      mutable Observed: bool }
 
 /// FG-052. What defines a build's pipeline on the Jenkins side: an inline
 /// script (CpsFlowDefinition) or an SCM the Jenkinsfile is obtained from
@@ -91,6 +95,7 @@ module Jenkins =
             try
                 IO.File.WriteAllText(temporary, console, UTF8Encoding(false))
                 IO.File.Move(temporary, target, true)
+                configured.Observed <- true
             finally
                 if IO.File.Exists temporary then
                     IO.File.Delete temporary
