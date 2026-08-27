@@ -54,12 +54,12 @@ FOGELL_WORKSPACE_COLLECTOR
     echo "REFUSED: shared Jenkins workspace collector could not be encoded" >&2
     return 2
   }
-  export FOGELL_JENKINS_WORKSPACE_CMD="ssh ${jenkins_host_q} \"podman exec ${jenkins_container_q} bash -c \\\"printf %s ${collector_b64} | base64 -d | bash -s -- '/var/jenkins_home/workspace/{job}'\\\"\""
+  export FOGELL_JENKINS_WORKSPACE_CMD="ssh -- ${jenkins_host_q} \"podman exec ${jenkins_container_q} bash -c \\\"printf %s ${collector_b64} | base64 -d | bash -s -- '/var/jenkins_home/workspace/{job}'\\\"\""
 
   # A compile-time refusal may never allocate a workspace. Precreate the empty
   # root so protocol v2 observes a real empty tree instead of treating a failed
   # `cd` as evidence.
-  export FOGELL_JENKINS_WIPE_CMD="ssh ${jenkins_host_q} \"podman exec ${jenkins_container_q} sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp && mkdir -p /var/jenkins_home/workspace/{job}\\\"\""
+  export FOGELL_JENKINS_WIPE_CMD="ssh -- ${jenkins_host_q} \"podman exec ${jenkins_container_q} sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp && mkdir -p /var/jenkins_home/workspace/{job}\\\"\""
 }
 
 fogell_jenkins_podman_inspect_v2() {
@@ -79,6 +79,6 @@ fogell_jenkins_podman_inspect_v2() {
   # Both interpolations are deliberately client-expanded only after `%q`
   # escaping; the remote shell must receive one inert command string.
   # shellcheck disable=SC2029
-  ssh "$jenkins_host" \
+  ssh -- "$jenkins_host" \
     "podman inspect --format=$inspect_format_q $jenkins_container_q"
 }

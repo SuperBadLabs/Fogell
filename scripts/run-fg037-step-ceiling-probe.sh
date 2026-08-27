@@ -42,6 +42,7 @@ for required in \
   Directory.Build.props \
   tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj \
   scripts/check-fg037-jenkins-identity.sh \
+  scripts/check-fg037-manifest.py \
   scripts/jenkins-workspace-v2.sh; do
   if [ ! -f "$required" ]; then
     echo "REFUSED: required FG-037 engine/build input is absent: $required" >&2
@@ -61,6 +62,7 @@ engine_input_pathspecs=(
 
 probe_input_pathspecs=(
   scripts/check-fg037-jenkins-identity.sh
+  scripts/check-fg037-manifest.py
   scripts/check-fg037-step-ceiling.py
   scripts/jenkins-workspace-v2.sh
   scripts/prove-fg037-step-ceiling.sh
@@ -79,16 +81,20 @@ fi
 
 collector_snapshot=$(mktemp)
 identity_checker_snapshot=$(mktemp)
-trap 'rm -f "$collector_snapshot" "$identity_checker_snapshot"' EXIT
+manifest_checker_snapshot=$(mktemp)
+trap 'rm -f "$collector_snapshot" "$identity_checker_snapshot" "$manifest_checker_snapshot"' EXIT
 git show HEAD:scripts/jenkins-workspace-v2.sh >"$collector_snapshot"
 git show HEAD:scripts/check-fg037-jenkins-identity.sh >"$identity_checker_snapshot"
+git show HEAD:scripts/check-fg037-manifest.py >"$manifest_checker_snapshot"
 if ! cmp -s "$collector_snapshot" scripts/jenkins-workspace-v2.sh \
-  || ! cmp -s "$identity_checker_snapshot" scripts/check-fg037-jenkins-identity.sh; then
+  || ! cmp -s "$identity_checker_snapshot" scripts/check-fg037-jenkins-identity.sh \
+  || ! cmp -s "$manifest_checker_snapshot" scripts/check-fg037-manifest.py; then
   echo "REFUSED: load-bearing probe input changed after the clean-input check" >&2
   exit 2
 fi
 collector_sha=$(sha256sum "$collector_snapshot" | awk '{print $1}')
 identity_checker_sha=$(sha256sum "$identity_checker_snapshot" | awk '{print $1}')
+manifest_checker_sha=$(sha256sum "$manifest_checker_snapshot" | awk '{print $1}')
 
 require_stable_inputs() {
   local current_head
@@ -103,7 +109,8 @@ require_stable_inputs() {
     || [ "$current_tree" != "$source_tree" ] \
     || [ -n "$current_status" ] \
     || ! cmp -s "$collector_snapshot" scripts/jenkins-workspace-v2.sh \
-    || ! cmp -s "$identity_checker_snapshot" scripts/check-fg037-jenkins-identity.sh; then
+    || ! cmp -s "$identity_checker_snapshot" scripts/check-fg037-jenkins-identity.sh \
+    || ! cmp -s "$manifest_checker_snapshot" scripts/check-fg037-manifest.py; then
     echo "REFUSED: load-bearing HEAD or probe inputs changed while evidence was being produced" >&2
     [ -z "$current_status" ] || printf '%s\n' "$current_status" >&2
     return 2
@@ -115,7 +122,7 @@ printf -v jenkins_host_q '%q' "$FOGELL_JENKINS_HOST"
 printf -v jenkins_container_q '%q' "$FOGELL_JENKINS_CONTAINER"
 # The quoted container word intentionally expands on HeMan for Luigi's shell.
 # shellcheck disable=SC2029
-actual_core=$(ssh "$FOGELL_JENKINS_HOST" \
+actual_core=$(ssh -- "$FOGELL_JENKINS_HOST" \
   "podman exec $jenkins_container_q java -jar /usr/share/jenkins/jenkins.war --version" \
   2>/dev/null)
 if [ "$actual_core" != "$FOGELL_JENKINS_CORE" ]; then
@@ -132,7 +139,7 @@ observe_container() {
   # The validated/quoted container argument intentionally expands on HeMan;
   # the resulting shell word and quoted curl format are interpreted on Luigi.
   # shellcheck disable=SC2029
-  ssh "$FOGELL_JENKINS_HOST" \
+  ssh -- "$FOGELL_JENKINS_HOST" \
     "podman exec $jenkins_container_q curl -fsS --max-time 10 --max-redirs 0 -o /dev/null -w '%header{x-jenkins}\\t%header{x-jenkins-session}' http://127.0.0.1:8080/api/json"
 }
 
@@ -151,8 +158,8 @@ jenkins_session=$(bash "$identity_checker_snapshot" \
 # shellcheck source=scripts/jenkins-workspace-v2.sh disable=SC1091
 source "$collector_snapshot"
 fogell_configure_jenkins_workspace_v2 "$FOGELL_JENKINS_HOST" "$FOGELL_JENKINS_CONTAINER"
-export FOGELL_JENKINS_ENV_CMD="ssh ${jenkins_host_q} \"podman exec ${jenkins_container_q} env\""
-export FOGELL_JENKINS_GIT_VERSION_CMD="ssh ${jenkins_host_q} \"podman exec ${jenkins_container_q} git --version\""
+export FOGELL_JENKINS_ENV_CMD="ssh -- ${jenkins_host_q} \"podman exec ${jenkins_container_q} env\""
+export FOGELL_JENKINS_GIT_VERSION_CMD="ssh -- ${jenkins_host_q} \"podman exec ${jenkins_container_q} git --version\""
 
 mkdir -p "$output/cases" "$output/receipts"
 
@@ -273,6 +280,8 @@ require_stable_inputs || exit $?
     scripts/run-fg037-step-ceiling-probe.sh
   printf '%s  %s\n' "$identity_checker_sha" \
     "scripts/check-fg037-jenkins-identity.sh (executed HEAD snapshot)"
+  printf '%s  %s\n' "$manifest_checker_sha" \
+    "scripts/check-fg037-manifest.py (executed HEAD snapshot)"
   printf '%s  %s\n' "$collector_sha" \
     "scripts/jenkins-workspace-v2.sh (executed HEAD snapshot)"
   echo ""
@@ -303,8 +312,9 @@ require_stable_inputs || exit $?
     | xargs -0 sha256sum >"$manifest_tmp"
   mv "$manifest_tmp" manifest.sha256
   trap - EXIT
-  sha256sum -c manifest.sha256 >/dev/null
 )
+
+python3 "$manifest_checker_snapshot" "$output" >/dev/null
 
 manifest_identity=$(sha256sum "$output/manifest.sha256" | awk '{print $1}')
 echo "FG-037 retained evidence: $output"

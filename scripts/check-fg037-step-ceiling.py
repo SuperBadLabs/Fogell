@@ -125,6 +125,13 @@ def check_receipt(path: Path, case_bytes: bytes, count: int, core: str) -> None:
         reached_output = any(line == "+ printf reached" or line.startswith("FG037-") for line in j_output)
         if j_result != "failure" or j_workspace != EMPTY_WORKSPACE or reached_output:
             fail(f"{path.name}: Jenkins must fail before any sentinel or marker effect")
+        if count == 400:
+            compiler_limit = (
+                "General error during class generation: The max number of supported "
+                "arguments is 255, but found 400"
+            )
+            if j_output.count(compiler_limit) != 1:
+                fail(f"{path.name}: Jenkins output does not prove the exact 400/255 argument limit")
 
 
 def main() -> int:

@@ -36,6 +36,17 @@ echo "=== FG-037 semantic checker mutation proof ==="
 check "$source_dir" >/dev/null
 echo "  accepted the unmodified retained evidence"
 
+manifest_checker=scripts/check-fg037-manifest.py
+python3 "$manifest_checker" "$source_dir" >/dev/null
+manifest_case=$scratch/manifest-case
+cp -a "$source_dir" "$manifest_case"
+printf 'unlisted\n' >"$manifest_case/unlisted.txt"
+if python3 "$manifest_checker" "$manifest_case" >/dev/null 2>&1; then
+  echo "FAIL: manifest checker accepted an unlisted evidence file" >&2
+  exit 1
+fi
+echo "  rejected an unlisted evidence file"
+
 identity_checker=scripts/check-fg037-jenkins-identity.sh
 good_identity=$'2.568.1\tpinned-session'
 stale_identity=$'2.568.1\tstale-forward-session'
@@ -88,8 +99,10 @@ mkdir -p "$inspect_fake_bin"
 cat >"$inspect_fake_bin/ssh" <<'FAKE_SSH'
 #!/usr/bin/env bash
 set -euo pipefail
-[ "$#" -eq 2 ]
-shift
+[ "$#" -eq 3 ]
+[ "$1" = -- ]
+[ "$2" = "$FG037_EXPECTED_HOST" ]
+shift 2
 bash -c "$1"
 FAKE_SSH
 cat >"$inspect_fake_bin/podman" <<'FAKE_PODMAN'
@@ -103,21 +116,27 @@ printf '%s\n' pinned-image-id
 FAKE_PODMAN
 chmod +x "$inspect_fake_bin/ssh" "$inspect_fake_bin/podman"
 inspect_injection_marker=$scratch/remote-inspect-injection
+host_injection_marker=$scratch/ssh-host-injection
+hostile_host="-oProxyCommand=touch $host_injection_marker"
 hostile_container="jenkins-lab; touch $inspect_injection_marker"
 inspect_result=$(
-  PATH="$inspect_fake_bin:$PATH" FG037_EXPECTED_CONTAINER="$hostile_container" \
+  PATH="$inspect_fake_bin:$PATH" \
+    FG037_EXPECTED_HOST="$hostile_host" \
+    FG037_EXPECTED_CONTAINER="$hostile_container" \
     bash -c \
-      'source "$1"; fogell_jenkins_podman_inspect_v2 luigi "$2" "{{.Image}}"' \
-      _ scripts/jenkins-workspace-v2.sh "$hostile_container"
+      'source "$1"; fogell_jenkins_podman_inspect_v2 "$2" "$3" "{{.Image}}"' \
+      _ scripts/jenkins-workspace-v2.sh "$hostile_host" "$hostile_container"
 ) || {
   echo "FAIL: shared collector rejected a safely quoted inspect override" >&2
   exit 1
 }
-if [ "$inspect_result" != pinned-image-id ] || [ -e "$inspect_injection_marker" ]; then
-  echo "FAIL: remote inspect did not contain a hostile container override" >&2
+if [ "$inspect_result" != pinned-image-id ] \
+  || [ -e "$host_injection_marker" ] \
+  || [ -e "$inspect_injection_marker" ]; then
+  echo "FAIL: remote inspect did not contain hostile host/container overrides" >&2
   exit 1
 fi
-echo "  contained a hostile remote-inspect container override"
+echo "  contained hostile remote-inspect host/container overrides"
 
 fresh
 sed -i 's/^jenkins-core: 2\.568\.1$/jenkins-core: 9.99.9/' \
@@ -133,6 +152,11 @@ fresh
 sed -i '0,/^    | FG037-400$/s//    | FG037-399/' \
   "$scratch/case/receipts/fg037-400-steps.receipt.txt"
 expect_reject "a skipped final Fogell marker"
+
+fresh
+sed -i 's/The max number of supported arguments is 255, but found 400/compiler diagnostic removed/' \
+  "$scratch/case/receipts/fg037-400-steps.receipt.txt"
+expect_reject "a missing exact 400/255 compiler diagnostic"
 
 fresh
 sed -i 's/^VERDICT: DIVERGED (/VERDICT: PROVEN (tier 1) — forged (/' \
@@ -167,6 +191,7 @@ mkdir -p "$probe_repo/scripts" "$probe_repo/tools/Fogell.Differential.Cli" \
   "$probe_repo/src"
 cp scripts/run-fg037-step-ceiling-probe.sh \
   scripts/check-fg037-jenkins-identity.sh \
+  scripts/check-fg037-manifest.py \
   scripts/check-fg037-step-ceiling.py \
   scripts/jenkins-workspace-v2.sh \
   scripts/prove-fg037-step-ceiling.sh \
@@ -195,4 +220,4 @@ if [ "$probe_rc" -ne 2 ] \
 fi
 echo "  refused a dirty shared workspace collector before evidence creation"
 
-echo "FG-037 proof PASS (9 semantic + 3 controller-identity + 3 collector/configuration rejection arms)"
+echo "FG-037 proof PASS (10 semantic + 3 controller-identity + 3 collector/configuration + 1 manifest-inventory rejection arms)"

@@ -130,10 +130,9 @@ echo "=== step-ceiling evidence-boundary proof (FG-037, blocking) ==="
 ./scripts/prove-fg037-step-ceiling.sh \
   evidence/20260827T180808Z-fg037-step-ceiling \
   || { echo "STEP-CEILING EVIDENCE-BOUNDARY PROOF FAILED"; exit 1; }
-(
-  cd evidence/20260827T180808Z-fg037-step-ceiling || exit 1
-  sha256sum -c manifest.sha256
-) || { echo "STEP-CEILING EVIDENCE MANIFEST FAILED"; exit 1; }
+python3 scripts/check-fg037-manifest.py \
+  evidence/20260827T180808Z-fg037-step-ceiling \
+  || { echo "STEP-CEILING EVIDENCE MANIFEST FAILED"; exit 1; }
 dotnet run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj \
   -c Release --no-build -- \
   --verify-seals evidence/20260827T180808Z-fg037-step-ceiling/receipts \
