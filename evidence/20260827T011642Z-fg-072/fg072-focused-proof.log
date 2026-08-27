@@ -1,0 +1,53 @@
+=== FG-072 live sandbox denial matrix (31 vectors / 30 names) ===
+  denied file as new File
+  denied file-input as new FileInputStream
+  denied file-output as new FileOutputStream
+  denied random-access as new RandomAccessFile
+  denied process-builder as new ProcessBuilder
+  denied runtime as Runtime
+  denied system as System
+  denied class as Class
+  denied class-loader as ClassLoader
+  denied groovy-shell as new GroovyShell
+  denied groovy-loader as new GroovyClassLoader
+  denied eval as Eval
+  denied evaluate as evaluate
+  denied url as new URL
+  denied url-connection as URLConnection
+  denied socket as new Socket
+  denied server-socket as new ServerSocket
+  denied http-url-connection as HttpURLConnection
+  denied thread as new Thread
+  denied unsafe as Unsafe
+  denied method-handles as MethodHandles
+  denied get-class as getClass
+  denied safe-null-get-class as getClass
+  denied for-name as forName
+  denied new-instance as newInstance
+  denied declared-method as getDeclaredMethod
+  denied declared-field as getDeclaredField
+  denied set-accessible as setAccessible
+  denied invoke as invoke
+  denied execute as execute
+  denied exec as exec
+=== FG-072 generic deny-by-default fallbacks (2 vectors) ===
+  denied unknown-free as fg072UnknownCapability
+  denied unknown-member as fg072UnknownMember
+=== sanctioned-call control ===
+  allowed control: registered steps + script function + trim builtin
+=== checker self-proof ===
+  checker rejects planted timeout-status state
+  checker rejects planted signal-status state
+  checker rejects planted non-failure-terminal state
+  checker rejects planted extra-terminal state
+  checker rejects planted generic-failure state
+  checker rejects planted unnamed state
+  checker rejects planted reason-free-crosswire state
+  checker rejects planted reason-member-crosswire state
+  checker rejects planted split-record state
+  checker rejects planted no-boundary-reason state
+  checker rejects planted no-halt state
+FG-072 sandbox denial proof: PASS
+[37m[[37m08:12:53 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0m[1000D[?25h[37m[[37m08:12:53 [37mINF[37m] [37mEXPECTO! [36m225[37m tests run in [32m00:00:00.1919180[37m for [36mFogell.Groovy[37m – [36m225[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m

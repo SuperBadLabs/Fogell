@@ -94,10 +94,12 @@ echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
 
 # FG-072. The interpreter sandbox is a load-bearing security boundary, not a
 # unit-test implementation detail. Exercise every name in Sandbox.knownEscapes
-# through the real parser/interpreter/host path, prove sanctioned calls still
-# work, and prove the checker rejects timeout/signal execution states plus six
+# through the real parser/interpreter/host path, exercise generic default-deny
+# fallbacks, prove sanctioned calls still work, and prove the checker rejects
+# timeout/signal execution states plus nine
 # record/workspace mutations: unique non-failure terminal, extra terminal,
-# generic-failure, unnamed, missing-boundary-reason, and no-halt. The proof binds
+# generic-failure, unnamed, missing-boundary-reason, both reason-class crosswires,
+# split-record predicate aggregation, and no-halt. The proof binds
 # the exact current-worktree net10 Release host; no ambient binary override exists.
 echo "=== sandbox-denial proof (FG-072, blocking) ==="
 ./scripts/prove-sandbox-denials.sh || { echo "SANDBOX-DENIAL PROOF FAILED"; exit 1; }

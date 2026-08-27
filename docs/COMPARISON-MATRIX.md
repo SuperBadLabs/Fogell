@@ -137,7 +137,7 @@ system designed around fail-closed admission, admission is accepting something u
 | Agent transport | JNLP/SSH | absent `[S]` — `FG-062` | mTLS mandatory, **plaintext impossible** `[S]` — `bins/controller/src/main.rs:1216` builds `ServerTlsConfig` unconditionally; per-RPC rejection `:1377`; no optional-TLS branch |
 | Agent death handling | yes | absent `[S]` — `FG-063` | process-group revalidation `[S]` — `bins/agent/src/lib.rs:848` binds boot-id + `/proc/<pid>/stat` start-ticks; mismatch → `RetireStale` `:748`, so a recycled PGID is never `killpg`-ed |
 | Tenant isolation | folders/RBAC | absent `[S]` — `FG-028` | org/project scoping + `FORCE ROW LEVEL SECURITY` in **19 migrations** `[S]` — e.g. `migrations/0003_public_api.sql:27` |
-| Sandbox | Groovy sandbox | structural — no host object in `Value` `[S]`; `FG-072` open, unproven | n/a — no interpreter |
+| Sandbox | Groovy sandbox | structural interpreter boundary `[S]` — `src/Fogell.Groovy.Interpreter/Value.fs`, `src/Fogell.Groovy.Interpreter/Sandbox.fs`, `src/Fogell.Groovy.Interpreter/Interpreter.fs`, `tests/Fogell.Groovy.Tests/Tests.fs`, and `scripts/prove-sandbox-denials.sh`; the type graph reachable from `Value` is exact-gated and named plus generic calls are denied through the real host (`FG-072`, executed receipt in the ticket); sanctioned-step internals and OS/egress/VM controls are outside this claim | n/a — no interpreter |
 
 ## 6. Operability
 

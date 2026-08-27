@@ -28,6 +28,155 @@ let private stepArgs (o: Outcome) =
     |> List.map (function
         | StepCall(n, pos, _) -> n, pos |> List.map Value.toDisplay)
 
+module CarrierFixtures =
+
+    type NestedHostCarrier<'host> =
+        { HostObject: 'host }
+
+    // Keep the reviewed VScmMap -> record -> Entries shape intact, then plant
+    // an arbitrary host-object reference below another record/container edge. A direct-field-only audit
+    // accepts both fixtures and therefore cannot satisfy FG-072.
+    type PreservedScmMap<'host> =
+        { Entries: Map<string, string>
+          Metadata: Map<string, NestedHostCarrier<'host>> }
+
+    type PreservedCarrierShape<'host> =
+        | VScmMap of PreservedScmMap<'host>
+
+module private CarrierSchema =
+
+    type Finding =
+        { Path: string
+          TypeName: string
+          Reason: string }
+
+    type Audit =
+        { Manifest: string list
+          Findings: Finding list }
+
+    let private optionType = typedefof<option<_>>
+    let private listType = typedefof<list<_>>
+    let private mapType = typedefof<Map<_, _>>
+    let private refType = typeof<int ref>.GetGenericTypeDefinition()
+
+    let private fullName (candidate: System.Type) =
+        if isNull candidate.FullName then candidate.Name else candidate.FullName
+
+    let private genericName (candidate: System.Type) =
+        let definitionName = fullName (candidate.GetGenericTypeDefinition())
+        let marker = definitionName.IndexOf('`')
+        if marker < 0 then definitionName else definitionName.Substring(0, marker)
+
+    let private isGeneric (definition: System.Type) (candidate: System.Type) =
+        candidate.IsGenericType && candidate.GetGenericTypeDefinition() = definition
+
+    let rec private renderType (candidate: System.Type) =
+        if Microsoft.FSharp.Reflection.FSharpType.IsTuple candidate then
+            Microsoft.FSharp.Reflection.FSharpType.GetTupleElements candidate
+            |> Array.map renderType
+            |> String.concat " * "
+            |> sprintf "tuple<%s>"
+        elif isGeneric optionType candidate then
+            $"option<{renderType (candidate.GetGenericArguments().[0])}>"
+        elif isGeneric listType candidate then
+            $"list<{renderType (candidate.GetGenericArguments().[0])}>"
+        elif isGeneric mapType candidate then
+            let arguments = candidate.GetGenericArguments()
+            $"map<{renderType arguments.[0]}, {renderType arguments.[1]}>"
+        elif isGeneric refType candidate then
+            $"ref<{renderType (candidate.GetGenericArguments().[0])}>"
+        elif candidate.IsGenericType then
+            candidate.GetGenericArguments()
+            |> Array.map renderType
+            |> String.concat ", "
+            |> fun arguments -> $"{genericName candidate}<{arguments}>"
+        else
+            fullName candidate
+
+    let private formatUnion (candidate: System.Type) =
+        Microsoft.FSharp.Reflection.FSharpType.GetUnionCases candidate
+        |> Array.map (fun unionCase ->
+            let fields =
+                unionCase.GetFields()
+                |> Array.map (fun field -> $"{field.Name}:{renderType field.PropertyType}")
+                |> String.concat ", "
+
+            if fields = "" then unionCase.Name else $"{unionCase.Name}({fields})")
+        |> String.concat " | "
+        |> sprintf "union %s"
+
+    let private formatRecord (candidate: System.Type) =
+        Microsoft.FSharp.Reflection.FSharpType.GetRecordFields candidate
+        |> Array.map (fun field -> $"{field.Name}:{renderType field.PropertyType}")
+        |> String.concat "; "
+        |> sprintf "record { %s }"
+
+    let audit (root: System.Type) =
+        // The dictionary is both the cycle fence (Value -> Env -> Value and the
+        // recursive AST) and the first full discovery path for each definition.
+        // Reviewed containers are transparent; every F# union/record schema is
+        // manifested; every other transitive type fails closed as a finding.
+        let definitions = System.Collections.Generic.Dictionary<System.Type, string>()
+        let findings = ResizeArray<Finding>()
+
+        let addFinding path candidate reason =
+            findings.Add(
+                { Path = path
+                  TypeName = renderType candidate
+                  Reason = reason }
+            )
+
+        let rec visit path (candidate: System.Type) =
+            if
+                candidate = typeof<bool>
+                || candidate = typeof<int64>
+                || candidate = typeof<single>
+                || candidate = typeof<string>
+            then
+                ()
+            elif Microsoft.FSharp.Reflection.FSharpType.IsTuple candidate then
+                Microsoft.FSharp.Reflection.FSharpType.GetTupleElements candidate
+                |> Array.iteri (fun index item -> visit $"{path}.tuple[{index}]" item)
+            elif isGeneric optionType candidate then
+                visit $"{path}.option" (candidate.GetGenericArguments().[0])
+            elif isGeneric listType candidate then
+                visit $"{path}.list" (candidate.GetGenericArguments().[0])
+            elif isGeneric mapType candidate then
+                let arguments = candidate.GetGenericArguments()
+                visit $"{path}.map-key" arguments.[0]
+                visit $"{path}.map-value" arguments.[1]
+            elif isGeneric refType candidate then
+                visit $"{path}.ref" (candidate.GetGenericArguments().[0])
+            elif Microsoft.FSharp.Reflection.FSharpType.IsUnion candidate then
+                if definitions.TryAdd(candidate, path) then
+                    for unionCase in Microsoft.FSharp.Reflection.FSharpType.GetUnionCases candidate do
+                        for field in unionCase.GetFields() do
+                            visit $"{path}.{unionCase.Name}.{field.Name}" field.PropertyType
+            elif Microsoft.FSharp.Reflection.FSharpType.IsRecord candidate then
+                if definitions.TryAdd(candidate, path) then
+                    for field in Microsoft.FSharp.Reflection.FSharpType.GetRecordFields candidate do
+                        visit $"{path}.{field.Name}" field.PropertyType
+            else
+                addFinding path candidate "unreviewed transitive carrier type"
+
+        visit (renderType root) root
+
+        let manifest =
+            definitions
+            |> Seq.map (fun entry ->
+                let schema =
+                    if Microsoft.FSharp.Reflection.FSharpType.IsUnion entry.Key then
+                        formatUnion entry.Key
+                    else
+                        formatRecord entry.Key
+
+                $"{entry.Value} :: {renderType entry.Key} = {schema}")
+            |> Seq.sort
+            |> Seq.toList
+
+        { Manifest = manifest
+          Findings = findings |> Seq.sortBy (fun finding -> finding.Path) |> Seq.toList }
+
 /// FG-011: every construct below was confirmed necessary by measuring the real
 /// corpus. Grammar coverage is demand-driven, not speculative.
 let grammar =
@@ -599,41 +748,46 @@ let sandbox =
               Expect.equal (stepArgs helper) [ "sh", [ "successor" ] ] "helper returned without blocking later work"
           }
 
-          test "Value union remains an explicitly reviewed closed boundary" {
-              // The exact case-name snapshot makes a new runtime carrier (especially a
-              // host-object wrapper) an intentional security-review change rather than
-              // an unnoticed expansion of the interpreter's authority.
-              let expectedCases =
-                  set
-                      [ "VNull"
-                        "VBool"
-                        "VInt"
-                        "VInteger"
-                        "VArithmeticInteger"
-                        "VFloat"
-                        "VStr"
-                        "VList"
-                        "VRange"
-                        "VMap"
-                        "VScmMap"
-                        "VScmKeySet"
-                        "VJUnitSummary"
-                        "VClosure"
-                        "VFunc" ]
+          test "Value carrier schema is exact and transitively free of unreviewed CLR carriers" {
+              let audit = CarrierSchema.audit typeof<Value>
 
-              let cases =
-                  Microsoft.FSharp.Reflection.FSharpType.GetUnionCases typeof<Value>
+              let expectedManifest =
+                  [ "Fogell.Groovy.Interpreter.Value :: Fogell.Groovy.Interpreter.Value = union VNull | VBool(Item:System.Boolean) | VInt(Item:System.Int64) | VInteger(Item:System.Int64) | VArithmeticInteger(Item:System.Int64) | VFloat(Item:System.Single) | VStr(Item:System.String) | VList(Item:ref<list<Fogell.Groovy.Interpreter.Value>>) | VRange(Item:list<System.Int64>) | VMap(Item:ref<map<System.String, Fogell.Groovy.Interpreter.Value>>) | VScmMap(Item:Fogell.Groovy.Interpreter.ScmMap) | VScmKeySet(Item:list<System.String>) | VJUnitSummary(Item:ref<Fogell.Groovy.Interpreter.JUnitSummary>) | VClosure(Item1:Fogell.Groovy.Closure, Item2:Fogell.Groovy.Interpreter.Env) | VFunc(name:System.String, parameters:list<System.String>, body:list<Fogell.Groovy.Stmt>)"
+                    "Fogell.Groovy.Interpreter.Value.VClosure.Item1 :: Fogell.Groovy.Closure = record { Params:list<System.String>; Body:list<Fogell.Groovy.Stmt> }"
+                    "Fogell.Groovy.Interpreter.Value.VClosure.Item1.Body.list :: Fogell.Groovy.Stmt = union SExpr(Item:Fogell.Groovy.Expr) | SDef(name:System.String, value:option<Fogell.Groovy.Expr>) | SAssign(target:Fogell.Groovy.Expr, value:Fogell.Groovy.Expr) | SIndexCompoundAssign(target:Fogell.Groovy.Expr, op:System.String, value:Fogell.Groovy.Expr) | SIndexPostfixAssign(target:Fogell.Groovy.Expr, op:System.String) | SIf(cond:Fogell.Groovy.Expr, thenBranch:list<Fogell.Groovy.Stmt>, elseBranch:list<Fogell.Groovy.Stmt>) | SForIn(var:System.String, source:Fogell.Groovy.Expr, body:list<Fogell.Groovy.Stmt>) | SWhile(cond:Fogell.Groovy.Expr, body:list<Fogell.Groovy.Stmt>) | SSwitch(subject:Fogell.Groovy.Expr, arms:list<tuple<option<Fogell.Groovy.Expr> * list<Fogell.Groovy.Stmt>>>) | SReturn(Item:option<Fogell.Groovy.Expr>) | SBreak | SContinue | SThrow(Item:Fogell.Groovy.Expr) | STry(body:list<Fogell.Groovy.Stmt>, catch:option<tuple<option<System.String> * option<System.String> * list<Fogell.Groovy.Stmt>>>, finallyBlock:list<Fogell.Groovy.Stmt>) | SFunc(name:System.String, parameters:list<System.String>, body:list<Fogell.Groovy.Stmt>)"
+                    "Fogell.Groovy.Interpreter.Value.VClosure.Item1.Body.list.SExpr.Item :: Fogell.Groovy.Expr = union ENull | EBool(Item:System.Boolean) | EInt(Item:System.Int64) | EStr(Item:System.String) | EGString(Item:list<Fogell.Groovy.GStringPart>) | EList(Item:list<Fogell.Groovy.Expr>) | EMap(Item:list<tuple<System.String * Fogell.Groovy.Expr>>) | EVar(Item:System.String) | EProp(target:Fogell.Groovy.Expr, name:System.String) | ESpreadProp(target:Fogell.Groovy.Expr, name:System.String) | ESafeProp(target:Fogell.Groovy.Expr, name:System.String) | EIndex(target:Fogell.Groovy.Expr, index:Fogell.Groovy.Expr) | EUnary(op:System.String, operand:Fogell.Groovy.Expr) | EBinary(op:System.String, left:Fogell.Groovy.Expr, right:Fogell.Groovy.Expr) | ETernary(cond:Fogell.Groovy.Expr, ifTrue:Fogell.Groovy.Expr, ifFalse:Fogell.Groovy.Expr) | EElvis(Item1:Fogell.Groovy.Expr, Item2:Fogell.Groovy.Expr) | ECall(target:Fogell.Groovy.CallTarget, args:list<Fogell.Groovy.Arg>, trailing:option<Fogell.Groovy.Closure>) | EClosure(Item:Fogell.Groovy.Closure)"
+                    "Fogell.Groovy.Interpreter.Value.VClosure.Item1.Body.list.SExpr.Item.ECall.args.list :: Fogell.Groovy.Arg = union APos(Item:Fogell.Groovy.Expr) | ANamed(name:System.String, value:Fogell.Groovy.Expr)"
+                    "Fogell.Groovy.Interpreter.Value.VClosure.Item1.Body.list.SExpr.Item.ECall.target :: Fogell.Groovy.CallTarget = union FreeCall(name:System.String) | MethodCall(target:Fogell.Groovy.Expr, name:System.String) | SafeMethodCall(target:Fogell.Groovy.Expr, name:System.String)"
+                    "Fogell.Groovy.Interpreter.Value.VClosure.Item1.Body.list.SExpr.Item.EGString.Item.list :: Fogell.Groovy.GStringPart = union GLit(Item:System.String) | GExpr(Item:Fogell.Groovy.Expr)"
+                    "Fogell.Groovy.Interpreter.Value.VClosure.Item2 :: Fogell.Groovy.Interpreter.Env = record { Vars:map<System.String, ref<Fogell.Groovy.Interpreter.Value>>; Funcs:map<System.String, list<tuple<list<System.String> * list<Fogell.Groovy.Stmt>>>> }"
+                    "Fogell.Groovy.Interpreter.Value.VJUnitSummary.Item.ref :: Fogell.Groovy.Interpreter.JUnitSummary = record { TotalCount:System.Int64; FailCount:System.Int64; SkipCount:System.Int64; PassCount:System.Int64; Duration:option<System.Single> }"
+                    "Fogell.Groovy.Interpreter.Value.VScmMap.Item :: Fogell.Groovy.Interpreter.ScmMap = record { Entries:map<System.String, System.String> }" ]
 
-              let actualCases =
-                  cases |> Array.map (fun case -> case.Name) |> Set.ofArray
+              Expect.isEmpty audit.Findings "the reviewed Value graph has no unreviewed carrier type"
+              Expect.equal audit.Manifest expectedManifest "the complete transitive Value schema is reviewed exactly"
+          }
 
-              Expect.equal actualCases expectedCases "every Value carrier is explicitly security-reviewed"
+          test "carrier audit rejects nested host objects without changing the outer shape" {
+              let objectAudit = CarrierSchema.audit typeof<CarrierFixtures.PreservedCarrierShape<obj>>
 
-              for case in cases do
-                  for field in case.GetFields() do
-                      Expect.isFalse
-                          (field.PropertyType = typeof<obj>)
-                          $"{case.Name}.{field.Name} must not directly wrap System.Object"
+              let fileInfoAudit =
+                  CarrierSchema.audit typeof<CarrierFixtures.PreservedCarrierShape<System.IO.FileInfo>>
+
+              Expect.equal objectAudit.Findings.Length 1 "nested System.Object is rejected"
+              Expect.equal objectAudit.Findings.Head.TypeName "System.Object" "object leaf is named"
+
+              Expect.equal
+                  objectAudit.Findings.Head.Path
+                  "Fogell.Groovy.Tests+CarrierFixtures+PreservedCarrierShape<System.Object>.VScmMap.Item.Metadata.map-value.HostObject"
+                  "object path is complete"
+
+              Expect.equal fileInfoAudit.Findings.Length 1 "nested FileInfo is rejected"
+              Expect.equal fileInfoAudit.Findings.Head.TypeName "System.IO.FileInfo" "host leaf is named"
+
+              Expect.equal
+                  fileInfoAudit.Findings.Head.Path
+                  "Fogell.Groovy.Tests+CarrierFixtures+PreservedCarrierShape<System.IO.FileInfo>.VScmMap.Item.Metadata.map-value.HostObject"
+                  "host path is complete"
           } ]
 
 /// Budgets: the interpreter runs on the admission path, so a runaway script is

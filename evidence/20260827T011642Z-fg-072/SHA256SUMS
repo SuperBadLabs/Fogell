@@ -1,0 +1,17 @@
+2d7ccfdd58aae3fd8250c28f440e6dd8536fcccaa420802da83884f239678fde  ./base-commit.txt
+ca6d6d956daa553878ce1a5d6d14e8664a441936f951a4bdd0f8d27ca996833f  ./build.log
+6e9e6d217e05b9c54f208666022639c8b811f8eec3bc7b67e78a6f15db8ea18e  ./candidate.diff
+dcf84a6b7954cd34d8b3b253b91d6933644e50d5d0cee776f9e0be87d6fceaec  ./corpus-gate.log
+97c916de4fe2da71199c88d8635c358027b62497d0b461ef444364a7a3310323  ./diffstat.txt
+c5b5df35fc71fe77ad98a8f6c1999a9d8bdc9d180f917e480b0c28c7794b0392  ./fg072-focused-proof.log
+2534aef219bf5189f6548f3a091b3ffa4241f8746d7c62a3cad42462869957e5  ./fg072-full-gate.log
+eaf48d022690ec78d787b79d53c3bd9f050cafdcb78cbf94f908f377d80974fb  ./status-before-commit.txt
+d8fccdb223ba5d311c9618e291f389101bd5c1796bb7436bcbb07f18b261abb8  ./tests-Fogell.Controller.Api.Tests.log
+8083443a316245f10de0878cf60ef2141797f9f211a3d8a1468c29becc3fd165  ./tests-Fogell.Differential.Tests.log
+d143546e25d34563122f5e8d7453cea9e0790c42946f09694f353c7eb60ff543  ./tests-Fogell.Domain.Tests.log
+141226cfee45c94e06ecaf37c5a48e2dd26aa9358d7b91aecf88e287d41a5111  ./tests-Fogell.Execution.Tests.log
+8e8a8a4b080e543c07bae76105643fac5cc26477c1b5c77e83051fc6ab7cb344  ./tests-Fogell.Groovy.Tests.log
+4c961959f75af089d895a6110169b8463361b58cdcc61607d2e2a2c58d294447  ./tests-Fogell.Journal.Tests.log
+f31a1a061cfe5f4b6935e098075fd93e23f95d35527ccc112b0ebd205504fbf4  ./tests-Fogell.Pipeline.Parser.Tests.log
+870b03f477debd6ef420dbe03f22beb1f14c24334b08383952469bbced582f0b  ./tests-Fogell.Store.Tests.log
+cf1bc076b01cb7bce700a578925777c7a78e0bb7014eb843d37601216117d320  ./tree.txt
