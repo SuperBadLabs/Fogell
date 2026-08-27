@@ -127,16 +127,16 @@ echo "=== fail-closed evidence sealer proof (FG-223, blocking) ==="
 # attacks and two manifest attacks must all be rejected before publication.
 echo "=== step-ceiling evidence-boundary proof (FG-037, blocking) ==="
 ./scripts/prove-fg037-step-ceiling.sh \
-  evidence/20260827T182923Z-fg037-step-ceiling \
+  evidence/20260827T185436Z-fg037-step-ceiling \
   || { echo "STEP-CEILING EVIDENCE-BOUNDARY PROOF FAILED"; exit 1; }
 python3 scripts/check-fg037-manifest.py \
   --expected-manifest-sha256 \
-  b2a03a08f799347b2b8754484e67145bfebfeb203ada61073388a8d03a409eec \
-  evidence/20260827T182923Z-fg037-step-ceiling \
+  488feb681882587345063e2294977767446cb5e69e1b3c648a4a1b9d78eff309 \
+  evidence/20260827T185436Z-fg037-step-ceiling \
   || { echo "STEP-CEILING EVIDENCE MANIFEST FAILED"; exit 1; }
 dotnet run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj \
   -c Release --no-build -- \
-  --verify-seals evidence/20260827T182923Z-fg037-step-ceiling/receipts \
+  --verify-seals evidence/20260827T185436Z-fg037-step-ceiling/receipts \
   || { echo "STEP-CEILING RECEIPT SEALS FAILED"; exit 1; }
 
 # FG-162. Board rows quoting generated counts are re-derived from the committed

@@ -1,7 +1,7 @@
-utc: 2026-08-27T18:29:23Z
+utc: 2026-08-27T18:55:29Z
 host: HeMan
-head: 0f56261d8d6278fc5f5a0a8a1bb6d00fd6b5cac2
-tree: df87cb56ac8484650c69f330bc80e7b27d078f3b
+head: 65674f9a4af80e358f645ad3409765a8738c68b4
+tree: 7e09d220260b9117890cf4275fc240d989101f7c
 dotnet: 10.0.301
 jenkins-url: http://127.0.0.1:18099
 jenkins-core: 2.568.1 (artifact, endpoint, and container-loopback agree)
@@ -31,12 +31,13 @@ probe-input-pathspecs:
   scripts/run-fg037-step-ceiling-probe.sh
 
 implementation-sha256:
-b18c2dc9ff22c3cc79fe998fd275423b9adafe1f7144124fc72345c229630422  tests/Fogell.Differential.Tests/Tests.fs
-21ad8f7a00847c3bdefbd685be2ac4e20b62e0278042d4dcac9d0ea6774d43e6  scripts/check-fg037-step-ceiling.py
-20d75aff8996cb09d8377060d1ed1ae01ab995fe2d86c469e83327c16d6a9d4d  scripts/prove-fg037-step-ceiling.sh
-c46995885ba664247fc570caaebc8ccc814830c36c25d348f2f9bc7a2445d3de  scripts/run-fg037-step-ceiling-probe.sh
+d3e97c241e7992ad3a3d69de0744544a266e50fbb914b5033e9a15cfe91869ee  tests/Fogell.Differential.Tests/Tests.fs
+b77b089bdba1b2c6fc810937de2b14f76682b2845905e3ea93ea893e2bc7dcf7  scripts/check-fg037-step-ceiling.py
+38d96645432888118ddc517901cc5edde921dac1b0d3bb666871620b54624d9a  scripts/prove-fg037-step-ceiling.sh
+5834f9cb706bada10e4bf6c8dda85b5074715f9d64f811754714dd06b5cccd88  scripts/run-fg037-step-ceiling-probe.sh
 3c60d292c08d6bcfc03d357c80ccc32014b2473ef85cae7a90e0578ff105f14d  scripts/check-fg037-jenkins-identity.sh (executed HEAD snapshot)
-c071ae8f5c9617b403b5788e91dbfb106dad373f2a60ce194ae14109d25e3a0a  scripts/check-fg037-manifest.py (executed HEAD snapshot)
-ef9acf914ab3ffc338f19248e0745d6db0e82e3cc892c10a3786f38d4b810c78  scripts/jenkins-workspace-v2.sh (executed HEAD snapshot)
+9b4da2ed8a4bf30f8997627a2b6f8a7bc97567ff3b5721ff7007d6562be9a0ef  scripts/check-fg037-manifest.py (executed HEAD snapshot)
+e77188dd47970da8b3c0c3c54b898bfc87a31591e80e2be16b8357ad490854ad  scripts/jenkins-workspace-v2.sh (executed HEAD snapshot)
 
 worktree-status:
+?? evidence/20260827T185436Z-fg037-step-ceiling/

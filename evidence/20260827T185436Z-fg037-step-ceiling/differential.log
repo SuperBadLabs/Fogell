@@ -1,5 +1,5 @@
 jenkins:   http://127.0.0.1:18099 (core 2.568.1)
-workspace: remote collector: ssh -- luigi "podman exec jenkins-lab bash -c \"printf %s c2...
+workspace: remote collector: ssh -- 'luigi' 'podman exec '\''jenkins-lab'\'' bash -c '\''...
 
   fg037-250-steps.Jenkinsfile                    PROVEN           fg037-250-steps.receipt.txt
   fg037-251-steps.Jenkinsfile                    re-running (diverged, attempt 2 of 3)
