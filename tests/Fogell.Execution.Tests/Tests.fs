@@ -1472,12 +1472,14 @@ let eventDrivenWaits =
               let signalFile = Path.Combine(root, "user-terminated.signal")
               use callbackEntered = new Threading.ManualResetEventSlim(false)
               use interruptObserved = new Threading.ManualResetEventSlim(false)
+              use abortFixture = new Threading.ManualResetEventSlim(false)
               use releaseCallback = new Threading.ManualResetEventSlim(false)
               let streamed = Collections.Concurrent.ConcurrentQueue<string>()
 
               let releaser =
                   Threading.Tasks.Task.Run(fun () ->
                       let interrupted = interruptObserved.Wait 3_000
+                      if not interrupted then abortFixture.Set()
                       // The trap runs only after ProcessGroup has taken its
                       // pre-signal output snapshot and delivered TERM. Waiting
                       // for its marker keeps the already-ingested user callback
@@ -1509,7 +1511,10 @@ let eventDrivenWaits =
                                   // callback remains deliberately incomplete.
                                   let ready = File.Exists readyFile && callbackEntered.IsSet
                                   if ready then interruptObserved.Set()
-                                  ready)
+                                  // A reader/callback regression must fail this
+                                  // test promptly instead of leaving its endless
+                                  // shell alive until the outer CI timeout.
+                                  ready || abortFixture.IsSet)
                           OnLine = Some onLine }
 
               let interruptCrossed, signalCrossed = releaser.GetAwaiter().GetResult()
