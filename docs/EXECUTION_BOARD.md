@@ -260,7 +260,7 @@ of trusting the row.
 
 ## Live queue — the reference point for the execution cycle
 
-**BOARD ACCOUNTING (derived): rows=209; DONE=130; open=79; open P0–P3=4 / 27 / 36 / 12.**
+**BOARD ACCOUNTING (derived): rows=209; DONE=131; open=78; open P0–P3=4 / 26 / 36 / 12.**
 
 **WHY THIS SECTION EXISTS.** The derived accounting above is the single live source for
 ticket totals and priority distribution. (Was "187 rows … open 84 … 4 / 34 / 36 / 10"
