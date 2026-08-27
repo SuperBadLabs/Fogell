@@ -127,7 +127,7 @@ echo "=== fail-closed evidence sealer proof (FG-223, blocking) ==="
 # workspace collector must all be rejected before publication.
 echo "=== step-ceiling evidence-boundary proof (FG-037, blocking) ==="
 ./scripts/prove-fg037-step-ceiling.sh \
-  evidence/20260827T160955Z-fg037-step-ceiling \
+  evidence/20260827T164745Z-fg037-step-ceiling \
   || { echo "STEP-CEILING EVIDENCE-BOUNDARY PROOF FAILED"; exit 1; }
 
 # FG-162. Board rows quoting generated counts are re-derived from the committed

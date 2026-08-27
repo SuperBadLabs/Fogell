@@ -41,7 +41,7 @@ Dispatch is one regex on `pipeline\s*\{`.
 | 1-stage end-to-end | 0.40 s | ~3.5 s | 0.20 s |
 | per in-engine step | ~0 ms | 54 ms | — |
 | per subprocess | 2.17 ms | — | — |
-| steps per stage | 400 exercised ([FG-037](../tickets/FG-037.md)) | **250 succeeds; 251 fails pre-effect** ([FG-037 evidence](../../evidence/20260827T160955Z-fg037-step-ceiling)) | 1 |
+| steps per stage | 400 exercised ([FG-037](../tickets/FG-037.md)) | **250 succeeds; 251 fails pre-effect** ([FG-037 evidence](../../evidence/20260827T164745Z-fg037-step-ceiling)) | 1 |
 
 The flat step ladder is the **non-durable** path (`forge run` persists nothing).
 It must be re-measured once per-step durability lands.
