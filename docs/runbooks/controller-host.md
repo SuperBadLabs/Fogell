@@ -72,6 +72,27 @@ round trip. Startup rejects an unsafe pair and reports the maximum poll interval
 for the configured lease.
 
 Keep the token file and both database strings out of command arguments and logs.
+Startup currently proves that the token path is absolute and readable and that
+its trimmed content is at least 32 characters; it does not yet reject a symlink
+or a permissive file mode. The operator must provide a service-owned regular,
+non-symlink file with mode `0400` or `0600`. On Linux, check that deployment
+obligation under the service identity before starting:
+
+```bash
+if [[ ! -f "$FOGELL_API_TOKEN_FILE" || -L "$FOGELL_API_TOKEN_FILE" ]]; then
+  printf 'token path must be a regular non-symlink file\n' >&2
+  exit 1
+fi
+if [[ "$(stat -c '%u' "$FOGELL_API_TOKEN_FILE")" != "$(id -u)" ]]; then
+  printf 'token file must be owned by the service identity\n' >&2
+  exit 1
+fi
+case "$(stat -c '%a' "$FOGELL_API_TOKEN_FILE")" in
+  400|600) ;;
+  *) printf 'token file mode must be 0400 or 0600\n' >&2; exit 1 ;;
+esac
+```
+
 The runtime state root holds immutable definitions, journals, event frames,
 identity-bound inner process-group registry records, workspaces, a neutral child
 home, private job/build-scoped agent homes, and temporary files. The configured
@@ -108,7 +129,14 @@ event, not permission to guess success.
 
 ## Start and observe
 
-Build the solution in locked mode, export the variables above, then start:
+From the repository root, build the exact locked dependency graph:
+
+```bash
+dotnet restore --locked-mode
+dotnet build -c Release --no-restore
+```
+
+Export the required variables above, then start the controller:
 
 ```bash
 src/Fogell.Controller.Host/bin/Release/net10.0/Fogell.Controller.Host
@@ -127,6 +155,138 @@ bound to Run.Host liveness and the controller's outer-plus-registered-inner
 cleanup then provide two bounded descendant-reaping paths, including when the
 inner leader has already exited. Start-time validation prevents a stale record
 from authorizing a signal to a reused pid.
+
+### Submit and follow one build
+
+The current slice does not provision organizations or projects over HTTP. First
+load the maintenance connection into libpq's `PGHOST`, `PGPORT`, `PGDATABASE`,
+`PGUSER`, and `PGPASSWORD` variables from the deployment secret store, then seed
+one tenant and project. This is a maintenance-plane action; the controller still
+uses only its restricted runtime identity for requests and worker operations.
+
+```bash
+FOGELL_ORGANIZATION_ID=$(cat /proc/sys/kernel/random/uuid)
+FOGELL_PROJECT_ID=$(cat /proc/sys/kernel/random/uuid)
+export FOGELL_ORGANIZATION_ID FOGELL_PROJECT_ID
+export FOGELL_ORGANIZATION_SLUG="hello-$FOGELL_ORGANIZATION_ID"
+export FOGELL_PROJECT_SLUG="hello-$FOGELL_PROJECT_ID"
+
+psql -X -v ON_ERROR_STOP=1 \
+  --set=organization_id="$FOGELL_ORGANIZATION_ID" \
+  --set=project_id="$FOGELL_PROJECT_ID" \
+  --set=organization_slug="$FOGELL_ORGANIZATION_SLUG" \
+  --set=project_slug="$FOGELL_PROJECT_SLUG" <<'SQL'
+BEGIN;
+INSERT INTO organizations (id, slug)
+VALUES (:'organization_id'::uuid, :'organization_slug');
+INSERT INTO projects (id, organization_id, slug)
+VALUES (:'project_id'::uuid, :'organization_id'::uuid, :'project_slug');
+COMMIT;
+SQL
+```
+
+This Bash session requires `curl` and `jq`. It keeps the bearer token out of
+`curl`'s argument list by building a mode-`0600` header file inside one private
+scratch directory. The trap removes both temporary files on success, error, or
+interruption:
+
+```bash
+(
+set -euo pipefail
+
+# The client origin may differ from a wildcard/proxied FOGELL_LISTEN_URL.
+export FOGELL_CLIENT_URL=http://127.0.0.1:8080
+FOGELL_IDEMPOTENCY_KEY=hello-$(date +%s)
+export FOGELL_IDEMPOTENCY_KEY
+export FOGELL_WAIT_SECONDS=300
+export FOGELL_CONNECT_TIMEOUT_SECONDS=5
+export FOGELL_HTTP_TIMEOUT_SECONDS=15
+curl_common=(
+  --fail-with-body -sS
+  --connect-timeout "$FOGELL_CONNECT_TIMEOUT_SECONDS"
+  --max-time "$FOGELL_HTTP_TIMEOUT_SECONDS"
+)
+
+umask 077
+FOGELL_QUICKSTART_DIR=$(mktemp -d /tmp/fogell-controller-quickstart.XXXXXX)
+cleanup_fogell_quickstart() {
+  case "$FOGELL_QUICKSTART_DIR" in
+    /tmp/fogell-controller-quickstart.*) rm -rf -- "$FOGELL_QUICKSTART_DIR" ;;
+    *) printf 'refusing unsafe cleanup path: %s\n' "$FOGELL_QUICKSTART_DIR" >&2 ;;
+  esac
+}
+trap cleanup_fogell_quickstart EXIT
+trap 'exit 130' HUP INT TERM
+FOGELL_AUTH_HEADER="$FOGELL_QUICKSTART_DIR/auth-header"
+FOGELL_PIPELINE_FILE="$FOGELL_QUICKSTART_DIR/Jenkinsfile"
+{
+  printf 'Authorization: Bearer '
+  tr -d '\r\n' <"$FOGELL_API_TOKEN_FILE"
+  printf '\n'
+} >"$FOGELL_AUTH_HEADER"
+
+cat >"$FOGELL_PIPELINE_FILE" <<'JENKINSFILE'
+pipeline {
+  agent any
+  stages {
+    stage('hello') {
+      steps {
+        echo 'hello from Fogell'
+      }
+    }
+  }
+}
+JENKINSFILE
+
+curl "${curl_common[@]}" "$FOGELL_CLIENT_URL/health/ready"
+
+FOGELL_BUILDS_URL="$FOGELL_CLIENT_URL/api/v1/organizations/$FOGELL_ORGANIZATION_ID/projects/$FOGELL_PROJECT_ID/builds"
+submission=$(
+  curl "${curl_common[@]}" -X POST \
+    --header "@$FOGELL_AUTH_HEADER" \
+    -H "Idempotency-Key: $FOGELL_IDEMPOTENCY_KEY" \
+    -H 'Content-Type: application/x-jenkinsfile' \
+    --data-binary "@$FOGELL_PIPELINE_FILE" \
+    "$FOGELL_BUILDS_URL"
+)
+printf '%s\n' "$submission" | jq .
+FOGELL_BUILD_ID=$(printf '%s\n' "$submission" | jq -er .build_id)
+
+deadline=$((SECONDS + FOGELL_WAIT_SECONDS))
+while true; do
+  status_json=$(curl "${curl_common[@]}" --header "@$FOGELL_AUTH_HEADER" \
+    "$FOGELL_BUILDS_URL/$FOGELL_BUILD_ID")
+  status=$(printf '%s\n' "$status_json" | jq -er .status)
+  printf 'status=%s\n' "$status"
+  case "$status" in
+    queued|running) sleep 1 ;;
+    success) break ;;
+    unstable|failure|aborted|reconciliation_required) printf '%s\n' "$status_json" | jq .; exit 1 ;;
+    *) printf 'unexpected status: %s\n' "$status" >&2; exit 1 ;;
+  esac
+
+  if (( SECONDS >= deadline )); then
+    printf 'timed out after %s seconds; last status:\n' "$FOGELL_WAIT_SECONDS" >&2
+    printf '%s\n' "$status_json" | jq . >&2
+    curl "${curl_common[@]}" "$FOGELL_CLIENT_URL/health/ready" >&2 || true
+    exit 1
+  fi
+done
+
+curl "${curl_common[@]}" --header "@$FOGELL_AUTH_HEADER" \
+  "$FOGELL_BUILDS_URL/$FOGELL_BUILD_ID/logs?from=0" \
+  | jq -r '.chunks[].body'
+
+cleanup_fogell_quickstart
+trap - EXIT HUP INT TERM
+)
+```
+
+A fresh idempotency key returns HTTP 201. Replaying the identical source and key
+returns 200 with the same build identity; changing the source under that key
+returns 409. Placement is controller policy: a request carrying
+`Fogell-Trust-Pool` is refused. Log responses include `next_sequence`; use that
+value as the next `?from=` cursor when tailing a long-running build.
 
 A graceful or ungraceful forced stop still moves started work to
 `reconciliation_required`: proving every process extinct does not prove whether

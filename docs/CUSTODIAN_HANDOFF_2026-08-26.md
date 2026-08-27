@@ -1,5 +1,16 @@
 # Fogell custodian handoff — 2026-08-26
 
+## Resolution
+
+This handoff is historical, not an active merge instruction. Pull request
+[#148](https://github.com/SuperBadLabs/Fogell/pull/148) merged exact source head
+`6ab95958fa1d77c9a994a4e07de90c09df7a5d7a` as
+`20d4b6382df26c17113b8e73d3f613f9e54da2ae` on 2026-08-27 at 03:55:17Z after
+both exact-head hosted `gate` checks passed. The repository's own review audit
+still finds Copilot coverage only on an earlier SHA, so FG-224 is
+**PARTIAL (MERGED)**. Its single-node Linux scope and the residual boundaries at
+the end of this document remain.
+
 Custodian tenure is closed. This handoff records the work already in flight; it
 does not authorize another impact dimension.
 
@@ -17,8 +28,8 @@ extending FG-224 through another unbounded review cycle.
 - Incoming signed head: `6281d4f4304f68fa5c3b9a1b1070e61ee0254569`.
 - The commit containing this file is the outgoing head; resolve it with
   `git rev-parse HEAD` rather than copying a predicted self-reference.
-- Do not merge without the owner. FG-224 remains **PARTIAL** until exact-head
-  review coverage, hosted gates, publication, and merge are complete.
+- Publication completed through owner-directed PR #148; the pre-merge
+  instructions below are retained as the sequence that was discharged.
 
 ## Last completed slice: Review 33
 
@@ -80,20 +91,22 @@ outgoing commit: push run `33033547756` / job `98391202409`, and pull-request ru
 
 ## Execution board snapshot
 
-The board has 209 ticket rows: 129 done and 80 open. Open priorities are P0=5,
-P1=27, P2=36, P3=12. FG-224 remains P0/PARTIAL; its row and ticket contain the
-Review 33 closure and 920-test accounting.
+The board has 209 ticket rows: 129 done and 80 open, with open priorities P0=5,
+P1=27, P2=36, P3=12. FG-224 remains P0/PARTIAL because exact-head Copilot
+coverage is absent; its row and ticket retain the Review 33 closure and 920-test
+accounting while recording that publication and merge completed.
 
-## Next custodian checklist
+## Publication outcome
 
-1. Verify the outgoing commit signature, tree, clean worktree, and remote branch.
-2. Require both push and pull-request `gate` runs on that exact SHA to finish
-   green; older green runs are not substitutes.
-3. Require fresh Codex and Copilot coverage on that exact SHA. Confirm zero
-   current non-outdated unresolved threads; outdated historical threads may stay.
-4. If a new exact-head finding lands, treat it as a bounded continuation of
-   FG-224. Do not open a new dimension from this handoff.
-5. Do not merge without explicit owner direction.
+1. The outgoing source head, tree, remote branch, and protected merge were
+   resolved through PR #148.
+2. Both push and pull-request `gate` runs finished green on the exact source
+   head; older green runs were not substituted.
+3. Codex covered the exact source head. Copilot covered an earlier commit only;
+   `scripts/review-coverage.py --pr 148` reports the exact-head miss.
+4. The bounded findings were closed on FG-224; the broader controller
+   trust-boundary design remains FG-225.
+5. The owner-directed merge completed as `20d4b6382df26c17113b8e73d3f613f9e54da2ae`.
 
 ## Cleanup and residual boundaries
 
