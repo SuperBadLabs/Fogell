@@ -273,6 +273,21 @@ printf 'Started by user unknown or anonymous\nAgent provisioning failed\nFinishe
 expect_reject "an unrelated 251-step infrastructure failure"
 
 fresh
+sed -i '0,/java\.lang\.Object, /s///' \
+  "$scratch/case/receipts/fg037-251-steps.jenkins-console.txt"
+expect_reject "a 250-object substitution in the 251-step causal signature"
+
+fresh
+sed -i '/^Finished: FAILURE$/i [Pipeline] Start of Pipeline' \
+  "$scratch/case/receipts/fg037-251-steps.jenkins-console.txt"
+expect_reject "a 251-step console claiming Pipeline execution began"
+
+fresh
+sed -i '/CpsFlowExecution\.parseScript/d' \
+  "$scratch/case/receipts/fg037-251-steps.jenkins-console.txt"
+expect_reject "a missing 251-step CPS parse frame"
+
+fresh
 sed -i 's/^VERDICT: DIVERGED (/VERDICT: PROVEN (tier 1) — forged (/' \
   "$scratch/case/receipts/fg037-400-steps.receipt.txt"
 expect_reject "a promoted intentional divergence"
@@ -334,4 +349,4 @@ if [ "$probe_rc" -ne 2 ] \
 fi
 echo "  refused a dirty shared workspace collector before evidence creation"
 
-echo "FG-037 proof PASS (11 semantic + 3 controller-identity + 4 collector/configuration + 2 manifest rejection arms)"
+echo "FG-037 proof PASS (14 semantic + 3 controller-identity + 4 collector/configuration + 2 manifest rejection arms)"
