@@ -19,6 +19,26 @@ it. See `docs/adr/0002-interpret-not-lower.md`.
 - No scalar compatibility percentage is ever published.
 - Durability is per-step and exactly-once, or it is stated as neither.
 
+## Run it
+
+`Fogell.Controller.Host` is a runnable, single-node Linux controller. On HeMan,
+the fastest end-to-end proof builds the exact checkout, provisions an isolated
+database and least-privilege runtime role, submits a Jenkinsfile over HTTP,
+observes progressive logs, and waits for durable terminal success:
+
+```bash
+dotnet restore --locked-mode
+dotnet build -c Release --no-restore
+FOGELL_PG_CONTAINER=fogell-fg060a \
+FOGELL_PG_PORT=55445 \
+FOGELL_BUILD_CONFIGURATION=Release \
+./scripts/prove-runnable-controller.sh
+```
+
+The final line begins `FG-224 PROOF PASS`. For a persistent controller and the
+authenticated submit/status/log workflow, follow the
+[controller host runbook](docs/runbooks/controller-host.md).
+
 ## Engineering bastion
 
 **HeMan is Fogell's engineering bastion.** The canonical working checkout is
