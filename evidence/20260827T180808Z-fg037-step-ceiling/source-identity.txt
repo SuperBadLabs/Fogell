@@ -1,7 +1,7 @@
-utc: 2026-08-27T17:22:31Z
+utc: 2026-08-27T18:08:08Z
 host: HeMan
-head: 206945613a2055c5a33af107479293d05217e2bc
-tree: 14afd258f58d9d6e47e5411217b4e0ce30241857
+head: 6a667c379703f872333f5d3f2efcebfe26a9a427
+tree: 5bf2367e220f011c1e9dc26021aa049c48159ecb
 dotnet: 10.0.301
 jenkins-url: http://127.0.0.1:18099
 jenkins-core: 2.568.1 (artifact, endpoint, and container-loopback agree)
@@ -32,9 +32,9 @@ probe-input-pathspecs:
 implementation-sha256:
 b18c2dc9ff22c3cc79fe998fd275423b9adafe1f7144124fc72345c229630422  tests/Fogell.Differential.Tests/Tests.fs
 eb68a76e5a0d9ec460c8b92809db01d12db506ca3f9d52be19141a64c9d0857e  scripts/check-fg037-step-ceiling.py
-0829d5dd912809e4de248acfcda60139f8ebdb8ec92c5dc37a6bbcbc0f8204b4  scripts/prove-fg037-step-ceiling.sh
-f3667245c63567bbb4e69de14cc41b02830abf4dad43768c836f1d129800a61e  scripts/run-fg037-step-ceiling-probe.sh
+f857b5454840a141956f725e319d370fe01e874b4470c2f1b1a22d5e54eba967  scripts/prove-fg037-step-ceiling.sh
+50d6f0a6d56b80610db90973df7791587e8a4b11aa122a4da71bbc79d43ee103  scripts/run-fg037-step-ceiling-probe.sh
 3c60d292c08d6bcfc03d357c80ccc32014b2473ef85cae7a90e0578ff105f14d  scripts/check-fg037-jenkins-identity.sh (executed HEAD snapshot)
-81dea4434e29905fcde91835156e0bc1834e15bb8bc3967df1f8fba06ead11d7  scripts/jenkins-workspace-v2.sh (executed HEAD snapshot)
+d03748f14773335a81e3af580082c3f8b65abc5b7128a457411d7420e88428ee  scripts/jenkins-workspace-v2.sh (executed HEAD snapshot)
 
 worktree-status:

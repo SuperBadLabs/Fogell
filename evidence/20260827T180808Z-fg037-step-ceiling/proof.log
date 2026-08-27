@@ -5,6 +5,7 @@
   rejected a wrong endpoint core
   rejected a controller session change across the live run
   rejected a shared-collector Base64 encoder failure
+  contained a hostile remote-inspect container override
   rejected a substituted Jenkins core
   rejected a 251-step Jenkins success substitution
   rejected a skipped final Fogell marker
@@ -15,4 +16,4 @@
   rejected an extra receipt outside the exact three-file inventory
   rejected a missing boundary receipt
   refused a dirty shared workspace collector before evidence creation
-FG-037 proof PASS (9 semantic + 3 controller-identity + 2 collector/configuration rejection arms)
+FG-037 proof PASS (9 semantic + 3 controller-identity + 3 collector/configuration rejection arms)
