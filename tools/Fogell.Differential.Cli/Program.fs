@@ -16,7 +16,9 @@ open Fogell.Execution
 ///                             without it, workspace hashes are not compared)
 ///   FOGELL_JENKINS_RAW_CONSOLE_JOB / _BUILD / _PATH
 ///                             optional all-or-none exact build console export;
-///                             PATH must be absolute and is atomically replaced
+///                             PATH must be absolute, its parent must already
+///                             exist, and it may not name a directory. The file
+///                             is atomically replaced; export failure aborts the run.
 [<EntryPoint>]
 let main argv =
     match Array.toList argv with
