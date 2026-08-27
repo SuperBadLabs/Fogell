@@ -1,0 +1,75 @@
+=== FG-093 positive control ===
+  accepted the exact clean tuple; downstream marker ran
+  rejected non-executable repository checker before fixture setup
+  rejected symlink repository checker before fixture setup
+  accepted downstream argv literally; no shell expansion occurred
+  exported five exact bindings to immutable artifact bytes and removed inherited Git state downstream
+  bound downstream consumption to immutable verified bytes across an artifact path swap
+=== FG-093 four tuple mismatches ===
+  rejected commit mismatch before downstream execution
+  rejected tree mismatch before downstream execution
+  rejected artifact digest mismatch before downstream execution
+  rejected corpus-manifest digest mismatch before downstream execution
+=== FG-093 strict manifest grammar ===
+  rejected unknown schema version before downstream execution
+  rejected boolean is not integer schema version before downstream execution
+  rejected short commit before downstream execution
+  rejected mixed-case commit guessed as lowercase before downstream execution
+  rejected short artifact digest before downstream execution
+  rejected mixed-case digest guessed as lowercase before downstream execution
+  rejected malformed JSON before downstream execution
+  rejected duplicate key before downstream execution
+  rejected missing key before downstream execution
+  rejected unknown key before downstream execution
+  rejected non-string value before downstream execution
+=== FG-093 checkout and file boundaries ===
+  rejected manifest inside checkout before downstream execution
+  rejected tracked artifact inside checkout before downstream execution
+  rejected tracked dirt before downstream execution
+  rejected clean-filter hidden raw tracked-byte mismatch before downstream execution
+  rejected untracked dirt before downstream execution
+  rejected .git/info/exclude hidden physical untracked file before downstream execution
+  rejected assume-unchanged masked tracked dirt before downstream execution
+  rejected skip-worktree masked tracked dirt before downstream execution
+  rejected core.fileMode=false masked executable-bit dirt before downstream execution
+  rejected core.ignoreCase case-collision dirt before downstream execution
+  rejected submodule dirt before downstream execution
+  rejected nested submodule assume-unchanged dirt before downstream execution
+  rejected plain directory at gitlink path before downstream execution
+  rejected initialized submodule at wrong HEAD before downstream execution
+  rejected nested submodule skip-worktree dirt before downstream execution
+=== FG-093 inherited Git-environment attacks ===
+  rejected GIT_CONFIG_COUNT core.ignoreCase collision; inherited Git environment could not hide dirt
+  rejected GIT_CONFIG_COUNT core.fileMode masking; inherited Git environment could not hide dirt
+  rejected GIT_INDEX_FILE alternate index; inherited Git environment could not hide dirt
+  ignored inherited GIT_DIR/GIT_WORK_TREE; exact repository still executed
+  rejected Git replacement-object attack before downstream execution
+  rejected symlink artifact before downstream execution
+=== FG-093 comparison-removal mutations ===
+  killed commit comparison-removal mutation: its known-bad arm became executable
+  killed tree comparison-removal mutation: its known-bad arm became executable
+  killed artifact_sha256 comparison-removal mutation: its known-bad arm became executable
+  killed corpus_manifest_sha256 comparison-removal mutation: its known-bad arm became executable
+  killed artifact-boundary mutation: tracked in-checkout artifact became executable
+=== FG-093 downstream environment-binding mutations ===
+  killed FOGELL_VERIFIED_COMMIT mutation: exact downstream binding assertion detected it
+  killed FOGELL_VERIFIED_TREE mutation: exact downstream binding assertion detected it
+  killed FOGELL_VERIFIED_ARTIFACT mutation: exact downstream binding assertion detected it
+  killed FOGELL_VERIFIED_ARTIFACT_SHA256 mutation: exact downstream binding assertion detected it
+  killed FOGELL_VERIFIED_CORPUS_MANIFEST_SHA256 mutation: exact downstream binding assertion detected it
+  killed downstream Git-environment scrub mutation: hostile values reached the probe
+=== FG-093 Git-cleanliness guard mutations ===
+  killed assume-unchanged cleanliness mutation: its masked bad arm became executable
+  killed skip-worktree cleanliness mutation: its masked bad arm became executable
+  killed filemode-config cleanliness mutation: its masked bad arm became executable
+  killed recursive-submodule cleanliness mutation: its masked bad arm became executable
+  killed ignorecase-override cleanliness mutation: its masked bad arm became executable
+  killed physical-untracked cleanliness mutation: its masked bad arm became executable
+  killed raw-tracked-identity cleanliness mutation: its masked bad arm became executable
+  killed required-gitlink mutation: evil plain-directory bytes became executable
+  killed inherited-Git-environment scrub mutation: ambient Git state changed the judgment
+=== FG-093 replacement-object and artifact-handoff mutations ===
+  killed replacement-object guard mutation: malicious clean bytes became executable
+  killed artifact descriptor-handoff mutation: downstream modified mutable source bytes
+  killed artifact-seal mutation: downstream modified the unsealed snapshot
+FG-093 provenance proof PASSED

@@ -1,0 +1,5 @@
+ docs/EXECUTION_BOARD.md             |   2 +-
+ docs/tickets/FG-093.md              |  83 ++++++++++------
+ scripts/prove-release-provenance.sh | 192 ++++++++++++++++++++++++++++++++++--
+ scripts/release-provenance-gate.py  | 124 +++++++++++++++++++++--
+ 4 files changed, 349 insertions(+), 52 deletions(-)

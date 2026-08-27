@@ -9,6 +9,7 @@ nothing.  This program therefore verifies only; it never writes a manifest.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -49,6 +50,7 @@ def controlled_git_environment() -> dict[str, str]:
     environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     environment["GIT_CONFIG_NOSYSTEM"] = "1"
     environment["GIT_CONFIG_GLOBAL"] = os.devnull
+    environment["GIT_NO_REPLACE_OBJECTS"] = "1"
     return environment
 
 
@@ -127,6 +129,91 @@ def sha256_file(path: Path, what: str) -> str:
         os.close(descriptor)
 
     return digest.hexdigest()
+
+
+def seal_artifact(path: Path) -> tuple[str, int]:
+    """Copy the artifact into immutable anonymous storage while hashing it."""
+    required = (
+        "F_ADD_SEALS",
+        "F_GET_SEALS",
+        "F_SEAL_SEAL",
+        "F_SEAL_SHRINK",
+        "F_SEAL_GROW",
+        "F_SEAL_WRITE",
+    )
+    if (
+        not hasattr(os, "memfd_create")
+        or not hasattr(os, "MFD_CLOEXEC")
+        or not hasattr(os, "MFD_ALLOW_SEALING")
+        or any(not hasattr(fcntl, name) for name in required)
+    ):
+        raise Refusal("host cannot create a sealed verified-artifact descriptor")
+
+    source, before = stable_regular_file(path, "artifact")
+    sealed = -1
+    try:
+        try:
+            sealed = os.memfd_create(
+                "fogell-verified-artifact",
+                os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING,
+            )
+        except OSError as error:
+            raise Refusal(f"sealed verified-artifact descriptor cannot be created: {error.strerror}") from error
+
+        digest = hashlib.sha256()
+        with os.fdopen(source, "rb", closefd=False) as source_handle, os.fdopen(
+            sealed, "wb", closefd=False
+        ) as sealed_handle:
+            while block := source_handle.read(1024 * 1024):
+                digest.update(block)
+                sealed_handle.write(block)
+            sealed_handle.flush()
+        unchanged(before, os.fstat(source), "artifact")
+
+        seals = (
+            fcntl.F_SEAL_WRITE
+            | fcntl.F_SEAL_GROW
+            | fcntl.F_SEAL_SHRINK
+            | fcntl.F_SEAL_SEAL
+        )
+        try:
+            fcntl.fcntl(sealed, fcntl.F_ADD_SEALS, seals)
+            applied = fcntl.fcntl(sealed, fcntl.F_GET_SEALS)
+        except OSError as error:
+            raise Refusal(f"verified-artifact descriptor cannot be sealed: {error.strerror}") from error
+        if applied & seals != seals:
+            raise Refusal("verified-artifact descriptor is missing required seals")
+        os.lseek(sealed, 0, os.SEEK_SET)
+        return digest.hexdigest(), sealed
+    except Refusal:
+        if sealed >= 0:
+            os.close(sealed)
+        raise
+    except OSError as error:
+        if sealed >= 0:
+            os.close(sealed)
+        raise Refusal(f"artifact cannot be copied into sealed storage: {error.strerror}") from error
+    finally:
+        os.close(source)
+
+
+def inherited_descriptor_path(descriptor: int) -> str:
+    path = Path("/proc/self/fd") / str(descriptor)
+    try:
+        descriptor_metadata = os.fstat(descriptor)
+        path_metadata = os.stat(path)
+    except OSError as error:
+        raise Refusal(f"verified-artifact descriptor cannot be handed downstream: {error.strerror}") from error
+    if (descriptor_metadata.st_dev, descriptor_metadata.st_ino) != (
+        path_metadata.st_dev,
+        path_metadata.st_ino,
+    ):
+        raise Refusal("verified-artifact descriptor path resolves to different bytes")
+    try:
+        os.set_inheritable(descriptor, True)
+    except OSError as error:
+        raise Refusal(f"verified-artifact descriptor cannot be inherited: {error.strerror}") from error
+    return str(path)
 
 
 def require_external_path(path: Path, repository: Path, what: str) -> Path:
@@ -238,6 +325,11 @@ def require_no_skip_worktree(repository: Path) -> None:
         raise Refusal("checkout index contains skip-worktree entries")
 
 
+def require_no_replacement_refs(repository: Path) -> None:
+    if git_bytes(repository, "for-each-ref", "--format=%(refname)", "refs/replace").strip():
+        raise Refusal("checkout contains Git replacement-object refs")
+
+
 def required_submodules(repository: Path) -> list[Path]:
     result: list[Path] = []
     records = git_bytes(repository, "ls-files", "--stage", "-z").split(b"\0")
@@ -340,6 +432,7 @@ def require_clean_checkout(repository: Path) -> None:
         if worktree in visited:
             raise Refusal("checkout contains a recursive submodule worktree")
         visited.add(worktree)
+        require_no_replacement_refs(worktree)
         require_filemode_tracking(worktree)
         require_no_assume_unchanged(worktree)
         require_no_skip_worktree(worktree)
@@ -358,7 +451,7 @@ def require_clean_checkout(repository: Path) -> None:
         queue.extend(submodules)
 
 
-def repository_snapshot(repository: Path, artifact: Path) -> dict[str, str]:
+def repository_snapshot(repository: Path, artifact: Path) -> tuple[dict[str, str], int]:
     top = Path(git(repository, "rev-parse", "--show-toplevel")).resolve()
     if top != repository:
         raise Refusal(f"checker belongs to {repository}, but git reports {top}")
@@ -366,13 +459,18 @@ def repository_snapshot(repository: Path, artifact: Path) -> dict[str, str]:
     require_external_path(artifact, repository, "artifact")
     require_clean_checkout(repository)
 
-    corpus_manifest = repository / "corpus" / "CORPUS-SHA256SUMS"
-    return {
-        "commit": git(repository, "rev-parse", "--verify", "HEAD^{commit}"),
-        "tree": git(repository, "rev-parse", "--verify", "HEAD^{tree}"),
-        "artifact_sha256": sha256_file(artifact, "artifact"),
-        "corpus_manifest_sha256": sha256_file(corpus_manifest, "canonical corpus manifest"),
-    }
+    artifact_sha256, artifact_descriptor = seal_artifact(artifact)
+    try:
+        corpus_manifest = repository / "corpus" / "CORPUS-SHA256SUMS"
+        return {
+            "commit": git(repository, "rev-parse", "--verify", "HEAD^{commit}"),
+            "tree": git(repository, "rev-parse", "--verify", "HEAD^{tree}"),
+            "artifact_sha256": artifact_sha256,
+            "corpus_manifest_sha256": sha256_file(corpus_manifest, "canonical corpus manifest"),
+        }, artifact_descriptor
+    except Exception:
+        os.close(artifact_descriptor)
+        raise
 
 
 def require_match(field: str, expected: str, actual: str) -> None:
@@ -403,15 +501,19 @@ def refuse(message: str) -> NoReturn:
 def main() -> NoReturn:
     parsed = arguments()
     repository = Path(__file__).resolve().parent.parent
+    artifact_descriptor: int | None = None
 
     try:
         manifest = load_manifest(parsed.manifest, repository)
-        snapshot = repository_snapshot(repository, parsed.artifact)
+        snapshot, artifact_descriptor = repository_snapshot(repository, parsed.artifact)
         require_match("commit", manifest["commit"], snapshot["commit"])
         require_match("tree", manifest["tree"], snapshot["tree"])
         require_match("artifact_sha256", manifest["artifact_sha256"], snapshot["artifact_sha256"])
         require_match("corpus_manifest_sha256", manifest["corpus_manifest_sha256"], snapshot["corpus_manifest_sha256"])
+        artifact_descriptor_path = inherited_descriptor_path(artifact_descriptor)
     except Refusal as error:
+        if artifact_descriptor is not None:
+            os.close(artifact_descriptor)
         refuse(str(error))
 
     print(
@@ -424,9 +526,10 @@ def main() -> NoReturn:
     environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     environment.update(
         {
+            "GIT_NO_REPLACE_OBJECTS": "1",
             "FOGELL_VERIFIED_COMMIT": snapshot["commit"],
             "FOGELL_VERIFIED_TREE": snapshot["tree"],
-            "FOGELL_VERIFIED_ARTIFACT": str(parsed.artifact.resolve()),
+            "FOGELL_VERIFIED_ARTIFACT": artifact_descriptor_path,
             "FOGELL_VERIFIED_ARTIFACT_SHA256": snapshot["artifact_sha256"],
             "FOGELL_VERIFIED_CORPUS_MANIFEST_SHA256": snapshot["corpus_manifest_sha256"],
         }
@@ -434,6 +537,7 @@ def main() -> NoReturn:
     try:
         os.execvpe(parsed.command[0], parsed.command, environment)
     except OSError as error:
+        os.close(artifact_descriptor)
         refuse(f"verified downstream command could not start: {error}")
 
 

@@ -234,12 +234,19 @@ ENV_CAPTURE="$OUT/environment-capture"
 ENV_EXPECTED="$OUT/environment-expected"
 printf '%s\n' \
   '#!/bin/sh' \
+  'case "${FOGELL_VERIFIED_ARTIFACT-}" in' \
+  '  /proc/self/fd/[0-9]*) artifact_binding="<sealed-descriptor>" ;;' \
+  '  *) artifact_binding="${FOGELL_VERIFIED_ARTIFACT-<unset>}" ;;' \
+  'esac' \
+  'artifact_bytes_sha=$(sha256sum "${FOGELL_VERIFIED_ARTIFACT-}" 2>/dev/null | awk '\''{print $1}'\'')' \
   'printf "%s\n" \' \
   '  "${FOGELL_VERIFIED_COMMIT-<unset>}" \' \
   '  "${FOGELL_VERIFIED_TREE-<unset>}" \' \
-  '  "${FOGELL_VERIFIED_ARTIFACT-<unset>}" \' \
+  '  "$artifact_binding" \' \
   '  "${FOGELL_VERIFIED_ARTIFACT_SHA256-<unset>}" \' \
   '  "${FOGELL_VERIFIED_CORPUS_MANIFEST_SHA256-<unset>}" \' \
+  '  "$artifact_bytes_sha" \' \
+  '  "${GIT_NO_REPLACE_OBJECTS-<unset>}" \' \
   '  "${GIT_DIR-<unset>}" \' \
   '  "${GIT_WORK_TREE-<unset>}" \' \
   '  "${GIT_INDEX_FILE-<unset>}" \' \
@@ -247,27 +254,54 @@ printf '%s\n' \
   '  "${GIT_CONFIG_KEY_0-<unset>}" \' \
   '  "${GIT_CONFIG_VALUE_0-<unset>}" > "$1"' > "$ENV_PROBE"
 chmod +x "$ENV_PROBE"
-printf '%s\n' "$COMMIT" "$TREE" "$(realpath "$ARTIFACT")" "$ARTIFACT_SHA" "$CORPUS_SHA" \
-  '<unset>' '<unset>' '<unset>' '<unset>' '<unset>' '<unset>' > "$ENV_EXPECTED"
+printf '%s\n' "$COMMIT" "$TREE" '<sealed-descriptor>' "$ARTIFACT_SHA" "$CORPUS_SHA" "$ARTIFACT_SHA" \
+  '1' '<unset>' '<unset>' '<unset>' '<unset>' '<unset>' '<unset>' > "$ENV_EXPECTED"
 rm -f "$ENV_CAPTURE"
 set +e
 env FOGELL_VERIFIED_COMMIT=hostile FOGELL_VERIFIED_TREE=hostile \
   FOGELL_VERIFIED_ARTIFACT=/hostile FOGELL_VERIFIED_ARTIFACT_SHA256=hostile \
   FOGELL_VERIFIED_CORPUS_MANIFEST_SHA256=hostile GIT_DIR=/hostile/git-dir \
   GIT_WORK_TREE=/hostile/work-tree GIT_INDEX_FILE=/hostile/index \
-  GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.ignoreCase GIT_CONFIG_VALUE_0=true \
+  GIT_NO_REPLACE_OBJECTS=0 GIT_CONFIG_COUNT=1 \
+  GIT_CONFIG_KEY_0=core.ignoreCase GIT_CONFIG_VALUE_0=true \
   "$REPO/scripts/release-provenance-gate.py" --manifest "$GOOD" --artifact "$ARTIFACT" -- \
   "$ENV_PROBE" "$ENV_CAPTURE" > "$OUT/environment.log" 2>&1
 RC=$?
 set -e
 if [ "$RC" -ne 0 ] || [ ! -f "$ENV_CAPTURE" ] || ! cmp -s "$ENV_EXPECTED" "$ENV_CAPTURE"; then
-  echo '  FAIL: downstream did not receive five exact bindings with inherited Git state removed'
+  echo '  FAIL: downstream did not receive five exact bindings, immutable artifact bytes, and scrubbed Git state'
   sed 's/^/    | /' "$OUT/environment.log"
   [ ! -f "$ENV_CAPTURE" ] || sed 's/^/    | actual: /' "$ENV_CAPTURE"
   FAILED=1
 else
-  echo '  exported five exact bindings and removed inherited Git state downstream'
+  echo '  exported five exact bindings to immutable artifact bytes and removed inherited Git state downstream'
 fi
+
+ARTIFACT_SWAP_PROBE="$OUT/artifact-swap-probe.sh"
+ARTIFACT_SWAP_CAPTURE="$OUT/artifact-swap.capture"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'if printf "in-place hostile bytes\n" > "$FOGELL_VERIFIED_ARTIFACT" 2>/dev/null; then exit 97; fi' \
+  'printf "replacement artifact bytes\n" > "$1.replacement"' \
+  'mv "$1.replacement" "$1"' \
+  'sha256sum "$FOGELL_VERIFIED_ARTIFACT" | awk '\''{print $1}'\'' > "$2"' > "$ARTIFACT_SWAP_PROBE"
+chmod +x "$ARTIFACT_SWAP_PROBE"
+rm -f "$ARTIFACT_SWAP_CAPTURE"
+set +e
+"$REPO/scripts/release-provenance-gate.py" --manifest "$GOOD" --artifact "$ARTIFACT" -- \
+  "$ARTIFACT_SWAP_PROBE" "$ARTIFACT" "$ARTIFACT_SWAP_CAPTURE" > "$OUT/artifact-swap.log" 2>&1
+RC=$?
+set -e
+if [ "$RC" -ne 0 ] || [ ! -f "$ARTIFACT_SWAP_CAPTURE" ] || \
+   [ "$(cat "$ARTIFACT_SWAP_CAPTURE")" != "$ARTIFACT_SHA" ] || \
+   [ "$(sha256 "$ARTIFACT")" = "$ARTIFACT_SHA" ]; then
+  echo '  FAIL: downstream did not consume the immutable verified bytes after an artifact path swap'
+  sed 's/^/    | /' "$OUT/artifact-swap.log"
+  FAILED=1
+else
+  echo '  bound downstream consumption to immutable verified bytes across an artifact path swap'
+fi
+printf 'deterministic release artifact bytes\n' > "$ARTIFACT"
 
 echo '=== FG-093 four tuple mismatches ==='
 write_manifest "$OUT/bad-commit.json" 0000000000000000000000000000000000000000 "$TREE" "$ARTIFACT_SHA" "$CORPUS_SHA"
@@ -433,6 +467,30 @@ else
   echo '  ignored inherited GIT_DIR/GIT_WORK_TREE; exact repository still executed'
 fi
 
+REPLACE_ATTACK="$LAB/replacement-object-attack"
+clone_fixture "$REPLACE_ATTACK"
+identity "$REPLACE_ATTACK"
+REPLACE_TRUSTED_COMMIT=$COMMIT
+REPLACE_TRUSTED_TREE=$TREE
+REPLACE_MANIFEST="$OUT/replacement-object-attack.json"
+write_manifest "$REPLACE_MANIFEST" "$COMMIT" "$TREE" "$ARTIFACT_SHA" "$CORPUS_SHA"
+printf 'replacement-object malicious bytes\n' > "$REPLACE_ATTACK/tracked.txt"
+git -C "$REPLACE_ATTACK" add tracked.txt
+git -C "$REPLACE_ATTACK" commit -q -m 'build malicious replacement tree'
+REPLACE_MALICIOUS_TREE=$(git -C "$REPLACE_ATTACK" rev-parse 'HEAD^{tree}')
+git -C "$REPLACE_ATTACK" replace "$REPLACE_TRUSTED_TREE" "$REPLACE_MALICIOUS_TREE"
+git -C "$REPLACE_ATTACK" reset --hard -q "$REPLACE_TRUSTED_COMMIT"
+if [ -n "$(git -C "$REPLACE_ATTACK" status --porcelain=v1 --untracked-files=all)" ] || \
+   [ "$(git -C "$REPLACE_ATTACK" rev-parse 'HEAD^{tree}')" != "$REPLACE_TRUSTED_TREE" ] || \
+   ! grep -Fqx 'replacement-object malicious bytes' "$REPLACE_ATTACK/tracked.txt"; then
+  echo '  FAIL: replacement-object attack preconditions were not established'
+  FAILED=1
+else
+  expect_reject 'Git replacement-object attack' \
+    "$REPLACE_ATTACK/scripts/release-provenance-gate.py" "$REPLACE_MANIFEST" "$ARTIFACT" \
+    'checkout contains Git replacement-object refs'
+fi
+
 ln -s "$ARTIFACT" "$OUT/artifact-link"
 expect_reject 'symlink artifact' "$REPO/scripts/release-provenance-gate.py" "$GOOD" "$OUT/artifact-link" 'artifact is not a regular non-symlink file'
 
@@ -547,9 +605,12 @@ mutation_exposes_environment_binding() {
   git -C "$mutant" commit -q -m "mutate $binding environment binding"
   identity "$mutant"
   write_manifest "$manifest" "$COMMIT" "$TREE" "$ARTIFACT_SHA" "$CORPUS_SHA"
-  printf '%s\n' "$COMMIT" "$TREE" "$(realpath "$ARTIFACT")" "$ARTIFACT_SHA" "$CORPUS_SHA" \
-    '<unset>' '<unset>' '<unset>' '<unset>' '<unset>' '<unset>' > "$expected"
+  printf '%s\n' "$COMMIT" "$TREE" '<sealed-descriptor>' "$ARTIFACT_SHA" "$CORPUS_SHA" "$ARTIFACT_SHA" \
+    '1' '<unset>' '<unset>' '<unset>' '<unset>' '<unset>' '<unset>' > "$expected"
   sed "${line_number}s/.*/FG-093-planted-wrong-binding/" "$expected" > "$detected"
+  if [ "$binding" = FOGELL_VERIFIED_ARTIFACT ]; then
+    sed -i '6s/.*//' "$detected"
+  fi
 
   rm -f "$capture"
   set +e
@@ -592,8 +653,8 @@ else
   DOWNSTREAM_SCRUB_CAPTURE="$OUT/mutant-downstream-git-environment-scrub.capture"
   DOWNSTREAM_SCRUB_EXPECTED="$OUT/mutant-downstream-git-environment-scrub.expected"
   write_manifest "$DOWNSTREAM_SCRUB_MANIFEST" "$COMMIT" "$TREE" "$ARTIFACT_SHA" "$CORPUS_SHA"
-  printf '%s\n' "$COMMIT" "$TREE" "$(realpath "$ARTIFACT")" "$ARTIFACT_SHA" "$CORPUS_SHA" \
-    /hostile/git-dir /hostile/work-tree /hostile/index 1 core.ignoreCase true > "$DOWNSTREAM_SCRUB_EXPECTED"
+  printf '%s\n' "$COMMIT" "$TREE" '<sealed-descriptor>' "$ARTIFACT_SHA" "$CORPUS_SHA" "$ARTIFACT_SHA" \
+    1 /hostile/git-dir /hostile/work-tree /hostile/index 1 core.ignoreCase true > "$DOWNSTREAM_SCRUB_EXPECTED"
   rm -f "$DOWNSTREAM_SCRUB_CAPTURE"
   set +e
   env GIT_DIR=/hostile/git-dir GIT_WORK_TREE=/hostile/work-tree GIT_INDEX_FILE=/hostile/index \
@@ -741,6 +802,117 @@ else
   else
     echo '  FAIL: inherited-Git-environment scrub mutation was not detected'
     sed 's/^/    | /' "$OUT/mutant-git-environment-scrub.log"
+    FAILED=1
+  fi
+fi
+
+echo '=== FG-093 replacement-object and artifact-handoff mutations ==='
+REPLACE_GUARD_MUTANT="$LAB/mutant-replacement-object-guards"
+clone_fixture "$REPLACE_GUARD_MUTANT"
+REPLACE_GUARD_CHECKER="$REPLACE_GUARD_MUTANT/scripts/release-provenance-gate.py"
+REPLACE_GUARD_BEFORE=$(sha256 "$REPLACE_GUARD_CHECKER")
+sed -i '/environment\["GIT_NO_REPLACE_OBJECTS"\] = "1"/d; /require_no_replacement_refs(worktree)/s/^/        # FG-093 planted replacement-object mutation: /' "$REPLACE_GUARD_CHECKER"
+REPLACE_GUARD_AFTER=$(sha256 "$REPLACE_GUARD_CHECKER")
+if [ "$REPLACE_GUARD_BEFORE" = "$REPLACE_GUARD_AFTER" ] || \
+   [ "$(grep -Fc 'environment["GIT_NO_REPLACE_OBJECTS"] = "1"' "$REPLACE_GUARD_CHECKER")" -ne 0 ] || \
+   [ "$(grep -Fc '# FG-093 planted replacement-object mutation:         require_no_replacement_refs(worktree)' "$REPLACE_GUARD_CHECKER")" -ne 1 ]; then
+  echo '  FAIL: replacement-object guard mutation was not planted exactly'
+  FAILED=1
+else
+  git -C "$REPLACE_GUARD_MUTANT" add scripts/release-provenance-gate.py
+  git -C "$REPLACE_GUARD_MUTANT" commit -q -m 'mutate replacement-object guards'
+  identity "$REPLACE_GUARD_MUTANT"
+  REPLACE_GUARD_TRUSTED_COMMIT=$COMMIT
+  REPLACE_GUARD_TRUSTED_TREE=$TREE
+  REPLACE_GUARD_MANIFEST="$OUT/mutant-replacement-object-guards.json"
+  REPLACE_GUARD_MARKER="$OUT/mutant-replacement-object-guards-ran"
+  write_manifest "$REPLACE_GUARD_MANIFEST" "$COMMIT" "$TREE" "$ARTIFACT_SHA" "$CORPUS_SHA"
+  printf 'mutation replacement-object malicious bytes\n' > "$REPLACE_GUARD_MUTANT/tracked.txt"
+  git -C "$REPLACE_GUARD_MUTANT" add tracked.txt
+  git -C "$REPLACE_GUARD_MUTANT" commit -q -m 'build mutation replacement tree'
+  REPLACE_GUARD_MALICIOUS_TREE=$(git -C "$REPLACE_GUARD_MUTANT" rev-parse 'HEAD^{tree}')
+  git -C "$REPLACE_GUARD_MUTANT" replace "$REPLACE_GUARD_TRUSTED_TREE" "$REPLACE_GUARD_MALICIOUS_TREE"
+  git -C "$REPLACE_GUARD_MUTANT" reset --hard -q "$REPLACE_GUARD_TRUSTED_COMMIT"
+  run_gate "$REPLACE_GUARD_CHECKER" "$REPLACE_GUARD_MANIFEST" "$ARTIFACT" \
+    "$REPLACE_GUARD_MARKER" "$OUT/mutant-replacement-object-guards.log"
+  if [ "$RC" -eq 0 ] && [ -f "$REPLACE_GUARD_MARKER" ] && \
+     grep -Fq 'PROVENANCE VERIFIED:' "$OUT/mutant-replacement-object-guards.log"; then
+    echo '  killed replacement-object guard mutation: malicious clean bytes became executable'
+  else
+    echo '  FAIL: replacement-object guard mutation did not expose its hostile arm'
+    sed 's/^/    | /' "$OUT/mutant-replacement-object-guards.log"
+    FAILED=1
+  fi
+fi
+
+ARTIFACT_HANDOFF_MUTANT="$LAB/mutant-artifact-descriptor-handoff"
+clone_fixture "$ARTIFACT_HANDOFF_MUTANT"
+ARTIFACT_HANDOFF_CHECKER="$ARTIFACT_HANDOFF_MUTANT/scripts/release-provenance-gate.py"
+ARTIFACT_HANDOFF_BEFORE=$(sha256 "$ARTIFACT_HANDOFF_CHECKER")
+sed -i 's/"FOGELL_VERIFIED_ARTIFACT": artifact_descriptor_path/"FOGELL_VERIFIED_ARTIFACT": str(parsed.artifact.resolve())/' "$ARTIFACT_HANDOFF_CHECKER"
+ARTIFACT_HANDOFF_AFTER=$(sha256 "$ARTIFACT_HANDOFF_CHECKER")
+if [ "$ARTIFACT_HANDOFF_BEFORE" = "$ARTIFACT_HANDOFF_AFTER" ] || \
+   [ "$(grep -Fc '"FOGELL_VERIFIED_ARTIFACT": str(parsed.artifact.resolve())' "$ARTIFACT_HANDOFF_CHECKER")" -ne 1 ]; then
+  echo '  FAIL: artifact descriptor-handoff mutation was not planted exactly'
+  FAILED=1
+else
+  git -C "$ARTIFACT_HANDOFF_MUTANT" add scripts/release-provenance-gate.py
+  git -C "$ARTIFACT_HANDOFF_MUTANT" commit -q -m 'mutate artifact descriptor handoff'
+  identity "$ARTIFACT_HANDOFF_MUTANT"
+  ARTIFACT_HANDOFF_MANIFEST="$OUT/mutant-artifact-descriptor-handoff.json"
+  ARTIFACT_HANDOFF_CAPTURE="$OUT/mutant-artifact-descriptor-handoff.capture"
+  write_manifest "$ARTIFACT_HANDOFF_MANIFEST" "$COMMIT" "$TREE" "$ARTIFACT_SHA" "$CORPUS_SHA"
+  printf 'deterministic release artifact bytes\n' > "$ARTIFACT"
+  rm -f "$ARTIFACT_HANDOFF_CAPTURE"
+  set +e
+  "$ARTIFACT_HANDOFF_CHECKER" --manifest "$ARTIFACT_HANDOFF_MANIFEST" --artifact "$ARTIFACT" -- \
+    "$ARTIFACT_SWAP_PROBE" "$ARTIFACT" "$ARTIFACT_HANDOFF_CAPTURE" > "$OUT/mutant-artifact-descriptor-handoff.log" 2>&1
+  RC=$?
+  set -e
+  if [ "$RC" -eq 97 ] && [ ! -f "$ARTIFACT_HANDOFF_CAPTURE" ] && \
+     [ "$(sha256 "$ARTIFACT")" != "$ARTIFACT_SHA" ]; then
+    echo '  killed artifact descriptor-handoff mutation: downstream modified mutable source bytes'
+  else
+    echo '  FAIL: artifact descriptor-handoff mutation did not expose swapped bytes'
+    sed 's/^/    | /' "$OUT/mutant-artifact-descriptor-handoff.log"
+    FAILED=1
+  fi
+  printf 'deterministic release artifact bytes\n' > "$ARTIFACT"
+fi
+
+ARTIFACT_SEAL_MUTANT="$LAB/mutant-artifact-seals"
+clone_fixture "$ARTIFACT_SEAL_MUTANT"
+ARTIFACT_SEAL_CHECKER="$ARTIFACT_SEAL_MUTANT/scripts/release-provenance-gate.py"
+ARTIFACT_SEAL_BEFORE=$(sha256 "$ARTIFACT_SEAL_CHECKER")
+sed -i \
+  -e 's/fcntl\.fcntl(sealed, fcntl\.F_ADD_SEALS, seals)/# FG-093 planted artifact-seal mutation: add omitted/' \
+  -e 's/applied = fcntl\.fcntl(sealed, fcntl\.F_GET_SEALS)/applied = seals  # FG-093 planted artifact-seal mutation: lie/' \
+  "$ARTIFACT_SEAL_CHECKER"
+ARTIFACT_SEAL_AFTER=$(sha256 "$ARTIFACT_SEAL_CHECKER")
+if [ "$ARTIFACT_SEAL_BEFORE" = "$ARTIFACT_SEAL_AFTER" ] || \
+   [ "$(grep -Fc 'FG-093 planted artifact-seal mutation:' "$ARTIFACT_SEAL_CHECKER")" -ne 2 ]; then
+  echo '  FAIL: artifact-seal mutation was not planted exactly'
+  FAILED=1
+else
+  git -C "$ARTIFACT_SEAL_MUTANT" add scripts/release-provenance-gate.py
+  git -C "$ARTIFACT_SEAL_MUTANT" commit -q -m 'mutate artifact seals'
+  identity "$ARTIFACT_SEAL_MUTANT"
+  ARTIFACT_SEAL_MANIFEST="$OUT/mutant-artifact-seals.json"
+  ARTIFACT_SEAL_CAPTURE="$OUT/mutant-artifact-seals.capture"
+  write_manifest "$ARTIFACT_SEAL_MANIFEST" "$COMMIT" "$TREE" "$ARTIFACT_SHA" "$CORPUS_SHA"
+  printf 'deterministic release artifact bytes\n' > "$ARTIFACT"
+  rm -f "$ARTIFACT_SEAL_CAPTURE"
+  set +e
+  "$ARTIFACT_SEAL_CHECKER" --manifest "$ARTIFACT_SEAL_MANIFEST" --artifact "$ARTIFACT" -- \
+    "$ARTIFACT_SWAP_PROBE" "$ARTIFACT" "$ARTIFACT_SEAL_CAPTURE" > "$OUT/mutant-artifact-seals.log" 2>&1
+  RC=$?
+  set -e
+  if [ "$RC" -eq 97 ] && [ ! -f "$ARTIFACT_SEAL_CAPTURE" ] && \
+     [ "$(sha256 "$ARTIFACT")" = "$ARTIFACT_SHA" ]; then
+    echo '  killed artifact-seal mutation: downstream modified the unsealed snapshot'
+  else
+    echo '  FAIL: artifact-seal mutation did not expose writable snapshot bytes'
+    sed 's/^/    | /' "$OUT/mutant-artifact-seals.log"
     FAILED=1
   fi
 fi

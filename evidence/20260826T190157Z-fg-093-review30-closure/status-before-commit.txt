@@ -1,0 +1,5 @@
+M  docs/EXECUTION_BOARD.md
+M  docs/tickets/FG-093.md
+M  scripts/prove-release-provenance.sh
+M  scripts/release-provenance-gate.py
+?? evidence/.20260826T190157Z-fg-093-review30-closure.partial.B9FOXW/
