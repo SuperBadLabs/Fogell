@@ -72,10 +72,12 @@ round trip. Startup rejects an unsafe pair and reports the maximum poll interval
 for the configured lease.
 
 Keep the token file and both database strings out of command arguments and logs.
-Startup currently proves that the token path is absolute and readable and that
-its trimmed content is at least 32 characters; it does not yet reject a symlink
-or a permissive file mode. The operator must provide a service-owned regular,
-non-symlink file with mode `0400` or `0600`. On Linux, check that deployment
+Startup requires an absolute, existing token path, attempts to read it, and
+requires at least 32 trimmed characters. A read failure aborts startup but is
+not yet normalized into the named configuration refusals. Startup also does not
+reject a symlink or a permissive file mode. The operator must provide a
+service-owned regular, non-symlink file with mode `0400` or `0600`. On Linux,
+check that deployment
 obligation under the service identity before starting:
 
 ```bash
@@ -196,7 +198,7 @@ set -euo pipefail
 
 # The client origin may differ from a wildcard/proxied FOGELL_LISTEN_URL.
 export FOGELL_CLIENT_URL=http://127.0.0.1:8080
-FOGELL_IDEMPOTENCY_KEY=hello-$(date +%s)
+FOGELL_IDEMPOTENCY_KEY=$(cat /proc/sys/kernel/random/uuid)
 export FOGELL_IDEMPOTENCY_KEY
 export FOGELL_WAIT_SECONDS=300
 export FOGELL_CONNECT_TIMEOUT_SECONDS=5
