@@ -251,11 +251,11 @@ require_stable_inputs || exit $?
   echo "jenkins-host: $FOGELL_JENKINS_HOST"
   echo "jenkins-container: $FOGELL_JENKINS_CONTAINER"
   echo -n "jenkins-image-name: "
-  ssh "$FOGELL_JENKINS_HOST" \
-    podman inspect '--format={{.ImageName}}' "$FOGELL_JENKINS_CONTAINER"
+  fogell_jenkins_podman_inspect_v2 \
+    "$FOGELL_JENKINS_HOST" "$FOGELL_JENKINS_CONTAINER" '{{.ImageName}}'
   echo -n "jenkins-image-id: "
-  ssh "$FOGELL_JENKINS_HOST" \
-    podman inspect '--format={{.Image}}' "$FOGELL_JENKINS_CONTAINER"
+  fogell_jenkins_podman_inspect_v2 \
+    "$FOGELL_JENKINS_HOST" "$FOGELL_JENKINS_CONTAINER" '{{.Image}}'
   echo "engine-build-input-status: clean against the recorded HEAD before and after the live run"
   echo "engine-build-project: $cli_project"
   echo "engine-build-configuration: Release"

@@ -61,3 +61,24 @@ FOGELL_WORKSPACE_COLLECTOR
   # `cd` as evidence.
   export FOGELL_JENKINS_WIPE_CMD="ssh ${jenkins_host_q} \"podman exec ${jenkins_container_q} sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp && mkdir -p /var/jenkins_home/workspace/{job}\\\"\""
 }
+
+fogell_jenkins_podman_inspect_v2() {
+  if [ "$#" -ne 3 ]; then
+    echo "usage: fogell_jenkins_podman_inspect_v2 <host> <container> <format>" >&2
+    return 2
+  fi
+
+  local jenkins_host=$1
+  local jenkins_container=$2
+  local inspect_format=$3
+  local jenkins_container_q
+  local inspect_format_q
+
+  printf -v jenkins_container_q '%q' "$jenkins_container" || return 2
+  printf -v inspect_format_q '%q' "$inspect_format" || return 2
+  # Both interpolations are deliberately client-expanded only after `%q`
+  # escaping; the remote shell must receive one inert command string.
+  # shellcheck disable=SC2029
+  ssh "$jenkins_host" \
+    "podman inspect --format=$inspect_format_q $jenkins_container_q"
+}

@@ -83,6 +83,42 @@ if [ "$base64_rc" -ne 2 ]; then
 fi
 echo "  rejected a shared-collector Base64 encoder failure"
 
+inspect_fake_bin=$scratch/inspect-fake-bin
+mkdir -p "$inspect_fake_bin"
+cat >"$inspect_fake_bin/ssh" <<'FAKE_SSH'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$#" -eq 2 ]
+shift
+bash -c "$1"
+FAKE_SSH
+cat >"$inspect_fake_bin/podman" <<'FAKE_PODMAN'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$#" -eq 3 ]
+[ "$1" = inspect ]
+[ "$2" = '--format={{.Image}}' ]
+[ "$3" = "$FG037_EXPECTED_CONTAINER" ]
+printf '%s\n' pinned-image-id
+FAKE_PODMAN
+chmod +x "$inspect_fake_bin/ssh" "$inspect_fake_bin/podman"
+inspect_injection_marker=$scratch/remote-inspect-injection
+hostile_container="jenkins-lab; touch $inspect_injection_marker"
+inspect_result=$(
+  PATH="$inspect_fake_bin:$PATH" FG037_EXPECTED_CONTAINER="$hostile_container" \
+    bash -c \
+      'source "$1"; fogell_jenkins_podman_inspect_v2 luigi "$2" "{{.Image}}"' \
+      _ scripts/jenkins-workspace-v2.sh "$hostile_container"
+) || {
+  echo "FAIL: shared collector rejected a safely quoted inspect override" >&2
+  exit 1
+}
+if [ "$inspect_result" != pinned-image-id ] || [ -e "$inspect_injection_marker" ]; then
+  echo "FAIL: remote inspect did not contain a hostile container override" >&2
+  exit 1
+fi
+echo "  contained a hostile remote-inspect container override"
+
 fresh
 sed -i 's/^jenkins-core: 2\.568\.1$/jenkins-core: 9.99.9/' \
   "$scratch/case/receipts/fg037-251-steps.receipt.txt"
@@ -159,4 +195,4 @@ if [ "$probe_rc" -ne 2 ] \
 fi
 echo "  refused a dirty shared workspace collector before evidence creation"
 
-echo "FG-037 proof PASS (9 semantic + 3 controller-identity + 2 collector/configuration rejection arms)"
+echo "FG-037 proof PASS (9 semantic + 3 controller-identity + 3 collector/configuration rejection arms)"
