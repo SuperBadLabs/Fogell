@@ -24,13 +24,16 @@ GRANT USAGE, SELECT ON
 The maintenance identity applies checksum-pinned migrations during startup and
 must not be used for requests or worker operations.
 
-After migration and before binding, startup proves both connection capabilities
-reach the same live PostgreSQL database. A fresh random advisory lock held by the
-maintenance session must be unavailable to a simultaneous runtime session. This
-active challenge deliberately does not compare connection strings, host names,
-database names, or role/schema metadata: aliases and proxies can make equal
-strings differ, while a separately migrated or cloned database can make metadata
-look equal. Any connection, query, or lock uncertainty refuses startup.
+Before migration, startup proves both connection capabilities reach the same live
+PostgreSQL database. The maintenance side takes a fresh random transaction-scoped
+advisory lock, then runtime probes the same key inside an overlapping transaction.
+The overlap pins distinct backends through transaction-pooling proxies; every
+unwind releases the locks automatically. This active challenge deliberately does
+not compare connection strings, host names, database names, or role/schema
+metadata: aliases and proxies can make equal strings differ, while a separately
+migrated or cloned database can make metadata look equal. Connection and command
+waits are capped at five seconds for this proof. Any connection, transaction,
+query, or cleanup uncertainty refuses startup without applying migrations.
 
 ## Required configuration
 

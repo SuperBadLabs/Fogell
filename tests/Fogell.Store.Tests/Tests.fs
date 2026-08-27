@@ -208,7 +208,7 @@ let migrations =
               multiplexedBuilder.Multiplexing <- true
               Expect.isTrue
                   (Store(multiplexedBuilder.ConnectionString, multiplexedBuilder.ConnectionString).DatabasePairMatches())
-                  "caller multiplexing cannot erase session advisory-lock identity"
+                  "caller multiplexing cannot erase transaction advisory-lock identity"
 
               let concurrent =
                   [ 1..16 ]
@@ -236,6 +236,18 @@ let migrations =
               create.ExecuteNonQuery() |> ignore
 
               try
+                  Expect.isTrue
+                      (Store(otherBuilder.ConnectionString, otherBuilder.ConnectionString).DatabasePairMatches())
+                      "the pair proof is schema-independent on an empty database"
+
+                  use empty = new Npgsql.NpgsqlConnection(otherBuilder.ConnectionString)
+                  empty.Open()
+                  use inspectEmpty = empty.CreateCommand()
+                  inspectEmpty.CommandText <- "SELECT to_regclass('public.schema_migrations') IS NULL"
+                  Expect.isTrue
+                      (inspectEmpty.ExecuteScalar() :?> bool)
+                      "the pair proof itself creates no schema"
+
                   match Store(otherBuilder.ConnectionString).Migrate() with
                   | Error why -> failtestf "other database migration failed: %s" why
                   | Ok _ -> ()

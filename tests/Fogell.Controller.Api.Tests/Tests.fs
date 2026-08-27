@@ -343,26 +343,45 @@ let private databaseStartupBoundary =
     testList
         "FG-224 database startup boundary"
         [ test "the live database-pair proof gates otherwise valid identities" {
-              let mutable downstreamChecks = 0
+              let calls = ResizeArray<string>()
 
               Expect.equal
                   (Fogell.Controller.Host.Program.databaseStartupError
-                      (fun () -> false)
-                      (fun () -> downstreamChecks <- downstreamChecks + 1; runtime)
-                      (fun () -> downstreamChecks <- downstreamChecks + 1; maintenance)
-                      (fun () -> downstreamChecks <- downstreamChecks + 1; true))
+                      (fun () -> calls.Add "pair"; false)
+                      (fun () -> calls.Add "migrate"; Ok [])
+                      (fun () -> calls.Add "runtime"; runtime)
+                      (fun () -> calls.Add "maintenance"; maintenance)
+                      (fun () -> calls.Add "capabilities"; true))
                   (Some Fogell.Controller.Host.Program.DatabaseStartupError.PairMismatch)
-                  "different databases refuse before role metadata can look healthy"
-              Expect.equal downstreamChecks 0 "pair mismatch short-circuits every downstream database check"
+                  "different databases refuse before migration or role metadata"
+              Expect.sequenceEqual calls [ "pair" ] "pair mismatch short-circuits every mutating or downstream check"
 
+              calls.Clear()
               Expect.equal
                   (Fogell.Controller.Host.Program.databaseStartupError
-                      (fun () -> true)
-                      (fun () -> runtime)
-                      (fun () -> maintenance)
-                      (fun () -> true))
+                      (fun () -> calls.Add "pair"; true)
+                      (fun () -> calls.Add "migrate"; Ok [])
+                      (fun () -> calls.Add "runtime"; runtime)
+                      (fun () -> calls.Add "maintenance"; maintenance)
+                      (fun () -> calls.Add "capabilities"; true))
                   None
                   "same database with separate least-privilege roles proceeds"
+              Expect.sequenceEqual
+                  calls
+                  [ "pair"; "migrate"; "runtime"; "maintenance"; "capabilities" ]
+                  "startup preserves pair-proof, migration, and validation order"
+
+              calls.Clear()
+              Expect.equal
+                  (Fogell.Controller.Host.Program.databaseStartupError
+                      (fun () -> calls.Add "pair"; true)
+                      (fun () -> calls.Add "migrate"; Error "boom")
+                      (fun () -> calls.Add "runtime"; runtime)
+                      (fun () -> calls.Add "maintenance"; maintenance)
+                      (fun () -> calls.Add "capabilities"; true))
+                  (Some Fogell.Controller.Host.Program.DatabaseStartupError.MigrationFailed)
+                  "migration failure remains a distinct startup refusal"
+              Expect.sequenceEqual calls [ "pair"; "migrate" ] "migration failure short-circuits validation"
 
               let adminBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
               adminBuilder.Database <- "postgres"
@@ -383,7 +402,15 @@ let private databaseStartupBoundary =
                           (Store(connectionString))
                           (Store(otherBuilder.ConnectionString)))
                       (Some Fogell.Controller.Host.Program.DatabaseStartupError.PairMismatch)
-                      "the production Store wiring executes the live pair challenge"
+                      "the production Store wiring executes the live pair challenge before migration"
+
+                  use untouched = new Npgsql.NpgsqlConnection(otherBuilder.ConnectionString)
+                  untouched.Open()
+                  use inspect = untouched.CreateCommand()
+                  inspect.CommandText <- "SELECT to_regclass('public.schema_migrations') IS NULL"
+                  Expect.isTrue
+                      (inspect.ExecuteScalar() :?> bool)
+                      "a mismatched maintenance database remains completely unmigrated"
               finally
                   Npgsql.NpgsqlConnection.ClearAllPools()
                   use terminate = admin.CreateCommand()

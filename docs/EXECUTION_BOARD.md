@@ -260,7 +260,7 @@ of trusting the row.
 
 ## Live queue — the reference point for the execution cycle
 
-**BOARD ACCOUNTING (derived): rows=208; DONE=129; open=79; open P0–P3=5 / 26 / 36 / 12.**
+**BOARD ACCOUNTING (derived): rows=209; DONE=129; open=80; open P0–P3=5 / 27 / 36 / 12.**
 
 **WHY THIS SECTION EXISTS.** The derived accounting above is the single live source for
 ticket totals and priority distribution. (Was "187 rows … open 84 … 4 / 34 / 36 / 10"
@@ -876,6 +876,8 @@ changed, and the queue above is what orders them.
 
 | FG-222 | **P1** | **PARTIAL** | Build processes inherited controller environment through GString, shell, and Git launch paths | Technical acceptance is complete locally. The environment port clears every build process environment and applies only fixed system PATH, a run-scoped neutral Fogell HOME, synthetic Jenkins metadata, and explicit pipeline overlays; controller fetch and build Git remain type-separated profiles. The final workspace-lifecycle slice makes `dir` logical-only and materializes admitted shell/bat and SCM cwd paths at their effect boundary, after retained-history SCM admission. Execution 87/87, Differential 226/226, the real-host proof, and the authoritative 795/795 gate pass. The live 275-case oracle now produces **282/282 tier-1 receipt builds, zero partial**; the four former empty-`dir` residuals and the opposing shell-retains-empty control are fresh and retained under `evidence/20260825T170847Z-dir-lifecycle-completion/`. PARTIAL now means unpublished/unhosted only: exact-head hosted review/CI and publication remain. Same-UID filesystem/network containment and credential-free prepared private-SCM checkout remain explicit residuals — [→ detail](tickets/FG-222.md) |
 | FG-223 | **P1** | **PARTIAL** | `seal-evidence.sh` emitted a checksum-valid bundle after failed corpus/build/test prerequisites | The sealer now validates ticket/extra inputs, stages transactionally, refuses every failed command, empty test inventory, or missing Expecto summary, verifies its manifest, and only then publishes the final directory with no-clobber directory semantics. A HeMan negative control proves the old script returned zero and sealed a forced corpus failure. The blocking scratch proof rejects an always-green fake first, plants prerequisite/inventory/input-boundary failures with no manifest/partial output, proves exactly one concurrent publisher wins, and verifies the positive path. The staged authoritative gate passes 795/795 plus every blocking lane; exact committed-head gate, hosted review/CI, and publication remain — [→ detail](tickets/FG-223.md) |
+| FG-225 | **P1** | TODO | Controller trust-boundary architecture | Design the authenticated tenant-bound approval broker and a typed database-startup capability/state model after repeated FG-224 review findings clustered at those seams. Specify transaction-pooling and active-rerouting guarantees, require a real PgBouncer proof lane, and split implementation into bounded follow-on tickets. This design ticket does not reopen or block publication of FG-224's completed single-node slice — [→ detail](tickets/FG-225.md) |
+
 ## Standing risks
 
 1. **Acceptance ≠ compatibility.** 93.9% inherited acceptance against 0 proven

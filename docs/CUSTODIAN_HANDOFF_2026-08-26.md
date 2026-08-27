@@ -3,6 +3,11 @@
 Custodian tenure is closed. This handoff records the work already in flight; it
 does not authorize another impact dimension.
 
+The owner subsequently directed this custodian to continue through successful
+merge. Review 34 closes the two final exact-head database-startup findings, and
+FG-225 records the broader controller trust-boundary redesign instead of
+extending FG-224 through another unbounded review cycle.
+
 ## Repository and publication boundary
 
 - Host: `heman` (Tailscale alias; project host was introduced as `heman-1`).
@@ -75,8 +80,8 @@ outgoing commit: push run `33033547756` / job `98391202409`, and pull-request ru
 
 ## Execution board snapshot
 
-The board has 208 ticket rows: 129 done and 79 open. Open priorities are P0=5,
-P1=26, P2=36, P3=12. FG-224 remains P0/PARTIAL; its row and ticket contain the
+The board has 209 ticket rows: 129 done and 80 open. Open priorities are P0=5,
+P1=27, P2=36, P3=12. FG-224 remains P0/PARTIAL; its row and ticket contain the
 Review 33 closure and 920-test accounting.
 
 ## Next custodian checklist

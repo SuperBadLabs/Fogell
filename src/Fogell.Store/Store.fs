@@ -646,62 +646,62 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
     /// Prove that the runtime and maintenance capabilities reach the same live
     /// PostgreSQL database, independent of connection-string aliases, proxies,
     /// host names, or cloned role/schema metadata. PostgreSQL advisory locks are
-    /// scoped by database OID inside a cluster. A lock held by the maintenance
-    /// session must therefore be unavailable to a simultaneous runtime session
-    /// only when both sessions name the same database.
+    /// scoped by database OID inside a cluster. Overlapping transactions pin
+    /// transaction-pooling proxies to distinct backends for the duration of the
+    /// proof; a transaction-scoped lock held by maintenance must therefore be
+    /// unavailable to runtime only when both capabilities name the same database.
     member _.DatabasePairMatches() =
         try
             let openProbeConnection (raw: string) =
                 let builder = NpgsqlConnectionStringBuilder(raw)
                 // The proof requires two simultaneous physical sessions. A
                 // caller's one-connector pool would deadlock the second open,
-                // while multiplexing cannot carry session advisory locks.
+                // while multiplexing cannot provide the explicit transaction
+                // ownership this proof relies on.
                 builder.Pooling <- false
                 builder.Multiplexing <- false
+                // An undersized or unhealthy external transaction pool must
+                // fail startup closed instead of blocking the proof forever.
+                if builder.Timeout = 0 || builder.Timeout > 5 then
+                    builder.Timeout <- 5
+                if builder.CommandTimeout = 0 || builder.CommandTimeout > 5 then
+                    builder.CommandTimeout <- 5
                 let connection = new NpgsqlConnection(builder.ConnectionString)
                 connection.Open()
                 connection
 
             use maintenance = openProbeConnection maintenanceConnectionString
             use runtime = openProbeConnection connectionString
-            let mutable proved = false
+            let mutable result: bool option = None
             let mutable attempted = 0
 
             // A cryptographic random key makes collision with unrelated advisory
             // lock users negligible. Retrying also makes a real collision a
             // bounded startup delay rather than a false mismatch.
-            while not proved && attempted < 8 do
+            while result.IsNone && attempted < 8 do
                 attempted <- attempted + 1
                 let keyBytes = RandomNumberGenerator.GetBytes 8
                 let key = BinaryPrimitives.ReadInt64LittleEndian(keyBytes.AsSpan())
 
+                use maintenanceTransaction = maintenance.BeginTransaction()
                 use take = maintenance.CreateCommand()
-                take.CommandText <- "SELECT pg_try_advisory_lock(@key)"
+                take.Transaction <- maintenanceTransaction
+                take.CommandText <- "SELECT pg_try_advisory_xact_lock(@key)"
                 take.Parameters.AddWithValue("key", key) |> ignore
 
                 if take.ExecuteScalar() :?> bool then
-                    try
-                        use probe = runtime.CreateCommand()
-                        probe.CommandText <- "SELECT pg_try_advisory_lock(@key)"
-                        probe.Parameters.AddWithValue("key", key) |> ignore
-                        let runtimeAcquired = probe.ExecuteScalar() :?> bool
+                    // Begin only after maintenance owns the lock. Transaction
+                    // poolers must now reserve a different backend for runtime.
+                    use runtimeTransaction = runtime.BeginTransaction()
+                    use probe = runtime.CreateCommand()
+                    probe.Transaction <- runtimeTransaction
+                    probe.CommandText <- "SELECT pg_try_advisory_xact_lock(@key)"
+                    probe.Parameters.AddWithValue("key", key) |> ignore
+                    result <- Some(not (probe.ExecuteScalar() :?> bool))
 
-                        if runtimeAcquired then
-                            // Different database (or cluster): release the probe
-                            // session's lock before failing closed.
-                            use releaseRuntime = runtime.CreateCommand()
-                            releaseRuntime.CommandText <- "SELECT pg_advisory_unlock(@key)"
-                            releaseRuntime.Parameters.AddWithValue("key", key) |> ignore
-                            releaseRuntime.ExecuteScalar() |> ignore
-                        else
-                            proved <- true
-                    finally
-                        use releaseMaintenance = maintenance.CreateCommand()
-                        releaseMaintenance.CommandText <- "SELECT pg_advisory_unlock(@key)"
-                        releaseMaintenance.Parameters.AddWithValue("key", key) |> ignore
-                        releaseMaintenance.ExecuteScalar() |> ignore
-
-            proved
+            // Disposing each transaction rolls back and releases every xact
+            // lock on its pinned backend, including the different-database case.
+            result |> Option.defaultValue false
         with _ ->
             false
 
