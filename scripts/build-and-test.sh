@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # FG-000/FG-001 — the gate every ticket must pass before its PR.
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 echo "=== sdk ==="; dotnet --version
 ./scripts/prove-dependency-locks.sh \
   || { echo "DEPENDENCY-LOCK/SOURCE-CLEARED BUILD PROOF FAILED"; exit 1; }
