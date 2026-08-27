@@ -1423,6 +1423,34 @@ module FogellSide =
         with ex ->
             Result.Error ex.Message
 
+    /// Test/internal entrypoint for exercising credential lexical cleanup when
+    /// persisted-host callbacks fail. Production hosts use runPersisted with the
+    /// same hook path; keeping the credential store explicit avoids process-global
+    /// test authority.
+    let internal runWithCredentialsAndPersistence
+        (credentials: Map<string, Credential>)
+        (workspaceRoot: string)
+        (jobName: string)
+        (hooks: PersistenceHooks)
+        (script: string)
+        =
+        try
+            runWithCredentialStore
+                (fun () -> credentials)
+                None
+                []
+                workspaceRoot
+                jobName
+                1
+                None
+                true
+                None
+                (Some hooks)
+                script
+        with
+        | :? OutputPublicationException -> reraise ()
+        | ex -> Result.Error ex.Message
+
     /// Run one Jenkinsfile as a fresh single build — the pre-FG-110 contract.
     let run (envReplacements: (string * string) list) (workspaceRoot: string) (jobName: string) (script: string) =
         try

@@ -20,11 +20,15 @@ let private effectiveIdentityIsRoot () = geteuid() = 0u
 /// publication contract directly so a future transport cannot accidentally
 /// publish raw bytes, reorder parallel lines, or replay the terminal snapshot.
 let progressiveOutputPublication =
+    // This seam fixture needs only the literal mask and the one transformed form
+    // exercised below; production bindings derive their complete cached sets.
     let binding =
         { ValueVariable = "TOKEN"
           PathVariable = "TOKEN_FILE"
           FilePath = "/not-used-by-this-test"
           Value = "s3cr3t-value"
+          MaskForms = [ "s3cr3t-value" ]
+          LeakForms = [ "reversed", "eulav-t3rc3s" ]
           ValueVariableCarriesPath = false }
 
     testList
@@ -7454,6 +7458,105 @@ let credentialKeyBoundaryRefusal =
                     "the ordinary successor ran")
           } ]
 
+/// FG-073. Credential files are controller-side state, so cleanup must cover
+/// failures that bypass ordinary wrapper completion: partial binding construction
+/// and a host callback throwing while the bound body is active.
+let credentialExceptionalCleanup =
+    let credentials = Map.ofList [ "live-text", SecretText "text-secret" ]
+
+    let leftovers root =
+        let secretRoot = IO.Path.Combine(root, "_secrets")
+
+        if IO.Directory.Exists secretRoot then
+            IO.Directory.GetFiles(secretRoot, "*", IO.SearchOption.AllDirectories)
+        else
+            [||]
+
+    let pipeline bindings body =
+        "pipeline { agent any stages { stage('credentials') { steps { "
+        + $"withCredentials([{bindings}]) {{ {body} }} "
+        + "} } } }"
+
+    testList
+        "FG-073 exceptional credential cleanup"
+        [ test "a later binding-construction failure revokes the already-created sibling" {
+              let root =
+                  IO.Path.Combine(
+                      IO.Path.GetTempPath(),
+                      "fogell-credential-partial-" + Guid.NewGuid().ToString("N"))
+
+              let source =
+                  pipeline
+                      (String.concat
+                          ", "
+                          [ "string(credentialsId: 'live-text', variable: 'GOOD')"
+                            "string(credentialsId: 'live-text', variable: 'BAD/NAME')" ])
+                      "echo 'must-not-run'"
+
+              try
+                  match FogellSide.runWithCredentials credentials [] root "job" source with
+                  | Ok trace -> failtestf "binding construction unexpectedly completed: %A" trace
+                  | Error why ->
+                      Expect.isTrue
+                          (IO.Directory.Exists(IO.Path.Combine(root, "_secrets", "job")))
+                          "construction reached the secret directory before failing"
+                      Expect.stringContains why "Could not find" "the planted second path caused the host failure"
+                      Expect.isEmpty (leftovers root) "the first binding was revoked by partial-list cleanup"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "a host publication exception inside the bound body still revokes its file" {
+              let root =
+                  IO.Path.Combine(
+                      IO.Path.GetTempPath(),
+                      "fogell-credential-body-failure-" + Guid.NewGuid().ToString("N"))
+
+              let hooks =
+                  { OnOutput =
+                      fun line ->
+                          if line.Contains("BOUND-THROW", StringComparison.Ordinal) then
+                              raise (IO.IOException "planted credential-body publisher failure")
+                    IsRestartedRun = false
+                    ShouldExecute = fun _ _ -> true
+                    StageWasCommitted = fun _ -> false
+                    SkippedStatus = fun _ _ -> None
+                    SkippedStageWarning = fun _ _ -> None
+                    OnStepStarted = fun _ _ _ -> ()
+                    OnStepStageWarning = fun _ _ _ -> ()
+                    OnStepFinished = fun _ _ _ _ -> ()
+                    OnStageCommitted = fun _ -> ()
+                    OnRetryAttempt = fun _ _ -> ()
+                    RetryAttemptsSoFar = fun _ -> 1
+                    PollInputAnswer = None
+                    OnInputClosed = fun _ _ _ -> ()
+                    OnInputAnswerVoided = fun _ _ _ -> () }
+
+              let source =
+                  pipeline
+                      "string(credentialsId: 'live-text', variable: 'TOKEN')"
+                      "sh 'echo BOUND-THROW'"
+
+              try
+                  Expect.throwsT<OutputPublicationException>
+                      (fun () ->
+                          FogellSide.runWithCredentialsAndPersistence
+                              credentials
+                              root
+                              "job"
+                              hooks
+                              source
+                          |> ignore)
+                      "the planted host callback escapes for reconciliation"
+
+                  Expect.isTrue
+                      (IO.Directory.Exists(IO.Path.Combine(root, "_secrets", "job")))
+                      "the wrapper created its credential before the body failed"
+                  Expect.isEmpty (leftovers root) "the lexical finally revoked the active binding"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          } ]
+
 /// FG-044b(b). A generated `_FILE` companion is a Fogell convenience, not a
 /// lexical binding. It may fill an unused name but must never replace an effective
 /// pipeline/stage/withEnv/outer-credential value.
@@ -7977,6 +8080,7 @@ let main argv =
               compileRefusalDisposition
               credentialStoreDecoding
               credentialKeyBoundaryRefusal
+              credentialExceptionalCleanup
               credentialCompanionPreservation
               stashDefaultExcludes
               dirWorkspaceLifecycle
