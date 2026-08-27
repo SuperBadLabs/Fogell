@@ -18,6 +18,9 @@ it. See `docs/adr/0002-interpret-not-lower.md`.
 - Unsupported behavior fails closed with a named error code.
 - No scalar compatibility percentage is ever published.
 - Durability is per-step and exactly-once, or it is stated as neither.
+- Security claims and deployment assumptions are bounded by the
+  [current-tree threat model](docs/THREAT_MODEL.md); an accepted ADR is not proof
+  that every required control is implemented.
 
 ## Run it
 
@@ -67,6 +70,7 @@ The working loop is therefore:
 
     docs/adr/           numbered decisions, each citing measured evidence
     docs/architecture/  contracts
+    docs/THREAT_MODEL.md current controls, residuals, and hard non-claims
     docs/related-work/  sibling-project dossiers (McLoving), informational only
     src/                F# projects
     tests/              unit + differential

@@ -1300,60 +1300,70 @@ module WalkerOrchestration =
                     // Non-secret variables that still have to reach the child, e.g. a
                     // usernamePassword's username.
                     let plainEnv = System.Collections.Generic.List<string * string>()
+                    let createdBindings = System.Collections.Generic.List<SecretBinding>()
+
+                    let trackBinding binding =
+                        createdBindings.Add binding
+                        binding
 
                     let bindings =
-                        requests
-                        |> List.collect (fun r ->
-                            match r with
-                            | BindText(id, v) ->
-                                match store.[id] with
-                                | SecretText value -> [ Secrets.bind secretDir v value ]
-                                | other ->
-                                    mismatches.Add
-                                        $"'{id}' is a {typeName other} credential but was requested as `string`"
-                                    []
-                            | BindUserPass(id, uv, pv) ->
-                                match store.[id] with
-                                | UsernamePassword(u, p) ->
-                                    // BOTH are masked. A Codex review (PR #15) said the
-                                    // username is not a secret on Jenkins and asked for
-                                    // it to be exported plainly — citing a comment I had
-                                    // written in the credentials-userpass case asserting
-                                    // exactly that. I had never measured it. A receipt
-                                    // that prints both to STDOUT settles it:
-                                    //   Jenkins: user-on-stdout=****
-                                    //   Jenkins: pass-on-stdout=****
-                                    // Jenkins registers both values with its masker, so
-                                    // masking both is parity and the "fix" broke it. My
-                                    // unverified comment became the reviewer's evidence,
-                                    // which is the real defect here.
-                                    [ Secrets.bind secretDir uv u; Secrets.bind secretDir pv p ]
-                                | other ->
-                                    mismatches.Add
-                                        $"'{id}' is a {typeName other} credential but was requested as `usernamePassword`"
-                                    []
-                            | BindFile(id, v) ->
-                                // REVIEW FIX (both reviewers, PR #15): Jenkins binds the
-                                // requested variable to a PATH to a temporary file. The
-                                // code bound `<VAR>_CONTENT` and never `<VAR>` at all,
-                                // while the comment claimed otherwise — so every
-                                // `file()` body ran with its variable unset.
-                                match store.[id] with
-                                | SecretFile(_, bytes) ->
-                                    // The requested variable holds the PATH; the bytes
-                                    // are written verbatim so a binary credential is
-                                    // not corrupted on the way through.
-                                    [ Secrets.bindBytes secretDir v bytes ]
-                                // REVIEW FIX (Codex, PR #15 round 3): secret TEXT was
-                                // silently accepted for a `file()` request while every
-                                // other mismatch failed closed — an inconsistency that
-                                // let a misconfigured credential through the one gate
-                                // built to stop it.
-                                | other ->
-                                    mismatches.Add
-                                        $"'{id}' is a {typeName other} credential but was requested as `file`"
-                                    []
-                            | BindUnmodelled _ -> [])
+                        try
+                            requests
+                            |> List.collect (fun r ->
+                                match r with
+                                | BindText(id, v) ->
+                                    match store.[id] with
+                                    | SecretText value -> [ Secrets.bind secretDir v value |> trackBinding ]
+                                    | other ->
+                                        mismatches.Add
+                                            $"'{id}' is a {typeName other} credential but was requested as `string`"
+                                        []
+                                | BindUserPass(id, uv, pv) ->
+                                    match store.[id] with
+                                    | UsernamePassword(u, p) ->
+                                        // BOTH are masked. A Codex review (PR #15) said the
+                                        // username is not a secret on Jenkins and asked for
+                                        // it to be exported plainly — citing a comment I had
+                                        // written in the credentials-userpass case asserting
+                                        // exactly that. I had never measured it. A receipt
+                                        // that prints both to STDOUT settles it:
+                                        //   Jenkins: user-on-stdout=****
+                                        //   Jenkins: pass-on-stdout=****
+                                        // Jenkins registers both values with its masker, so
+                                        // masking both is parity and the "fix" broke it. My
+                                        // unverified comment became the reviewer's evidence,
+                                        // which is the real defect here.
+                                        [ Secrets.bind secretDir uv u |> trackBinding
+                                          Secrets.bind secretDir pv p |> trackBinding ]
+                                    | other ->
+                                        mismatches.Add
+                                            $"'{id}' is a {typeName other} credential but was requested as `usernamePassword`"
+                                        []
+                                | BindFile(id, v) ->
+                                    // REVIEW FIX (both reviewers, PR #15): Jenkins binds the
+                                    // requested variable to a PATH to a temporary file. The
+                                    // code bound `<VAR>_CONTENT` and never `<VAR>` at all,
+                                    // while the comment claimed otherwise — so every
+                                    // `file()` body ran with its variable unset.
+                                    match store.[id] with
+                                    | SecretFile credential ->
+                                        // The requested variable holds the PATH; the bytes
+                                        // are written verbatim so a binary credential is
+                                        // not corrupted on the way through.
+                                        [ Secrets.bindPreparedFile secretDir v credential |> trackBinding ]
+                                    // REVIEW FIX (Codex, PR #15 round 3): secret TEXT was
+                                    // silently accepted for a `file()` request while every
+                                    // other mismatch failed closed — an inconsistency that
+                                    // let a misconfigured credential through the one gate
+                                    // built to stop it.
+                                    | other ->
+                                        mismatches.Add
+                                            $"'{id}' is a {typeName other} credential but was requested as `file`"
+                                        []
+                                | BindUnmodelled _ -> [])
+                        with _ ->
+                            Secrets.revoke (List.ofSeq createdBindings)
+                            reraise()
 
                     // Jenkins narrates the masking; excluded from comparison as
                     // engine narration, but said so a reader is not left guessing.
@@ -1368,44 +1378,46 @@ module WalkerOrchestration =
                         ctx.Failed.Value <- true
                         ctx.Sink BuildStatus.Failure
                     else
+                        try
+                            // One line naming every bound variable, matching Jenkins' shape.
+                            // The wording is not compared (see the contract); the line exists
+                            // so a reader of OUR log is told what is being masked.
+                            // Register BEFORE the narration line, so nothing this block can
+                            // print is emitted while the masker is still unaware of it. The
+                            // recorded index scopes the LEAK CHECK, not the masking: only
+                            // output from here on can be a leak of these values.
+                            runCtx.BindSecrets bindings
 
-                    // One line naming every bound variable, matching Jenkins' shape.
-                    // The wording is not compared (see the contract); the line exists
-                    // so a reader of OUR log is told what is being masked.
-                    // Register BEFORE the narration line, so nothing this block can
-                    // print is emitted while the masker is still unaware of it. The
-                    // recorded index scopes the LEAK CHECK, not the masking: only
-                    // output from here on can be a leak of these values.
-                    runCtx.BindSecrets bindings
+                            let names = bindings |> List.map (fun b -> "$" + b.ValueVariable)
+                            emit $"""Masking supported pattern matches of {String.concat " or " names}"""
 
-                    let names = bindings |> List.map (fun b -> "$" + b.ValueVariable)
-                    emit $"""Masking supported pattern matches of {String.concat " or " names}"""
+                            // FG-044b(b). Explicit variables requested by THIS wrapper are
+                            // lexical and may shadow outer values. Generated `_FILE` companions
+                            // are Fogell-only conveniences: they may fill an unused name, never
+                            // overwrite a pipeline, stage, withEnv or outer-credential binding.
+                            let currentPlain = List.ofSeq plainEnv
 
-                    // FG-044b(b). Explicit variables requested by THIS wrapper are
-                    // lexical and may shadow outer values. Generated `_FILE` companions
-                    // are Fogell-only conveniences: they may fill an unused name, never
-                    // overwrite a pipeline, stage, withEnv or outer-credential binding.
-                    let currentPlain = List.ofSeq plainEnv
+                            let preservedNames =
+                                envForWith (ctx.EnvOverlay @ currentPlain) stage
+                                |> List.map fst
+                                |> Set.ofList
 
-                    let preservedNames =
-                        envForWith (ctx.EnvOverlay @ currentPlain) stage
-                        |> List.map fst
-                        |> Set.ofList
+                            let overlay =
+                                ctx.EnvOverlay
+                                @ currentPlain
+                                @ Secrets.environmentForPreserving preservedNames bindings
+                            let inner = { ctx with EnvOverlay = overlay; Secrets = ctx.Secrets @ bindings }
 
-                    let overlay =
-                        ctx.EnvOverlay
-                        @ currentPlain
-                        @ Secrets.environmentForPreserving preservedNames bindings
-                    let inner = { ctx with EnvOverlay = overlay; Secrets = ctx.Secrets @ bindings }
+                            for st in step.Block do
+                                if not (halted inner) then
+                                    runStepDispatch inner cwd stage st deadline
 
-                    for st in step.Block do
-                        if not (halted inner) then
-                            runStepDispatch inner cwd stage st deadline
-
-                    if inner.Failed.Value then ctx.Failed.Value <- true
-
-                    // Unset after the block: measured on Jenkins.
-                    Secrets.revoke bindings
+                            if inner.Failed.Value then ctx.Failed.Value <- true
+                        finally
+                            // Lexical cleanup must survive a catchable host failure in the
+                            // wrapper body. Abrupt process death still requires state-root
+                            // recovery/cleanup and remains a documented residual.
+                            Secrets.revoke bindings
 
             // FG-047 companion. `deleteDir()` empties the CURRENT directory — the
             // workspace, or the enclosing `dir` block's cwd — without removing the
