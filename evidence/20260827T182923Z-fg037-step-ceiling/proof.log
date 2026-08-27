@@ -1,14 +1,16 @@
 === FG-037 semantic checker mutation proof ===
   accepted the unmodified retained evidence
+  rejected an unlisted evidence file
   accepted one pinned endpoint/container identity
   rejected a same-core stale endpoint session
   rejected a wrong endpoint core
   rejected a controller session change across the live run
   rejected a shared-collector Base64 encoder failure
-  contained a hostile remote-inspect container override
+  contained hostile remote-inspect host/container overrides
   rejected a substituted Jenkins core
   rejected a 251-step Jenkins success substitution
   rejected a skipped final Fogell marker
+  rejected a missing exact 400/255 compiler diagnostic
   rejected a promoted intentional divergence
   rejected a weakened one-difference verdict
   rejected a forged suffix on the exact control verdict
@@ -16,4 +18,4 @@
   rejected an extra receipt outside the exact three-file inventory
   rejected a missing boundary receipt
   refused a dirty shared workspace collector before evidence creation
-FG-037 proof PASS (9 semantic + 3 controller-identity + 3 collector/configuration rejection arms)
+FG-037 proof PASS (10 semantic + 3 controller-identity + 3 collector/configuration + 1 manifest-inventory rejection arms)
