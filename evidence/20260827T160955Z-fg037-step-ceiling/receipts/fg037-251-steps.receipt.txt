@@ -1,8 +1,8 @@
-# Differential receipt — fg037-400-steps.Jenkinsfile
+# Differential receipt — fg037-251-steps.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         908defa30d2446e54574c115e9552229477075ba8f40f10158a0b21151f3d074
-case-digest:  02f6bc53459b4d91adedf2a1e0dc68f77a19095c50807c92ecff487a0bde2102
+seal:         38b735eb4a768557268a177b3dd5c0d3883c2501e2032328024b8666e5c52f33
+case-digest:  6e45f57916dc5c25fcaa4e50a51dd8c2c504cc8f02f28674329ae86cef32261a
 sealed-output: sequence
 
 VERDICT: DIVERGED (3)
@@ -16,15 +16,15 @@ VERDICT: DIVERGED (3)
     which compare as a MULTISET; those receipts say so under `## Output comparison notes`
   compared: canonical workspace hash over sorted (path, content-hash) pairs
   excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
-  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
+  compared as a CLASSIFICATION — none / partial / all — over COMPARED survivors:
     timestamps() coverage. Two engines read two clocks, so the instants can never
     agree; an engine that IGNORED the option, or honoured it for only some lines,
     would otherwise compare equal to one that honoured it fully. Line COUNTS are
     printed but never compared — the engines do not emit the same number of lines.
-    LIMIT: the numerator counts stamped RAW lines while the denominator is the
-    compared-output length, so a stamped-but-suppressed line can offset an
-    unstamped compared one. Catches a total miss and an ordinary partial
-    implementation (both planted); not a per-line proof. FG-118 makes it exact.
+    FG-118: prefix provenance follows each line through the complete contextual
+    normaliser, and both counts come from its final survivor set. `all` means every
+    compared survivor carried a prefix; suppressed narration and other raw console
+    lines are outside both output comparison and this coverage claim.
     FG-053: this exclusion was CLAIMED and unimplemented until a case first used
     the option, and read as true only because none did.
   excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
@@ -82,33 +82,15 @@ VERDICT: DIVERGED (3)
 ## Jenkins
   result:         failure
   workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  output (21 lines):
+  output (3 lines):
     | Started by user unknown or anonymous
-    | org.codehaus.groovy.control.MultipleCompilationErrorsException: startup failed:
-    | General error during class generation: The max number of supported arguments is 255, but found 400
-    | 1 error
-    | at org.codehaus.groovy.control.ErrorCollector.failIfErrors(ErrorCollector.java:309)
-    | at org.codehaus.groovy.control.CompilationUnit.applyToPrimaryClassNodes(CompilationUnit.java:1107)
-    | at org.codehaus.groovy.control.CompilationUnit.doPhaseOperation(CompilationUnit.java:624)
-    | at org.codehaus.groovy.control.CompilationUnit.processPhaseOperations(CompilationUnit.java:602)
-    | at org.codehaus.groovy.control.CompilationUnit.compile(CompilationUnit.java:579)
-    | at groovy.lang.GroovyClassLoader.doParseClass(GroovyClassLoader.java:323)
-    | at groovy.lang.GroovyClassLoader.parseClass(GroovyClassLoader.java:293)
-    | at PluginClassLoader for script-security//org.jenkinsci.plugins.scriptsecurity.sandbox.groovy.GroovySandbox$Scope.parse(GroovySandbox.java:162)
-    | at PluginClassLoader for workflow-cps//org.jenkinsci.plugins.workflow.cps.CpsGroovyShell.doParse(CpsGroovyShell.java:202)
-    | at PluginClassLoader for workflow-cps//org.jenkinsci.plugins.workflow.cps.CpsGroovyShell.reparse(CpsGroovyShell.java:186)
-    | at PluginClassLoader for workflow-cps//org.jenkinsci.plugins.workflow.cps.CpsFlowExecution.parseScript(CpsFlowExecution.java:670)
-    | at PluginClassLoader for workflow-cps//org.jenkinsci.plugins.workflow.cps.CpsFlowExecution.start(CpsFlowExecution.java:616)
-    | at PluginClassLoader for workflow-job//org.jenkinsci.plugins.workflow.job.WorkflowRun.run(WorkflowRun.java:368)
-    | at hudson.model.ResourceController.execute(ResourceController.java:97)
-    | at hudson.model.Executor.run(Executor.java:456)
-    | [withMaven] downstreamPipelineTriggerRunListener - Failure to introspect build steps: java.io.IOException: diff-fg037-400-steps #1 did not yet start
-    | [withMaven] downstreamPipelineTriggerRunListener - Failure to introspect build steps: java.io.IOException: diff-fg037-400-steps #1 did not yet start
+    | [withMaven] downstreamPipelineTriggerRunListener - Failure to introspect build steps: java.io.IOException: diff-fg037-251-steps #1 did not yet start
+    | [withMaven] downstreamPipelineTriggerRunListener - Failure to introspect build steps: java.io.IOException: diff-fg037-251-steps #1 did not yet start
 
 ## Fogell
   result:         success
   workspace-hash: 15a29062f49a6e41d45fc7c06cc2219e1f372ec131888916d2813aeb4a9b7dd4
-  output (400 lines):
+  output (251 lines):
     | + printf reached
     | FG037-002
     | FG037-003
@@ -360,154 +342,5 @@ VERDICT: DIVERGED (3)
     | FG037-249
     | FG037-250
     | FG037-251
-    | FG037-252
-    | FG037-253
-    | FG037-254
-    | FG037-255
-    | FG037-256
-    | FG037-257
-    | FG037-258
-    | FG037-259
-    | FG037-260
-    | FG037-261
-    | FG037-262
-    | FG037-263
-    | FG037-264
-    | FG037-265
-    | FG037-266
-    | FG037-267
-    | FG037-268
-    | FG037-269
-    | FG037-270
-    | FG037-271
-    | FG037-272
-    | FG037-273
-    | FG037-274
-    | FG037-275
-    | FG037-276
-    | FG037-277
-    | FG037-278
-    | FG037-279
-    | FG037-280
-    | FG037-281
-    | FG037-282
-    | FG037-283
-    | FG037-284
-    | FG037-285
-    | FG037-286
-    | FG037-287
-    | FG037-288
-    | FG037-289
-    | FG037-290
-    | FG037-291
-    | FG037-292
-    | FG037-293
-    | FG037-294
-    | FG037-295
-    | FG037-296
-    | FG037-297
-    | FG037-298
-    | FG037-299
-    | FG037-300
-    | FG037-301
-    | FG037-302
-    | FG037-303
-    | FG037-304
-    | FG037-305
-    | FG037-306
-    | FG037-307
-    | FG037-308
-    | FG037-309
-    | FG037-310
-    | FG037-311
-    | FG037-312
-    | FG037-313
-    | FG037-314
-    | FG037-315
-    | FG037-316
-    | FG037-317
-    | FG037-318
-    | FG037-319
-    | FG037-320
-    | FG037-321
-    | FG037-322
-    | FG037-323
-    | FG037-324
-    | FG037-325
-    | FG037-326
-    | FG037-327
-    | FG037-328
-    | FG037-329
-    | FG037-330
-    | FG037-331
-    | FG037-332
-    | FG037-333
-    | FG037-334
-    | FG037-335
-    | FG037-336
-    | FG037-337
-    | FG037-338
-    | FG037-339
-    | FG037-340
-    | FG037-341
-    | FG037-342
-    | FG037-343
-    | FG037-344
-    | FG037-345
-    | FG037-346
-    | FG037-347
-    | FG037-348
-    | FG037-349
-    | FG037-350
-    | FG037-351
-    | FG037-352
-    | FG037-353
-    | FG037-354
-    | FG037-355
-    | FG037-356
-    | FG037-357
-    | FG037-358
-    | FG037-359
-    | FG037-360
-    | FG037-361
-    | FG037-362
-    | FG037-363
-    | FG037-364
-    | FG037-365
-    | FG037-366
-    | FG037-367
-    | FG037-368
-    | FG037-369
-    | FG037-370
-    | FG037-371
-    | FG037-372
-    | FG037-373
-    | FG037-374
-    | FG037-375
-    | FG037-376
-    | FG037-377
-    | FG037-378
-    | FG037-379
-    | FG037-380
-    | FG037-381
-    | FG037-382
-    | FG037-383
-    | FG037-384
-    | FG037-385
-    | FG037-386
-    | FG037-387
-    | FG037-388
-    | FG037-389
-    | FG037-390
-    | FG037-391
-    | FG037-392
-    | FG037-393
-    | FG037-394
-    | FG037-395
-    | FG037-396
-    | FG037-397
-    | FG037-398
-    | FG037-399
-    | FG037-400
   workspace:
     52774637822c  reached-agent.txt

@@ -125,7 +125,7 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
   and at 400 Jenkins reports the JVM 255-argument limit while Fogell again runs
   every ordered step. The intentional divergences are retained outside the
   compatibility suite in the manifest-bound
-  [FG-037 evidence](../../evidence/20260824T090757Z-fg037-step-ceiling).
+  [FG-037 evidence](../../evidence/20260827T160955Z-fg037-step-ceiling).
 - **Diagnose dirty-death data loss.** Jenkins' `PERFORMANCE_OPTIMIZED` mode
   fails silently on SIGKILL — truncated console, no resume attempt, no error.
 - **Detect dead step processes in seconds.** Jenkins took ~10 minutes to fail a
