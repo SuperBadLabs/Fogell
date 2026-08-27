@@ -643,6 +643,68 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         with ex ->
             Error ex.Message
 
+    /// Prove that the runtime and maintenance capabilities reach the same live
+    /// PostgreSQL database, independent of connection-string aliases, proxies,
+    /// host names, or cloned role/schema metadata. PostgreSQL advisory locks are
+    /// scoped by database OID inside a cluster. A lock held by the maintenance
+    /// session must therefore be unavailable to a simultaneous runtime session
+    /// only when both sessions name the same database.
+    member _.DatabasePairMatches() =
+        try
+            let openProbeConnection (raw: string) =
+                let builder = NpgsqlConnectionStringBuilder(raw)
+                // The proof requires two simultaneous physical sessions. A
+                // caller's one-connector pool would deadlock the second open,
+                // while multiplexing cannot carry session advisory locks.
+                builder.Pooling <- false
+                builder.Multiplexing <- false
+                let connection = new NpgsqlConnection(builder.ConnectionString)
+                connection.Open()
+                connection
+
+            use maintenance = openProbeConnection maintenanceConnectionString
+            use runtime = openProbeConnection connectionString
+            let mutable proved = false
+            let mutable attempted = 0
+
+            // A cryptographic random key makes collision with unrelated advisory
+            // lock users negligible. Retrying also makes a real collision a
+            // bounded startup delay rather than a false mismatch.
+            while not proved && attempted < 8 do
+                attempted <- attempted + 1
+                let keyBytes = RandomNumberGenerator.GetBytes 8
+                let key = BinaryPrimitives.ReadInt64LittleEndian(keyBytes.AsSpan())
+
+                use take = maintenance.CreateCommand()
+                take.CommandText <- "SELECT pg_try_advisory_lock(@key)"
+                take.Parameters.AddWithValue("key", key) |> ignore
+
+                if take.ExecuteScalar() :?> bool then
+                    try
+                        use probe = runtime.CreateCommand()
+                        probe.CommandText <- "SELECT pg_try_advisory_lock(@key)"
+                        probe.Parameters.AddWithValue("key", key) |> ignore
+                        let runtimeAcquired = probe.ExecuteScalar() :?> bool
+
+                        if runtimeAcquired then
+                            // Different database (or cluster): release the probe
+                            // session's lock before failing closed.
+                            use releaseRuntime = runtime.CreateCommand()
+                            releaseRuntime.CommandText <- "SELECT pg_advisory_unlock(@key)"
+                            releaseRuntime.Parameters.AddWithValue("key", key) |> ignore
+                            releaseRuntime.ExecuteScalar() |> ignore
+                        else
+                            proved <- true
+                    finally
+                        use releaseMaintenance = maintenance.CreateCommand()
+                        releaseMaintenance.CommandText <- "SELECT pg_advisory_unlock(@key)"
+                        releaseMaintenance.Parameters.AddWithValue("key", key) |> ignore
+                        releaseMaintenance.ExecuteScalar() |> ignore
+
+            proved
+        with _ ->
+            false
+
     member _.RuntimeCapabilities() =
         try
             use conn = openConn ()

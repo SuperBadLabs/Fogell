@@ -192,7 +192,7 @@ module Router =
                                             // capability. Only a fresh key must satisfy the same
                                             // fail-closed persisted preflight as Run.Host before
                                             // binding a build number or idempotency key.
-                                            match Fogell.Differential.FogellSide.preflightPersistedExecution source with
+                                            match Fogell.Differential.FogellSide.preflightControllerExecution source with
                                             | Result.Error why ->
                                                 return!
                                                     fail ctx 422 "execution_unsupported" why None

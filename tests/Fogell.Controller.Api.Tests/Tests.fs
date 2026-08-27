@@ -327,6 +327,77 @@ let private stateRootReadiness =
                       IO.Directory.Delete(root, true)
           } ]
 
+let private databaseStartupBoundary =
+    let runtime =
+        Ok
+            { User = "fogell_runtime"
+              IsSuperuser = false
+              BypassesRls = false }
+
+    let maintenance =
+        Ok
+            { User = "fogell_maintenance"
+              IsSuperuser = false
+              BypassesRls = false }
+
+    testList
+        "FG-224 database startup boundary"
+        [ test "the live database-pair proof gates otherwise valid identities" {
+              let mutable downstreamChecks = 0
+
+              Expect.equal
+                  (Fogell.Controller.Host.Program.databaseStartupError
+                      (fun () -> false)
+                      (fun () -> downstreamChecks <- downstreamChecks + 1; runtime)
+                      (fun () -> downstreamChecks <- downstreamChecks + 1; maintenance)
+                      (fun () -> downstreamChecks <- downstreamChecks + 1; true))
+                  (Some Fogell.Controller.Host.Program.DatabaseStartupError.PairMismatch)
+                  "different databases refuse before role metadata can look healthy"
+              Expect.equal downstreamChecks 0 "pair mismatch short-circuits every downstream database check"
+
+              Expect.equal
+                  (Fogell.Controller.Host.Program.databaseStartupError
+                      (fun () -> true)
+                      (fun () -> runtime)
+                      (fun () -> maintenance)
+                      (fun () -> true))
+                  None
+                  "same database with separate least-privilege roles proceeds"
+
+              let adminBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+              adminBuilder.Database <- "postgres"
+              let otherName = $"fogell_program_pair_{Guid.NewGuid():N}"
+              let otherBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+              otherBuilder.Database <- otherName
+
+              use admin = new Npgsql.NpgsqlConnection(adminBuilder.ConnectionString)
+              admin.Open()
+              use create = admin.CreateCommand()
+              create.CommandText <- $"CREATE DATABASE {otherName}"
+              create.ExecuteNonQuery() |> ignore
+
+              try
+                  Expect.equal
+                      (Fogell.Controller.Host.Program.databaseStartupErrorForStores
+                          (Store(connectionString, otherBuilder.ConnectionString))
+                          (Store(connectionString))
+                          (Store(otherBuilder.ConnectionString)))
+                      (Some Fogell.Controller.Host.Program.DatabaseStartupError.PairMismatch)
+                      "the production Store wiring executes the live pair challenge"
+              finally
+                  Npgsql.NpgsqlConnection.ClearAllPools()
+                  use terminate = admin.CreateCommand()
+                  terminate.CommandText <-
+                      "SELECT pg_terminate_backend(pid)
+                         FROM pg_stat_activity
+                        WHERE datname = @database AND pid <> pg_backend_pid()"
+                  terminate.Parameters.AddWithValue("database", otherName) |> ignore
+                  terminate.ExecuteNonQuery() |> ignore
+                  use drop = admin.CreateCommand()
+                  drop.CommandText <- $"DROP DATABASE {otherName}"
+                  drop.ExecuteNonQuery() |> ignore
+          } ]
+
 let private executionLauncherValidation =
     let variables =
         [ "FOGELL_DATABASE_URL"; "FOGELL_MAINTENANCE_DATABASE_URL"
@@ -583,6 +654,66 @@ let endpoints =
               Expect.equal replayCode 200 "the supported admission still replays normally"
               Expect.stringContains replayBody "\"was_existing\":true" "the replay finds the one supported build"
               Expect.equal (buildCount ()) 1 "replay creates no second build"
+          }
+
+          test "unbounded input is refused before build and idempotency admission" {
+              let org, project = freshProject ()
+              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              let unbounded =
+                  "pipeline { agent any stages { stage('Gate') { steps { input message: 'Deploy?' } } } }"
+
+              let buildCount () =
+                  use connection = new Npgsql.NpgsqlConnection(connectionString)
+                  connection.Open()
+                  use command = connection.CreateCommand()
+                  command.CommandText <-
+                      "SELECT count(*) FROM builds WHERE organization_id=@organization AND project_id=@project"
+                  command.Parameters.AddWithValue("organization", org.Value) |> ignore
+                  command.Parameters.AddWithValue("project", project.Value) |> ignore
+                  Convert.ToInt32(command.ExecuteScalar())
+
+              for attempt in 1..2 do
+                  let code, body =
+                      send HttpMethod.Post url (Some token) (Some "approval-boundary") (Some unbounded)
+                  Expect.equal code 422 $"attempt {attempt} is rejected before admission"
+                  use payload = JsonDocument.Parse body
+                  Expect.equal
+                      (payload.RootElement.GetProperty("code").GetString())
+                      "execution_unsupported"
+                      $"attempt {attempt} keeps the public capability code"
+                  Expect.stringStarts
+                      (payload.RootElement.GetProperty("message").GetString())
+                      "unsupported_input_approval:"
+                      $"attempt {attempt} names the exact controller limitation"
+                  Expect.equal (buildCount ()) 0 $"attempt {attempt} creates no durable build"
+
+              let accepted, acceptedBody =
+                  send HttpMethod.Post url (Some token) (Some "approval-boundary") (Some pipeline)
+              Expect.equal accepted 201 "the refused request did not bind its idempotency key"
+              Expect.stringContains acceptedBody "\"was_existing\":false" "the replacement is a fresh admission"
+              Expect.equal (buildCount ()) 1 "only the supported replacement was admitted"
+
+              let legacyOrg, legacyProject = freshProject ()
+              let legacyKey = "legacy-unbounded-input"
+              let legacyInput: NewBuild =
+                  { OrganizationId = legacyOrg
+                    ProjectId = legacyProject
+                    IdempotencyKey = legacyKey
+                    PipelineSource = Encoding.UTF8.GetBytes unbounded
+                    StageNames = [ "Gate" ]
+                    RequiredTrustPool = "trusted-linux"
+                    RequiredCapabilities = [ "linux" ] }
+
+              match store.AdmitBuild legacyInput with
+              | Error why -> failtestf "legacy approval admission seed failed: %s" why
+              | Ok _ -> ()
+
+              let legacyUrl =
+                  $"{baseUrl}/api/v1/organizations/{legacyOrg.Value}/projects/{legacyProject.Value}/builds"
+              let replayCode, replayBody =
+                  send HttpMethod.Post legacyUrl (Some token) (Some legacyKey) (Some unbounded)
+              Expect.equal replayCode 200 "an exact legacy admission still replays before fresh preflight"
+              Expect.stringContains replayBody "\"was_existing\":true" "legacy replay returns its durable identity"
           }
 
           test "persisted journal-key preflight refuses before build and idempotency admission" {
@@ -1184,6 +1315,7 @@ let main argv =
                     (testList
                         "Fogell.Controller.Api"
                         [ stateRootReadiness
+                          databaseStartupBoundary
                           executionLauncherValidation
                           authorization
                           endpoints ]))

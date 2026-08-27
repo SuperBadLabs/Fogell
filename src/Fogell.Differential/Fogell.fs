@@ -458,6 +458,67 @@ module FogellSide =
                         + String.concat ", " unsafe
                     ))
 
+    /// The runnable controller does not yet have a brokered, authenticated
+    /// approval capability. Run.Host's optional filesystem inbox is valid for a
+    /// trusted standalone operator, but exposing it from the controller would
+    /// let build code running as the same OS identity forge its own decision.
+    /// Refuse only prompts that can wait without a deadline; a timeout-scoped
+    /// input still has a safe, Jenkins-compatible abort-on-expiry outcome.
+    let preflightControllerExecution (script: string) : Result<Pipeline, string> =
+        let hasUsableTimeout (options: Step list) =
+            options
+            |> List.exists (fun (option: Step) ->
+                option.Name = "timeout"
+                && (match WalkerRules.timeoutMs option with
+                    | Ok _ -> true
+                    | Error _ -> false))
+
+        let rec firstUnboundedStep bounded (steps: Step list) =
+            steps
+            |> List.tryPick (fun step ->
+                if step.Name = "input" && not bounded then
+                    Some step.Position
+                else
+                    let bodyBounded =
+                        bounded
+                        || (step.Name = "timeout"
+                            && (match WalkerRules.timeoutMs step with
+                                | Ok _ -> true
+                                | Error _ -> false))
+
+                    firstUnboundedStep bodyBounded step.Block)
+
+        let firstUnboundedPost bounded post =
+            post
+            |> List.tryPick (fun (_, steps) -> firstUnboundedStep bounded steps)
+
+        let rec firstUnboundedStage inherited (stage: Stage) =
+            // A stage option bounds its body and nested stages, but Jenkins runs
+            // that stage's own post outside its declared deadline. An inherited
+            // pipeline/parent-stage deadline still bounds the post.
+            let bodyBounded = inherited || hasUsableTimeout stage.Options
+
+            firstUnboundedStep bodyBounded stage.Steps
+            |> Option.orElseWith (fun () ->
+                stage.Nested |> List.tryPick (firstUnboundedStage bodyBounded))
+            |> Option.orElseWith (fun () -> firstUnboundedPost inherited stage.Post)
+
+        preflightPersistedExecution script
+        |> Result.bind (fun pipeline ->
+            let pipelineBounded = hasUsableTimeout pipeline.Options
+
+            let unbounded =
+                pipeline.Stages
+                |> List.tryPick (firstUnboundedStage pipelineBounded)
+                |> Option.orElseWith (fun () -> firstUnboundedPost pipelineBounded pipeline.Post)
+
+            match unbounded with
+            | None -> Ok pipeline
+            | Some position ->
+                Error(
+                    $"unsupported_input_approval: controller execution has no authenticated approval broker; unbounded input at {position.Line}:{position.Column} is refused before admission (wrap it in timeout or use trusted standalone Run.Host approval orchestration)"
+                ))
+
     /// FG-129. A bad input and an unavailable Fogell capability were both
     /// `Result.Error` before this boundary. Only the former is evidence that the
     /// reference engine also refused before execution; the latter must remain

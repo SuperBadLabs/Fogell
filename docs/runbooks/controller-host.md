@@ -24,6 +24,14 @@ GRANT USAGE, SELECT ON
 The maintenance identity applies checksum-pinned migrations during startup and
 must not be used for requests or worker operations.
 
+After migration and before binding, startup proves both connection capabilities
+reach the same live PostgreSQL database. A fresh random advisory lock held by the
+maintenance session must be unavailable to a simultaneous runtime session. This
+active challenge deliberately does not compare connection strings, host names,
+database names, or role/schema metadata: aliases and proxies can make equal
+strings differ, while a separately migrated or cloned database can make metadata
+look equal. Any connection, query, or lock uncertainty refuses startup.
+
 ## Required configuration
 
 ```text
@@ -43,6 +51,15 @@ FOGELL_WORKER_LEASE_SECONDS         10..3600
 Every setting in this list is required, and a whitespace-only value is treated
 as missing. In particular, `FOGELL_LOCAL_TRUST_POOL` must name a nonblank pool;
 startup refuses a blank value before the controller can bind or admit work.
+
+The controller currently has no authenticated approval broker. Fresh admission
+therefore rejects an `input` step unless a usable explicit, inherited stage, or
+pipeline timeout provably bounds it. The refusal is `execution_unsupported` with
+reason `unsupported_input_approval` and occurs before binding the build or its
+idempotency key; exact legacy admissions still replay. Run.Host's optional
+filesystem inbox remains available only to trusted standalone orchestration. Do
+not expose that directory through the controller: build code shares the runner's
+OS identity and could otherwise forge its own decision.
 
 The worker targets renewal after one third of each lease. Keep the poll interval
 at or below that same one-third boundary: if a control check falls immediately

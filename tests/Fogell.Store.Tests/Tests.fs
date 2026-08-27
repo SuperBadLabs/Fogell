@@ -189,6 +189,74 @@ let migrations =
               Expect.equal (cmd.ExecuteScalar() :?> int64) 1L "exactly one ledger row"
           }
 
+          test "runtime and maintenance capabilities prove the same live database" {
+              let aliasBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+              aliasBuilder.ApplicationName <- $"fogell-pair-alias-{Guid.NewGuid():N}"
+
+              Expect.isTrue
+                  (Store(aliasBuilder.ConnectionString, connectionString).DatabasePairMatches())
+                  "connection-string aliases to one database are accepted"
+
+              let constrainedBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+              constrainedBuilder.MaxPoolSize <- 1
+              constrainedBuilder.Timeout <- 1
+              Expect.isTrue
+                  (Store(constrainedBuilder.ConnectionString, constrainedBuilder.ConnectionString).DatabasePairMatches())
+                  "a caller's one-connector pool cannot starve the two-session proof"
+
+              let multiplexedBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+              multiplexedBuilder.Multiplexing <- true
+              Expect.isTrue
+                  (Store(multiplexedBuilder.ConnectionString, multiplexedBuilder.ConnectionString).DatabasePairMatches())
+                  "caller multiplexing cannot erase session advisory-lock identity"
+
+              let concurrent =
+                  [ 1..16 ]
+                  |> List.map (fun _ ->
+                      async {
+                          return Store(connectionString, aliasBuilder.ConnectionString).DatabasePairMatches()
+                      })
+                  |> Async.Parallel
+                  |> Async.RunSynchronously
+
+              Expect.isTrue
+                  (concurrent |> Array.forall id)
+                  "concurrent startup probes against one database cannot reject each other"
+
+              let adminBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+              adminBuilder.Database <- "postgres"
+              let otherName = $"fogell_pair_{Guid.NewGuid():N}"
+              let otherBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
+              otherBuilder.Database <- otherName
+
+              use admin = new Npgsql.NpgsqlConnection(adminBuilder.ConnectionString)
+              admin.Open()
+              use create = admin.CreateCommand()
+              create.CommandText <- $"CREATE DATABASE {otherName}"
+              create.ExecuteNonQuery() |> ignore
+
+              try
+                  match Store(otherBuilder.ConnectionString).Migrate() with
+                  | Error why -> failtestf "other database migration failed: %s" why
+                  | Ok _ -> ()
+
+                  Expect.isFalse
+                      (Store(connectionString, otherBuilder.ConnectionString).DatabasePairMatches())
+                      "two fully migrated databases are not mistaken for one target"
+              finally
+                  Npgsql.NpgsqlConnection.ClearAllPools()
+                  use terminate = admin.CreateCommand()
+                  terminate.CommandText <-
+                      "SELECT pg_terminate_backend(pid)
+                         FROM pg_stat_activity
+                        WHERE datname = @database AND pid <> pg_backend_pid()"
+                  terminate.Parameters.AddWithValue("database", otherName) |> ignore
+                  terminate.ExecuteNonQuery() |> ignore
+                  use drop = admin.CreateCommand()
+                  drop.CommandText <- $"DROP DATABASE {otherName}"
+                  drop.ExecuteNonQuery() |> ignore
+          }
+
           test "effect ledger migration 0003 is checksum-pinned" {
               use conn = new Npgsql.NpgsqlConnection(connectionString)
               conn.Open()

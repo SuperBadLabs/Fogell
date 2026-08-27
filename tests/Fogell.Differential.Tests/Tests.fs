@@ -5573,6 +5573,81 @@ let spreadAssignmentPreflight =
                   (pipelineWithBody "holder.foo { rows*.name = 'x' }.bar = 1")
           } ]
 
+let controllerApprovalPreflight =
+    let pipeline body =
+        "pipeline { agent any " + body + " }"
+
+    let accepted label source =
+        match FogellSide.preflightControllerExecution source with
+        | Ok _ -> ()
+        | Error why -> failtestf "%s unexpectedly failed controller preflight: %s" label why
+
+    let refused label source =
+        match FogellSide.preflightControllerExecution source with
+        | Ok _ -> failtestf "%s unexpectedly passed controller preflight" label
+        | Error why ->
+            Expect.stringStarts why "unsupported_input_approval:" $"{label}: stable reason code"
+            Expect.stringContains why "unbounded input at" $"{label}: source location named"
+            Expect.stringContains why "authenticated approval broker" $"{label}: capability gap named"
+
+    testList
+        "FG-224 controller approval admission boundary"
+        [ test "bare input and ordinary wrappers are refused" {
+              for label, steps in
+                  [ "bare", "input message: 'Deploy?'"
+                    "dir", "dir('release') { input message: 'Deploy?' }"
+                    "retry", "retry(1) { input message: 'Deploy?' }" ] do
+                  refused
+                      label
+                      (pipeline $"stages {{ stage('gate') {{ steps {{ {steps} }} }} }}")
+          }
+
+          test "a timeout bounds only its own descendants" {
+              accepted
+                  "explicit timeout body"
+                  (pipeline
+                      "stages { stage('gate') { steps { timeout(time: 1, unit: 'SECONDS') { input message: 'Deploy?' } } } }")
+
+              refused
+                  "timeout sibling"
+                  (pipeline
+                      "stages { stage('gate') { steps { timeout(time: 1, unit: 'SECONDS') { echo 'bounded' }; input message: 'Deploy?' } } }")
+
+              refused
+                  "unusable timeout"
+                  (pipeline
+                      "stages { stage('gate') { steps { timeout(time: 1, unit: 'NOPE') { input message: 'Deploy?' } } } }")
+          }
+
+          test "stage timeout bounds its body and nested stages but not its own post" {
+              accepted
+                  "stage body and nested post"
+                  (pipeline
+                      "stages { stage('outer') { options { timeout(time: 1, unit: 'SECONDS') } stages { stage('inner') { steps { input message: 'Body?' } post { always { input message: 'Nested post?' } } } } } }")
+
+              refused
+                  "stage post"
+                  (pipeline
+                      "stages { stage('gate') { options { timeout(time: 1, unit: 'SECONDS') } steps { echo 'body' } post { always { input message: 'Post?' } } } }")
+
+              refused
+                  "unbounded nested stage"
+                  (pipeline
+                      "stages { stage('outer') { stages { stage('inner') { steps { input message: 'Nested?' } } } } }")
+          }
+
+          test "pipeline timeout bounds stages and pipeline post" {
+              accepted
+                  "whole pipeline"
+                  (pipeline
+                      "options { timeout(time: 1, unit: 'SECONDS') } stages { stage('gate') { steps { input message: 'Body?' } post { always { input message: 'Stage post?' } } } } post { always { input message: 'Pipeline post?' } }")
+
+              refused
+                  "unbounded pipeline post"
+                  (pipeline
+                      "stages { stage('ordinary') { steps { echo 'body' } } } post { always { input message: 'Pipeline post?' } }")
+          } ]
+
 let jenkinsBuildDataAttestation =
     testList
         "FG-177 Jenkins BuildData attestation"
@@ -7886,6 +7961,7 @@ let main argv =
               unsupportedNamedCollections
               unsupportedDeclarativeAgents
               unsupportedDeclarativeTools
+              controllerApprovalPreflight
               spreadAssignmentPreflight
               userOutputSurvives
               stringModel

@@ -16,6 +16,40 @@ let private health status (ctx: HttpContext) =
 let internal readinessStatus databaseReady capabilitiesReady launchersReady stateRootReady =
     if databaseReady () && capabilitiesReady () && launchersReady () && stateRootReady () then 200 else 503
 
+[<RequireQualifiedAccess>]
+type internal DatabaseStartupError =
+    | PairMismatch
+    | IdentityUnavailable
+    | SameIdentity
+    | RuntimeMayBypassRls
+    | RuntimeCapabilitiesIncomplete
+
+let internal databaseStartupError pairMatches runtime maintenance capabilitiesReady =
+    if not (pairMatches ()) then
+        Some DatabaseStartupError.PairMismatch
+    else
+        match runtime (), maintenance () with
+        | Error _, _
+        | _, Error _ -> Some DatabaseStartupError.IdentityUnavailable
+        | Ok runtime, Ok maintenance when runtime.User = maintenance.User ->
+            Some DatabaseStartupError.SameIdentity
+        | Ok runtime, _ when runtime.IsSuperuser || runtime.BypassesRls ->
+            Some DatabaseStartupError.RuntimeMayBypassRls
+        | Ok _, Ok _ when not (capabilitiesReady ()) ->
+            Some DatabaseStartupError.RuntimeCapabilitiesIncomplete
+        | Ok _, Ok _ -> None
+
+let internal databaseStartupErrorForStores
+    (migrator: Store)
+    (runtimeStore: Store)
+    (maintenanceStore: Store)
+    =
+    databaseStartupError
+        migrator.DatabasePairMatches
+        runtimeStore.RuntimeDatabaseIdentity
+        maintenanceStore.RuntimeDatabaseIdentity
+        runtimeStore.RuntimeCapabilities
+
 [<EntryPoint>]
 let main _ =
     match ControllerConfig.load () with
@@ -34,23 +68,27 @@ let main _ =
                 3
             | Ok _ ->
                 let runtimeStore = Store(config.RuntimeDatabaseUrl)
-                let maintenanceIdentity = Store(config.MaintenanceDatabaseUrl).RuntimeDatabaseIdentity()
+                let maintenanceStore = Store(config.MaintenanceDatabaseUrl)
 
-                match runtimeStore.RuntimeDatabaseIdentity(), maintenanceIdentity with
-                | Error _, _
-                | _, Error _ ->
+                match
+                    databaseStartupErrorForStores migrator runtimeStore maintenanceStore
+                with
+                | Some DatabaseStartupError.PairMismatch ->
+                    eprintfn "FG-224 startup refused: runtime and maintenance capabilities target different databases"
+                    3
+                | Some DatabaseStartupError.IdentityUnavailable ->
                     eprintfn "FG-224 startup refused: database identity check failed"
                     3
-                | Ok runtime, Ok maintenance when runtime.User = maintenance.User ->
+                | Some DatabaseStartupError.SameIdentity ->
                     eprintfn "FG-224 startup refused: runtime and maintenance database identities must differ"
                     3
-                | Ok runtime, _ when runtime.IsSuperuser || runtime.BypassesRls ->
+                | Some DatabaseStartupError.RuntimeMayBypassRls ->
                     eprintfn "FG-224 startup refused: runtime database identity may bypass tenant isolation"
                     3
-                | Ok _, Ok _ when not (runtimeStore.RuntimeCapabilities()) ->
+                | Some DatabaseStartupError.RuntimeCapabilitiesIncomplete ->
                     eprintfn "FG-224 startup refused: runtime database capability is incomplete"
                     3
-                | Ok _, Ok _ ->
+                | None ->
                     let stateRootReadiness =
                         ControllerConfig.createStateRootReadinessCache config
 
