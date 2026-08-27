@@ -129,6 +129,14 @@ echo "=== step-ceiling evidence-boundary proof (FG-037, blocking) ==="
 ./scripts/prove-fg037-step-ceiling.sh \
   evidence/20260827T164745Z-fg037-step-ceiling \
   || { echo "STEP-CEILING EVIDENCE-BOUNDARY PROOF FAILED"; exit 1; }
+(
+  cd evidence/20260827T164745Z-fg037-step-ceiling || exit 1
+  sha256sum -c manifest.sha256
+) || { echo "STEP-CEILING EVIDENCE MANIFEST FAILED"; exit 1; }
+dotnet run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj \
+  -c Release --no-build -- \
+  --verify-seals evidence/20260827T164745Z-fg037-step-ceiling/receipts \
+  || { echo "STEP-CEILING RECEIPT SEALS FAILED"; exit 1; }
 
 # FG-162. Board rows quoting generated counts are re-derived from the committed
 # ledger. Runs EVERYWHERE including CI — both files are in the repo, unlike the

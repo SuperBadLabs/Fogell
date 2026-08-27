@@ -24,8 +24,16 @@ fi
 # Jenkins does not share a filesystem with us, so the workspace is enumerated WHERE
 # IT LIVES. FG-173's v2 wire format is strict and framed; Trace.collectRemote validates
 # it before reducing it to canonical file records plus tagged empty leaf records.
-source scripts/jenkins-workspace-v2.sh
-fogell_configure_jenkins_workspace_v2 "$FOGELL_JENKINS_HOST" "$FOGELL_JENKINS_CONTAINER"
+# shellcheck source=scripts/jenkins-workspace-v2.sh disable=SC1091
+if ! source scripts/jenkins-workspace-v2.sh; then
+  echo "REFUSED: shared Jenkins workspace collector could not be loaded" >&2
+  exit 2
+fi
+if ! fogell_configure_jenkins_workspace_v2 \
+  "$FOGELL_JENKINS_HOST" "$FOGELL_JENKINS_CONTAINER"; then
+  echo "REFUSED: shared Jenkins workspace collector could not be configured" >&2
+  exit 2
+fi
 # engine-inherited env (PATH and friends) for trace canonicalisation
 export FOGELL_JENKINS_ENV_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} env\""
 # each engine's `git --version` folds to ${GITVERSION} (FG-111 git step)

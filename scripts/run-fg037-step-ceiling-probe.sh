@@ -67,6 +67,8 @@ probe_input_pathspecs=(
   scripts/run-fg037-step-ceiling-probe.sh
 )
 
+source_head=$(git rev-parse HEAD)
+source_tree=$(git rev-parse 'HEAD^{tree}')
 input_status=$(git status --porcelain=v1 --untracked-files=all -- \
   "${engine_input_pathspecs[@]}" "${probe_input_pathspecs[@]}")
 if [ -n "$input_status" ]; then
@@ -87,6 +89,26 @@ if ! cmp -s "$collector_snapshot" scripts/jenkins-workspace-v2.sh \
 fi
 collector_sha=$(sha256sum "$collector_snapshot" | awk '{print $1}')
 identity_checker_sha=$(sha256sum "$identity_checker_snapshot" | awk '{print $1}')
+
+require_stable_inputs() {
+  local current_head
+  local current_tree
+  local current_status
+
+  current_head=$(git rev-parse HEAD)
+  current_tree=$(git rev-parse 'HEAD^{tree}')
+  current_status=$(git status --porcelain=v1 --untracked-files=all -- \
+    "${engine_input_pathspecs[@]}" "${probe_input_pathspecs[@]}")
+  if [ "$current_head" != "$source_head" ] \
+    || [ "$current_tree" != "$source_tree" ] \
+    || [ -n "$current_status" ] \
+    || ! cmp -s "$collector_snapshot" scripts/jenkins-workspace-v2.sh \
+    || ! cmp -s "$identity_checker_snapshot" scripts/check-fg037-jenkins-identity.sh; then
+    echo "REFUSED: load-bearing HEAD or probe inputs changed while evidence was being produced" >&2
+    [ -z "$current_status" ] || printf '%s\n' "$current_status" >&2
+    return 2
+  fi
+}
 
 jenkins_api_url=${FOGELL_JENKINS_URL%/}/api/json
 actual_core=$(ssh "$FOGELL_JENKINS_HOST" \
@@ -208,11 +230,17 @@ dotnet run --project "$cli_project" -c Release --no-build -- \
 
 scripts/prove-fg037-step-ceiling.sh "$output" >"$output/proof.log"
 
+# The build, semantic checker and hostile proof above intentionally use the
+# checkout. Revalidate every governed input and the exact commit/tree before
+# making any provenance statement or manifest; an initial clean check alone
+# cannot license evidence if the checkout changed during a long live run.
+require_stable_inputs || exit $?
+
 {
   echo "utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "host: $(hostname)"
-  echo "head: $(git rev-parse HEAD)"
-  echo "tree: $(git rev-parse 'HEAD^{tree}')"
+  echo "head: $source_head"
+  echo "tree: $source_tree"
   echo "dotnet: $(dotnet --version)"
   echo "jenkins-url: $FOGELL_JENKINS_URL"
   echo "jenkins-core: $actual_core (artifact, endpoint, and container-loopback agree)"
@@ -225,7 +253,7 @@ scripts/prove-fg037-step-ceiling.sh "$output" >"$output/proof.log"
   echo -n "jenkins-image-id: "
   ssh "$FOGELL_JENKINS_HOST" \
     podman inspect '--format={{.Image}}' "$FOGELL_JENKINS_CONTAINER"
-  echo "engine-build-input-status: clean against HEAD (tracked and untracked)"
+  echo "engine-build-input-status: clean against the recorded HEAD before and after the live run"
   echo "engine-build-project: $cli_project"
   echo "engine-build-configuration: Release"
   echo "engine-build-mode: --no-incremental (no stale output reuse)"
@@ -260,6 +288,8 @@ scripts/prove-fg037-step-ceiling.sh "$output" >"$output/proof.log"
   echo "These receipts are intentional capability differences. They must remain outside"
   echo "differential/receipts and are not part of the compatibility scorecard."
 } >"$output/README.md"
+
+require_stable_inputs || exit $?
 
 (
   cd "$output"
