@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 
 
 LINE = re.compile(r"^([0-9a-f]{64})  \./([^\\\r\n]+)$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 def fail(message: str) -> None:
@@ -20,8 +21,20 @@ def fail(message: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--expected-manifest-sha256",
+        metavar="SHA256",
+        help="trusted SHA-256 identity required for manifest.sha256",
+    )
     parser.add_argument("evidence", type=Path)
     args = parser.parse_args()
+
+    expected_manifest_sha256 = args.expected_manifest_sha256
+    if (
+        expected_manifest_sha256 is not None
+        and SHA256.fullmatch(expected_manifest_sha256) is None
+    ):
+        fail("expected manifest SHA-256 must be 64 lowercase hexadecimal characters")
 
     root = args.evidence
     if root.is_symlink() or not root.is_dir():
@@ -33,6 +46,15 @@ def main() -> int:
     raw = manifest.read_bytes()
     if not raw or not raw.endswith(b"\n") or b"\r" in raw:
         fail("manifest must be non-empty LF-terminated UTF-8")
+    actual_manifest_sha256 = hashlib.sha256(raw).hexdigest()
+    if (
+        expected_manifest_sha256 is not None
+        and actual_manifest_sha256 != expected_manifest_sha256
+    ):
+        fail(
+            "manifest identity mismatch: "
+            f"expected {expected_manifest_sha256}, actual {actual_manifest_sha256}"
+        )
     text = raw.decode("utf-8")
 
     expected: dict[str, str] = {}

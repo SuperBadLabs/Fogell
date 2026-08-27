@@ -6,6 +6,32 @@
 # matching wipe in one place prevents a focused probe from silently falling
 # back to PROVEN-PARTIAL when the canonical manifest protocol evolves.
 
+# The differential CLI evaluates configured commands with local `/bin/sh -c`,
+# then SSH gives its final argument to the remote shell. Quote each parse as a
+# separate layer so an escape needed remotely is not consumed locally.
+fogell_quote_posix_shell_v2() {
+  if [ "$#" -ne 1 ]; then
+    echo "usage: fogell_quote_posix_shell_v2 <value>" >&2
+    return 2
+  fi
+
+  local escaped=${1//\'/\'\\\'\'}
+  printf "'%s'" "$escaped"
+}
+
+fogell_jenkins_ssh_command_v2() {
+  if [ "$#" -ne 2 ]; then
+    echo "usage: fogell_jenkins_ssh_command_v2 <host> <remote-command>" >&2
+    return 2
+  fi
+
+  local host_q
+  local remote_command_q
+  host_q=$(fogell_quote_posix_shell_v2 "$1") || return 2
+  remote_command_q=$(fogell_quote_posix_shell_v2 "$2") || return 2
+  printf 'ssh -- %s %s' "$host_q" "$remote_command_q"
+}
+
 fogell_configure_jenkins_workspace_v2() {
   if [ "$#" -ne 2 ]; then
     echo "usage: fogell_configure_jenkins_workspace_v2 <host> <container>" >&2
@@ -14,13 +40,17 @@ fogell_configure_jenkins_workspace_v2() {
 
   local jenkins_host=$1
   local jenkins_container=$2
-  local jenkins_host_q
-  local jenkins_container_q
+  local jenkins_container_remote_q
   local collector_source
   local collector_b64
+  local collector_script
+  local collector_script_remote_q
+  local workspace_remote_command
+  local wipe_script
+  local wipe_script_remote_q
+  local wipe_remote_command
 
-  printf -v jenkins_host_q '%q' "$jenkins_host" || return 2
-  printf -v jenkins_container_q '%q' "$jenkins_container" || return 2
+  jenkins_container_remote_q=$(fogell_quote_posix_shell_v2 "$jenkins_container") || return 2
 
   read -r -d '' collector_source <<'FOGELL_WORKSPACE_COLLECTOR' || true
 set -uo pipefail
@@ -54,12 +84,24 @@ FOGELL_WORKSPACE_COLLECTOR
     echo "REFUSED: shared Jenkins workspace collector could not be encoded" >&2
     return 2
   }
-  export FOGELL_JENKINS_WORKSPACE_CMD="ssh -- ${jenkins_host_q} \"podman exec ${jenkins_container_q} bash -c \\\"printf %s ${collector_b64} | base64 -d | bash -s -- '/var/jenkins_home/workspace/{job}'\\\"\""
+  collector_script="printf %s ${collector_b64} | base64 -d | bash -s -- '/var/jenkins_home/workspace/{job}'"
+  collector_script_remote_q=$(fogell_quote_posix_shell_v2 "$collector_script") || return 2
+  workspace_remote_command="podman exec ${jenkins_container_remote_q} bash -c ${collector_script_remote_q}"
+  FOGELL_JENKINS_WORKSPACE_CMD=$(
+    fogell_jenkins_ssh_command_v2 "$jenkins_host" "$workspace_remote_command"
+  ) || return 2
+  export FOGELL_JENKINS_WORKSPACE_CMD
 
   # A compile-time refusal may never allocate a workspace. Precreate the empty
   # root so protocol v2 observes a real empty tree instead of treating a failed
   # `cd` as evidence.
-  export FOGELL_JENKINS_WIPE_CMD="ssh -- ${jenkins_host_q} \"podman exec ${jenkins_container_q} sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp && mkdir -p /var/jenkins_home/workspace/{job}\\\"\""
+  wipe_script="rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp && mkdir -p /var/jenkins_home/workspace/{job}"
+  wipe_script_remote_q=$(fogell_quote_posix_shell_v2 "$wipe_script") || return 2
+  wipe_remote_command="podman exec ${jenkins_container_remote_q} sh -c ${wipe_script_remote_q}"
+  FOGELL_JENKINS_WIPE_CMD=$(
+    fogell_jenkins_ssh_command_v2 "$jenkins_host" "$wipe_remote_command"
+  ) || return 2
+  export FOGELL_JENKINS_WIPE_CMD
 }
 
 fogell_jenkins_podman_inspect_v2() {

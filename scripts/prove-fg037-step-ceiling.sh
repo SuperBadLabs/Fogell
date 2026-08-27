@@ -56,6 +56,34 @@ if python3 "$manifest_checker" "$manifest_case" >/dev/null 2>&1; then
 fi
 echo "  rejected an unlisted evidence file"
 
+manifest_substitution=$scratch/manifest-substitution
+cp -a "$source_dir" "$manifest_substitution"
+rm -f "$manifest_substitution/manifest.sha256"
+manifest_substitution_tmp=$scratch/manifest-substitution.sha256
+(
+  cd "$manifest_substitution"
+  find . -type f ! -name manifest.sha256 -print0 \
+    | LC_ALL=C sort -z \
+    | xargs -0 sha256sum >"$manifest_substitution_tmp"
+)
+mv "$manifest_substitution_tmp" "$manifest_substitution/manifest.sha256"
+trusted_manifest_sha=$(sha256sum "$manifest_substitution/manifest.sha256" | awk '{print $1}')
+printf '\nsubstituted payload\n' >>"$manifest_substitution/build.log"
+(
+  cd "$manifest_substitution"
+  find . -type f ! -name manifest.sha256 -print0 \
+    | LC_ALL=C sort -z \
+    | xargs -0 sha256sum >"$manifest_substitution_tmp"
+)
+mv "$manifest_substitution_tmp" "$manifest_substitution/manifest.sha256"
+if python3 "$manifest_checker" \
+  --expected-manifest-sha256 "$trusted_manifest_sha" \
+  "$manifest_substitution" >/dev/null 2>&1; then
+  echo "FAIL: manifest checker accepted a substituted payload and self-consistent manifest" >&2
+  exit 1
+fi
+echo "  rejected a substituted payload and self-consistent manifest"
+
 identity_checker=scripts/check-fg037-jenkins-identity.sh
 good_identity=$'2.568.1\tpinned-session'
 stale_identity=$'2.568.1\tstale-forward-session'
@@ -147,6 +175,78 @@ if [ "$inspect_result" != pinned-image-id ] \
 fi
 echo "  contained hostile remote-inspect host/container overrides"
 
+nested_fake_bin=$scratch/nested-fake-bin
+mkdir -p "$nested_fake_bin"
+cat >"$nested_fake_bin/ssh" <<'FAKE_SSH'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$#" -eq 3 ]
+[ "$1" = -- ]
+[ "$2" = "$FG037_EXPECTED_HOST" ]
+shift 2
+bash -c "$1"
+FAKE_SSH
+cat >"$nested_fake_bin/podman" <<'FAKE_PODMAN'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$1" = exec ]
+[ "$2" = "$FG037_EXPECTED_CONTAINER" ]
+printf '%s\n' "$2" >>"$FG037_CONTAINER_LOG"
+shift 2
+case "$1 ${2-}" in
+  'bash -c')
+    printf 'FOGELL-WORKSPACE-MANIFEST\t2\nEND\t0\n'
+    ;;
+  'sh -c')
+    ;;
+  'env ')
+    printf 'PATH=/usr/bin\n'
+    ;;
+  'git --version')
+    printf 'git version 2.0\n'
+    ;;
+  *)
+    printf 'unexpected fake podman argv: %q ' "$@" >&2
+    printf '\n' >&2
+    exit 9
+    ;;
+esac
+FAKE_PODMAN
+chmod +x "$nested_fake_bin/ssh" "$nested_fake_bin/podman"
+nested_host_marker=$scratch/nested-host-injection
+nested_container_marker=$scratch/nested-container-injection
+nested_backtick_marker=$scratch/nested-backtick-injection
+nested_host="-oProxyCommand=touch $nested_host_marker"
+nested_container="jenkins'\"; touch $nested_container_marker; \`touch $nested_backtick_marker\`"
+nested_container_log=$scratch/nested-containers.log
+PATH="$nested_fake_bin:$PATH" \
+  FG037_EXPECTED_HOST="$nested_host" \
+  FG037_EXPECTED_CONTAINER="$nested_container" \
+  FG037_CONTAINER_LOG="$nested_container_log" \
+  bash -c '
+    set -euo pipefail
+    source "$1"
+    fogell_configure_jenkins_workspace_v2 "$2" "$3"
+    container_q=$(fogell_quote_posix_shell_v2 "$3")
+    env_cmd=$(fogell_jenkins_ssh_command_v2 "$2" "podman exec ${container_q} env")
+    git_cmd=$(fogell_jenkins_ssh_command_v2 "$2" "podman exec ${container_q} git --version")
+    workspace_cmd=${FOGELL_JENKINS_WORKSPACE_CMD//\{job\}/proof-job}
+    wipe_cmd=${FOGELL_JENKINS_WIPE_CMD//\{job\}/proof-job}
+    /bin/sh -c "$workspace_cmd" >/dev/null
+    /bin/sh -c "$wipe_cmd" >/dev/null
+    /bin/sh -c "$env_cmd" >/dev/null
+    /bin/sh -c "$git_cmd" >/dev/null
+  ' _ scripts/jenkins-workspace-v2.sh "$nested_host" "$nested_container"
+if [ "$(wc -l <"$nested_container_log")" -ne 4 ] \
+  || [ -e "$nested_host_marker" ] \
+  || [ -e "$nested_container_marker" ] \
+  || [ -e "$nested_backtick_marker" ] \
+  || [ "$(sort -u "$nested_container_log")" != "$nested_container" ]; then
+  echo "FAIL: nested local/remote shell commands did not contain hostile overrides" >&2
+  exit 1
+fi
+echo "  contained hostile overrides across nested workspace/wipe/env/git commands"
+
 fresh
 sed -i 's/^jenkins-core: 2\.568\.1$/jenkins-core: 9.99.9/' \
   "$scratch/case/receipts/fg037-251-steps.receipt.txt"
@@ -166,6 +266,11 @@ fresh
 sed -i 's/The max number of supported arguments is 255, but found 400/compiler diagnostic removed/' \
   "$scratch/case/receipts/fg037-400-steps.receipt.txt"
 expect_reject "a missing exact 400/255 compiler diagnostic"
+
+fresh
+printf 'Started by user unknown or anonymous\nAgent provisioning failed\nFinished: FAILURE\n' \
+  >"$scratch/case/receipts/fg037-251-steps.jenkins-console.txt"
+expect_reject "an unrelated 251-step infrastructure failure"
 
 fresh
 sed -i 's/^VERDICT: DIVERGED (/VERDICT: PROVEN (tier 1) — forged (/' \
@@ -229,4 +334,4 @@ if [ "$probe_rc" -ne 2 ] \
 fi
 echo "  refused a dirty shared workspace collector before evidence creation"
 
-echo "FG-037 proof PASS (10 semantic + 3 controller-identity + 3 collector/configuration + 1 manifest-inventory rejection arms)"
+echo "FG-037 proof PASS (11 semantic + 3 controller-identity + 4 collector/configuration + 2 manifest rejection arms)"

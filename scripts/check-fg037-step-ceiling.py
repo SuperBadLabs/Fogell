@@ -12,6 +12,7 @@ from pathlib import Path
 
 COUNTS = (250, 251, 400)
 EMPTY_WORKSPACE = hashlib.sha256(b"").hexdigest()
+JENKINS_251_CONSOLE = "fg037-251-steps.jenkins-console.txt"
 
 
 def fail(message: str) -> None:
@@ -75,6 +76,8 @@ def expected_workspace_hash() -> str:
 
 
 def check_case(path: Path, count: int) -> bytes:
+    if path.is_symlink() or not path.is_file():
+        fail(f"{path.name}: case must be a real file")
     raw = path.read_bytes()
     expected = expected_case(count).encode()
     if raw != expected:
@@ -82,7 +85,82 @@ def check_case(path: Path, count: int) -> bytes:
     return raw
 
 
+def check_251_compile_cause(path: Path) -> None:
+    """Bind the 251 failure to Jenkins' pre-execution ArrayUtil boundary.
+
+    The ordinary receipt intentionally normalises compiler diagnostics away.  An
+    empty workspace and absent marker prove that no fixture step had an effect,
+    but cannot distinguish compilation from an agent/controller outage.  The raw
+    controller console retained beside the receipts supplies that missing cause.
+    """
+
+    if path.is_symlink() or not path.is_file():
+        fail(f"{path.name}: 251-step raw Jenkins console must be a real file")
+
+    raw = path.read_bytes()
+    if not raw or not raw.endswith(b"\n") or b"\r" in raw:
+        fail(f"{path.name}: raw Jenkins console must be non-empty, LF-terminated UTF-8")
+    lines = raw.decode("utf-8").splitlines()
+    stripped = [line.strip() for line in lines]
+
+    if any("[Pipeline]" in line for line in stripped):
+        fail(f"{path.name}: Jenkins console says Pipeline execution began")
+    if any(line == "+ printf reached" or "FG037-" in line for line in stripped):
+        fail(f"{path.name}: Jenkins console contains a fixture step effect")
+
+    signature_pattern = re.compile(
+        r"^java\.lang\.NoSuchMethodError: 'java\.lang\.Object\[\] "
+        r"org\.codehaus\.groovy\.runtime\.ArrayUtil\.createArray\(([^)]*)\)'$"
+    )
+    signatures = [
+        (index, match)
+        for index, line in enumerate(stripped)
+        if (match := signature_pattern.fullmatch(line))
+    ]
+    if len(signatures) != 1:
+        fail(f"{path.name}: expected one exact ArrayUtil.createArray NoSuchMethodError")
+
+    signature_index, signature = signatures[0]
+    parameters = signature.group(1).split(", ")
+    if len(parameters) != 251 or any(parameter != "java.lang.Object" for parameter in parameters):
+        fail(f"{path.name}: ArrayUtil failure is not the exact 251-object signature")
+
+    required = (
+        re.compile(r"^at WorkflowScript\.___cps___[0-9]+\(WorkflowScript\)$"),
+        re.compile(r"^at WorkflowScript\.<clinit>\(WorkflowScript\)$"),
+        re.compile(
+            r"^Caused: groovy\.lang\.GroovyRuntimeException: Failed to create Script instance "
+            r"for class: class WorkflowScript\. Reason$"
+        ),
+        re.compile(
+            r"^at (?:PluginClassLoader for workflow-cps//)?"
+            r"org\.jenkinsci\.plugins\.workflow\.cps\.CpsFlowExecution\.parseScript"
+            r"\(CpsFlowExecution\.java:[1-9][0-9]*\)$"
+        ),
+        re.compile(
+            r"^at (?:PluginClassLoader for workflow-cps//)?"
+            r"org\.jenkinsci\.plugins\.workflow\.cps\.CpsFlowExecution\.start"
+            r"\(CpsFlowExecution\.java:[1-9][0-9]*\)$"
+        ),
+        re.compile(r"^Finished: FAILURE$"),
+    )
+
+    positions = [signature_index]
+    for pattern in required:
+        matches = [index for index, line in enumerate(stripped) if pattern.fullmatch(line)]
+        if len(matches) != 1:
+            fail(f"{path.name}: expected one causal console line matching {pattern.pattern}")
+        positions.append(matches[0])
+
+    if positions != sorted(positions) or len(set(positions)) != len(positions):
+        fail(f"{path.name}: 251-step compiler cause is not in causal stack order")
+    if next((line for line in reversed(stripped) if line), None) != "Finished: FAILURE":
+        fail(f"{path.name}: Jenkins console has non-blank content after the terminal failure")
+
+
 def check_receipt(path: Path, case_bytes: bytes, count: int, core: str) -> None:
+    if path.is_symlink() or not path.is_file():
+        fail(f"{path.name}: receipt must be a real file")
     receipt = path.read_text(encoding="utf-8")
     recorded_core = one_line(receipt, f"{path.name} core", r"^jenkins-core:\s+(\S+)\s*$")
     if recorded_core != core:
@@ -142,13 +220,15 @@ def main() -> int:
     args = parser.parse_args()
 
     expected_cases = {f"fg037-{n}-steps.Jenkinsfile" for n in COUNTS}
-    expected_receipts = {f"fg037-{n}-steps.receipt.txt" for n in COUNTS}
-    actual_cases = {p.name for p in args.cases.glob("*.Jenkinsfile")}
-    actual_receipts = {p.name for p in args.receipts.glob("*.receipt.txt")}
+    expected_receipts = {f"fg037-{n}-steps.receipt.txt" for n in COUNTS} | {JENKINS_251_CONSOLE}
+    actual_cases = {p.name for p in args.cases.iterdir()}
+    actual_receipts = {p.name for p in args.receipts.iterdir()}
     if actual_cases != expected_cases:
         fail(f"case inventory mismatch: got {sorted(actual_cases)}")
     if actual_receipts != expected_receipts:
         fail(f"receipt inventory mismatch: got {sorted(actual_receipts)}")
+
+    check_251_compile_cause(args.receipts / JENKINS_251_CONSOLE)
 
     for count in COUNTS:
         case = args.cases / f"fg037-{count}-steps.Jenkinsfile"

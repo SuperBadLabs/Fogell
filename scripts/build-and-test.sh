@@ -122,14 +122,16 @@ echo "=== fail-closed evidence sealer proof (FG-223, blocking) ==="
   || { echo "FAIL-CLOSED EVIDENCE SEALER PROOF FAILED"; exit 1; }
 
 # FG-037. The live 250/251/400 comparison stays off CI because it needs the
-# pinned Jenkins lab. Its fail-closed evidence boundaries are pure: ten receipt
-# mutations, three controller-identity substitutions, three collector/configuration
-# attacks and an unlisted bundle file must all be rejected before publication.
+# pinned Jenkins lab. Its fail-closed evidence boundaries are pure: eleven semantic
+# mutations, three controller-identity substitutions, four collector/configuration
+# attacks and two manifest attacks must all be rejected before publication.
 echo "=== step-ceiling evidence-boundary proof (FG-037, blocking) ==="
 ./scripts/prove-fg037-step-ceiling.sh \
   evidence/20260827T182923Z-fg037-step-ceiling \
   || { echo "STEP-CEILING EVIDENCE-BOUNDARY PROOF FAILED"; exit 1; }
 python3 scripts/check-fg037-manifest.py \
+  --expected-manifest-sha256 \
+  b2a03a08f799347b2b8754484e67145bfebfeb203ada61073388a8d03a409eec \
   evidence/20260827T182923Z-fg037-step-ceiling \
   || { echo "STEP-CEILING EVIDENCE MANIFEST FAILED"; exit 1; }
 dotnet run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj \

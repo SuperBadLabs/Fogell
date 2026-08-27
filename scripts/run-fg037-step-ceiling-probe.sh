@@ -118,7 +118,6 @@ require_stable_inputs() {
 }
 
 jenkins_api_url=${FOGELL_JENKINS_URL%/}/api/json
-printf -v jenkins_host_q '%q' "$FOGELL_JENKINS_HOST"
 printf -v jenkins_container_q '%q' "$FOGELL_JENKINS_CONTAINER"
 # The quoted container word intentionally expands on HeMan for Luigi's shell.
 # shellcheck disable=SC2029
@@ -158,8 +157,16 @@ jenkins_session=$(bash "$identity_checker_snapshot" \
 # shellcheck source=scripts/jenkins-workspace-v2.sh disable=SC1091
 source "$collector_snapshot"
 fogell_configure_jenkins_workspace_v2 "$FOGELL_JENKINS_HOST" "$FOGELL_JENKINS_CONTAINER"
-export FOGELL_JENKINS_ENV_CMD="ssh -- ${jenkins_host_q} \"podman exec ${jenkins_container_q} env\""
-export FOGELL_JENKINS_GIT_VERSION_CMD="ssh -- ${jenkins_host_q} \"podman exec ${jenkins_container_q} git --version\""
+jenkins_container_remote_q=$(fogell_quote_posix_shell_v2 "$FOGELL_JENKINS_CONTAINER")
+jenkins_env_remote_command="podman exec ${jenkins_container_remote_q} env"
+jenkins_git_remote_command="podman exec ${jenkins_container_remote_q} git --version"
+FOGELL_JENKINS_ENV_CMD=$(
+  fogell_jenkins_ssh_command_v2 "$FOGELL_JENKINS_HOST" "$jenkins_env_remote_command"
+)
+FOGELL_JENKINS_GIT_VERSION_CMD=$(
+  fogell_jenkins_ssh_command_v2 "$FOGELL_JENKINS_HOST" "$jenkins_git_remote_command"
+)
+export FOGELL_JENKINS_ENV_CMD FOGELL_JENKINS_GIT_VERSION_CMD
 
 mkdir -p "$output/cases" "$output/receipts"
 
@@ -217,6 +224,23 @@ if [ "$run_rc" -ne 1 ]; then
   sed -n '1,240p' "$output/differential.log" >&2
   exit 1
 fi
+
+# The comparison receipt deliberately normalises engine-specific diagnostic
+# wording, so it cannot by itself distinguish this boundary from an unrelated
+# pre-effect infrastructure failure. Retain the final confirmed attempt's raw
+# Jenkins console: its ArrayUtil.createArray NoSuchMethodError carries the exact
+# 251-argument cause, and the semantic checker below binds that cause before the
+# bundle can be sealed.
+jenkins_251_console=$output/receipts/fg037-251-steps.jenkins-console.txt
+jenkins_251_console_tmp=$output/receipts/.fg037-251-steps.jenkins-console.tmp
+if ! curl -fsS --max-time 10 --max-redirs 0 \
+  "${FOGELL_JENKINS_URL%/}/job/diff-fg037-251-steps/1/consoleText" \
+  -o "$jenkins_251_console_tmp"; then
+  rm -f "$jenkins_251_console_tmp"
+  echo "REFUSED: final 251-step Jenkins console could not be retained" >&2
+  exit 2
+fi
+mv "$jenkins_251_console_tmp" "$jenkins_251_console"
 
 endpoint_identity=$(observe_endpoint) || {
   echo "REFUSED: build endpoint identity disappeared after the live probe" >&2
@@ -295,7 +319,8 @@ require_stable_inputs || exit $?
   echo "The exact 250-step control is tier-1 PROVEN on Jenkins 2.568.1 and Fogell."
   echo "The adjacent 251-step input and the 400-step input are deliberately DIVERGED:"
   echo "Jenkins fails with an empty workspace before the sentinel step, while Fogell"
-  echo "succeeds, writes the sentinel, and emits every ordered marker."
+  echo "succeeds, writes the sentinel, and emits every ordered marker. The retained raw"
+  echo "251 console binds that refusal to its 251-argument ArrayUtil NoSuchMethodError."
   echo ""
   echo "These receipts are intentional capability differences. They must remain outside"
   echo "differential/receipts and are not part of the compatibility scorecard."
