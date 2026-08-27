@@ -72,14 +72,14 @@ round trip. Startup rejects an unsafe pair and reports the maximum poll interval
 for the configured lease.
 
 Keep the token file and both database strings out of command arguments and logs.
-Startup requires an absolute, existing token path and attempts to read the
-entire file. It removes only trailing CR/LF characters, then requires at least
-32 remaining characters and rejects any leading or trailing whitespace. A read
-failure aborts startup but is not yet normalized into the named configuration
-refusals. Startup also does not reject a symlink or a permissive file mode. The
-operator must provide a service-owned regular, non-symlink file with mode `0400`
-or `0600`. On Linux with `python3`, check that deployment obligation under the
-service identity before starting:
+Startup requires an absolute path that names an existing token file and attempts
+to read the entire file. It removes only trailing CR/LF characters, then requires
+at least 32 remaining characters and rejects any leading or trailing whitespace.
+A read failure aborts startup but is not yet normalized into the named
+configuration refusals. Startup also does not reject a symlink or a permissive
+file mode. The operator must provide a service-owned regular, non-symlink file
+with mode `0400` or `0600`. On Linux with `python3`, check that deployment
+obligation holds under the service identity before starting:
 
 ```bash
 if [[ ! -f "$FOGELL_API_TOKEN_FILE" || -L "$FOGELL_API_TOKEN_FILE" ]]; then
