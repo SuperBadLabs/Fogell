@@ -7047,6 +7047,78 @@ let compileRefusalDisposition =
               | Error why -> Expect.stringContains why "no compiler boundary" "boundary matching is exact"
           }
 
+          test "configured raw console export is exact-build scoped, atomic and fail-closed" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-console-export-{Guid.NewGuid():N}")
+              let target = IO.Path.Combine(root, "jenkins-console.txt")
+
+              try
+                  IO.Directory.CreateDirectory root |> ignore
+
+                  let export =
+                      Some
+                          { JobName = "diff-boundary"
+                            BuildNumber = 1
+                            Path = target }
+
+                  Jenkins.exportRawConsole export "diff-other" 1 "wrong job\n"
+                  Jenkins.exportRawConsole export "diff-boundary" 2 "wrong build\n"
+                  Expect.isFalse (IO.File.Exists target) "non-selected builds cannot publish"
+
+                  Jenkins.exportRawConsole export "diff-boundary" 1 "first π console\n"
+                  Expect.equal
+                      (IO.File.ReadAllText(target, Text.Encoding.UTF8))
+                      "first π console\n"
+                      "selected build publishes exact UTF-8 text"
+
+                  Jenkins.exportRawConsole export "diff-boundary" 1 "confirmed console\n"
+                  Expect.equal
+                      (IO.File.ReadAllText target)
+                      "confirmed console\n"
+                      "a confirmed retry atomically replaces the prior attempt"
+
+                  Expect.equal
+                      (IO.Directory.GetFiles(root, ".*.tmp"))
+                      [||]
+                      "atomic publication leaves no temporary artifact"
+
+                  let unavailable =
+                      Some
+                          { JobName = "diff-boundary"
+                            BuildNumber = 1
+                            Path = IO.Path.Combine(root, "missing", "console.txt") }
+
+                  Expect.throws
+                      (fun () -> Jenkins.exportRawConsole unavailable "diff-boundary" 1 "must fail\n")
+                      "a configured export cannot silently disappear"
+
+                  let relative =
+                      Some
+                          { JobName = "diff-boundary"
+                            BuildNumber = 1
+                            Path = "relative-console.txt" }
+
+                  Expect.throws
+                      (fun () -> Jenkins.exportRawConsole relative "diff-boundary" 1 "must fail\n")
+                      "a configured export cannot escape its explicit absolute evidence path"
+
+                  let directoryTarget =
+                      Some
+                          { JobName = "diff-boundary"
+                            BuildNumber = 1
+                            Path = root }
+
+                  Expect.throws
+                      (fun () -> Jenkins.exportRawConsole directoryTarget "diff-boundary" 1 "must fail\n")
+                      "a directory cannot be mistaken for a published console"
+
+                  Expect.equal
+                      (IO.Directory.GetFiles(root, ".*.tmp"))
+                      [||]
+                      "failed publications leave no partial temporary artifact"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
           test "Fogell input rejection returns a refusal trace without touching a fresh workspace" {
               let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-fresh-{Guid.NewGuid():N}")
               let workspace = IO.Path.Combine(root, "job")

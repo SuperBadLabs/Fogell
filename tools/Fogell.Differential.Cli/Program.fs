@@ -14,6 +14,9 @@ open Fogell.Execution
 /// Environment:
 ///   FOGELL_JENKINS_WORKSPACE  host path of Jenkins' workspace root (optional;
 ///                             without it, workspace hashes are not compared)
+///   FOGELL_JENKINS_RAW_CONSOLE_JOB / _BUILD / _PATH
+///                             optional all-or-none exact build console export;
+///                             PATH must be absolute and is atomically replaced
 [<EntryPoint>]
 let main argv =
     match Array.toList argv with
@@ -73,6 +76,40 @@ let main argv =
             match Environment.GetEnvironmentVariable "FOGELL_JENKINS_WORKSPACE_CMD" with
             | null | "" -> None
             | v -> Some v
+
+        let rawConsoleExport =
+            let job = Environment.GetEnvironmentVariable "FOGELL_JENKINS_RAW_CONSOLE_JOB"
+            let build = Environment.GetEnvironmentVariable "FOGELL_JENKINS_RAW_CONSOLE_BUILD"
+            let path = Environment.GetEnvironmentVariable "FOGELL_JENKINS_RAW_CONSOLE_PATH"
+            let present value = not (String.IsNullOrEmpty value)
+
+            match present job, present build, present path with
+            | false, false, false -> None
+            | true, true, true ->
+                match Int32.TryParse build with
+                | true, buildNumber
+                    when buildNumber > 0
+                         && Text.RegularExpressions.Regex.IsMatch(
+                             job,
+                             "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+                         )
+                         && Path.IsPathFullyQualified path ->
+                    Some
+                        { JobName = job
+                          BuildNumber = buildNumber
+                          Path = Path.GetFullPath path }
+                | _ ->
+                    eprintfn
+                        "raw-console export refused: JOB must be one safe Jenkins job name, BUILD a positive integer, and PATH absolute"
+
+                    exit 2
+                    None
+            | _ ->
+                eprintfn
+                    "raw-console export refused: FOGELL_JENKINS_RAW_CONSOLE_JOB, _BUILD and _PATH must be configured together"
+
+                exit 2
+                None
 
         // ONE coordinated canonicalisation set for BOTH traces: the union of each
         // engine's inherited values for the curated names, so a literal equal to
@@ -262,6 +299,7 @@ let main argv =
               CoreVersion = core
               WorkspaceRoot = jenkinsWorkspace
               WorkspaceCollector = collector
+              RawConsoleExport = rawConsoleExport
               // per-case; replaced at each call site from that case's script
               DeclaresTimestamps = false }
 

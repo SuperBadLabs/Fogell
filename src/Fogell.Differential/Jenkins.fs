@@ -32,6 +32,11 @@ type JenkinsConfig =
       /// The output is normalised through exactly the same exclusion rules as a
       /// local hash, so neither side gets a different definition of "workspace".
       WorkspaceCollector: string option
+      /// Optional, exact build-scoped raw-console export. The console is written
+      /// atomically after Jenkins returns it and before the disposable job is
+      /// deleted. A configured write failure fails that build rather than leaving
+      /// a stale or partial evidence artifact.
+      RawConsoleExport: RawConsoleExport option
       /// FG-053. Whether the SCRIPT declares `options { timestamps() }`.
       ///
       /// Jenkins cannot be asked, and its console cannot be inspected for it
@@ -40,6 +45,11 @@ type JenkinsConfig =
       /// [Trace.Concurrent] already uses, so the CLI reads it off the script and
       /// tells both engines.
       DeclaresTimestamps: bool }
+
+and RawConsoleExport =
+    { JobName: string
+      BuildNumber: int
+      Path: string }
 
 /// FG-052. What defines a build's pipeline on the Jenkins side: an inline
 /// script (CpsFlowDefinition) or an SCM the Jenkinsfile is obtained from
@@ -51,6 +61,40 @@ type JobDefinition =
 module Jenkins =
 
     let private client = new HttpClient(Timeout = TimeSpan.FromMinutes 10.0)
+
+    let internal exportRawConsole
+        (export: RawConsoleExport option)
+        (jobName: string)
+        (buildNumber: int)
+        (console: string)
+        =
+        match export with
+        | Some configured when configured.JobName = jobName && configured.BuildNumber = buildNumber ->
+            let target = configured.Path
+            let directory = IO.Path.GetDirectoryName target
+
+            if not (IO.Path.IsPathFullyQualified target) || String.IsNullOrEmpty directory then
+                invalidOp "configured raw-console export path must be absolute"
+
+            if not (IO.Directory.Exists directory) then
+                invalidOp $"configured raw-console export directory does not exist: {directory}"
+
+            if IO.Directory.Exists target then
+                invalidOp $"configured raw-console export target is a directory: {target}"
+
+            let temporary =
+                IO.Path.Combine(
+                    directory,
+                    $".{IO.Path.GetFileName target}.{Guid.NewGuid():N}.tmp"
+                )
+
+            try
+                IO.File.WriteAllText(temporary, console, UTF8Encoding(false))
+                IO.File.Move(temporary, target, true)
+            finally
+                if IO.File.Exists temporary then
+                    IO.File.Delete temporary
+        | _ -> ()
 
     /// FG-129. Jenkins has no structured "compiler refused" result, so the
     /// distinction is reduced from the controller-owned terminal result and raw
@@ -319,6 +363,8 @@ module Jenkins =
                 | Some terminal ->
                     let console =
                         client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/{buildNumber}/consoleText").Result
+
+                    exportRawConsole cfg.RawConsoleExport jobName buildNumber console
 
                     let rawLines = console.Replace("\r\n", "\n").Split '\n'
                     let disposition = classifyExecutionDisposition terminal rawLines

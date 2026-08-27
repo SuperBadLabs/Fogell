@@ -200,6 +200,10 @@ python3 scripts/check-fg037-step-ceiling.py \
   }
 
 cli_project=tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj
+jenkins_251_console=$output/receipts/fg037-251-steps.jenkins-console.txt
+export FOGELL_JENKINS_RAW_CONSOLE_JOB=diff-fg037-251-steps
+export FOGELL_JENKINS_RAW_CONSOLE_BUILD=1
+export FOGELL_JENKINS_RAW_CONSOLE_PATH=$jenkins_251_console
 
 # Build the exact executable used below, including its transitive engine
 # projects. A solution-default build followed by `dotnet run --no-build` left a
@@ -227,20 +231,11 @@ fi
 
 # The comparison receipt deliberately normalises engine-specific diagnostic
 # wording, so it cannot by itself distinguish this boundary from an unrelated
-# pre-effect infrastructure failure. Retain the final confirmed attempt's raw
-# Jenkins console: its ArrayUtil.createArray NoSuchMethodError carries the exact
-# 251-argument cause, and the semantic checker below binds that cause before the
-# bundle can be sealed.
-jenkins_251_console=$output/receipts/fg037-251-steps.jenkins-console.txt
-jenkins_251_console_tmp=$output/receipts/.fg037-251-steps.jenkins-console.tmp
-if ! curl -fsS --max-time 10 --max-redirs 0 \
-  "${FOGELL_JENKINS_URL%/}/job/diff-fg037-251-steps/1/consoleText" \
-  -o "$jenkins_251_console_tmp"; then
-  rm -f "$jenkins_251_console_tmp"
-  echo "REFUSED: final 251-step Jenkins console could not be retained" >&2
-  exit 2
-fi
-mv "$jenkins_251_console_tmp" "$jenkins_251_console"
+# pre-effect infrastructure failure. The CLI's exact-build export above retains
+# each confirmed attempt before its disposable Jenkins job is deleted; the last
+# retry atomically replaces the prior attempt. Its ArrayUtil.createArray
+# NoSuchMethodError carries the exact 251-argument cause, which the semantic
+# checker below binds before the bundle can be sealed.
 
 endpoint_identity=$(observe_endpoint) || {
   echo "REFUSED: build endpoint identity disappeared after the live probe" >&2
