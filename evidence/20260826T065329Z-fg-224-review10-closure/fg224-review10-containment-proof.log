@@ -1,0 +1,22 @@
+[37m[[37m07:31:27 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0m[1000D[?25h[37m[[37m07:31:36 [37mINF[37m] [37mEXPECTO! [36m14[37m tests run in [32m00:00:08.7338225[37m for [36mFogell.Execution.FG-031/032 process group containment[37m – [36m14[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m[1000D[?25h[37m[[37m07:31:36 [37mINF[37m] [37mEXPECTO?! Summary...
+Passed: [36m 14
+	Fogell.Execution.FG-031/032 process group containment.reaping can be opted out of
+	Fogell.Execution.FG-031/032 process group containment.BEAT JENKINS: a backgrounded child is reaped after a TIMEOUT too
+	Fogell.Execution.FG-031/032 process group containment.BEAT JENKINS: a backgrounded child is reaped after SUCCESS
+	Fogell.Execution.FG-031/032 process group containment.a step ignoring SIGTERM is escalated to SIGKILL
+	Fogell.Execution.FG-031/032 process group containment.a timeout sends a trappable SIGTERM before killing
+	Fogell.Execution.FG-031/032 process group containment.a 30-day budget is represented exactly, not wrapped
+	Fogell.Execution.FG-031/032 process group containment.the step leads its own process group
+	Fogell.Execution.FG-031/032 process group containment.owner death after the inner leader exits still reaps its background group
+	Fogell.Execution.FG-031/032 process group containment.owner death during TERM grace retains anchor provenance through KILL
+	Fogell.Execution.FG-031/032 process group containment.an abrupt Run.Host death reaps a registered inner step group
+	Fogell.Execution.FG-031/032 process group containment.pre-registration owner failures never release or leak the launcher
+	Fogell.Execution.FG-031/032 process group containment.leader identity drift refuses release immediately
+	Fogell.Execution.FG-031/032 process group containment.a leader that never stops is refused at the exact polling bound
+	Fogell.Execution.FG-031/032 process group containment.a running registered leader is released only after its stopped state is observed[37m
+Ignored: [36m 0[37m
+Failed: [36m  0[37m
+Errored: [36m 0[37m [37m<[37mExpecto[37m>[37m
+[0m

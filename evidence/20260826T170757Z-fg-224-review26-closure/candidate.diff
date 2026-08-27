@@ -1,0 +1,273 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 0f97a5b..6956ef5 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -740,7 +740,7 @@ before their no-effect validation refusal. Compatibility counts are unchanged.
+ | FG-062 | P1 | TODO | `Fogell.Agent.Protocol` + `Runtime` (`adr/0008`): mTLS, versioned, agent-local durable log, offset recovery | **network partition ≥ 45 s costs zero log lines** — the Jenkins parity bar |
+ | FG-063 | P1 | TODO | Agent death handling: announce reconnect grace with a budget, then ABORTED with a named cause | matches Jenkins' behavior, which is exemplary here |
+ | FG-064 | P1 | **DONE** | Progressive console over the API (`adr/0005` match) | `GET …/logs?from=N` returns chunks plus a `next_sequence` cursor, so a client tails a running build rather than waiting for completion |
+-| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Local exact-tree acceptance closes the review findings: outer Run.Host cleanup binds every leader/group signal to the launcher's captured Linux birth identity and fails closed on PID/PGID reuse; durable raw-byte idempotency is resolved before decoding or parsing, so an exact malformed legacy replay remains 200 while changed malformed bytes remain the bound key's 409 conflict; and invalid-definition quarantine atomically moves attempt → node → build with exactly one reasoned event/outbox pair. Review25 closes Codex `3866957698`: shutdown interrupts the active poll promptly and retains the durable `controller_shutdown` disposition. It also closes `3866957703`: readiness detects a missing or unwritable state root beyond startup through lazy ordered dependency checks and a lock-protected one-second cache; the worker checks cached readiness before claiming, forces a fresh probe after an offer, and fenced-requeues an unstarted offer on failure, so cached success never authorizes materialization after storage loss. The adjacent lease-expiry audit remains closed: expired `accepted`/`running`/`finalizing`/`cancelling` attempts atomically emit one `lease_expired` pair, while safe `offered` → `queued` recovery emits neither. Engine-created inner step groups are registered before release and reaped across Run.Host death; progressive publication is FIFO-serialized outside the output lock; and ambiguous post-launch exits enter reconciliation with a stable reason event and outbox while retaining the event fence until terminal publication. The fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth, plus graceful-shutdown reconciliation and byte-exact recovery evidence. Controller API is 33/33, Differential is 271/271, Store is 89/89, and the aggregate locked gate is 902/902. A replacement exact-head hosted gate, Copilot/Codex review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
++| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Local exact-tree acceptance closes the review findings: outer Run.Host cleanup binds every leader/group signal to the launcher's captured Linux birth identity and fails closed on PID/PGID reuse; durable raw-byte idempotency is resolved before decoding or parsing, so an exact malformed legacy replay remains 200 while changed malformed bytes remain the bound key's 409 conflict; and invalid-definition quarantine atomically moves attempt → node → build with exactly one reasoned event/outbox pair. Review25 closes Codex `3866957698`: shutdown interrupts the active poll promptly and retains the durable `controller_shutdown` disposition. It also closes `3866957703`: readiness detects a missing or unwritable state root beyond startup through lazy ordered dependency checks and a lock-protected one-second cache; the worker checks cached readiness before claiming, forces a fresh probe after an offer, and fenced-requeues an unstarted offer on failure, so cached success never authorizes materialization after storage loss. Review26 closes Codex `3867130539`: after an offer, the lazy launcher-first guard performs the fresh state-root probe only when launchers are available, and either dependency loss makes one immediate fenced `RequeueOwnedAttempt` before logging. The unstarted attempt/node/build return to `queued` without materialization, execution, reconciliation, event, or outbox publication; the exact owner/fence/unexpired-lease/current-restore-epoch contract applies in attempt → node → build lock order, a replacement advances the fence, and concurrent cancellation remains set for it to observe. The adjacent lease-expiry audit remains closed: expired `accepted`/`running`/`finalizing`/`cancelling` attempts atomically emit one `lease_expired` pair, while safe `offered` → `queued` recovery emits neither. Engine-created inner step groups are registered before release and reaped across Run.Host death; progressive publication is FIFO-serialized outside the output lock; and ambiguous post-launch exits enter reconciliation with a stable reason event and outbox while retaining the event fence until terminal publication. The fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth, plus graceful-shutdown reconciliation and byte-exact recovery evidence. Controller API is 33/33, Differential is 272/272, Store is 89/89, and the aggregate locked gate is 903/903. Exact-head hosted gates, fresh Copilot/Codex review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
+ | FG-065 | P2 | TODO | Jenkins-shaped REST compatibility shim, **off by default**, explicitly bounded | enabled only via env var; limitations documented |
+ | FG-066 | P2 | TODO | `Fogell.Cli`: validate / plan / run / build / resume / list / history | each subcommand has a golden-output test |
+ | FG-067 | P3 | TODO | `Fogell.Web` read-only build UI | renders a build's stages and log |
+diff --git a/docs/runbooks/controller-host.md b/docs/runbooks/controller-host.md
+index cf493f8..90f6969 100644
+--- a/docs/runbooks/controller-host.md
++++ b/docs/runbooks/controller-host.md
+@@ -68,8 +68,16 @@ to `/usr/bin/setsid`; startup refuses before binding unless that exact file is
+ executable by the service identity. Readiness and the worker claim boundary
+ recheck both executables and the state root, so later removal returns 503 and
+ cannot start new work. A cached state-root success may permit an offer, but the
+-worker forces a fresh probe before materialization and fenced-requeues the
+-unstarted offer if that probe fails. It never recreates a missing root.
++worker checks the launchers first and performs the fresh state-root probe only
++when they are available. Either dependency loss calls the same immediate fenced
++requeue before logging. The still-unstarted attempt, node, and build return to
++`queued`; the lease owner and expiry are cleared; and no event or outbox row is
++published. Requeue requires the current owner, fence, unexpired lease, and
++restore epoch through the attempt → node → build lock order; a replacement claim
++advances the fence. A concurrent cancellation request remains set for the
++replacement to observe before launch. Neither loss path materializes work,
++begins execution, or enters reconciliation. The worker never recreates a missing
++root.
+ Put the state root on storage whose loss/recovery policy matches the PostgreSQL
+ database; an incomplete journal is a reconciliation
+ event, not permission to guess success.
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index c780a84..faf405d 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -174,8 +174,22 @@ is reconciled by restore; an insert that waits is born in the new epoch.
+   fenced-requeues that unstarted offer, so cached readiness cannot authorize
+   execution after the root disappears or becomes unwritable.
+ 
+-These are local exact-tree closure claims only. Exact-head hosted gates and
+-review coverage, publication, and merge remain outstanding.
++## Review 26 closure
++
++- Codex finding `3867130539` is closed by giving both post-offer dependency-loss
++  paths the same immediate fenced recovery. The worker checks launchers first and
++  only performs the fresh state-root probe when they are available; either
++  launcher loss or state-root loss calls `RequeueOwnedAttempt` once before
++  logging. The still-unstarted attempt, node, and build return to `queued`
++  atomically, the lease owner and expiry are cleared, and no event or outbox row
++  is published. The current owner, fence, unexpired lease, and restore epoch must
++  still match through the attempt → node → build lock order; the replacement
++  claim advances the fence, and a concurrent cancellation request remains set for
++  that replacement to observe. Neither path materializes work, begins execution,
++  or enters reconciliation.
++
++These are local exact-tree closure claims only. Exact-head hosted gates, fresh
++Copilot/Codex review coverage, publication, and merge remain outstanding.
+ 
+ ## Acceptance
+ 
+@@ -200,12 +214,12 @@ Exact-tree HeMan acceptance on fresh databases:
+ 
+ - Store: 89/89 passed;
+ - Controller API: 33/33 passed;
+-- Differential: 271/271 passed;
++- Differential: 272/272 passed;
+ - Execution: 100/100 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-locked repository gate also passes all 902 main-suite tests and every blocking
++locked repository gate also passes all 903 main-suite tests and every blocking
+ proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
+ recorded at publication rather than predicted here.
+ 
+diff --git a/src/Fogell.Controller.Host/Worker.fs b/src/Fogell.Controller.Host/Worker.fs
+index 580298d..c0197f3 100644
+--- a/src/Fogell.Controller.Host/Worker.fs
++++ b/src/Fogell.Controller.Host/Worker.fs
+@@ -18,6 +18,25 @@ module internal WorkerControl =
+         | PollElapsed
+         | ShutdownRequested
+ 
++    [<RequireQualifiedAccess>]
++    type PostOfferDependency =
++        | ExecutionLaunchers
++        | StateRoot
++
++    let postOfferDependencyName = function
++        | PostOfferDependency.ExecutionLaunchers -> "execution launchers"
++        | PostOfferDependency.StateRoot -> "state root"
++
++    let afterOfferReady launchersReady stateRootReady onUnavailable =
++        if not (launchersReady ()) then
++            onUnavailable PostOfferDependency.ExecutionLaunchers
++            false
++        elif not (stateRootReady ()) then
++            onUnavailable PostOfferDependency.StateRoot
++            false
++        else
++            true
++
+     let waitForActivePoll (pollMilliseconds: int) (stoppingToken: CancellationToken) =
+         task {
+             try
+@@ -639,44 +658,50 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                             requireReconciliation reconciliationReason
+         }
+ 
++    let requeueUnstartedClaim dependency (claim: ExecutionClaim) =
++        let dependencyName = WorkerControl.postOfferDependencyName dependency
++
++        let requeueResult =
++            try
++                Ok(
++                    store.RequeueOwnedAttempt(
++                        claim.OrganizationId,
++                        claim.AttemptId,
++                        claim.Fence,
++                        owner))
++            with ex ->
++                Error ex
++
++        match requeueResult with
++        | Ok true ->
++            logger.LogInformation(
++                "FG-224 {Dependency} became unavailable before claim {AttemptId}; the unstarted attempt was requeued",
++                dependencyName,
++                claim.AttemptId.Value)
++        | Ok false ->
++            logger.LogWarning(
++                "FG-224 {Dependency} became unavailable before claim {AttemptId}; the unstarted requeue lost authority",
++                dependencyName,
++                claim.AttemptId.Value)
++        | Error ex ->
++            logger.LogError(
++                ex,
++                "FG-224 {Dependency} became unavailable before claim {AttemptId}; the unstarted requeue failed",
++                dependencyName,
++                claim.AttemptId.Value)
++
+     let runClaim (claim: ExecutionClaim) (stoppingToken: CancellationToken) =
+         task {
+             // Recheck every runtime dependency after the offer and before
+             // definition materialization or BeginExecution. No child exists at
+             // this boundary, so unavailable durable storage can return the
+             // fenced offer to FIFO immediately rather than waiting for expiry.
+-            if not (ControllerConfig.executionLaunchersReady config) then
+-                logger.LogError(
+-                    "FG-224 execution launchers became unavailable before claim {AttemptId}; the attempt was not started",
+-                    claim.AttemptId.Value)
+-            elif not (stateRootReadiness.Fresh()) then
+-                logger.LogError(
+-                    "FG-224 state root became unavailable before claim {AttemptId}; the attempt was not started",
+-                    claim.AttemptId.Value)
+-
+-                let requeued =
+-                    try
+-                        store.RequeueOwnedAttempt(
+-                            claim.OrganizationId,
+-                            claim.AttemptId,
+-                            claim.Fence,
+-                            owner)
+-                    with ex ->
+-                        logger.LogError(
+-                            ex,
+-                            "FG-224 state-root requeue failed for {AttemptId}",
+-                            claim.AttemptId.Value)
+-                        false
+-
+-                if requeued then
+-                    logger.LogInformation(
+-                        "FG-224 unavailable state root requeued unstarted claim {AttemptId}",
+-                        claim.AttemptId.Value)
+-                else
+-                    logger.LogWarning(
+-                        "FG-224 unavailable state-root requeue lost authority for {AttemptId}",
+-                        claim.AttemptId.Value)
+-            else
++            if
++                WorkerControl.afterOfferReady
++                    (fun () -> ControllerConfig.executionLaunchersReady config)
++                    stateRootReadiness.Fresh
++                    (fun dependency -> requeueUnstartedClaim dependency claim)
++            then
+                 do! runReadyClaim claim stoppingToken
+         }
+ 
+diff --git a/tests/Fogell.Differential.Tests/Tests.fs b/tests/Fogell.Differential.Tests/Tests.fs
+index 61edc21..14ba3f6 100644
+--- a/tests/Fogell.Differential.Tests/Tests.fs
++++ b/tests/Fogell.Differential.Tests/Tests.fs
+@@ -603,6 +603,49 @@ let controllerWorkerTiming =
+                   (cache.Cached())
+                   "the failed fresh result prevents another claim without probing again"
+               Expect.equal probes 2 "the forced failure also updates the idle cache"
++          }
++
++          test "post-offer dependency loss selects one immediate recovery before execution" {
++              let unavailable = ResizeArray<WorkerControl.PostOfferDependency>()
++              let mutable launcherChecks = 0
++              let mutable stateRootChecks = 0
++
++              let afterOffer launcherReady stateRootReady =
++                  WorkerControl.afterOfferReady
++                      (fun () ->
++                          launcherChecks <- launcherChecks + 1
++                          launcherReady)
++                      (fun () ->
++                          stateRootChecks <- stateRootChecks + 1
++                          stateRootReady)
++                      unavailable.Add
++
++              Expect.isFalse (afterOffer false true) "launcher loss refuses the offered claim"
++              Expect.equal launcherChecks 1 "launcher readiness is checked first"
++              Expect.equal stateRootChecks 0 "launcher loss short-circuits the durable probe"
++              Expect.equal
++                  (List.ofSeq unavailable)
++                  [ WorkerControl.PostOfferDependency.ExecutionLaunchers ]
++                  "launcher loss invokes the shared recovery exactly once with its precise cause"
++              Expect.equal
++                  (WorkerControl.postOfferDependencyName unavailable[0])
++                  "execution launchers"
++                  "launcher refusal retains its log cause"
++
++              unavailable.Clear()
++              Expect.isFalse (afterOffer true false) "state-root loss refuses the offered claim"
++              Expect.equal launcherChecks 2 "the second boundary rechecks launchers"
++              Expect.equal stateRootChecks 1 "state-root readiness follows a live launcher"
++              Expect.equal
++                  (List.ofSeq unavailable)
++                  [ WorkerControl.PostOfferDependency.StateRoot ]
++                  "state-root loss invokes the same recovery exactly once with its precise cause"
++
++              unavailable.Clear()
++              Expect.isTrue (afterOffer true true) "live dependencies admit execution"
++              Expect.equal launcherChecks 3 "the admitted boundary checks launchers once"
++              Expect.equal stateRootChecks 2 "the admitted boundary checks state root once"
++              Expect.isEmpty unavailable "the ready path does not requeue the offered claim"
+           } ]
+ 
+ let controllerStateRoot =
+diff --git a/tests/Fogell.Store.Tests/Tests.fs b/tests/Fogell.Store.Tests/Tests.fs
+index 5bd023f..e640253 100644
+--- a/tests/Fogell.Store.Tests/Tests.fs
++++ b/tests/Fogell.Store.Tests/Tests.fs
+@@ -2009,10 +2009,10 @@ let fencing =
+               Expect.equal (store.CountOutbox org) (outboxBefore + 1) "the scan race emits one outbox row total"
+           }
+ 
+-          test "an unstarted offered claim requeues without reconciliation and advances its replacement fence" {
++          test "an unstarted launcher-loss claim requeues without reconciliation and advances its replacement fence" {
+               let org, project = freshProject ()
+               let admitted = admitOk (newBuild org project "offered-readiness-requeue" [ "build" ])
+-              let owner = "local:unavailable-state-root"
++              let owner = "local:unavailable-launcher"
+ 
+               let claim =
+                   match store.ClaimNextExecution(org, owner, "trusted-linux", [ "linux" ], 60) with
+@@ -2061,7 +2061,7 @@ let fencing =
+                   outboxBefore
+                   "an unstarted offer emits no reconciliation outbox"
+ 
+-              let replacementOwner = "local:restored-state-root"
++              let replacementOwner = "local:restored-launcher"
+               let replacement =
+                   match
+                       store.ClaimNextExecution(

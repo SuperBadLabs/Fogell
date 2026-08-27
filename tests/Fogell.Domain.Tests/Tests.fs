@@ -161,4 +161,8 @@ let main argv =
         argv
         (testList
             "Fogell.Domain"
-            [ aggregationProperties; transitionProperties; publicationGuard; retrySemantics ])
+            [ aggregationProperties
+              transitionProperties
+              publicationGuard
+              retrySemantics
+              RetryDecisionTests.tests ])

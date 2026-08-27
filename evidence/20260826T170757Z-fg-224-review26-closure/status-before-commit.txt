@@ -1,0 +1,7 @@
+M  docs/EXECUTION_BOARD.md
+M  docs/runbooks/controller-host.md
+M  docs/tickets/FG-224.md
+M  src/Fogell.Controller.Host/Worker.fs
+M  tests/Fogell.Differential.Tests/Tests.fs
+M  tests/Fogell.Store.Tests/Tests.fs
+?? evidence/.20260826T170757Z-fg-224-review26-closure.partial.CKP6Bb/

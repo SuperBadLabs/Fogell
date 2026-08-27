@@ -1,0 +1,7 @@
+build-identity	e976e2b5e9a246b3aff49061bf40b3b0
+script-digest	3a35f9a0431c2d1d11b419f3d5bd67fef77117362ebebf67175fe61ac858770c
+workspace-identity	54:/tmp/fogell-fg222-bench-20ec7cb.AXpxMG/runs/echo/12/ws|54:/tmp/fogell-fg222-bench-20ec7cb.AXpxMG/runs/echo/12/ws|58:/tmp/fogell-fg222-bench-20ec7cb.AXpxMG/runs/echo/12/ws/job|65:/tmp/fogell-fg222-bench-20ec7cb.AXpxMG/runs/echo/12/ws/_artifacts	job
+step-started	one	0	echo
+step-finished	one	0	success
+stage-committed	one
+build-finished	success

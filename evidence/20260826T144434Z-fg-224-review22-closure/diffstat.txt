@@ -1,0 +1,13 @@
+ docs/runbooks/controller-host.md                   |   2 +-
+ docs/tickets/FG-224.md                             |  26 +-
+ scripts/backup-restore-drill.sh                    |   1 +
+ scripts/migration-rollback-drill.sh                |  10 +-
+ scripts/prove-runnable-controller.sh               |   2 +-
+ src/Fogell.Controller.Api/Router.fs                |  94 +++---
+ src/Fogell.Differential/Fogell.fs                  |  92 ++---
+ src/Fogell.Store/Store.fs                          | 188 ++++++++++-
+ .../0010_attempt_restore_epoch_guard.sql           |  35 ++
+ tests/Fogell.Controller.Api.Tests/Tests.fs         | 112 +++++++
+ tests/Fogell.Store.Tests/Tests.fs                  | 373 ++++++++++++++++++++-
+ tools/Fogell.Run.Host/Program.fs                   |   5 +-
+ 12 files changed, 824 insertions(+), 116 deletions(-)

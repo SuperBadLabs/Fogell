@@ -2,6 +2,7 @@ namespace Fogell.Journal
 
 open System
 open System.IO
+open Fogell.Domain
 
 module JournalRepair =
 
@@ -43,13 +44,26 @@ type FsyncPolicy =
     /// No fsync. For tests only; never a production setting.
     | Never
 
+/// FG-207. Test-only observation of a force that the journal itself performed.
+/// The observer is deliberately a notification, not an injected flush function:
+/// production and tests both execute the same private `FileStream.Flush(true)`.
+type internal ForceOrigin =
+    | AppendPolicy
+    | ExplicitSync
+    | Closing
+
+type internal ForceObservation =
+    { Origin: ForceOrigin
+      RecordCount: int
+      Length: int64 }
+
 /// ADR 0003. Append-only, per-attempt durable journal.
 ///
 /// Append-only is the whole design: a record is never rewritten, so a torn write
 /// can only ever truncate the tail. Resume therefore reads what it can and stops
 /// at the first unparsable line rather than trusting a possibly-half-written
 /// record — which is why [Record.decode] returns an option instead of throwing.
-type Journal(path: string, policy: FsyncPolicy) =
+type Journal internal (path: string, policy: FsyncPolicy, forceObserver: (ForceObservation -> unit) option) =
 
     let mutable stream: FileStream option = None
 
@@ -58,6 +72,18 @@ type Journal(path: string, policy: FsyncPolicy) =
     // line — resume would then forget durable steps and re-run them, the
     // at-least-once outcome this design exists to reject.
     let writeLock = obj ()
+
+    // The real durability primitive. An observer can count a COMPLETED force,
+    // but cannot replace it, suppress it, or choose a weaker flush mode.
+    let force origin recordCount (s: FileStream) =
+        s.Flush true
+
+        forceObserver
+        |> Option.iter (fun observe ->
+            observe
+                { Origin = origin
+                  RecordCount = recordCount
+                  Length = s.Length })
 
     let ensure () =
         match stream with
@@ -75,44 +101,87 @@ type Journal(path: string, policy: FsyncPolicy) =
             stream <- Some s
             s
 
+    let appendGroup (records: Record list) =
+        if not (List.isEmpty records) then
+            lock writeLock (fun () ->
+                let s = ensure ()
+
+                // One lock owns every byte in the completion group. Encoding one
+                // contiguous buffer also makes Finish/Reason adjacency independent
+                // of FileStream's per-call buffering decisions.
+                let bytes =
+                    records
+                    |> List.map (fun record -> Record.encode record + "\n")
+                    |> String.concat ""
+                    |> Text.Encoding.UTF8.GetBytes
+
+                s.Write(bytes, 0, bytes.Length)
+                s.Flush()
+
+                match policy with
+                | EveryStep -> force AppendPolicy records.Length s
+                | EveryStage
+                    when records
+                         |> List.exists (function
+                             | StageCommitted _
+                             | BuildFinished _ -> true
+                             | _ -> false) ->
+                    force AppendPolicy records.Length s
+                | EveryStage
+                | Never -> ())
+
     member _.Path = path
 
     /// Append one record. Durability depends on the policy; the caller does not
     /// have to know which, only that a StepFinished is durable before the next
     /// step begins under EveryStep.
-    member _.Append(record: Record) =
-        lock writeLock (fun () ->
-            let s = ensure ()
-            let bytes = Text.Encoding.UTF8.GetBytes(Record.encode record + "\n")
-            s.Write(bytes, 0, bytes.Length)
-            s.Flush()
+    member _.Append(record: Record) = appendGroup [ record ]
 
-            match policy, record with
-            | EveryStep, _ -> s.Flush true
-            | EveryStage, StageCommitted _ -> s.Flush true
-            | EveryStage, BuildFinished _ -> s.Flush true
-            | EveryStage, _ -> ()
-            | Never, _ -> ())
+    /// FG-207. A finish and its optional explanation are one durability unit.
+    /// Their wire format stays two records, Finish first, so every historical
+    /// reader remains valid; EveryStep pays one force only after both bytes land.
+    ///
+    /// A reason on Success/Unstable would describe a green disposition and is
+    /// rejected. Failure/Aborted WITHOUT a reason remains valid: FG-114 captures
+    /// only named diagnostic sites, and historical journals/resume explicitly
+    /// tolerate a durable disposition whose explanation was not captured.
+    member _.AppendStepFinished(stage: string, stepIndex: int, status: BuildStatus, reason: string option) =
+        let records =
+            match status, reason with
+            | (BuildStatus.Success | BuildStatus.Unstable), Some _ ->
+                invalidArg (nameof reason) "a successful or unstable step cannot carry a failure reason"
+            | BuildStatus.NotBuilt, _ ->
+                invalidArg (nameof status) "NotBuilt is not a completed step status"
+            | _, Some explanation ->
+                [ StepFinished(stage, stepIndex, status)
+                  StepReason(stage, stepIndex, explanation) ]
+            | _, None -> [ StepFinished(stage, stepIndex, status) ]
+
+        appendGroup records
 
     /// Force whatever is buffered. Called before a controller hands an attempt
     /// away, so nothing in flight depends on a later flush.
     member _.Sync() =
         lock writeLock (fun () ->
             match stream with
-            | Some s -> s.Flush true
+            | Some s -> force ExplicitSync 0 s
             | None -> ())
 
     member _.Close() =
         lock writeLock (fun () ->
             match stream with
             | Some s ->
-                s.Flush true
+                force Closing 0 s
                 s.Dispose()
                 stream <- None
             | None -> ())
 
     interface IDisposable with
         member this.Dispose() = this.Close()
+
+    /// Preserve the original public construction surface. The observer is an
+    /// internal test seam, not a new production dependency.
+    new (path: string, policy: FsyncPolicy) = new Journal(path, policy, None)
 
 module Journal =
 
@@ -133,6 +202,11 @@ module Journal =
             |> List.map Option.get
 
     let openAt path policy = new Journal(path, policy)
+
+    /// Deterministic force observation for this assembly's tests. The callback
+    /// runs only after the same real Flush(true) production uses has returned.
+    let internal openAtObserved path policy observer =
+        new Journal(path, policy, Some observer)
 
     /// Truncate a torn final line so every remaining line decodes — call
     /// BEFORE any read whose result gates a resume decision.

@@ -1,0 +1,7 @@
+ docs/EXECUTION_BOARD.md        |   3 +-
+ docs/tickets/FG-223.md         |  62 +++++++++++++
+ evidence/README.md             |   6 ++
+ scripts/build-and-test.sh      |   8 ++
+ scripts/prove-seal-evidence.sh | 199 +++++++++++++++++++++++++++++++++++++++++
+ scripts/seal-evidence.sh       | 126 +++++++++++++++++++++-----
+ 6 files changed, 381 insertions(+), 23 deletions(-)

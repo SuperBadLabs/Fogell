@@ -6,5 +6,6 @@
     <Compile Include="Ids.fs" />
     <Compile Include="Status.fs" />
     <Compile Include="Model.fs" />
+    <Compile Include="RetryDecision.fs" />
   </ItemGroup>
 </Project>

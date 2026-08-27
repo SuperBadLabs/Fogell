@@ -1,0 +1,91 @@
+[37m[[37m00:11:34 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0mInitialized empty Git repository in /tmp/fogell-fg222-scm-boundary-3460c76fa8424af9b367d5e986e95eff/fixture.git/
+Initialized empty Git repository in /tmp/fogell-fg222-scm-boundary-3460c76fa8424af9b367d5e986e95eff/source/.git/
+[main (root-commit) 41cc005] fixture
+ 2 files changed, 3 insertions(+)
+ create mode 100644 Jenkinsfile
+ create mode 100644 payload.txt
+[1000D[?25h[31mFOGELL_CREDENTIALS: 'bad-base64' has malformed base64 and was DROPPED; the step will fail closed
+[0m[1000D[?25h[37m[[37m00:11:38 [37mINF[37m] [37mEXPECTO! [36m218[37m tests run in [32m00:00:04.1528959[37m for [36mFogell.Differential[37m – [36m218[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m[37m[[37m00:11:38 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0mInitialized empty Git repository in /tmp/fogell-fg222-scm-boundary-e40eb82ff7fb453bb7def8cfe30e7317/fixture.git/
+Initialized empty Git repository in /tmp/fogell-fg222-scm-boundary-e40eb82ff7fb453bb7def8cfe30e7317/source/.git/
+[main (root-commit) 35ef22f] fixture
+ 2 files changed, 3 insertions(+)
+ create mode 100644 Jenkinsfile
+ create mode 100644 payload.txt
+[1000D[?25h[31mFOGELL_CREDENTIALS: 'bad-base64' has malformed base64 and was DROPPED; the step will fail closed
+[0m[1000D[?25h[37m[[37m00:11:43 [37mINF[37m] [37mEXPECTO! [36m218[37m tests run in [32m00:00:04.1567926[37m for [36mFogell.Differential[37m – [36m218[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m[37m[[37m00:11:43 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0mInitialized empty Git repository in /tmp/fogell-fg222-scm-boundary-3bbd81e35e1549ea9bd8bb0a3faa6261/fixture.git/
+Initialized empty Git repository in /tmp/fogell-fg222-scm-boundary-3bbd81e35e1549ea9bd8bb0a3faa6261/source/.git/
+[main (root-commit) da2df43] fixture
+ 2 files changed, 3 insertions(+)
+ create mode 100644 Jenkinsfile
+ create mode 100644 payload.txt
+[1000D[?25h[31mFOGELL_CREDENTIALS: 'bad-base64' has malformed base64 and was DROPPED; the step will fail closed
+[0m[1000D[?25h[37m[[37m00:11:47 [37mINF[37m] [37mEXPECTO! [36m218[37m tests run in [32m00:00:04.1530690[37m for [36mFogell.Differential[37m – [36m218[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m[37m[[37m00:11:48 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0mInitialized empty Git repository in /tmp/fogell-fg222-scm-boundary-b4320cac8ae94ab6baacae3f7937d4eb/fixture.git/
+Initialized empty Git repository in /tmp/fogell-fg222-scm-boundary-b4320cac8ae94ab6baacae3f7937d4eb/source/.git/
+[main (root-commit) cfdc101] fixture
+ 2 files changed, 3 insertions(+)
+ create mode 100644 Jenkinsfile
+ create mode 100644 payload.txt
+[1000D[?25h[31mFOGELL_CREDENTIALS: 'bad-base64' has malformed base64 and was DROPPED; the step will fail closed
+[0m[1000D[?25h[37m[[37m00:11:52 [37mINF[37m] [37mEXPECTO! [36m218[37m tests run in [32m00:00:04.1563598[37m for [36mFogell.Differential[37m – [36m218[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m[37m[[37m00:11:52 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0mInitialized empty Git repository in /tmp/fogell-fg222-scm-boundary-47da3f69f8e6409285429aa258a6af18/fixture.git/
+Initialized empty Git repository in /tmp/fogell-fg222-scm-boundary-47da3f69f8e6409285429aa258a6af18/source/.git/
+[main (root-commit) dea09af] fixture
+ 2 files changed, 3 insertions(+)
+ create mode 100644 Jenkinsfile
+ create mode 100644 payload.txt
+[1000D[?25h[31mFOGELL_CREDENTIALS: 'bad-base64' has malformed base64 and was DROPPED; the step will fail closed
+[0m[1000D[?25h[37m[[37m00:11:56 [37mINF[37m] [37mEXPECTO! [36m218[37m tests run in [32m00:00:04.1506394[37m for [36mFogell.Differential[37m – [36m218[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m[37m[[37m00:11:57 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0mInitialized empty Git repository in /tmp/fogell-fg222-scm-boundary-a99d5cd526644ca88e3b6be6288d4015/fixture.git/
+Initialized empty Git repository in /tmp/fogell-fg222-scm-boundary-a99d5cd526644ca88e3b6be6288d4015/source/.git/
+[main (root-commit) 3963378] fixture
+ 2 files changed, 3 insertions(+)
+ create mode 100644 Jenkinsfile
+ create mode 100644 payload.txt
+[1000D[?25h[31mFOGELL_CREDENTIALS: 'bad-base64' has malformed base64 and was DROPPED; the step will fail closed
+[0m[1000D[?25h[37m[[37m00:12:01 [37mINF[37m] [37mEXPECTO! [36m218[37m tests run in [32m00:00:04.1536190[37m for [36mFogell.Differential[37m – [36m218[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m[37m[[37m00:12:01 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0mInitialized empty Git repository in /tmp/fogell-fg222-scm-boundary-ea2f1fc045ac426a804f213dc720265e/fixture.git/
+Initialized empty Git repository in /tmp/fogell-fg222-scm-boundary-ea2f1fc045ac426a804f213dc720265e/source/.git/
+[main (root-commit) 40fabec] fixture
+ 2 files changed, 3 insertions(+)
+ create mode 100644 Jenkinsfile
+ create mode 100644 payload.txt
+[1000D[?25h[31mFOGELL_CREDENTIALS: 'bad-base64' has malformed base64 and was DROPPED; the step will fail closed
+[0m[1000D[?25h[37m[[37m00:12:05 [37mINF[37m] [37mEXPECTO! [36m218[37m tests run in [32m00:00:04.1553723[37m for [36mFogell.Differential[37m – [36m218[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m[37m[[37m00:12:06 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0mInitialized empty Git repository in /tmp/fogell-fg222-scm-boundary-3e65332d6bdf438e935c500d3dd51a31/fixture.git/
+Initialized empty Git repository in /tmp/fogell-fg222-scm-boundary-3e65332d6bdf438e935c500d3dd51a31/source/.git/
+[main (root-commit) 3eb505d] fixture
+ 2 files changed, 3 insertions(+)
+ create mode 100644 Jenkinsfile
+ create mode 100644 payload.txt
+[1000D[?25h[31mFOGELL_CREDENTIALS: 'bad-base64' has malformed base64 and was DROPPED; the step will fail closed
+[0m[1000D[?25h[37m[[37m00:12:10 [37mINF[37m] [37mEXPECTO! [36m218[37m tests run in [32m00:00:04.1562609[37m for [36mFogell.Differential[37m – [36m218[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m[37m[[37m00:12:10 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0mInitialized empty Git repository in /tmp/fogell-fg222-scm-boundary-30b082e511364c62ac6413e4d24af129/fixture.git/
+Initialized empty Git repository in /tmp/fogell-fg222-scm-boundary-30b082e511364c62ac6413e4d24af129/source/.git/
+[main (root-commit) 1027376] fixture
+ 2 files changed, 3 insertions(+)
+ create mode 100644 Jenkinsfile
+ create mode 100644 payload.txt
+[1000D[?25h[31mFOGELL_CREDENTIALS: 'bad-base64' has malformed base64 and was DROPPED; the step will fail closed
+[0m[1000D[?25h[37m[[37m00:12:15 [37mINF[37m] [37mEXPECTO! [36m218[37m tests run in [32m00:00:04.1572385[37m for [36mFogell.Differential[37m – [36m218[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m[37m[[37m00:12:15 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0mInitialized empty Git repository in /tmp/fogell-fg222-scm-boundary-86bf7c53fe844fcd98cbaff6f1576200/fixture.git/
+Initialized empty Git repository in /tmp/fogell-fg222-scm-boundary-86bf7c53fe844fcd98cbaff6f1576200/source/.git/
+[main (root-commit) bf9b7da] fixture
+ 2 files changed, 3 insertions(+)
+ create mode 100644 Jenkinsfile
+ create mode 100644 payload.txt
+[1000D[?25h[31mFOGELL_CREDENTIALS: 'bad-base64' has malformed base64 and was DROPPED; the step will fail closed
+[0m[1000D[?25h[37m[[37m00:12:19 [37mINF[37m] [37mEXPECTO! [36m218[37m tests run in [32m00:00:04.1567501[37m for [36mFogell.Differential[37m – [36m218[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m

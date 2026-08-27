@@ -101,18 +101,15 @@ module GString =
 
             match Map.tryFind bare known with
             | Some v -> v
-            | None ->
-                match Environment.GetEnvironmentVariable bare with
-                | null when strict && isEnvPath ->
-                    // MEASURED (`gstring-env-missing-null`): `${env.MISSING}` is a
-                    // null map read, stringified — the build sees the text `null`.
-                    "null"
-                | null when strict ->
-                    // MEASURED (`gstring-unresolved-property`): a bare unknown name
-                    // is a failed Groovy property lookup, and the build FAILS.
-                    raise (MissingProperty name)
-                | null -> ""
-                | v -> v
+            | None when strict && isEnvPath ->
+                // MEASURED (`gstring-env-missing-null`): `${env.MISSING}` is a
+                // null map read, stringified — the build sees the text `null`.
+                "null"
+            | None when strict ->
+                // MEASURED (`gstring-unresolved-property`): a bare unknown name
+                // is a failed Groovy property lookup, and the build FAILS.
+                raise (MissingProperty name)
+            | None -> ""
 
         // `${...}` may hold a real Groovy EXPRESSION, not just a variable path:
         // `input message: "Approve build ${1 + 1}?"` shows "Approve build 2?" on
@@ -130,22 +127,10 @@ module GString =
 
                 None
             | Result.Ok script ->
-                // The INHERITED process environment participates, exactly as the
-                // simple-name fast path's fallback does. MEASURED (receipt `gstring-inherited-env-resolves`, 2.568.1):
-                // declarative resolves a bare `${PATH}` from the agent environment and
-                // SUCCEEDS — the MissingPropertyException fires only for a name bound
-                // NOWHERE. Seeding only `known` here made `${PATH.toUpperCase()}` fail
-                // while `${PATH}` resolved: two rules for one name, split by whether a
-                // method call follows. `known` wins over the OS on collision.
-                let allVars =
-                    Seq.append
-                        (Environment.GetEnvironmentVariables()
-                         |> Seq.cast<Collections.DictionaryEntry>
-                         |> Seq.map (fun e -> string e.Key, string e.Value))
-                        (Map.toSeq known)
-                    |> Map.ofSeq
-
-                let asValues = allVars |> Map.map (fun _ v -> VStr v)
+                // FG-222. Both interpolation paths read one explicit build map.
+                // The run-entry compatibility baseline and all pipeline overlays
+                // are already in `known`; controller variables never seed Groovy.
+                let asValues = known |> Map.map (fun _ v -> VStr v)
 
                 // Carried script-binding values overlay the environment seeds — a
                 // reassignment wins, exactly as Groovy's Binding does — but they do

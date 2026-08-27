@@ -1,0 +1,6 @@
+commit 20ec7cbc8171be8dd7b0e6f1c2df15e7abe65406
+Good "git" signature for srikanth.remani@gmail.com with ED25519 key SHA256:6cTB2VnhVlZd0WqZSzWP6UsYjYewpNL20zho8M7R1tY
+Author: Srikanth Remani <srikanth.remani@gmail.com>
+Date:   Tue Aug 25 00:19:12 2026 -0500
+
+    security: isolate build environment authority

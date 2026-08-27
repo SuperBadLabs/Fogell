@@ -1,0 +1,875 @@
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index 53a6730..bf0c5f5 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -60,7 +60,15 @@ walker's output lock, and delivered by one publisher outside that lock. Slow or
+ reentrant callbacks cannot freeze concurrent emitters. The first callback
+ failure is typed, sticky, and never retried; `Run.Host` withholds terminal journal
+ truth so the controller requires reconciliation instead of converting transport
+-failure into build semantics.
++failure into build semantics. Attempt-local frame sequences remain the
++idempotency key for publication, while PostgreSQL atomically allocates a separate
++build-wide sequence for the public log cursor. Retries and parallel attempts may
++therefore both publish local sequence zero without a page limit splitting the
++tie or `next_sequence` skipping either chunk. Publishers lock the canonical
++lineage before the duplicate check, so concurrent replay of one local frame is
++a true database no-op and cannot burn a build cursor. Publication locks attempt,
++node, and build rows in that order before accepting the requested build, closing
++a concurrent mutable-node lineage substitution window.
+ 
+ Forced tenant RLS remains the data boundary. The only global runtime relation is
+ `organization_work_roots`, containing UUIDs and no tenant slug or record; every
+@@ -89,14 +97,14 @@ gate runs this proof against its PostgreSQL service.
+ 
+ Exact-tree HeMan acceptance on fresh databases:
+ 
+-- Store: 75/75 passed;
+-- Controller API: 22/22 passed;
++- Store: 80/80 passed;
++- Controller API: 23/23 passed;
+ - Differential: 261/261 passed;
+ - Execution: 94/94 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-locked repository gate also passes all 861 main-suite tests and every blocking
++locked repository gate also passes all 867 main-suite tests and every blocking
+ proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
+ recorded at publication rather than predicted here.
+ 
+diff --git a/scripts/backup-restore-drill.sh b/scripts/backup-restore-drill.sh
+index 4444011..91a410c 100755
+--- a/scripts/backup-restore-drill.sh
++++ b/scripts/backup-restore-drill.sh
+@@ -197,10 +197,11 @@ VALUES ('10000000-0000-0000-0000-000000000001', 'fg085a-org');
+ INSERT INTO projects (id, organization_id, slug)
+ VALUES ('20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'fg085a-project');
+ INSERT INTO builds
+-  (id, organization_id, project_id, number, idempotency_key, status, cancellation_requested, created_at)
++  (id, organization_id, project_id, number, idempotency_key, status,
++   cancellation_requested, next_log_sequence, created_at)
+ VALUES
+   ('30000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001',
+-   '20000000-0000-0000-0000-000000000001', 7, 'fg085a-key', 'running', true,
++   '20000000-0000-0000-0000-000000000001', 7, 'fg085a-key', 'running', true, 10,
+    '2026-08-24T01:02:03.456789Z');
+ INSERT INTO nodes
+   (id, organization_id, build_id, name, ordinal, required_trust_pool, required_capabilities, status)
+@@ -231,10 +232,10 @@ VALUES
+    '{"build":"30000000-0000-0000-0000-000000000001","ordinal":7}'::jsonb,
+    '2026-08-24T01:06:00.123456Z', '2026-08-24T01:05:30.123456Z');
+ INSERT INTO log_chunks
+-  (organization_id, build_id, attempt_id, sequence, body, created_at)
++  (organization_id, build_id, attempt_id, sequence, build_sequence, body, created_at)
+ VALUES
+   ('10000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001',
+-   '50000000-0000-0000-0000-000000000002', 9, 'quoted '' value | unicode π',
++   '50000000-0000-0000-0000-000000000002', 9, 9, 'quoted '' value | unicode π',
+    '2026-08-24T01:07:00.123456Z');
+ SELECT setval(pg_get_serial_sequence('events', 'id'), 41, true);
+ SELECT setval(pg_get_serial_sequence('outbox', 'id'), 52, true);
+diff --git a/src/Fogell.Store/Store.fs b/src/Fogell.Store/Store.fs
+index c63759e..c0ad690 100644
+--- a/src/Fogell.Store/Store.fs
++++ b/src/Fogell.Store/Store.fs
+@@ -2145,34 +2145,117 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+         tx.Commit()
+         explanation
+ 
+-    /// FG-064a. The append and its attempt -> node -> build ownership check are
+-    /// one statement. IDs are tenant-composite, so the attempt predicate and
+-    /// node join both carry the tenant.
+-    member _.AppendLog(org: OrganizationId, build: BuildId, attempt: AttemptId, sequence: int, body: string) : bool =
+-        use conn = openConn ()
+-        use tx = beginTenantTransaction conn org
++    /// Lock the canonical lineage in the same explicit order as execution
++    /// roll-up: attempt -> node -> build. Both attempts.node_id and
++    /// nodes.build_id are mutable columns, so locking only the attempt or using
++    /// a multi-table query leaves a substitution window. The requested build
++    /// is checked only after the actual lineage and its build row are locked.
++    /// A concurrent duplicate waiter also acquires the attempt only after the
++    /// winner commits, so its following READ COMMITTED duplicate query sees the
++    /// committed chunk without burning a build cursor.
++    member private _.LockLogLineage
++        (conn: NpgsqlConnection,
++         tx: NpgsqlTransaction,
++         org: OrganizationId,
++         build: BuildId,
++         attempt: AttemptId)
++        : bool =
++        use attemptLock = conn.CreateCommand()
++        attemptLock.Transaction <- tx
++        attemptLock.CommandText <-
++            "SELECT node_id FROM attempts
++              WHERE organization_id = @o AND id = @a
++              FOR UPDATE"
++        attemptLock.Parameters.AddWithValue("o", org.Value) |> ignore
++        attemptLock.Parameters.AddWithValue("a", attempt.Value) |> ignore
++
++        match attemptLock.ExecuteScalar() with
++        | null -> false
++        | nodeValue ->
++            let nodeId = nodeValue :?> Guid
++            use nodeLock = conn.CreateCommand()
++            nodeLock.Transaction <- tx
++            nodeLock.CommandText <-
++                "SELECT build_id FROM nodes
++                  WHERE organization_id = @o AND id = @n
++                  FOR UPDATE"
++            nodeLock.Parameters.AddWithValue("o", org.Value) |> ignore
++            nodeLock.Parameters.AddWithValue("n", nodeId) |> ignore
++
++            match nodeLock.ExecuteScalar() with
++            | null -> false
++            | buildValue ->
++                let lockedBuildId = buildValue :?> Guid
++                use buildLock = conn.CreateCommand()
++                buildLock.Transaction <- tx
++                buildLock.CommandText <-
++                    "SELECT id FROM builds
++                      WHERE organization_id = @o AND id = @b
++                      FOR UPDATE"
++                buildLock.Parameters.AddWithValue("o", org.Value) |> ignore
++                buildLock.Parameters.AddWithValue("b", lockedBuildId) |> ignore
++
++                match buildLock.ExecuteScalar() with
++                | :? Guid as lockedId -> lockedId = build.Value
++                | _ -> false
++
++    member private _.LogChunkExists
++        (conn: NpgsqlConnection, tx: NpgsqlTransaction, org: OrganizationId, attempt: AttemptId, sequence: int)
++        : bool =
+         use cmd = conn.CreateCommand()
+         cmd.Transaction <- tx
+         cmd.CommandText <-
+-            "INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, body)
+-             SELECT a.organization_id, n.build_id, a.id, @s, @body
+-             FROM attempts a
+-             JOIN nodes n ON n.organization_id = a.organization_id AND n.id = a.node_id
+-             WHERE a.organization_id = @o AND a.id = @a AND n.build_id = @b
+-             ON CONFLICT (organization_id, attempt_id, sequence) DO NOTHING"
++            "SELECT EXISTS (
++                 SELECT 1 FROM log_chunks
++                  WHERE organization_id = @o AND attempt_id = @a AND sequence = @s
++             )"
+         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+-        cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+         cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+         cmd.Parameters.AddWithValue("s", sequence) |> ignore
+-        cmd.Parameters.AddWithValue("body", body) |> ignore
+-        let appended = cmd.ExecuteNonQuery() = 1
++        cmd.ExecuteScalar() :?> bool
++
++    /// FG-064a. Canonical tenant lineage is locked before publication. The
++    /// caller's sequence is attempt-local for replay idempotency; the UPDATE
++    /// atomically allocates the public, build-wide cursor even when multiple
++    /// attempts publish concurrently.
++    member this.AppendLog(org: OrganizationId, build: BuildId, attempt: AttemptId, sequence: int, body: string) : bool =
++        use conn = openConn ()
++        use tx = beginTenantTransaction conn org
++
++        let appended =
++            if not (this.LockLogLineage(conn, tx, org, build, attempt)) then
++                false
++            elif this.LogChunkExists(conn, tx, org, attempt, sequence) then
++                false
++            else
++                use cmd = conn.CreateCommand()
++                cmd.Transaction <- tx
++                cmd.CommandText <-
++                    "WITH allocation AS (
++                         UPDATE builds b
++                            SET next_log_sequence = GREATEST(b.next_log_sequence, @s) + 1
++                          WHERE b.organization_id = @o AND b.id = @b
++                         RETURNING b.next_log_sequence - 1 AS build_sequence
++                     )
++                     INSERT INTO log_chunks
++                            (organization_id, build_id, attempt_id, sequence, build_sequence, body)
++                     SELECT @o, @b, @a, @s, allocation.build_sequence, @body
++                       FROM allocation"
++                cmd.Parameters.AddWithValue("o", org.Value) |> ignore
++                cmd.Parameters.AddWithValue("b", build.Value) |> ignore
++                cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
++                cmd.Parameters.AddWithValue("s", sequence) |> ignore
++                cmd.Parameters.AddWithValue("body", body) |> ignore
++                cmd.ExecuteNonQuery() = 1
++
+         tx.Commit()
+         appended
+ 
+     /// The local supervisor, not the untrusted child, writes public log chunks.
+-    /// Authority is re-checked in the INSERT so a stale supervisor cannot append
+-    /// after its lease or fence has been replaced.
+-    member _.AppendLogFenced
++    /// After the canonical lineage locks are held, authority is re-checked in
++    /// the allocation statement so a stale supervisor cannot consume a cursor
++    /// or append after its lease or fence has been replaced.
++    member this.AppendLogFenced
+         (org: OrganizationId,
+          build: BuildId,
+          attempt: AttemptId,
+@@ -2183,28 +2266,45 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+         : bool =
+         use conn = openConn ()
+         use tx = beginTenantTransaction conn org
+-        use cmd = conn.CreateCommand()
+-        cmd.Transaction <- tx
+-        cmd.CommandText <-
+-            "INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, body)
+-             SELECT a.organization_id, n.build_id, a.id, @s, @body
+-               FROM attempts a
+-               JOIN nodes n
+-                 ON n.organization_id = a.organization_id AND n.id = a.node_id
+-              WHERE a.organization_id = @o AND a.id = @a AND n.build_id = @b
+-                AND a.fence = @f AND a.lease_owner = @owner
+-                AND a.lease_expires_at > clock_timestamp()
+-                AND a.state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
+-                AND a.restore_epoch = (SELECT restore_epoch FROM controller_metadata WHERE singleton)
+-             ON CONFLICT (organization_id, attempt_id, sequence) DO NOTHING"
+-        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+-        cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+-        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+-        cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
+-        cmd.Parameters.AddWithValue("owner", owner) |> ignore
+-        cmd.Parameters.AddWithValue("s", sequence) |> ignore
+-        cmd.Parameters.AddWithValue("body", body) |> ignore
+-        let appended = cmd.ExecuteNonQuery() = 1
++
++        let appended =
++            if not (this.LockLogLineage(conn, tx, org, build, attempt)) then
++                false
++            elif this.LogChunkExists(conn, tx, org, attempt, sequence) then
++                false
++            else
++                use cmd = conn.CreateCommand()
++                cmd.Transaction <- tx
++                cmd.CommandText <-
++                    "WITH allocation AS (
++                         UPDATE builds b
++                            SET next_log_sequence = GREATEST(b.next_log_sequence, @s) + 1
++                          WHERE b.organization_id = @o AND b.id = @b
++                            AND EXISTS (
++                                SELECT 1
++                                  FROM attempts a
++                                 WHERE a.organization_id = @o AND a.id = @a
++                                   AND a.fence = @f AND a.lease_owner = @owner
++                                   AND a.lease_expires_at > clock_timestamp()
++                                   AND a.state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
++                                   AND a.restore_epoch =
++                                       (SELECT restore_epoch FROM controller_metadata WHERE singleton)
++                            )
++                         RETURNING b.next_log_sequence - 1 AS build_sequence
++                     )
++                     INSERT INTO log_chunks
++                            (organization_id, build_id, attempt_id, sequence, build_sequence, body)
++                     SELECT @o, @b, @a, @s, allocation.build_sequence, @body
++                       FROM allocation"
++                cmd.Parameters.AddWithValue("o", org.Value) |> ignore
++                cmd.Parameters.AddWithValue("b", build.Value) |> ignore
++                cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
++                cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
++                cmd.Parameters.AddWithValue("owner", owner) |> ignore
++                cmd.Parameters.AddWithValue("s", sequence) |> ignore
++                cmd.Parameters.AddWithValue("body", body) |> ignore
++                cmd.ExecuteNonQuery() = 1
++
+         tx.Commit()
+         appended
+ 
+@@ -2234,16 +2334,16 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+         use cmd = conn.CreateCommand()
+         cmd.Transaction <- tx
+         cmd.CommandText <-
+-            "SELECT l.sequence, l.body
++            "SELECT l.build_sequence, l.body
+                FROM builds b
+                LEFT JOIN log_chunks l
+                  ON l.organization_id = b.organization_id
+                 AND l.build_id = b.id
+-                AND l.sequence >= @s
++                AND l.build_sequence >= @s
+               WHERE b.organization_id = @o
+                 AND b.project_id = @p
+                 AND b.id = @b
+-              ORDER BY l.sequence
++              ORDER BY l.build_sequence
+               LIMIT @limit"
+         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+         cmd.Parameters.AddWithValue("p", project.Value) |> ignore
+diff --git a/src/Fogell.Store/migrations/0008_build_log_sequence.sql b/src/Fogell.Store/migrations/0008_build_log_sequence.sql
+new file mode 100644
+index 0000000..8882011
+--- /dev/null
++++ b/src/Fogell.Store/migrations/0008_build_log_sequence.sql
+@@ -0,0 +1,72 @@
++-- Progressive log cursors are build-wide, while execution attempts (including
++-- retries and parallel nodes) number their own frames from zero. Keep the
++-- attempt-local sequence for idempotent publication and add a separately
++-- allocated build-wide sequence for the public cursor.
++
++-- Migrations run as the maintenance owner, outside a tenant transaction. The
++-- two tables are FORCE-RLS in normal operation, so temporarily disable their
++-- policies while backfilling every tenant and restore the boundary before this
++-- transaction can commit.
++ALTER TABLE builds NO FORCE ROW LEVEL SECURITY;
++ALTER TABLE builds DISABLE ROW LEVEL SECURITY;
++ALTER TABLE log_chunks NO FORCE ROW LEVEL SECURITY;
++ALTER TABLE log_chunks DISABLE ROW LEVEL SECURITY;
++
++ALTER TABLE builds
++    ADD COLUMN next_log_sequence integer NOT NULL DEFAULT 0;
++
++ALTER TABLE log_chunks
++    ADD COLUMN build_sequence integer;
++
++WITH ordered AS (
++    SELECT id,
++           organization_id,
++           build_id,
++           sequence,
++           row_number() OVER (
++               PARTITION BY organization_id, build_id
++               ORDER BY created_at, id
++           ) - 1 AS ordinal
++      FROM log_chunks
++),
++ranked AS (
++    SELECT id,
++           ordinal + MAX(sequence - ordinal) OVER (
++               PARTITION BY organization_id, build_id
++               ORDER BY ordinal
++               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
++           ) AS build_sequence
++      FROM ordered
++)
++UPDATE log_chunks AS chunk
++   SET build_sequence = ranked.build_sequence
++  FROM ranked
++ WHERE ranked.id = chunk.id;
++
++UPDATE builds AS build
++   SET next_log_sequence = next_sequence.value
++  FROM (
++      SELECT organization_id,
++             build_id,
++             COALESCE(MAX(build_sequence), -1) + 1 AS value
++        FROM log_chunks
++       GROUP BY organization_id, build_id
++  ) AS next_sequence
++ WHERE build.organization_id = next_sequence.organization_id
++   AND build.id = next_sequence.build_id;
++
++ALTER TABLE log_chunks
++    ALTER COLUMN build_sequence SET NOT NULL;
++
++ALTER TABLE log_chunks
++    ADD CONSTRAINT log_chunks_build_sequence_unique
++    UNIQUE (organization_id, build_id, build_sequence);
++
++DROP INDEX IF EXISTS log_chunks_read_order;
++CREATE INDEX log_chunks_read_order
++    ON log_chunks (organization_id, build_id, build_sequence);
++
++ALTER TABLE builds ENABLE ROW LEVEL SECURITY;
++ALTER TABLE builds FORCE ROW LEVEL SECURITY;
++ALTER TABLE log_chunks ENABLE ROW LEVEL SECURITY;
++ALTER TABLE log_chunks FORCE ROW LEVEL SECURITY;
+diff --git a/tests/Fogell.Controller.Api.Tests/Tests.fs b/tests/Fogell.Controller.Api.Tests/Tests.fs
+index 4b15170..a95a183 100644
+--- a/tests/Fogell.Controller.Api.Tests/Tests.fs
++++ b/tests/Fogell.Controller.Api.Tests/Tests.fs
+@@ -33,7 +33,7 @@ let private token = String.replicate 32 "k"
+ let private store = Store(connectionString)
+ let private maxPipelineBytes = 1024
+ 
+-let private startServer () =
++let private startServer maxLogChunks =
+     let auth =
+         match Authorization.configure token with
+         | Ok c -> c
+@@ -52,7 +52,7 @@ let private startServer () =
+           Auth = auth
+           TrustPool = "trusted-linux"
+           MaxPipelineBytes = maxPipelineBytes
+-          MaxLogChunks = 1000 }
++          MaxLogChunks = maxLogChunks }
+         app
+     |> ignore
+ 
+@@ -151,7 +151,7 @@ let authorization =
+           } ]
+ 
+ let endpoints =
+-    let app, baseUrl = startServer ()
++    let app, baseUrl = startServer 1000
+ 
+     testList
+         "FG-060 endpoints"
+@@ -413,6 +413,61 @@ let endpoints =
+               Expect.isFalse (tail.Contains "line-0") "offset respected"
+           }
+ 
++          test "one-chunk pages cross retry attempts without duplicate or skipped local sequence ties" {
++              let smallApp, smallBaseUrl = startServer 1
++
++              try
++                  let org, project = freshProject ()
++                  let url = $"{smallBaseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
++                  let _, body = send HttpMethod.Post url (Some token) (Some "log-retry-api") (Some pipeline)
++                  use admission = JsonDocument.Parse body
++                  let buildId = BuildId(Guid.Parse(admission.RootElement.GetProperty("build_id").GetString()))
++                  let parent = AttemptId(Guid.Parse(admission.RootElement.GetProperty("attempt_id").GetString()))
++
++                  Expect.isTrue (store.AppendLog(org, buildId, parent, 0, "parent-zero")) "parent log appended"
++
++                  let owner = "log-retry-api-owner"
++                  let fence =
++                      match store.OfferAttempt(org, parent, owner, 60) with
++                      | Ok fence -> fence
++                      | Error error -> failtestf "offer failed: %s" error
++
++                  Expect.isTrue (store.AcceptAttempt(org, parent, fence, owner)) "parent accepted"
++
++                  match store.PublishTerminal(org, parent, fence, owner, Failure) with
++                  | Error error -> failtestf "terminal publication failed: %s" error
++                  | Ok () -> ()
++
++                  let child = AttemptId(Guid.NewGuid())
++
++                  match store.DecideRetry(org, parent, 2, child) with
++                  | Error error -> failtestf "retry decision failed: %A" error
++                  | Ok _ -> ()
++
++                  Expect.isTrue (store.AppendLog(org, buildId, child, 0, "child-zero")) "retry log appended"
++
++                  let page from =
++                      let code, response = send HttpMethod.Get $"{url}/{buildId.Value}/logs?from={from}" (Some token) None None
++                      Expect.equal code 200 $"page {from} is readable"
++                      JsonDocument.Parse response
++
++                  use first = page 0
++                  Expect.equal (first.RootElement.GetProperty("next_sequence").GetInt32()) 1 "first cursor advances once"
++                  Expect.equal (first.RootElement.GetProperty("chunks").GetArrayLength()) 1 "limit is exact"
++                  Expect.equal (first.RootElement.GetProperty("chunks").[0].GetProperty("body").GetString()) "parent-zero" "first attempt appears once"
++
++                  use second = page 1
++                  Expect.equal (second.RootElement.GetProperty("next_sequence").GetInt32()) 2 "retry cursor advances once"
++                  Expect.equal (second.RootElement.GetProperty("chunks").GetArrayLength()) 1 "limit remains exact"
++                  Expect.equal (second.RootElement.GetProperty("chunks").[0].GetProperty("body").GetString()) "child-zero" "retry appears once"
++
++                  use exhausted = page 2
++                  Expect.equal (exhausted.RootElement.GetProperty("next_sequence").GetInt32()) 2 "empty page retains cursor"
++                  Expect.equal (exhausted.RootElement.GetProperty("chunks").GetArrayLength()) 0 "both chunks were consumed exactly once"
++              finally
++                  smallApp.StopAsync() |> Async.AwaitTask |> Async.RunSynchronously
++          }
++
+           // Corrected expectation: my first version asserted 409 on a repeat
+           // cancel. That is wrong — a retried cancellation after a client timeout
+           // must not look like an error, since the requested state is already the
+diff --git a/tests/Fogell.Store.Tests/Tests.fs b/tests/Fogell.Store.Tests/Tests.fs
+index 9fd2dd9..119f421 100644
+--- a/tests/Fogell.Store.Tests/Tests.fs
++++ b/tests/Fogell.Store.Tests/Tests.fs
+@@ -247,6 +247,194 @@ let migrations =
+                       (string value)
+                       "26daeb1153b1a71b945bc897aee2ce1dba9994bc53aa1bdf206e416aa284a7aa"
+                       "migration 0006 exact source checksum"
++          }
++
++          test "build-wide log cursor migration 0008 is checksum-pinned" {
++              use conn = new Npgsql.NpgsqlConnection(connectionString)
++              conn.Open()
++              use cmd = conn.CreateCommand()
++              cmd.CommandText <- "SELECT checksum FROM schema_migrations WHERE version = '0008'"
++
++              match cmd.ExecuteScalar() with
++              | null -> failtest "migration ledger has no 0008 row"
++              | value ->
++                  Expect.equal
++                      (string value)
++                      "a164a5a46fe18d9712508bb7222016badb9fef4cd51c4516662b591a912bede9"
++                      "migration 0008 exact source checksum"
++          }
++
++          test "migration 0008 upgrades populated sparse and colliding legacy logs" {
++              let databaseName = $"fogell_log_upgrade_{Guid.NewGuid():N}"
++              let adminBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
++              adminBuilder.Database <- "postgres"
++              let targetBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
++              targetBuilder.Database <- databaseName
++
++              use admin = new Npgsql.NpgsqlConnection(adminBuilder.ConnectionString)
++              admin.Open()
++              use create = admin.CreateCommand()
++              create.CommandText <- $"CREATE DATABASE {databaseName}"
++              create.ExecuteNonQuery() |> ignore
++
++              try
++                  use target = new Npgsql.NpgsqlConnection(targetBuilder.ConnectionString)
++                  target.Open()
++
++                  Migrations.all ()
++                  |> List.filter (fun (version, _) -> version <= "0007")
++                  |> List.iter (fun (_, sql) ->
++                      use apply = target.CreateCommand()
++                      apply.CommandText <- sql
++                      apply.ExecuteNonQuery() |> ignore)
++
++                  let org = Guid.NewGuid()
++                  let project = Guid.NewGuid()
++                  let populatedBuild = Guid.NewGuid()
++                  let emptyBuild = Guid.NewGuid()
++                  let node = Guid.NewGuid()
++                  let parent = Guid.NewGuid()
++                  let retry = Guid.NewGuid()
++
++                  use seedTx = target.BeginTransaction()
++                  use seed = target.CreateCommand()
++                  seed.Transaction <- seedTx
++                  seed.CommandText <-
++                      "SELECT set_config('fogell.organization_id', @org_text, true);
++                       INSERT INTO organizations (id, slug) VALUES (@org, 'upgrade-org');
++                       INSERT INTO projects (id, organization_id, slug)
++                       VALUES (@project, @org, 'upgrade-project');
++                       INSERT INTO builds
++                              (id, organization_id, project_id, number, idempotency_key, status)
++                       VALUES (@build, @org, @project, 1, 'populated', 'queued'),
++                              (@empty, @org, @project, 2, 'empty', 'queued');
++                       INSERT INTO nodes
++                              (id, organization_id, build_id, name, ordinal,
++                               required_trust_pool, status)
++                       VALUES (@node, @org, @build, 'legacy', 0, 'trusted-linux', 'queued');
++                       INSERT INTO attempts
++                              (id, organization_id, node_id, ordinal, state)
++                       VALUES (@parent, @org, @node, 0, 'queued'),
++                              (@retry, @org, @node, 1, 'queued');
++                       INSERT INTO log_chunks
++                              (organization_id, build_id, attempt_id, sequence, body, created_at)
++                       VALUES (@org, @build, @parent, 0, 'zero',
++                               '2026-01-01T00:00:00Z'::timestamptz),
++                              (@org, @build, @parent, 4, 'four',
++                               '2026-01-01T00:00:01Z'::timestamptz),
++                              (@org, @build, @retry, 0, 'retry-zero',
++                               '2026-01-01T00:00:02Z'::timestamptz)"
++                  seed.Parameters.AddWithValue("org_text", string org) |> ignore
++                  seed.Parameters.AddWithValue("org", org) |> ignore
++                  seed.Parameters.AddWithValue("project", project) |> ignore
++                  seed.Parameters.AddWithValue("build", populatedBuild) |> ignore
++                  seed.Parameters.AddWithValue("empty", emptyBuild) |> ignore
++                  seed.Parameters.AddWithValue("node", node) |> ignore
++                  seed.Parameters.AddWithValue("parent", parent) |> ignore
++                  seed.Parameters.AddWithValue("retry", retry) |> ignore
++                  seed.ExecuteNonQuery() |> ignore
++                  seedTx.Commit()
++
++                  let migration8 =
++                      Migrations.all ()
++                      |> List.find (fun (version, _) -> version = "0008")
++                      |> snd
++
++                  use apply8 = target.CreateCommand()
++                  apply8.CommandText <- migration8
++                  apply8.ExecuteNonQuery() |> ignore
++
++                  use readTx = target.BeginTransaction()
++                  use scopeRead = target.CreateCommand()
++                  scopeRead.Transaction <- readTx
++                  scopeRead.CommandText <- "SELECT set_config('fogell.organization_id', @org_text, true)"
++                  scopeRead.Parameters.AddWithValue("org_text", string org) |> ignore
++                  scopeRead.ExecuteScalar() |> ignore
++                  use select = target.CreateCommand()
++                  select.Transaction <- readTx
++                  select.CommandText <-
++                      "SELECT body, build_sequence
++                         FROM log_chunks
++                        WHERE organization_id = @org AND build_id = @build
++                        ORDER BY build_sequence"
++                  select.Parameters.AddWithValue("org", org) |> ignore
++                  select.Parameters.AddWithValue("build", populatedBuild) |> ignore
++                  use rows = select.ExecuteReader()
++
++                  let mapping =
++                      [ while rows.Read() do
++                            yield rows.GetString 0, rows.GetInt32 1 ]
++
++                  rows.Close()
++                  Expect.equal mapping [ "zero", 0; "four", 4; "retry-zero", 5 ] "sparse values survive and retry tie is lifted"
++
++                  use counters = target.CreateCommand()
++                  counters.Transaction <- readTx
++                  counters.CommandText <-
++                      "SELECT id, next_log_sequence
++                         FROM builds
++                        WHERE organization_id = @org AND id IN (@build, @empty)
++                        ORDER BY number"
++                  counters.Parameters.AddWithValue("org", org) |> ignore
++                  counters.Parameters.AddWithValue("build", populatedBuild) |> ignore
++                  counters.Parameters.AddWithValue("empty", emptyBuild) |> ignore
++                  use counterRows = counters.ExecuteReader()
++                  Expect.isTrue (counterRows.Read()) "populated build counter exists"
++                  Expect.equal (counterRows.GetGuid 0, counterRows.GetInt32 1) (populatedBuild, 6) "counter follows lifted maximum"
++                  Expect.isTrue (counterRows.Read()) "empty build counter exists"
++                  Expect.equal (counterRows.GetGuid 0, counterRows.GetInt32 1) (emptyBuild, 0) "empty build stays at zero"
++                  Expect.isFalse (counterRows.Read()) "only the two seeded builds exist"
++                  counterRows.Close()
++                  readTx.Commit()
++
++                  use collisionTx = target.BeginTransaction()
++                  use collision = target.CreateCommand()
++                  collision.Transaction <- collisionTx
++                  collision.CommandText <-
++                      "SELECT set_config('fogell.organization_id', @org_text, true);
++                       INSERT INTO log_chunks
++                              (organization_id, build_id, attempt_id, sequence, build_sequence, body)
++                       VALUES (@org, @build, @retry, 99, 5, 'collision')"
++                  collision.Parameters.AddWithValue("org_text", string org) |> ignore
++                  collision.Parameters.AddWithValue("org", org) |> ignore
++                  collision.Parameters.AddWithValue("build", populatedBuild) |> ignore
++                  collision.Parameters.AddWithValue("retry", retry) |> ignore
++
++                  let uniqueRejected =
++                      try
++                          collision.ExecuteNonQuery() |> ignore
++                          false
++                      with :? Npgsql.PostgresException as error ->
++                          error.SqlState = "23505"
++
++                  Expect.isTrue uniqueRejected "build-wide cursor uniqueness is enforced"
++                  collisionTx.Rollback()
++
++                  use rls = target.CreateCommand()
++                  rls.CommandText <-
++                      "SELECT relname, relrowsecurity, relforcerowsecurity
++                         FROM pg_class
++                        WHERE relname IN ('builds', 'log_chunks')
++                        ORDER BY relname"
++                  use rlsRows = rls.ExecuteReader()
++                  let protections =
++                      [ while rlsRows.Read() do
++                            yield rlsRows.GetString 0, rlsRows.GetBoolean 1, rlsRows.GetBoolean 2 ]
++
++                  rlsRows.Close()
++                  Expect.equal protections [ "builds", true, true; "log_chunks", true, true ] "migration restores forced RLS"
++              finally
++                  Npgsql.NpgsqlConnection.ClearAllPools()
++                  use terminate = admin.CreateCommand()
++                  terminate.CommandText <-
++                      "SELECT pg_terminate_backend(pid)
++                         FROM pg_stat_activity
++                        WHERE datname = @database AND pid <> pg_backend_pid()"
++                  terminate.Parameters.AddWithValue("database", databaseName) |> ignore
++                  terminate.ExecuteNonQuery() |> ignore
++                  use drop = admin.CreateCommand()
++                  drop.CommandText <- $"DROP DATABASE {databaseName}"
++                  drop.ExecuteNonQuery() |> ignore
+           } ]
+ 
+ let tenantIsolation =
+@@ -512,8 +700,9 @@ let tenantIsolation =
+                       "event cannot substitute another tenant's attempt"
+                   Expect.isTrue
+                       (crossLineageRejected
+-                          "INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, body)
+-                           VALUES (@o, @b, @a, 99, 'cross-lineage')")
++                          "INSERT INTO log_chunks
++                                  (organization_id, build_id, attempt_id, sequence, build_sequence, body)
++                           VALUES (@o, @b, @a, 99, 99, 'cross-lineage')")
+                       "log cannot substitute another tenant's attempt"
+ 
+                   use catalog = new Npgsql.NpgsqlConnection(connectionString)
+@@ -2870,6 +3059,194 @@ let logs =
+               Expect.equal (readLog org project a.BuildId 0 |> List.length) 1 "still one chunk"
+           }
+ 
++          test "concurrent duplicate publication does not burn the next build cursor" {
++              let nextCursor (org: OrganizationId) (build: BuildId) =
++                  use conn = new Npgsql.NpgsqlConnection(connectionString)
++                  conn.Open()
++                  use tx = conn.BeginTransaction()
++                  use scope = conn.CreateCommand()
++                  scope.Transaction <- tx
++                  scope.CommandText <- "SELECT set_config('fogell.organization_id', @o, true)"
++                  scope.Parameters.AddWithValue("o", string org.Value) |> ignore
++                  scope.ExecuteScalar() |> ignore
++                  use read = conn.CreateCommand()
++                  read.Transaction <- tx
++                  read.CommandText <-
++                      "SELECT next_log_sequence FROM builds
++                        WHERE organization_id = @o AND id = @b"
++                  read.Parameters.AddWithValue("o", org.Value) |> ignore
++                  read.Parameters.AddWithValue("b", build.Value) |> ignore
++                  let value = read.ExecuteScalar() :?> int
++                  tx.Commit()
++                  value
++
++              let race (append: unit -> bool) =
++                  [ async { return append () }
++                    async { return append () } ]
++                  |> Async.Parallel
++                  |> Async.RunSynchronously
++
++              let org, project = freshProject ()
++              let unfenced = admitOk (newBuild org project "log-no-burn-unfenced" [ "b" ])
++              let unfencedResults =
++                  race (fun () ->
++                      Store(connectionString).AppendLog(
++                          org, unfenced.BuildId, unfenced.AttemptId, 0, "unfenced-zero"))
++
++              Expect.equal (unfencedResults |> Array.filter id |> Array.length) 1 "one unfenced publisher wins"
++              Expect.isTrue
++                  (store.AppendLog(org, unfenced.BuildId, unfenced.AttemptId, 1, "unfenced-one"))
++                  "next real unfenced chunk appends"
++              Expect.equal
++                  (readLog org project unfenced.BuildId 0)
++                  [ 0, "unfenced-zero"; 1, "unfenced-one" ]
++                  "unfenced replay burned no public cursor"
++              Expect.equal (nextCursor org unfenced.BuildId) 2 "unfenced counter advanced only for real chunks"
++
++              let fenced, fence = runningAttempt org project "log-no-burn-fenced" "log-no-burn-owner" 60
++              let fencedResults =
++                  race (fun () ->
++                      Store(connectionString).AppendLogFenced(
++                          org,
++                          fenced.BuildId,
++                          fenced.AttemptId,
++                          fence,
++                          "log-no-burn-owner",
++                          0,
++                          "fenced-zero"))
++
++              Expect.equal (fencedResults |> Array.filter id |> Array.length) 1 "one fenced publisher wins"
++              Expect.isTrue
++                  (store.AppendLogFenced(
++                      org,
++                      fenced.BuildId,
++                      fenced.AttemptId,
++                      fence,
++                      "log-no-burn-owner",
++                      1,
++                      "fenced-one"))
++                  "next real fenced chunk appends"
++              Expect.equal
++                  (readLog org project fenced.BuildId 0)
++                  [ 0, "fenced-zero"; 1, "fenced-one" ]
++                  "fenced replay burned no public cursor"
++              Expect.equal (nextCursor org fenced.BuildId) 2 "fenced counter advanced only for real chunks"
++          }
++
++          test "a concurrent node move cannot splice a log into the requested build" {
++              let org, project = freshProject ()
++              let source = admitOk (newBuild org project "log-node-move-source" [ "b" ])
++              let target = admitOk (newBuild org project "log-node-move-target" [ "b" ])
++              let applicationName = $"fogell-log-lineage-{Guid.NewGuid():N}"
++              let raceBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
++              raceBuilder.ApplicationName <- applicationName
++
++              use mover = new Npgsql.NpgsqlConnection(connectionString)
++              mover.Open()
++              use moveTx = mover.BeginTransaction()
++              use scope = mover.CreateCommand()
++              scope.Transaction <- moveTx
++              scope.CommandText <- "SELECT set_config('fogell.organization_id', @o, true)"
++              scope.Parameters.AddWithValue("o", string org.Value) |> ignore
++              scope.ExecuteScalar() |> ignore
++              use move = mover.CreateCommand()
++              move.Transaction <- moveTx
++              move.CommandText <-
++                  "UPDATE nodes SET build_id = @target
++                    WHERE organization_id = @o AND id = @node"
++              move.Parameters.AddWithValue("target", target.BuildId.Value) |> ignore
++              move.Parameters.AddWithValue("o", org.Value) |> ignore
++              move.Parameters.AddWithValue("node", source.NodeId.Value) |> ignore
++              Expect.equal (move.ExecuteNonQuery()) 1 "node move holds the lineage row lock"
++
++              let append =
++                  System.Threading.Tasks.Task.Run(fun () ->
++                      Store(raceBuilder.ConnectionString).AppendLog(
++                          org, source.BuildId, source.AttemptId, 0, "must-not-splice"))
++
++              use observer = new Npgsql.NpgsqlConnection(connectionString)
++              observer.Open()
++
++              let rec waitForNodeLock deadline =
++                  use waiting = observer.CreateCommand()
++                  waiting.CommandText <-
++                      "SELECT EXISTS (
++                           SELECT 1 FROM pg_stat_activity
++                            WHERE application_name = @application
++                              AND wait_event_type = 'Lock'
++                              AND query LIKE 'SELECT build_id FROM nodes%'
++                       )"
++                  waiting.Parameters.AddWithValue("application", applicationName) |> ignore
++
++                  if waiting.ExecuteScalar() :?> bool then
++                      true
++                  elif DateTime.UtcNow >= deadline then
++                      false
++                  else
++                      System.Threading.Thread.Sleep 10
++                      waitForNodeLock deadline
++
++              Expect.isTrue
++                  (waitForNodeLock (DateTime.UtcNow.AddSeconds 5.0))
++                  "append reaches and waits on the explicitly locked node"
++
++              moveTx.Commit()
++              Expect.isFalse append.Result "moved lineage is re-read and rejected after the lock wait"
++              Expect.equal (readLog org project source.BuildId 0) [] "requested build received no spliced log"
++              Expect.equal (readLog org project target.BuildId 0) [] "actual moved-to build received no disguised log"
++
++              use verify = new Npgsql.NpgsqlConnection(connectionString)
++              verify.Open()
++              use verifyTx = verify.BeginTransaction()
++              use verifyScope = verify.CreateCommand()
++              verifyScope.Transaction <- verifyTx
++              verifyScope.CommandText <- "SELECT set_config('fogell.organization_id', @o, true)"
++              verifyScope.Parameters.AddWithValue("o", string org.Value) |> ignore
++              verifyScope.ExecuteScalar() |> ignore
++              use counters = verify.CreateCommand()
++              counters.Transaction <- verifyTx
++              counters.CommandText <-
++                  "SELECT next_log_sequence FROM builds
++                    WHERE organization_id = @o AND id IN (@source, @target)
++                    ORDER BY id"
++              counters.Parameters.AddWithValue("o", org.Value) |> ignore
++              counters.Parameters.AddWithValue("source", source.BuildId.Value) |> ignore
++              counters.Parameters.AddWithValue("target", target.BuildId.Value) |> ignore
++              use rows = counters.ExecuteReader()
++              let values = [ while rows.Read() do yield rows.GetInt32 0 ]
++              Expect.equal values [ 0; 0 ] "rejected splice consumed no cursor on either build"
++              rows.Close()
++              verifyTx.Commit()
++          }
++
++          test "build-wide pages do not skip retry chunks with the same attempt-local sequence" {
++              let org, project = freshProject ()
++              let parent = terminalAttempt org project "log-retry-page"
++
++              let child =
++                  let decision = decideRetryOk org parent.AttemptId 2 (AttemptId(Guid.NewGuid()))
++
++                  match decision.Persisted.Decision.Outcome with
++                  | BudgetExhausted -> failtest "retry budget unexpectedly exhausted"
++                  | ChildCreated child -> child
++
++              Expect.isTrue
++                  (store.AppendLog(org, parent.BuildId, parent.AttemptId, 0, "parent-zero"))
++                  "parent attempt publishes local sequence zero"
++
++              Expect.isTrue
++                  (store.AppendLog(org, parent.BuildId, child.Id, 0, "child-zero"))
++                  "retry attempt independently publishes local sequence zero"
++
++              let first = store.ReadLogPage(org, project, parent.BuildId, 0, 1)
++              let second = store.ReadLogPage(org, project, parent.BuildId, 1, 1)
++              let exhausted = store.ReadLogPage(org, project, parent.BuildId, 2, 1)
++
++              Expect.equal first (Some [ 0, "parent-zero" ]) "first page contains exactly the first attempt"
++              Expect.equal second (Some [ 1, "child-zero" ]) "next cursor contains exactly the retry"
++              Expect.equal exhausted (Some []) "advancing twice neither duplicates nor skips a chunk"
++          }
++
+           test "an attempt cannot append to another build or consume its real sequence" {
+               let org, project = freshProject ()
+               let first = admitOk (newBuild org project "log-bound-first" [ "b" ])

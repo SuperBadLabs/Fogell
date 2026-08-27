@@ -1,0 +1,12 @@
+M  docs/EXECUTION_BOARD.md
+M  docs/runbooks/controller-host.md
+M  docs/tickets/FG-224.md
+M  scripts/prove-runnable-controller.sh
+M  src/Fogell.Controller.Host/Worker.fs
+M  src/Fogell.Controller.Host/WorkerPaths.fs
+M  src/Fogell.Execution/ProcessGroup.fs
+M  src/Fogell.Store/Store.fs
+M  tests/Fogell.Controller.Api.Tests/Tests.fs
+M  tests/Fogell.Execution.Tests/Tests.fs
+M  tests/Fogell.Store.Tests/Tests.fs
+?? evidence/.20260826T125308Z-fg-224-review20-closure.partial.U3Pwtc/

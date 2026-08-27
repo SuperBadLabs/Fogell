@@ -3,6 +3,7 @@ module Fogell.Differential.Cli.Program
 open System
 open System.IO
 open Fogell.Differential
+open Fogell.Execution
 
 /// FG-002. Runs one or more Jenkinsfiles through BOTH engines and seals a
 /// receipt per file.
@@ -140,6 +141,24 @@ let main argv =
         // three rounds of reference-gate lexing unnecessary: expansions live on
         // engine-generated lines, literals live in output, and neither needs the
         // script parsed. The union set stays injective via the ambiguity dropper.
+        // The build-visible HOME is derived from this explicit run root, so the
+        // controller's TMPDIR must not select it.  /tmp is part of the Linux
+        // agent contract just like the fixed build PATH.
+        let fogellRoot =
+            Path.Combine("/tmp", "fogell-diff-" + Guid.NewGuid().ToString("N").Substring(0, 8))
+
+        Directory.CreateDirectory(
+            fogellRoot,
+            UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute
+        )
+        |> ignore
+
+        // HOME is build-scoped and injected into the enabled HOME fold by the
+        // Fogell runner once job/build identity is known. PATH remains static.
+        let fogellBuildBaseline =
+            LaunchEnvironment.buildBaseline ""
+            |> List.filter (fun (name, _) -> name <> "HOME")
+
         let envReplacements =
             if not envCanonicalisationEnabled then
                 []
@@ -150,10 +169,9 @@ let main argv =
                       | Some(_, v) when v <> "" -> yield v, "${" + name + "}"
                       | _ -> ()
 
-                      match Environment.GetEnvironmentVariable name with
-                      | null
-                      | "" -> ()
-                      | v -> yield v, "${" + name + "}" ])
+                      match fogellBuildBaseline |> List.tryFind (fun (n, _) -> n = name) with
+                      | Some(_, value) -> yield value, "${" + name + "}"
+                      | None -> () ])
                 |> List.distinct
                 |> List.groupBy fst
                 |> List.choose (fun (_, pairs) ->
@@ -246,11 +264,6 @@ let main argv =
               WorkspaceCollector = collector
               // per-case; replaced at each call site from that case's script
               DeclaresTimestamps = false }
-
-        let fogellRoot =
-            Path.Combine(Path.GetTempPath(), "fogell-diff-" + Guid.NewGuid().ToString("N").Substring(0, 8))
-
-        Directory.CreateDirectory fogellRoot |> ignore
 
         printfn "jenkins:   %s (core %s)" baseUrl core
         printfn
@@ -503,7 +516,32 @@ let main argv =
 
                     List.zip jenkinsRuns fogellRuns
                     |> List.mapi (fun bi (jenkins, fogell) ->
-                        Compare.receipt (caseNameFor bi) caseBytes core envReplacementsAll jenkins fogell)
+                        let receiptEnvReplacements =
+                            envReplacementsAll
+                            @ FogellSide.coordinatedAgentHomeReplacement
+                                envReplacementsAll
+                                fogellRoot
+                                job
+                                (bi + 1)
+                            |> List.distinct
+                            |> List.groupBy fst
+                            |> List.choose (fun (_, pairs) ->
+                                match pairs |> List.map snd |> List.distinct with
+                                | [ _ ] -> Some pairs.Head
+                                | _ -> None)
+
+                        let stableReceiptEnvironment =
+                            receiptEnvReplacements
+                            |> List.filter (fun (_, token) -> token = "${HOME}")
+
+                        Compare.receiptWithStableEnvironment
+                            stableReceiptEnvironment
+                            (caseNameFor bi)
+                            caseBytes
+                            core
+                            receiptEnvReplacements
+                            jenkins
+                            fogell)
 
                 let anyDiverged rs =
                     rs |> List.exists (fun (r: Receipt) ->

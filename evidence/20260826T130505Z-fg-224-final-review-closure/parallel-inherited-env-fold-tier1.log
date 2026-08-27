@@ -1,0 +1,9 @@
+jenkins:   http://127.0.0.1:18099 (core 2.568.1)
+workspace: remote collector: ssh luigi "podman exec jenkins-lab bash -c \"printf %s c2V0I...
+
+  parallel-inherited-env-fold.Jenkinsfile        PROVEN           parallel-inherited-env-fold.receipt.txt
+
+tier-1 proven (incl. workspace): 1 / 1
+proven-partial (result+output):  0 / 1
+RECEIPT_DIR=/tmp/fogell-pr148-parallel-home-fold-tier1.hFofz6
+EXIT_CODE=0

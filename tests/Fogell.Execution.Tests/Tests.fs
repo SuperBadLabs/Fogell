@@ -50,7 +50,12 @@ let private request root script =
 /// immediately and every reaping assertion passed vacuously — the daemon it
 /// claimed to reap never existed. Identifying by recorded pid cannot lie.
 let private daemonScript (pidFile: string) =
-    $"nohup /bin/sh -c 'echo $$ > {pidFile}; exec sleep 600' >/dev/null 2>&1 &"
+    // The parent must not exit until the child has established the evidence
+    // this test reads. The old 40ms reader-settlement floor accidentally gave
+    // the child time to write; event-driven completion correctly lets reaping
+    // win that race. Make the precondition explicit and bounded instead of
+    // depending on executor slowness.
+    $"nohup /bin/sh -c 'echo $$ > {pidFile}; exec sleep 600' >/dev/null 2>&1 & i=0; while [ ! -s {pidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; sleep 0.01; done;"
 
 let private waitForPidFile (pidFile: string) =
     let clock = Diagnostics.Stopwatch.StartNew()
@@ -65,9 +70,109 @@ let private waitForPidFile (pidFile: string) =
     else
         None
 
+let private runContainmentChild registry pidFile readyFile =
+    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
+
+    let script =
+        $"sleep 600 & fogell_effect=$!; printf '%%s' \"$fogell_effect\" > '{pidFile}'; printf ready > '{readyFile}'; wait \"$fogell_effect\""
+
+    ProcessGroup.run
+        { RunRequest.create (script, tempRoot ()) with
+            ReapGroup = false }
+    |> ignore
+
+    0
+
+let private runExitedLeaderContainmentChild registry pidFile readyFile =
+    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
+
+    let script =
+        $"sleep 600 & fogell_effect=$!; printf '%%s' \"$fogell_effect\" > '{pidFile}'; printf ready > '{readyFile}'; exit 0"
+
+    ProcessGroup.run
+        { RunRequest.create (script, tempRoot ()) with
+            ReapGroup = false }
+    |> ignore
+    0
+
+let private runTermGraceContainmentChild registry pidFile termFile =
+    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
+
+    let script =
+        $"/bin/sh -c 'trap \"\" TERM; exec /bin/sleep 600' & fogell_effect=$!; printf '%%s' \"$fogell_effect\" > '{pidFile}'; trap 'printf term > \"{termFile}\"' TERM; wait \"$fogell_effect\""
+
+    ProcessGroup.run
+        { RunRequest.create (script, tempRoot ()) with
+            TimeoutMs = Some 200L
+            GraceMs = 5_000 }
+    |> ignore
+    0
+
+let private runHostilePathContainmentChild registry pidFile readyFile hostilePath =
+    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
+
+    let script =
+        $"/bin/sh -c 'trap \"\" TERM; exec /bin/sleep 600' & fogell_effect=$!; /usr/bin/printf '%%s' \"$fogell_effect\" > '{pidFile}'; /usr/bin/printf ready > '{readyFile}'; wait \"$fogell_effect\""
+
+    ProcessGroup.run
+        { RunRequest.create (script, tempRoot ()) with
+            Environment = [ "PATH", hostilePath ]
+            ReapGroup = false }
+    |> ignore
+    0
+
+let private runPreSetsidContainmentChild
+    registry
+    effectFile
+    releaseFile
+    readyFile
+    observedFile
+    stoppedFile
+    cleanupReleaseFile
+    =
+    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
+    Environment.SetEnvironmentVariable("FOGELL_TEST_PRE_SETSID_RELEASE_FILE", releaseFile)
+    Environment.SetEnvironmentVariable("FOGELL_TEST_PRE_SETSID_READY_FILE", readyFile)
+    Environment.SetEnvironmentVariable("FOGELL_TEST_PRE_SETSID_OBSERVED_FILE", observedFile)
+    Environment.SetEnvironmentVariable("FOGELL_TEST_PRE_SETSID_STOPPED_FILE", stoppedFile)
+    Environment.SetEnvironmentVariable("FOGELL_TEST_PRE_SETSID_CLEANUP_RELEASE_FILE", cleanupReleaseFile)
+
+    ProcessGroup.run
+        { RunRequest.create ($"printf ran > '{effectFile}'; sleep 600", tempRoot ()) with
+            ReapGroup = false }
+    |> ignore
+    0
+
 /// Alive per /proc, which needs no signal and cannot be confused by reuse
 /// within a single test.
 let private pidAlive (pid: int) = Directory.Exists $"/proc/{pid}"
+
+let private containmentAnchorPids () =
+    if not (OperatingSystem.IsLinux()) then
+        Set.empty
+    else
+        Directory.GetDirectories "/proc"
+        |> Array.choose (fun directory ->
+            match Int32.TryParse(Path.GetFileName directory) with
+            | true, pid ->
+                try
+                    let arguments =
+                        File.ReadAllText(Path.Combine(directory, "cmdline"))
+                            .Split('\000', StringSplitOptions.RemoveEmptyEntries)
+
+                    // Match argv, not a substring: the outer wait wrapper has
+                    // the anchor command in its shell-program argument and is
+                    // deliberately alive during STOP-boundary tests.
+                    if arguments.Length >= 2
+                       && arguments.[0] = "/bin/sleep"
+                       && arguments.[1] = "2147483647" then
+                        Some pid
+                    else
+                        None
+                with _ ->
+                    None
+            | _ -> None)
+        |> Set.ofArray
 
 /// Reaping is asynchronous, so the assertion has to WAIT for it rather than
 /// sample once. Both call sites slept a flat 300ms and asserted — which passes
@@ -85,6 +190,14 @@ let private waitForReap (pid: int) =
         Threading.Thread.Sleep 25
 
     not (pidAlive pid)
+
+let private waitForFile path budgetMs =
+    let clock = Diagnostics.Stopwatch.StartNew()
+
+    while not (File.Exists path) && clock.ElapsedMilliseconds < int64 budgetMs do
+        Threading.Thread.Sleep 10
+
+    File.Exists path
 
 let workspaceHygiene =
     testList
@@ -138,6 +251,76 @@ let workspaceHygiene =
               match Workspace.createFresh root k with
               | Result.Error(Workspace.AlreadyExists _) -> ()
               | other -> failtestf "reuse must be refused, got %A" other
+          }
+
+          test "materialization creates nested targets and is idempotent under contention" {
+              let root = tempRoot ()
+              let target = Path.Combine(root, "nested", "cwd")
+
+              let results =
+                  [ 1..16 ]
+                  |> List.map (fun _ -> async { return Workspace.materializeUnder root target })
+                  |> Async.Parallel
+                  |> Async.RunSynchronously
+
+              for result in results do
+                  match result with
+                  | Result.Ok() -> ()
+                  | Result.Error e -> failtestf "concurrent materialization failed: %s" e.Describe
+
+              Expect.isTrue (Directory.Exists target) "the exact nested cwd exists"
+              Expect.isEmpty
+                  (Directory.EnumerateFileSystemEntries(target) |> Seq.toList)
+                  "materialization adds no payload"
+
+              match Workspace.materializeUnder root root with
+              | Result.Ok() -> ()
+              | Result.Error e -> failtestf "the established attempt root was refused: %s" e.Describe
+          }
+
+          test "materialization refuses outside targets and existing symlink components" {
+              let root = tempRoot ()
+              let outside = tempRoot ()
+              let sentinel = Path.Combine(outside, "sentinel.txt")
+              File.WriteAllText(sentinel, "unchanged")
+
+              match Workspace.materializeUnder root (Path.Combine(outside, "escaped")) with
+              | Result.Error _ -> ()
+              | Result.Ok() -> failtest "outside target was materialized"
+
+              let finalLink = Path.Combine(root, "final-link")
+              Directory.CreateSymbolicLink(finalLink, outside) |> ignore
+
+              match Workspace.materializeUnder root finalLink with
+              | Result.Error(Workspace.SymlinkComponent _) -> ()
+              | other -> failtestf "expected final SymlinkComponent, got %A" other
+
+              let parentLink = Path.Combine(root, "parent-link")
+              Directory.CreateSymbolicLink(parentLink, outside) |> ignore
+
+              match Workspace.materializeUnder root (Path.Combine(parentLink, "child")) with
+              | Result.Error(Workspace.SymlinkComponent _) -> ()
+              | other -> failtestf "expected parent SymlinkComponent, got %A" other
+
+              Expect.isFalse (Directory.Exists(Path.Combine(outside, "escaped"))) "outside target was untouched"
+              Expect.isFalse (Directory.Exists(Path.Combine(outside, "child"))) "symlink target was not followed"
+              Expect.equal (File.ReadAllText sentinel) "unchanged" "outside sentinel bytes are unchanged"
+          }
+
+          test "materialization reports file collisions without throwing" {
+              let root = tempRoot ()
+              let fileTarget = Path.Combine(root, "file-target")
+              File.WriteAllText(fileTarget, "payload")
+
+              match Workspace.materializeUnder root fileTarget with
+              | Result.Error(Workspace.MaterializationFailed _) -> ()
+              | other -> failtestf "expected MaterializationFailed, got %A" other
+
+              match Workspace.materializeUnder root (Path.Combine(fileTarget, "child")) with
+              | Result.Error(Workspace.NonDirectoryParent _) -> ()
+              | other -> failtestf "expected NonDirectoryParent, got %A" other
+
+              Expect.equal (File.ReadAllText fileTarget) "payload" "colliding file bytes are unchanged"
           } ]
 
 let shellExecution =
@@ -223,10 +406,671 @@ let shellExecution =
               | None -> failtest "must carry a diagnostic"
           } ]
 
+let environmentIsolation =
+    testList
+        "FG-222 controller environment isolation"
+        [ test "build launch replacement clears pre-seeded controller controls" {
+              let psi = ProcessStartInfo("/bin/true")
+              let planted =
+                  [ "FOGELL_CREDENTIALS", "fg222-inline-control"
+                    "DATABASE_URL", "postgres://controller/fg222"
+                    "CONTROLLER_API_TOKEN", "fg222-api-control"
+                    "SSH_AUTH_SOCK", "fg222-agent-control" ]
+
+              for name, value in planted do
+                  psi.Environment[name] <- value
+
+              let requestedPath = "/fg222/request:/usr/bin:/bin"
+              let neutralHome = "/tmp/fogell-agent-home"
+              LaunchEnvironment.applyBuildTo
+                  psi
+                  [ "PATH", requestedPath
+                    "HOME", neutralHome
+                    "DECLARED", "pipeline-value" ]
+
+              Expect.equal psi.Environment.Count 3 "no ambient or pre-seeded key survives replacement"
+              Expect.equal psi.Environment["PATH"] requestedPath "explicit PATH remains"
+              Expect.equal psi.Environment["HOME"] neutralHome "neutral build HOME remains"
+              Expect.equal psi.Environment["DECLARED"] "pipeline-value" "declared value remains"
+
+              for name, value in planted do
+                  Expect.isFalse (psi.Environment.ContainsKey name) $"{name} is absent"
+                  Expect.isFalse (psi.Environment.Values.Contains value) $"{name} value is absent"
+          }
+
+          test "a real shell receives only neutral metadata and declared input" {
+              let neutralHome = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-agent-home-test")
+              let environment =
+                  LaunchEnvironment.buildBaseline neutralHome
+                  @ [ "DECLARED", "pipeline-value" ]
+
+              Expect.equal
+                  environment
+                  [ "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                    "HOME", neutralHome
+                    "DECLARED", "pipeline-value" ]
+                  "the implicit baseline cannot widen without changing this contract"
+
+              let result =
+                  Executor.runStep
+                      { request (tempRoot ()) "/usr/bin/env | /usr/bin/sort" with
+                          Environment = environment }
+
+              Expect.equal result.Status Success "the shell completed"
+              Expect.stringContains result.Stdout "DECLARED=pipeline-value" "declared env is present"
+              Expect.stringContains result.Stdout $"HOME={neutralHome}" "neutral HOME is present"
+              Expect.stringContains result.Stdout "PATH=" "approved PATH is present"
+
+              for name in [ "FOGELL_CREDENTIALS"; "FOGELL_CREDENTIALS_FILE"; "DATABASE_URL"; "CONTROLLER_API_TOKEN"; "SSH_AUTH_SOCK" ] do
+                  Expect.isFalse (result.Stdout.Contains $"{name}=") $"{name} is absent from the child"
+          }
+
+          test "the production controller SCM snapshot copies only approved names" {
+              let planted =
+                  [ "SSH_AUTH_SOCK", "fg222-approved-agent"
+                    "FG222_CUSTOM_SCM", "fg222-approved-custom"
+                    "FOGELL_SCM_ENV_ALLOWLIST", "FG222_CUSTOM_SCM"
+                    "CONTROLLER_API_TOKEN", "fg222-denied-api"
+                    "AWS_SECRET_ACCESS_KEY", "fg222-denied-aws" ]
+
+              let previous =
+                  planted |> List.map (fun (name, _) -> name, Environment.GetEnvironmentVariable name)
+
+              try
+                  for name, value in planted do
+                      Environment.SetEnvironmentVariable(name, value)
+
+                  let psi = ProcessStartInfo("/bin/true")
+                  LaunchEnvironment.applyControllerScmTo psi (LaunchEnvironment.controllerScmBaseline ())
+
+                  let allowed =
+                      set
+                          [ "PATH"; "HOME"; "USER"; "LOGNAME"; "XDG_CONFIG_HOME"
+                            "SSH_AUTH_SOCK"; "SSH_ASKPASS"; "GIT_ASKPASS"; "GIT_SSH"; "GIT_SSH_COMMAND"
+                            "GIT_CONFIG_GLOBAL"; "GIT_CONFIG_SYSTEM"; "GIT_SSL_CAINFO"
+                            "SSL_CERT_FILE"; "SSL_CERT_DIR"
+                            "HTTP_PROXY"; "HTTPS_PROXY"; "ALL_PROXY"; "NO_PROXY"
+                            "http_proxy"; "https_proxy"; "all_proxy"; "no_proxy"
+                            "FG222_CUSTOM_SCM" ]
+
+                  for key in psi.Environment.Keys do
+                      Expect.isTrue (allowed.Contains key) $"production SCM profile contains only approved key {key}"
+
+                  Expect.equal psi.Environment["SSH_AUTH_SOCK"] "fg222-approved-agent" "standard SCM authority is present"
+                  Expect.equal psi.Environment["FG222_CUSTOM_SCM"] "fg222-approved-custom" "opted-in authority is present"
+                  Expect.isFalse (psi.Environment.ContainsKey "FOGELL_SCM_ENV_ALLOWLIST") "the selector is not copied"
+                  Expect.isFalse (psi.Environment.ContainsKey "CONTROLLER_API_TOKEN") "unapproved API control is absent"
+                  Expect.isFalse (psi.Environment.ContainsKey "AWS_SECRET_ACCESS_KEY") "unapproved cloud control is absent"
+              finally
+                  for name, value in previous do
+                      Environment.SetEnvironmentVariable(name, value)
+          }
+
+          test "Git resolution obeys relative empty executable and missing PATH entries" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg222-path-" + Guid.NewGuid().ToString("N"))
+              let tools = IO.Path.Combine(root, "tools")
+              let blocked = IO.Path.Combine(root, "blocked")
+              IO.Directory.CreateDirectory tools |> ignore
+              IO.Directory.CreateDirectory blocked |> ignore
+
+              let executable = IO.Path.Combine(tools, "git")
+              let currentExecutable = IO.Path.Combine(root, "git")
+              let nonExecutable = IO.Path.Combine(blocked, "git")
+
+              try
+                  for path in [ executable; currentExecutable; nonExecutable ] do
+                      IO.File.WriteAllText(path, "#!/bin/sh\nexit 0\n")
+
+                  let executableMode =
+                      IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
+
+                  IO.File.SetUnixFileMode(executable, executableMode)
+                  IO.File.SetUnixFileMode(currentExecutable, executableMode)
+                  IO.File.SetUnixFileMode(nonExecutable, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite)
+
+                  Expect.equal
+                      (LaunchEnvironment.resolveBuildExecutable "git" root [ "PATH", "blocked:tools" ])
+                      (Some executable)
+                      "relative PATH is resolved from the child cwd and skips a non-executable candidate"
+
+                  Expect.equal
+                      (LaunchEnvironment.resolveBuildExecutable "git" root [ "PATH", "" ])
+                      (Some currentExecutable)
+                      "an empty PATH entry names the child cwd"
+
+                  Expect.isNone
+                      (LaunchEnvironment.resolveBuildExecutable "git" root [ "PATH", IO.Path.Combine(root, "missing") ])
+                      "an unusable explicit PATH fails closed instead of falling back to controller PATH"
+              finally
+                  try IO.Directory.Delete(root, true) with _ -> ()
+          } ]
+
 let containment =
     testList
         "FG-031/032 process group containment"
-        [ test "the step leads its own process group" {
+        [ test "a running registered leader is released only after its stopped state is observed" {
+              let states =
+                  Collections.Generic.Queue(
+                      [ ProcessGroup.ProcessIdentityState.Matching 'R'
+                        ProcessGroup.ProcessIdentityState.Matching 'S'
+                        ProcessGroup.ProcessIdentityState.Matching 'T' ])
+              let mutable pauses = 0
+
+              let stopped =
+                  ProcessGroup.waitForIdentityStop
+                      3
+                      (fun () -> states.Dequeue())
+                      (fun () -> pauses <- pauses + 1)
+
+              Expect.isTrue stopped "SIGCONT is authorized only by the observed stopped state"
+              Expect.equal pauses 2 "running states consume the bounded polling budget"
+
+              let launcherStates =
+                  Collections.Generic.Queue(
+                      [ ProcessGroup.LauncherFormationState.SameIdentity 17
+                        ProcessGroup.LauncherFormationState.SameIdentity 42 ])
+
+              let formed =
+                  ProcessGroup.waitForIdentityGroup
+                      42
+                      1
+                      (fun () -> launcherStates.Dequeue())
+                      ignore
+
+              Expect.equal
+                  formed
+                  ProcessGroup.LauncherFormationDecision.GroupFormed
+                  "the EOF guard follows the same launcher identity across setsid"
+
+              let timedOut =
+                  ProcessGroup.waitForIdentityGroup
+                      42
+                      0
+                      (fun () -> ProcessGroup.LauncherFormationState.SameIdentity 17)
+                      ignore
+
+              Expect.equal
+                  timedOut
+                  ProcessGroup.LauncherFormationDecision.TerminateLauncher
+                  "the bound kills a still-pre-setsid launcher instead of abandoning it"
+
+              let drifted =
+                  ProcessGroup.waitForIdentityGroup
+                      42
+                      20
+                      (fun () -> ProcessGroup.LauncherFormationState.Changed)
+                      ignore
+
+              Expect.equal
+                  drifted
+                  ProcessGroup.LauncherFormationDecision.Refused
+                  "numeric pid reuse never authorizes either group or launcher signalling"
+
+              let disappeared =
+                  ProcessGroup.waitForIdentityGroup
+                      42
+                      20
+                      (fun () -> ProcessGroup.LauncherFormationState.Absent)
+                      ignore
+
+              Expect.equal
+                  disappeared
+                  ProcessGroup.LauncherFormationDecision.Disappeared
+                  "a launcher that vanished before session formation needs no signal"
+          }
+
+          test "a leader that never stops is refused at the exact polling bound" {
+              let mutable observations = 0
+              let mutable pauses = 0
+
+              let stopped =
+                  ProcessGroup.waitForIdentityStop
+                      2
+                      (fun () ->
+                          observations <- observations + 1
+                          ProcessGroup.ProcessIdentityState.Matching 'R')
+                      (fun () -> pauses <- pauses + 1)
+
+              Expect.isFalse stopped "a marker alone can never authorize SIGCONT"
+              Expect.equal observations 3 "the initial observation plus two bounded retries were made"
+              Expect.equal pauses 2 "the timeout has no hidden extra sleep"
+          }
+
+          test "leader identity drift refuses release immediately" {
+              let states =
+                  Collections.Generic.Queue(
+                      [ ProcessGroup.ProcessIdentityState.Matching 'R'
+                        ProcessGroup.ProcessIdentityState.Changed ])
+              let mutable pauses = 0
+
+              let stopped =
+                  ProcessGroup.waitForIdentityStop
+                      20
+                      (fun () -> states.Dequeue())
+                      (fun () -> pauses <- pauses + 1)
+
+              Expect.isFalse stopped "a reused numeric pid cannot authorize SIGCONT"
+              Expect.equal pauses 1 "identity drift fails closed without spending the remaining budget"
+          }
+
+          test "pre-registration owner failures never release or leak the launcher" {
+              let root = tempRoot ()
+              let invalidRegistry = Path.Combine(root, "registry-is-a-file")
+              let userEffect = Path.Combine(root, "user-effect")
+              let previousRegistry = Environment.GetEnvironmentVariable "FOGELL_PROCESS_GROUP_REGISTRY"
+              let anchorsBefore = containmentAnchorPids ()
+              File.WriteAllText(invalidRegistry, "not a directory")
+              Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", invalidRegistry)
+
+              try
+                  Expect.throws
+                      (fun () ->
+                          ProcessGroup.run
+                              (RunRequest.create ($"printf ran > '{userEffect}'", root))
+                          |> ignore)
+                      "registration failure is surfaced rather than releasing unregistered code"
+              finally
+                  Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", previousRegistry)
+
+              let clock = Stopwatch.StartNew()
+              let mutable leaked = Set.difference (containmentAnchorPids ()) anchorsBefore
+
+              while not leaked.IsEmpty && clock.ElapsedMilliseconds < 3_000L do
+                  Threading.Thread.Sleep 25
+                  leaked <- Set.difference (containmentAnchorPids ()) anchorsBefore
+
+              Expect.isFalse (File.Exists userEffect) "the stopped user leader never executed its command"
+              Expect.isEmpty leaked "the no-record guard reaped the anchor under the bounded fallback"
+
+              // Exercise the still-earlier window: the owner dies while the
+              // direct child has been forked but has not executed setsid or
+              // emitted its marker. A release-file gate makes the boundary
+              // exact; the guard acknowledgement proves EOF was observed while
+              // pid and pgrp were still different.
+              let earlyRoot = tempRoot ()
+              let registry = Path.Combine(earlyRoot, "registry")
+              let effect = Path.Combine(earlyRoot, "effect")
+              let release = Path.Combine(earlyRoot, "release")
+              let ready = Path.Combine(earlyRoot, "launcher.pid")
+              let observed = Path.Combine(earlyRoot, "guard.observed")
+              let earlyAnchorsBefore = containmentAnchorPids ()
+              Directory.CreateDirectory registry |> ignore
+
+              let start = ProcessStartInfo(Environment.ProcessPath)
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              start.ArgumentList.Add "--containment-pre-setsid-child"
+              start.ArgumentList.Add registry
+              start.ArgumentList.Add effect
+              start.ArgumentList.Add release
+              start.ArgumentList.Add ready
+              start.ArgumentList.Add observed
+              start.ArgumentList.Add ""
+              start.ArgumentList.Add ""
+              start.UseShellExecute <- false
+              start.RedirectStandardOutput <- true
+              start.RedirectStandardError <- true
+              use host = Process.Start start
+
+              if not (waitForFile ready 5_000) then
+                  host.Kill(true)
+                  failtest "pre-setsid launcher did not establish the deterministic gate"
+
+              let launcherPid = Int32.Parse((File.ReadAllText ready).Trim())
+              Expect.isTrue (pidAlive launcherPid) "the delayed launcher was alive before owner death"
+              Expect.notEqual
+                  (Native.processGroupOf launcherPid)
+                  (Some launcherPid)
+                  "the test kills the owner before setsid, not after group formation"
+              Expect.isTrue
+                  (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty)
+                  "no marker or durable registration existed at the failure boundary"
+
+              host.Kill()
+              host.WaitForExit 3_000 |> ignore
+
+              if not (waitForFile observed 3_000) then
+                  File.WriteAllText(release, "release")
+                  failtest "EOF guard did not observe the identity-bound pre-setsid launcher"
+
+              File.WriteAllText(release, "release")
+              Expect.isTrue (waitForReap launcherPid) "the guard followed setsid and reaped the formed group"
+              Expect.isFalse (File.Exists effect) "user code remained gated across abrupt owner death"
+
+              let anchorClock = Stopwatch.StartNew()
+              let mutable earlyLeaked = Set.difference (containmentAnchorPids ()) earlyAnchorsBefore
+
+              while not earlyLeaked.IsEmpty && anchorClock.ElapsedMilliseconds < 3_000L do
+                  Threading.Thread.Sleep 25
+                  earlyLeaked <- Set.difference (containmentAnchorPids ()) earlyAnchorsBefore
+
+              Expect.isEmpty earlyLeaked "the earliest owner-death window left no identity anchor"
+              Expect.isTrue
+                  (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty)
+                  "the pre-marker failure did not manufacture registration evidence"
+              Directory.Delete(earlyRoot, true)
+
+              // The polling bound is itself fail-closed. If setsid has not yet
+              // arrived, the guard freezes and identity-checks the direct
+              // launcher before classifying it. The test then releases the
+              // launch gate while cleanup is deliberately paused: acknowledged
+              // T/t, not signal delivery alone, is what prevents transition.
+              let timeoutRoot = tempRoot ()
+              let timeoutRegistry = Path.Combine(timeoutRoot, "registry")
+              let timeoutEffect = Path.Combine(timeoutRoot, "effect")
+              let timeoutRelease = Path.Combine(timeoutRoot, "never-release")
+              let timeoutReady = Path.Combine(timeoutRoot, "launcher.pid")
+              let timeoutObserved = Path.Combine(timeoutRoot, "guard.observed")
+              let timeoutStopped = Path.Combine(timeoutRoot, "guard.stopped")
+              let timeoutCleanupRelease = Path.Combine(timeoutRoot, "cleanup.release")
+              Directory.CreateDirectory timeoutRegistry |> ignore
+
+              let timeoutStart = ProcessStartInfo(Environment.ProcessPath)
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  timeoutStart.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              timeoutStart.ArgumentList.Add "--containment-pre-setsid-child"
+              timeoutStart.ArgumentList.Add timeoutRegistry
+              timeoutStart.ArgumentList.Add timeoutEffect
+              timeoutStart.ArgumentList.Add timeoutRelease
+              timeoutStart.ArgumentList.Add timeoutReady
+              timeoutStart.ArgumentList.Add timeoutObserved
+              timeoutStart.ArgumentList.Add timeoutStopped
+              timeoutStart.ArgumentList.Add timeoutCleanupRelease
+              timeoutStart.UseShellExecute <- false
+              timeoutStart.RedirectStandardOutput <- true
+              timeoutStart.RedirectStandardError <- true
+              use timeoutHost = Process.Start timeoutStart
+
+              if not (waitForFile timeoutReady 5_000) then
+                  timeoutHost.Kill(true)
+                  failtest "bounded pre-setsid launcher did not establish its gate"
+
+              let timeoutLauncher = Int32.Parse((File.ReadAllText timeoutReady).Trim())
+              timeoutHost.Kill()
+              timeoutHost.WaitForExit 3_000 |> ignore
+              Expect.isTrue
+                  (waitForFile timeoutObserved 3_000)
+                  "the timeout case non-vacuously entered pre-setsid polling"
+              Expect.isTrue
+                  (waitForFile timeoutStopped 3_000)
+                  "the guard acknowledged the exact launcher identity in T/t before classifying it"
+              let frozenPgrp = Int32.Parse((File.ReadAllText timeoutStopped).Trim())
+              Expect.isGreaterThan
+                  frozenPgrp
+                  1
+                  (if frozenPgrp = timeoutLauncher then
+                       "STOP acknowledgement classified an already-formed inner group"
+                   else
+                       "STOP acknowledgement classified the direct pre-setsid launcher")
+              File.WriteAllText(timeoutRelease, "release")
+              Threading.Thread.Sleep 50
+              Expect.isTrue (pidAlive timeoutLauncher) "cleanup remained paused with the launcher frozen"
+              Expect.equal
+                  (Native.processGroupOf timeoutLauncher)
+                  (Some frozenPgrp)
+                  "the acknowledged frozen classification remained stable after gate release"
+              Expect.isFalse (File.Exists timeoutEffect) "a released gate cannot advance a stopped launcher"
+              File.WriteAllText(timeoutCleanupRelease, "cleanup")
+              Expect.isTrue
+                  (waitForReap timeoutLauncher)
+                  "the polling bound killed the frozen same-identity launcher"
+              Expect.isFalse (File.Exists timeoutEffect) "timeout never released user code"
+
+              let timeoutAnchorClock = Stopwatch.StartNew()
+              let mutable timeoutAnchors = Set.difference (containmentAnchorPids ()) earlyAnchorsBefore
+
+              while not timeoutAnchors.IsEmpty && timeoutAnchorClock.ElapsedMilliseconds < 3_000L do
+                  Threading.Thread.Sleep 25
+                  timeoutAnchors <- Set.difference (containmentAnchorPids ()) earlyAnchorsBefore
+
+              Expect.isEmpty
+                  timeoutAnchors
+                  $"cleanup reaped every anchor after frozen pgrp {frozenPgrp} was classified"
+              Expect.isTrue
+                  (Directory.EnumerateFiles(timeoutRegistry, "*.group") |> Seq.isEmpty)
+                  "timeout before setsid created no false registration"
+              Directory.Delete(timeoutRoot, true)
+          }
+
+          test "an abrupt Run.Host death reaps a registered inner step group" {
+              let root = tempRoot ()
+              let registry = Path.Combine(root, "registry")
+              let pidFile = Path.Combine(root, "effect.pid")
+              let readyFile = Path.Combine(root, "effect.ready")
+              Directory.CreateDirectory registry |> ignore
+
+              let start = ProcessStartInfo(Environment.ProcessPath)
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              start.ArgumentList.Add "--containment-child"
+              start.ArgumentList.Add registry
+              start.ArgumentList.Add pidFile
+              start.ArgumentList.Add readyFile
+              start.UseShellExecute <- false
+              start.RedirectStandardOutput <- true
+              start.RedirectStandardError <- true
+              use host = Process.Start start
+
+              let clock = Stopwatch.StartNew()
+
+              while ((not (File.Exists readyFile)
+                      || (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty))
+                     && clock.ElapsedMilliseconds < 5_000L) do
+                  Threading.Thread.Sleep 25
+
+              let effectPid =
+                  match waitForPidFile pidFile with
+                  | Some pid -> pid
+                  | None ->
+                      host.Kill(true)
+                      failtest "inner effect never established its non-vacuous pid precondition"
+
+              let record = Directory.EnumerateFiles(registry, "*.group") |> Seq.exactlyOne
+              let recordFields =
+                  File.ReadAllText(record).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+              Expect.equal recordFields.Length 4 "the registry binds both leader and identity anchor"
+              let anchorPid = Int32.Parse recordFields.[2]
+
+              Expect.isTrue (pidAlive effectPid) "the background effect was alive before abrupt host death"
+              Expect.isTrue (pidAlive anchorPid) "the anchor continuously reserved the inner PGID"
+              Expect.isFalse
+                  (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty)
+                  "the inner group was durably registered before effects ran"
+
+              host.Kill()
+              host.WaitForExit 3_000 |> ignore
+              Expect.isTrue (waitForReap effectPid) "stdin-EOF watchdog reaped the inner group after SIGKILL"
+              Expect.isTrue (waitForReap anchorPid) "the watchdog reaped its continuous identity anchor"
+              Expect.isTrue
+                  (File.Exists record)
+                  "the watchdog leaves durable cleanup evidence for the controller verifier"
+              Directory.Delete(root, true)
+          }
+
+          test "EOF watchdog cleanup cannot resolve its grace sleep from hostile PATH" {
+              if not (OperatingSystem.IsLinux()) then
+                  Tests.skiptest "the watchdog containment contract is Linux-only"
+
+              let root = tempRoot ()
+              let registry = Path.Combine(root, "registry")
+              let hostilePath = Path.Combine(root, "hostile-path")
+              let pidFile = Path.Combine(root, "effect.pid")
+              let readyFile = Path.Combine(root, "effect.ready")
+              let intercepted = Path.Combine(root, "sleep.intercepted")
+              let hostileSleep = Path.Combine(hostilePath, "sleep")
+              Directory.CreateDirectory registry |> ignore
+              Directory.CreateDirectory hostilePath |> ignore
+              File.WriteAllText(
+                  hostileSleep,
+                  $"#!/bin/sh\n/usr/bin/printf intercepted > '{intercepted}'\nexec /bin/sleep 30\n")
+              File.SetUnixFileMode(
+                  hostileSleep,
+                  UnixFileMode.UserRead
+                  ||| UnixFileMode.UserWrite
+                  ||| UnixFileMode.UserExecute)
+
+              let start = ProcessStartInfo(Environment.ProcessPath)
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              start.ArgumentList.Add "--containment-hostile-path-child"
+              start.ArgumentList.Add registry
+              start.ArgumentList.Add pidFile
+              start.ArgumentList.Add readyFile
+              start.ArgumentList.Add hostilePath
+              start.UseShellExecute <- false
+              start.RedirectStandardOutput <- true
+              start.RedirectStandardError <- true
+              use host = Process.Start start
+              let mutable group = 0
+
+              try
+                  let clock = Stopwatch.StartNew()
+
+                  while ((not (File.Exists readyFile)
+                          || (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty))
+                         && clock.ElapsedMilliseconds < 5_000L) do
+                      Threading.Thread.Sleep 10
+
+                  let effectPid =
+                      match waitForPidFile pidFile with
+                      | Some pid -> pid
+                      | None -> failtest "hostile-PATH effect never established its non-vacuous pid precondition"
+
+                  let record = Directory.EnumerateFiles(registry, "*.group") |> Seq.exactlyOne
+                  let fields = File.ReadAllText(record).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                  group <- Int32.Parse fields.[0]
+                  Expect.isTrue (pidAlive effectPid) "the TERM-resistant effect was alive before owner death"
+
+                  host.Kill()
+                  host.WaitForExit 3_000 |> ignore
+                  Expect.isTrue (waitForReap effectPid) "the EOF watchdog reached absolute-path KILL"
+                  Expect.isFalse (File.Exists intercepted) "the build-controlled sleep executable was never invoked"
+              finally
+                  if not host.HasExited then
+                      host.Kill(true)
+
+                  if group > 1 then
+                      Native.signalGroup group Native.SIGKILL |> ignore
+
+                  Directory.Delete(root, true)
+          }
+
+          test "owner death during TERM grace retains anchor provenance through KILL" {
+              let root = tempRoot ()
+              let registry = Path.Combine(root, "registry")
+              let pidFile = Path.Combine(root, "effect.pid")
+              let termFile = Path.Combine(root, "term.seen")
+              Directory.CreateDirectory registry |> ignore
+
+              let start = ProcessStartInfo(Environment.ProcessPath)
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              start.ArgumentList.Add "--containment-term-grace-child"
+              start.ArgumentList.Add registry
+              start.ArgumentList.Add pidFile
+              start.ArgumentList.Add termFile
+              start.UseShellExecute <- false
+              start.RedirectStandardOutput <- true
+              start.RedirectStandardError <- true
+              use host = Process.Start start
+
+              let clock = Stopwatch.StartNew()
+
+              while ((not (File.Exists termFile)
+                      || (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty))
+                     && clock.ElapsedMilliseconds < 5_000L) do
+                  Threading.Thread.Sleep 10
+
+              let effectPid =
+                  match waitForPidFile pidFile with
+                  | Some pid -> pid
+                  | None ->
+                      host.Kill(true)
+                      failtest "TERM-resistant effect never established its pid precondition"
+
+              let record = Directory.EnumerateFiles(registry, "*.group") |> Seq.exactlyOne
+              let recordFields =
+                  File.ReadAllText(record).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+              let anchorPid = Int32.Parse recordFields.[2]
+
+              Expect.isTrue (File.Exists termFile) "the timeout entered TERM grace before owner death"
+              Expect.isTrue (pidAlive effectPid) "the effect deliberately survived TERM"
+              Expect.isTrue (pidAlive anchorPid) "the stopped anchor survived TERM as continuous provenance"
+
+              host.Kill()
+              host.WaitForExit 3_000 |> ignore
+              Expect.isTrue (waitForReap effectPid) "EOF escalation killed the TERM-resistant effect"
+              Expect.isTrue (waitForReap anchorPid) "EOF escalation killed the provenance anchor last"
+              Directory.Delete(root, true)
+          }
+
+          test "owner death after the inner leader exits still reaps its background group" {
+              let root = tempRoot ()
+              let registry = Path.Combine(root, "registry")
+              let pidFile = Path.Combine(root, "effect.pid")
+              let readyFile = Path.Combine(root, "effect.ready")
+              Directory.CreateDirectory registry |> ignore
+
+              let start = ProcessStartInfo(Environment.ProcessPath)
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              start.ArgumentList.Add "--containment-exited-leader-child"
+              start.ArgumentList.Add registry
+              start.ArgumentList.Add pidFile
+              start.ArgumentList.Add readyFile
+              start.UseShellExecute <- false
+              start.RedirectStandardOutput <- true
+              start.RedirectStandardError <- true
+              use host = Process.Start start
+
+              let clock = Stopwatch.StartNew()
+
+              while ((not (File.Exists readyFile)
+                      || (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty))
+                     && clock.ElapsedMilliseconds < 5_000L) do
+                  Threading.Thread.Sleep 10
+
+              let effectPid =
+                  match waitForPidFile pidFile with
+                  | Some pid -> pid
+                  | None ->
+                      host.Kill(true)
+                      failtest "background effect never established its non-vacuous pid precondition"
+
+              let record = Directory.EnumerateFiles(registry, "*.group") |> Seq.exactlyOne
+              let recordFields =
+                  File.ReadAllText(record).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+              let anchorPid = Int32.Parse recordFields.[2]
+
+              Expect.isTrue (pidAlive effectPid) "the descendant remained alive after its group leader exited"
+              Expect.isTrue (pidAlive anchorPid) "the anchor prevents PGID reuse after leader exit"
+              Expect.isFalse host.HasExited "the owner was still inside bounded post-leader drain/reap"
+              Expect.isFalse
+                  (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty)
+                  "the exited leader's identity-bound group remained registered"
+
+              host.Kill()
+              host.WaitForExit 3_000 |> ignore
+              Expect.isTrue
+                  (waitForReap effectPid)
+                  "the still-armed EOF watchdog reaped descendants across the leader-exit boundary"
+              Expect.isTrue (waitForReap anchorPid) "the anchor was reaped with the original group"
+              Directory.Delete(root, true)
+          }
+
+          test "the step leads its own process group" {
               let r = Executor.runStep (request (tempRoot ()) "echo x")
               Expect.isSome r.ProcessGroupId "a group id was observed"
           }
@@ -352,6 +1196,677 @@ let containment =
                   Native.signalProcess pid Native.SIGKILL |> ignore
           } ]
 
+let eventDrivenWaits =
+    testList
+        "FG-197 event-driven process completion"
+        [ test "the reported group id is the inner session leader, not the setsid wrapper" {
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create ("printf 'leader=%s\\n' \"$$\"", tempRoot ()) with
+                          ReapGroup = false }
+
+              let leader =
+                  result.Stdout.Replace("\r\n", "\n").Split '\n'
+                  |> Array.tryPick (fun line ->
+                      if line.StartsWith "leader=" then
+                          match Int32.TryParse(line.Substring("leader=".Length)) with
+                          | true, pid -> Some pid
+                          | _ -> None
+                      else
+                          None)
+
+              Expect.isSome leader "the script exposed its actual session-leader pid"
+              Expect.equal result.ProcessGroupId leader "the marker, not Process.Id, owns group identity"
+          }
+
+          test "continuous output consumes only the shared settlement budget" {
+              // Model 17ms already spent draining an active callback, then make
+              // every before/after snapshot differ. This is a deterministic
+              // budget proof: no scheduler or wall-clock tolerance participates.
+              let mutable elapsed = 17L
+              let sleeps = ResizeArray<int>()
+              let mutable sample = 0
+
+              let snapshot () =
+                  sample <- sample + 1
+                  sample, -sample
+
+              ProcessGroup.settleOutputUntilQuiet
+                  300
+                  (fun () -> elapsed)
+                  (fun milliseconds ->
+                      sleeps.Add milliseconds
+                      elapsed <- elapsed + int64 milliseconds)
+                  snapshot
+
+              Expect.sequenceEqual
+                  sleeps
+                  [ 40; 40; 40; 40; 40; 40; 40; 3 ]
+                  "the final sample sleeps only the three milliseconds left in the shared budget"
+              Expect.equal elapsed 300L "continuous output cannot overshoot the 300ms settlement budget"
+          }
+
+          test "a zero settlement budget neither samples nor sleeps" {
+              let mutable samples = 0
+              let mutable sleeps = 0
+
+              ProcessGroup.settleOutputUntilQuiet
+                  0
+                  (fun () -> 0L)
+                  (fun _ -> sleeps <- sleeps + 1)
+                  (fun () ->
+                      samples <- samples + 1
+                      samples, samples)
+
+              Expect.equal samples 0 "zero budget never opens a quiet-sampling window"
+              Expect.equal sleeps 0 "zero budget never sleeps"
+          }
+
+          test "one quiet sample followed by output restarts the sustained quiet window" {
+              let mutable elapsed = 0L
+              let sleeps = ResizeArray<int>()
+              let samples =
+                  Collections.Generic.Queue<int * int>(
+                      [ (0, 0); (0, 0); (1, 0); (1, 0); (1, 0) ])
+
+              ProcessGroup.settleOutputUntilQuiet
+                  300
+                  (fun () -> elapsed)
+                  (fun milliseconds ->
+                      sleeps.Add milliseconds
+                      elapsed <- elapsed + int64 milliseconds)
+                  (fun () -> samples.Dequeue())
+
+              Expect.sequenceEqual
+                  sleeps
+                  [ 40; 40; 40; 40 ]
+                  "a change after one quiet interval resets the consecutive-quiet counter"
+              Expect.equal elapsed 160L "two fresh unchanged intervals close the window after the reset"
+              Expect.isEmpty samples "the retained sample sequence is consumed exactly"
+          }
+
+          test "a delayed tail after the direct process exits is retained" {
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create (
+                            "#!/bin/sh\nsetsid /bin/sh -c 'sleep 0.3; printf \"delayed-tail\\n\"' & printf 'leader-done\\n'",
+                            tempRoot ()) with
+                          ReapGroup = false }
+
+              Expect.equal result.Outcome (Completed 0) "the direct step completed"
+              Expect.equal
+                  (result.Stdout.Replace("\r\n", "\n"))
+                  "leader-done\ndelayed-tail\n"
+                  "a no-xtrace script preserves the actual delayed tail in exact emission order"
+          }
+
+          test "an escaped descendant holding stdout cannot wedge or erase arrived capture" {
+              let root = tempRoot ()
+              let pidFile = Path.Combine(root, "escaped.pid")
+              let sw = Diagnostics.Stopwatch.StartNew()
+              let streamed = Collections.Concurrent.ConcurrentQueue<string>()
+
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create (
+                            $"setsid /bin/sh -c 'echo $$ > {pidFile}; sleep 30' 2>/dev/null & printf arrived",
+                            root) with
+                          SuppressStdoutEcho = true
+                          ReapGroup = false
+                          OnLine = Some streamed.Enqueue }
+
+              sw.Stop()
+              match waitForPidFile pidFile with
+              | Some pid ->
+                  Native.signalGroup pid Native.SIGKILL |> ignore
+                  Expect.isTrue (waitForReap pid) "the escaped fixture is cleaned up"
+              | None -> failtest "the escaped descendant never established its pipe-holding precondition"
+
+              Expect.equal result.Outcome (Completed 0) "the direct step completed"
+              Expect.isLessThan sw.ElapsedMilliseconds 2_000L "capture reuses the reader bound instead of adding a second five-second wait"
+              Expect.equal result.Stdout "arrived" "bytes received before the bound survive truncation"
+          }
+
+          test "a production containment anchor is reaped before callback EOF is required" {
+              let root = tempRoot ()
+              let registry = Path.Combine(root, "registry")
+              let durableRoot = root + "@tmp"
+              let previousRegistry = Environment.GetEnvironmentVariable "FOGELL_PROCESS_GROUP_REGISTRY"
+              let streamed = Collections.Concurrent.ConcurrentQueue<string>()
+              Directory.CreateDirectory registry |> ignore
+              Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
+
+              try
+                  let result =
+                      ProcessGroup.run
+                          { RunRequest.create ("printf 'controller-line\\n'", root) with
+                              OnLine = Some streamed.Enqueue }
+
+                  Expect.equal result.Outcome (Completed 0) "the controller-style step completes"
+                  Expect.isTrue
+                      (streamed.ToArray() |> Array.contains "controller-line")
+                      "the output callback is published before the run returns"
+                  Expect.isEmpty
+                      (Directory.EnumerateFiles registry)
+                      "normal reaping removes the controller containment record"
+              finally
+                  Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", previousRegistry)
+                  if Directory.Exists root then Directory.Delete(root, true)
+                  if Directory.Exists durableRoot then Directory.Delete(durableRoot, true)
+          }
+
+          test "an open callback reader fails closed and cannot enqueue a late line" {
+              let root = tempRoot ()
+              let pidFile = Path.Combine(root, "escaped-callback.pid")
+              let streamed = Collections.Concurrent.ConcurrentQueue<string>()
+              let sw = Diagnostics.Stopwatch.StartNew()
+
+              try
+                  Expect.throwsT<TimeoutException>
+                      (fun () ->
+                          ProcessGroup.run
+                              { RunRequest.create (
+                                    $"setsid /bin/sh -c 'echo $$ > {pidFile}; sleep 0.8; printf \"late-line\\n\" >&2; sleep 30' & i=0; while [ ! -s {pidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; sleep 0.01; done; printf \"early-line\\n\"",
+                                    root) with
+                                  SuppressStdoutEcho = true
+                                  ReapGroup = false
+                                  OnLine = Some streamed.Enqueue }
+                          |> ignore)
+                      "a callback-producing reader without EOF cannot return success"
+
+                  sw.Stop()
+                  Expect.isLessThan
+                      sw.ElapsedMilliseconds
+                      1_500L
+                      "reader noncompletion consumes only the existing output-drain bound"
+
+                  let countAtFailure = streamed.Count
+                  Threading.Thread.Sleep 600
+                  Expect.equal
+                      streamed.Count
+                      countAtFailure
+                      "callback admission closes before the tail snapshot"
+                  Expect.isFalse
+                      (streamed.ToArray() |> Array.contains "late-line")
+                      "the escaped writer cannot enqueue after the failed run"
+              finally
+                  match waitForPidFile pidFile with
+                  | Some pid ->
+                      Native.signalGroup pid Native.SIGKILL |> ignore
+                      Expect.isTrue (waitForReap pid) "the escaped callback fixture is cleaned up"
+                  | None -> failtest "the escaped callback writer never established its precondition"
+          }
+
+          test "capture timeout pays one post-signal reader bound and keeps partial output" {
+              let root = tempRoot ()
+              let pidFile = Path.Combine(root, "escaped-timeout.pid")
+              let sw = Diagnostics.Stopwatch.StartNew()
+
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create (
+                            $"setsid /bin/sh -c 'echo $$ > {pidFile}; sleep 30' & i=0; while [ ! -s {pidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; sleep 0.01; done; printf arrived; sleep 30",
+                            root) with
+                          SuppressStdoutEcho = true
+                          TimeoutMs = Some 500L
+                          GraceMs = 100
+                          ReapGroup = false }
+
+              sw.Stop()
+              match waitForPidFile pidFile with
+              | Some pid ->
+                  Native.signalGroup pid Native.SIGKILL |> ignore
+                  Expect.isTrue (waitForReap pid) "the escaped timeout fixture is cleaned up"
+              | None -> failtest "the escaped timeout descendant never established its precondition"
+
+              Expect.equal result.Outcome TimedOut "the foreground step reached its timeout"
+              Expect.isLessThan sw.ElapsedMilliseconds 2_000L "capture has no second post-result or duplicate reader wait"
+              Expect.equal result.Stdout "arrived" "timeout keeps bytes captured before the bounded snapshot"
+          }
+
+          test "a delayed pre-signal user Terminated line does not suppress synthetic narration" {
+              let root = tempRoot ()
+              let readyFile = Path.Combine(root, "user-terminated.ready")
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use interruptObserved = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let streamed = Collections.Concurrent.ConcurrentQueue<string>()
+
+              let releaser =
+                  Threading.Tasks.Task.Run(fun () ->
+                      let clock = Diagnostics.Stopwatch.StartNew()
+
+                      while not (File.Exists readyFile) && clock.ElapsedMilliseconds < 3_000L do
+                          Threading.Thread.Sleep 5
+
+                      interruptObserved.Wait 3_000 |> ignore
+                      // Keep the user callback in flight while the interrupt is
+                      // observed and the bounded pre-signal snapshot is taken.
+                      Threading.Thread.Sleep 150
+                      releaseCallback.Set())
+
+              let onLine line =
+                  streamed.Enqueue line
+
+                  if line = "hold-user-callback" then
+                      callbackEntered.Set()
+                      releaseCallback.Wait 3_000 |> ignore
+
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create (
+                            $"#!/bin/sh\ntrap 'exit 0' TERM\necho hold-user-callback\necho Terminated\nprintf ready > '{readyFile}'\nwhile :; do :; done",
+                            root) with
+                          GraceMs = 500
+                          Interrupt =
+                              Some(fun () ->
+                                  let ready = File.Exists readyFile
+                                  if ready then interruptObserved.Set()
+                                  ready)
+                          OnLine = Some onLine }
+
+              releaser.GetAwaiter().GetResult()
+              Expect.isTrue (File.Exists readyFile) "the script printed before requesting interruption"
+              Expect.isTrue callbackEntered.IsSet "the pre-signal user callback was genuinely delayed"
+              Expect.equal result.Outcome Cancelled "the ready-file interrupt ended the step"
+
+              let terminatedCount =
+                  streamed.ToArray()
+                  |> Array.filter (fun line -> line.Trim() = "Terminated")
+                  |> Array.length
+
+              Expect.equal terminatedCount 2 "pre-signal user output remains distinct from synthetic post-signal narration"
+          }
+
+          test "a Terminated callback delayed across the signal boundary is emitted exactly once" {
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let streamed = Collections.Concurrent.ConcurrentQueue<string>()
+
+              let releaser =
+                  Threading.Tasks.Task.Run(fun () ->
+                      if callbackEntered.Wait 3_000 then
+                          // This callback is emitted by the TERM trap, so it starts
+                          // strictly after the signal. Keep the following Terminated
+                          // callback queued long enough to make post-signal draining
+                          // load-bearing, but within its 300ms upper bound.
+                          Threading.Thread.Sleep 150
+
+                      releaseCallback.Set())
+
+              let onLine line =
+                  streamed.Enqueue line
+
+                  if line = "hold-post-callback" then
+                      callbackEntered.Set()
+                      releaseCallback.Wait 3_000 |> ignore
+
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create (
+                            "#!/bin/sh\ntrap 'echo hold-post-callback; echo \"Terminated \"; exit 0' TERM\nwhile :; do :; done",
+                            tempRoot ()) with
+                          TimeoutMs = Some 500L
+                          GraceMs = 500
+                          OnLine = Some onLine }
+
+              releaser.GetAwaiter().GetResult()
+              Expect.isTrue callbackEntered.IsSet "the hostile callback was blocked before timeout"
+              Expect.equal result.Outcome TimedOut "the timeout signal reached the trapping shell"
+
+              let terminatedCount =
+                  streamed.ToArray()
+                  |> Array.filter (fun line -> line.Trim() = "Terminated")
+                  |> Array.length
+
+              Expect.contains (streamed.ToArray()) "Terminated " "the delayed shell callback itself drained before return"
+              let transcript = String.concat " | " (streamed.ToArray())
+
+              Expect.equal
+                  terminatedCount
+                  1
+                  $"the delayed shell line suppresses synthetic duplicate narration: {transcript}"
+          }
+
+          test "an OnLine callback failure is sticky and escapes the run" {
+              let seen = ResizeArray<string>()
+
+              Expect.throwsT<IO.IOException>
+                  (fun () ->
+                      ProcessGroup.run
+                          { RunRequest.create ("printf 'first\\nsecond\\n'", tempRoot ()) with
+                              ReapGroup = false
+                              OnLine =
+                                  Some(fun line ->
+                                      seen.Add line
+                                      raise (IO.IOException "event sink unavailable")) }
+                      |> ignore)
+                  "a completed faulted callback tail must fail the run"
+
+              Expect.equal seen.Count 1 "successors do not publish after the first callback failure"
+          }
+
+          test "an incomplete OnLine callback tail fails within the shared bound" {
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              use callbackCompleted = new Threading.ManualResetEventSlim(false)
+              let sw = Diagnostics.Stopwatch.StartNew()
+
+              try
+                  Expect.throwsT<TimeoutException>
+                      (fun () ->
+                          ProcessGroup.run
+                              { RunRequest.create ("printf 'blocked\\n'", tempRoot ()) with
+                                  ReapGroup = false
+                                  OnLine =
+                                      Some(fun _ ->
+                                          callbackEntered.Set()
+
+                                          try
+                                              releaseCallback.Wait()
+                                          finally
+                                              callbackCompleted.Set()) }
+                          |> ignore)
+                      "an incomplete callback tail cannot return a successful RunResult"
+
+                  sw.Stop()
+                  Expect.isTrue callbackEntered.IsSet "the callback genuinely held the tail open"
+                  Expect.isLessThan
+                      sw.ElapsedMilliseconds
+                      1_500L
+                      "callback noncompletion preserves the existing bounded output-drain elapsed time"
+              finally
+                  releaseCallback.Set()
+                  Expect.isTrue
+                      (callbackCompleted.Wait 1_000)
+                      "the fixture releases the rejected callback task before the test exits"
+          }
+
+          test "fast completed steps do not pay a fixed reader-settlement window" {
+              let sw = Diagnostics.Stopwatch.StartNew()
+
+              for _ in 1 .. 10 do
+                  let result =
+                      ProcessGroup.run
+                          { RunRequest.create ("true", tempRoot ()) with
+                              ReapGroup = false }
+
+                  Expect.equal result.Outcome (Completed 0) "each fast control completed"
+
+              sw.Stop()
+              Expect.isLessThan sw.ElapsedMilliseconds 400L "ten steps have no tenfold 40ms floor"
+          }
+
+          test "an earlier interrupt remains cancellation when the local budget is also expired" {
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create ("sleep 30", tempRoot ()) with
+                          TimeoutMs = Some 0L
+                          GraceMs = 100
+                          Interrupt = Some(fun () -> true)
+                          InterruptBeatsDeadline = Some(fun () -> true) }
+
+              Expect.equal result.Outcome Cancelled "the caller's earlier interrupt timestamp is authoritative"
+          }
+
+          test "an earlier deadline remains timeout when an interrupt is also observable" {
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create ("sleep 30", tempRoot ()) with
+                          TimeoutMs = Some 0L
+                          GraceMs = 100
+                          Interrupt = Some(fun () -> true)
+                          InterruptBeatsDeadline = Some(fun () -> false) }
+
+              Expect.equal result.Outcome TimedOut "the caller's earlier deadline timestamp is authoritative"
+          } ]
+
+/// FG-044b(c). Raw nested-call keys are identifiers, not suffix searches.
+let credentialKeyBoundaries =
+    let prefixes =
+        [ "ASCII letter", "X"
+          "ASCII digit", "7"
+          "Arabic-Indic decimal digit", "\u0667"
+          "Roman letter number", "\u2167"
+          "underscore connector", "_"
+          "dollar currency", "$"
+          "Unicode letter", "λ"
+          "nonspacing mark", "\u0301"
+          "spacing combining mark", "\u093E"
+          "connector punctuation", "\u203F"
+          "Unicode currency", "€"
+          "zero-width non-joiner", "\u200C"
+          "zero-width joiner", "\u200D" ]
+
+    let hostile prefix =
+        [ "string credentialsId", "string", $"string({prefix}credentialsId: 'text-id', variable: 'TOKEN')"
+          "string variable", "string", $"string(credentialsId: 'text-id', {prefix}variable: 'TOKEN')"
+          "file credentialsId", "file", $"file({prefix}credentialsId: 'file-id', variable: 'CERT')"
+          "file variable", "file", $"file(credentialsId: 'file-id', {prefix}variable: 'CERT')"
+          "userpass credentialsId",
+          "usernamePassword",
+          $"usernamePassword({prefix}credentialsId: 'user-id', usernameVariable: 'USER', passwordVariable: 'PASS')"
+          "userpass usernameVariable",
+          "usernamePassword",
+          $"usernamePassword(credentialsId: 'user-id', {prefix}usernameVariable: 'USER', passwordVariable: 'PASS')"
+          "userpass passwordVariable",
+          "usernamePassword",
+          $"usernamePassword(credentialsId: 'user-id', usernameVariable: 'USER', {prefix}passwordVariable: 'PASS')" ]
+
+    testList
+        "FG-044b(c) credential keys require a complete identifier token"
+        [ test "every required key rejects every hostile identifier-part prefix" {
+              for prefixLabel, prefix in prefixes do
+                  for keyLabel, kind, source in hostile prefix do
+                      for quoteLabel, quotedSource in
+                          [ "single quoted", source
+                            "double quoted", source.Replace("'", "\"") ] do
+                          let requests = Credentials.parseRequests quotedSource
+
+                          match requests with
+                          | [ BindUnmodelled(actualKind, actualSource) ] ->
+                              Expect.equal
+                                  actualKind
+                                  kind
+                                  $"{prefixLabel} / {keyLabel} / {quoteLabel}: binding kind remains observable"
+
+                              Expect.isNonEmpty
+                                  actualSource
+                                  $"{prefixLabel} / {keyLabel} / {quoteLabel}: rejected source remains observable"
+                          | other ->
+                              failtestf "%s / %s / %s parsed as supported: %A" prefixLabel keyLabel quoteLabel other
+
+                          Expect.isEmpty
+                              (Credentials.idsOf requests)
+                              $"{prefixLabel} / {keyLabel} / {quoteLabel}: an unmodelled request invents no credential id"
+          }
+
+          test "exact case-sensitive keys preserve all three supported bindings" {
+              let source =
+                  "string ( credentialsId : 'text-id', variable : \"TOKEN\" ), "
+                  + "file(credentialsId:\"file-id\", variable:'CERT'), "
+                  + "usernamePassword(credentialsId: 'user-id', usernameVariable: \"USER\", passwordVariable: 'PASS')"
+
+              let requests = Credentials.parseRequests source
+
+              Expect.equal
+                  requests
+                  [ BindText("text-id", "TOKEN")
+                    BindFile("file-id", "CERT")
+                    BindUserPass("user-id", "USER", "PASS") ]
+                  "single/double quotes and whitespace remain valid"
+
+              Expect.equal
+                  (Credentials.idsOf requests)
+                  [ "text-id"; "file-id"; "user-id" ]
+                  "idsOf returns exactly the modeled ids"
+          }
+
+          test "key spelling remains case-sensitive" {
+              for source in
+                  [ "string(CredentialsId: 'text-id', variable: 'TOKEN')"
+                    "file(credentialsId: 'file-id', Variable: 'CERT')"
+                    "usernamePassword(credentialsId: 'user-id', UsernameVariable: 'USER', passwordVariable: 'PASS')" ] do
+                  let requests = Credentials.parseRequests source
+
+                  match requests with
+                  | [ BindUnmodelled _ ] -> ()
+                  | other -> failtestf "wrong-case key parsed as supported: %A" other
+
+                  Expect.isEmpty (Credentials.idsOf requests) "wrong-case keys invent no ids"
+          }
+
+          test "non-Java number and enclosing-mark categories remain separators" {
+              for label, separator in
+                  [ "other number", "\u00B2"
+                    "enclosing mark", "\u20DD" ] do
+                  let single = $"string({separator}credentialsId: 'text-id', variable: 'TOKEN')"
+
+                  for quoteLabel, source in
+                      [ "single quoted", single
+                        "double quoted", single.Replace("'", "\"") ] do
+                      let requests = Credentials.parseRequests source
+
+                      Expect.equal
+                          requests
+                          [ BindText("text-id", "TOKEN") ]
+                          $"{label}/{quoteLabel}: a non-identifier category does not hide the exact key"
+
+                      Expect.equal
+                          (Credentials.idsOf requests)
+                          [ "text-id" ]
+                          $"{label}/{quoteLabel}: the exact supported id remains observable"
+          } ]
+
+/// FG-044b(d). Jenkins stash uses Ant's default excludes unless the exact
+/// useDefaultExcludes flag is false. Keep this at the Stash boundary so every
+/// caller shares the same selection rule and a walker-only fix cannot pass.
+let stashDefaultExcludes =
+    testList
+        "FG-044b(d) stash Ant default excludes"
+        [ test "all 28 defaults are case-sensitive, literal includes cannot override them, and false opts out" {
+              let root = tempRoot ()
+              let workspace = Path.Combine(root, "workspace")
+              let store = StashStore.under (Path.Combine(root, "controller"))
+              Directory.CreateDirectory workspace |> ignore
+
+              let excluded =
+                  [ "temp/result.txt~"
+                    "temp/#result.txt#"
+                    "temp/.#result.txt"
+                    "temp/%result.txt%"
+                    "temp/._result.txt"
+                    "files/CVS"
+                    "directories/CVS/hidden.txt"
+                    "meta/.cvsignore"
+                    "files/SCCS"
+                    "directories/SCCS/hidden.txt"
+                    "meta/vssver.scc"
+                    "files/.svn"
+                    "directories/.svn/hidden.txt"
+                    "files/.git"
+                    "directories/.git/hidden.txt"
+                    "meta/.gitattributes"
+                    "meta/.gitignore"
+                    "meta/.gitmodules"
+                    "files/.hg"
+                    "directories/.hg/hidden.txt"
+                    "meta/.hgignore"
+                    "meta/.hgsub"
+                    "meta/.hgsubstate"
+                    "meta/.hgtags"
+                    "files/.bzr"
+                    "directories/.bzr/hidden.txt"
+                    "meta/.bzrignore"
+                    "meta/.DS_Store" ]
+
+              let caseNear =
+                  [ "temp/result.txt~x"
+                    "temp/x#result.txt#"
+                    "temp/x.#result.txt"
+                    "temp/x%result.txt%"
+                    "temp/x._result.txt"
+                    "files/Cvs"
+                    "directories/Cvs/hidden.txt"
+                    "meta/.CVSIGNORE"
+                    "files/Sccs"
+                    "directories/Sccs/hidden.txt"
+                    "meta/VSSVER.SCC"
+                    "files/.SVN"
+                    "directories/.SVN/hidden.txt"
+                    "files/.GIT"
+                    "directories/.GIT/hidden.txt"
+                    "meta/.GitAttributes"
+                    "meta/.GitIgnore"
+                    "meta/.GitModules"
+                    "files/.HG"
+                    "directories/.HG/hidden.txt"
+                    "meta/.HGIgnore"
+                    "meta/.HGSub"
+                    "meta/.HGSubState"
+                    "meta/.HGTags"
+                    "files/.BZR"
+                    "directories/.BZR/hidden.txt"
+                    "meta/.BZRIgnore"
+                    "meta/.DS_STORE" ]
+
+              let write relative =
+                  let path = Path.Combine(workspace, relative)
+                  Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+                  File.WriteAllText(path, relative)
+
+              let literal = "literal/.git/config"
+
+              for relative in excluded @ caseNear @ [ literal; "visible.txt"; "user/drop.txt" ] do
+                  write relative
+
+              let save name patterns defaults =
+                  Stash.save
+                      store
+                      "build-1"
+                      workspace
+                      name
+                      patterns
+                      [ "user/drop.txt" ]
+                      defaults
+                      (fun () -> false)
+                  |> fst
+
+              let savedDefault = save "defaults" [ "**" ] true
+              let expectedDefault = caseNear @ [ "visible.txt" ] |> Set.ofList
+
+              Expect.equal
+                  (Set.ofList savedDefault)
+                  expectedDefault
+                  "all defaults are removed, every case-near path remains, and caller excludes still win"
+
+              let savedWithoutDefaults = save "disabled" [ "**" ] false
+              let expectedWithoutDefaults = excluded @ caseNear @ [ literal; "visible.txt" ] |> Set.ofList
+
+              Expect.equal
+                  (Set.ofList savedWithoutDefaults)
+                  expectedWithoutDefaults
+                  "false disables only Ant defaults and never disables the caller's excludes"
+
+              Expect.isEmpty (save "literal-default" [ literal ] true) "a literal include cannot override a default exclude"
+              Expect.equal (save "literal-disabled" [ literal ] false) [ literal ] "false admits that same literal path"
+
+              Directory.Delete(workspace, true)
+              Directory.CreateDirectory workspace |> ignore
+
+              match Stash.restore store "build-1" workspace "defaults" (fun () -> false) with
+              | Error why -> failtestf "default-filtered stash did not restore: %s" why
+              | Ok restored ->
+                  Expect.equal restored savedDefault "restore returns the exact filtered stash inventory"
+                  Expect.isTrue (File.Exists(Path.Combine(workspace, "visible.txt"))) "ordinary content restores"
+                  Expect.isTrue
+                      (File.Exists(Path.Combine(workspace, caseNear.Head)))
+                      "a case-near control restores"
+                  Expect.isFalse
+                      (File.Exists(Path.Combine(workspace, excluded.Head)))
+                      "a default-excluded file was never copied into controller storage"
+          } ]
+
 /// FG-070/071. The properties that make secret handling better than Jenkins',
 /// each asserted against a real subprocess.
 let secrets =
@@ -427,7 +1942,54 @@ let secrets =
               let env = Secrets.environmentFor [ explicitBinding; other ] |> Map.ofList
 
               Expect.equal (Map.tryFind "TOKEN_FILE" env) (Some "explicit-secret") "the requested value wins"
+
+              let preservingOuter =
+                  Secrets.environmentForPreserving (Set.ofList [ "TOKEN_FILE" ]) [ explicitBinding; other ]
+                  |> Map.ofList
+
+              Expect.equal
+                  (Map.tryFind "TOKEN_FILE" preservingOuter)
+                  (Some "explicit-secret")
+                  "a current explicit value still shadows a preserved outer name"
+
               Secrets.revoke [ explicitBinding; other ]
+          }
+
+          test "generated companions preserve exact outer names and keep unused names" {
+              let root = tempRoot ()
+              let token = Secrets.bind root "TOKEN" "text-secret"
+              let user = Secrets.bind root "USER" "measured-user"
+              let cert = Secrets.bindBytes root "CERT" (Text.Encoding.UTF8.GetBytes "certificate")
+
+              let actual =
+                  Secrets.environmentForPreserving
+                      (Set.ofList [ "TOKEN_FILE"; "USER_FILE"; "cert_file" ])
+                      [ token; user; cert ]
+
+              Expect.equal
+                  actual
+                  [ "TOKEN", "text-secret"
+                    "USER", "measured-user"
+                    "CERT", cert.FilePath
+                    "CERT_FILE", cert.FilePath ]
+                  "values stay lexical, exact protected companions disappear, and an unused companion remains"
+
+              Expect.equal
+                  (Secrets.environmentForPreserving (Set.ofList [ "CERT_FILE" ]) [ cert ])
+                  [ "CERT", cert.FilePath ]
+                  "an exact protected companion is suppressed for a binary file-style binding too"
+
+              Expect.equal
+                  (Secrets.environmentForPreserving (Set.ofList [ "token_file" ]) [ token ])
+                  [ "TOKEN", "text-secret"; "TOKEN_FILE", token.FilePath ]
+                  "environment names remain case-sensitive"
+
+              Expect.equal
+                  (Secrets.environmentFor [ token; user; cert ])
+                  (Secrets.environmentForPreserving Set.empty [ token; user; cert ])
+                  "the legacy no-outer-environment entry point is byte-for-byte equivalent"
+
+              Secrets.revoke [ token; user; cert ]
           }
 
           test "a stash name cannot escape the stash root" {
@@ -448,15 +2010,15 @@ let secrets =
               File.WriteAllText(canary, "must survive")
 
               for hostile in [ "../../canary"; "/etc"; "..\\..\\canary"; "a/../../b" ] do
-                  let saved, _ = Stash.save store "build-1" ws hostile [ "f.txt" ] [] (fun () -> false)
+                  let saved, _ = Stash.save store "build-1" ws hostile [ "f.txt" ] [] true (fun () -> false)
                   Expect.equal saved [ "f.txt" ] $"the stash still works for name '{hostile}'"
 
               Expect.isTrue (File.Exists canary) "nothing outside the stash root was touched"
               Expect.equal (File.ReadAllText canary) "must survive" "and it was not overwritten"
 
               // Distinct hostile names must not collide with each other either.
-              let a, _ = Stash.save store "build-1" ws "x" [ "f.txt" ] [] (fun () -> false)
-              let b, _ = Stash.save store "build-1" ws "y" [ "f.txt" ] [] (fun () -> false)
+              let a, _ = Stash.save store "build-1" ws "x" [ "f.txt" ] [] true (fun () -> false)
+              let b, _ = Stash.save store "build-1" ws "y" [ "f.txt" ] [] true (fun () -> false)
               Expect.equal a b "both saved"
 
               match Stash.restore store "build-1" ws "x" (fun () -> false) with
@@ -1360,6 +2922,373 @@ let externalInterrupt =
                   "the shared matcher also retains its repeated trailing-separator behavior"
           }
 
+          test "junit follows healthy symlinks and bounds repeated directory targets like pinned Ant" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let reports = Path.Combine(baseRequest.Workspace, "reports")
+              Directory.CreateDirectory reports |> ignore
+
+              let report name duration =
+                  $"<testsuite name=\"{name}\" time=\"{duration}\" tests=\"1\"><testcase name=\"pass\"/></testsuite>"
+
+              let direct = Path.Combine(reports, "direct.xml")
+              File.WriteAllText(direct, report "direct" 1)
+              File.CreateSymbolicLink(Path.Combine(reports, "file-link.xml"), direct) |> ignore
+
+              let nested = Path.Combine(reports, "nested")
+              Directory.CreateDirectory nested |> ignore
+              File.WriteAllText(Path.Combine(nested, "nested.xml"), report "nested" 2)
+              Directory.CreateSymbolicLink(Path.Combine(reports, "dir-link"), nested) |> ignore
+
+              let external = tempRoot ()
+              File.WriteAllText(Path.Combine(external, "external.xml"), report "external" 3)
+              Directory.CreateSymbolicLink(Path.Combine(reports, "external-link"), external) |> ignore
+
+              File.CreateSymbolicLink(
+                  Path.Combine(reports, "broken.xml"),
+                  Path.Combine(reports, "missing.xml"))
+              |> ignore
+
+              Directory.CreateSymbolicLink(
+                  Path.Combine(reports, "broken-dir"),
+                  Path.Combine(reports, "missing-dir"))
+              |> ignore
+
+              File.CreateSymbolicLink(
+                  Path.Combine(reports, "self-loop.xml"),
+                  Path.Combine(reports, "self-loop.xml"))
+              |> ignore
+
+              let junit pattern allowEmpty =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          Named = [ "testResults", pattern ]
+                          JUnitAllowEmptyResults = allowEmpty }
+
+              for label, pattern, duration in
+                  [ "file", "reports/file-link.xml", 1.0f
+                    "directory", "reports/dir-link/*.xml", 2.0f
+                    "external", "reports/external-link/*.xml", 3.0f ] do
+                  let observed = junit pattern false
+                  Expect.equal observed.Status Success $"{label}: a healthy link is followed"
+                  Expect.equal observed.TestTotals (Some(1, 0, 0)) $"{label}: one logical report is selected"
+                  Expect.equal observed.TestDuration (Some duration) $"{label}: target content is parsed"
+
+              let brokenLiteral = junit "reports/broken.xml" false
+              Expect.equal brokenLiteral.Status Failure "a dangling literal link is absent from Ant's fast path"
+              Expect.equal
+                  brokenLiteral.Diagnostic
+                  (Some "No test report files were found. Configuration error?")
+                  "a dangling literal link takes the existing no-report path"
+
+              let brokenLiteralAllowed = junit "reports/broken.xml" true
+              Expect.equal brokenLiteralAllowed.Status Success "allowEmptyResults permits the literal dangling miss"
+              Expect.equal brokenLiteralAllowed.TestTotals (Some(0, 0, 0)) "the permitted miss returns typed zero"
+
+              let brokenWildcard = junit "reports/broken*.xml" false
+              Expect.equal brokenWildcard.Status Unstable "a wildcard scan retains the dangling lexical file entry"
+              Expect.equal brokenWildcard.TestTotals (Some(1, 1, 0)) "the dangling wildcard entry is one synthetic failure"
+              Expect.equal brokenWildcard.TestDuration (Some 0.0f) "the synthetic report has zero duration"
+
+              let brokenWildcardAllowed = junit "reports/broken*.xml" true
+              Expect.equal
+                  brokenWildcardAllowed.Status
+                  Unstable
+                  "allowEmptyResults does not suppress a selected dangling wildcard entry"
+              Expect.equal
+                  brokenWildcardAllowed.TestTotals
+                  (Some(1, 1, 0))
+                  "allowEmptyResults changes only the no-match path"
+
+              let brokenDirectory = junit "reports/broken-dir/**/*.xml" true
+              Expect.equal brokenDirectory.Status Success "a dangling directory link has no descendants"
+              Expect.equal brokenDirectory.TestTotals (Some(0, 0, 0)) "the dangling directory link is a no-match"
+
+              let selfFileLoop = junit "reports/self-*.xml" false
+              Expect.equal selfFileLoop.Status Unstable "a file symlink loop is retained lexically"
+              Expect.equal selfFileLoop.TestTotals (Some(1, 1, 0)) "the selected file loop is one synthetic failure"
+              Expect.equal selfFileLoop.TestDuration (Some 0.0f) "the file loop synthetic report has zero duration"
+
+              let brokenWithTimestampFilter =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          Named = [ "testResults", "reports/broken*.xml" ]
+                          JUnitSkipOldReportsSince = Some(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) }
+
+              Expect.equal
+                  brokenWithTimestampFilter.Status
+                  Failure
+                  "skipOldReports inspects the final target before zero-length synthesis"
+              Expect.stringContains
+                  brokenWithTimestampFilter.Diagnostic.Value
+                  "FileNotFoundException"
+                  "a dangling target fails the timestamp lookup like Jenkins"
+
+              let emptyTarget = Path.Combine(external, "empty.data")
+              File.WriteAllBytes(emptyTarget, Array.empty)
+              File.CreateSymbolicLink(Path.Combine(reports, "empty-link.data"), emptyTarget) |> ignore
+
+              let emptyLink = junit "reports/empty-link.data" false
+              Expect.equal emptyLink.Status Unstable "length is read from the final zero-byte target"
+              Expect.equal emptyLink.TestTotals (Some(1, 1, 0)) "the zero-byte target is one synthetic failure"
+
+              let buildStart = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+              let oldTarget = Path.Combine(external, "old.xml")
+              File.WriteAllText(oldTarget, report "old" 4)
+              File.SetLastWriteTimeUtc(
+                  oldTarget,
+                  DateTimeOffset.FromUnixTimeMilliseconds(buildStart - 4000L).UtcDateTime)
+              File.CreateSymbolicLink(Path.Combine(reports, "old-link.xml"), oldTarget) |> ignore
+
+              let oldLink =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          Named = [ "testResults", "reports/old-link.xml" ]
+                          JUnitSkipOldReportsSince = Some buildStart
+                          JUnitAllowEmptyResults = true }
+
+              Expect.equal oldLink.Status Success "skipOldReports reads the final target timestamp"
+              Expect.equal oldLink.TestTotals (Some(0, 0, 0)) "an old symlink target is filtered"
+
+              let loops = Path.Combine(baseRequest.Workspace, "loops")
+              Directory.CreateDirectory loops |> ignore
+              File.WriteAllText(Path.Combine(loops, "looped.xml"), report "looped" 1)
+              Directory.CreateSymbolicLink(Path.Combine(loops, "loop"), ".") |> ignore
+
+              let boundedLoop = junit "loops/**/*.xml" false
+              Expect.equal boundedLoop.Status Success "a self-loop terminates without poisoning publication"
+              Expect.equal boundedLoop.TestTotals (Some(6, 0, 0)) "the base report plus five followed aliases are ingested"
+              Expect.equal boundedLoop.TestDuration (Some 6.0f) "all six logical Ant paths retain their content"
+
+              Expect.equal
+                  (Publish.expandGlob baseRequest.Workspace "loops/**/*.xml" |> List.length)
+                  41
+                  "the public archive/stash matcher retains its platform traversal ceiling"
+          }
+
+          test "junit prunes unrelated external symlink directories before traversal" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let reports = Path.Combine(baseRequest.Workspace, "reports")
+              Directory.CreateDirectory reports |> ignore
+              File.WriteAllText(
+                  Path.Combine(reports, "result.xml"),
+                  "<testsuite name=\"good\" time=\"1\"><testcase name=\"pass\"/></testsuite>")
+
+              let blocked = tempRoot ()
+              let originalMode = File.GetUnixFileMode blocked
+              Directory.CreateSymbolicLink(Path.Combine(baseRequest.Workspace, "unrelated"), blocked)
+              |> ignore
+
+              try
+                  File.SetUnixFileMode(blocked, UnixFileMode.None)
+
+                  let observed =
+                      Executor.runStep
+                          { baseRequest with
+                              Name = "junit"
+                              Script = None
+                              Named = [ "testResults", "reports/*.xml" ] }
+
+                  Expect.equal observed.Status Success "the narrow include succeeds"
+                  Expect.equal observed.TestTotals (Some(1, 0, 0)) "only the selected report contributes"
+                  Expect.equal observed.TestDuration (Some 1.0f) "the selected report duration is retained"
+                  Expect.isNone observed.Diagnostic "the unrelated denied tree is never inspected"
+              finally
+                  File.SetUnixFileMode(blocked, originalMode)
+          }
+
+          test "junit polls cancellation while enumerating selected symlink directories" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let reports = Path.Combine(baseRequest.Workspace, "reports")
+              Directory.CreateDirectory reports |> ignore
+              let blocked = tempRoot ()
+              let originalMode = File.GetUnixFileMode blocked
+              Directory.CreateSymbolicLink(Path.Combine(reports, "external"), blocked) |> ignore
+              let polls = ref 0
+
+              let abort () =
+                  polls.Value <- polls.Value + 1
+                  polls.Value >= 2
+
+              try
+                  File.SetUnixFileMode(blocked, UnixFileMode.None)
+
+                  let observed =
+                      Publish.parseJUnitWithAbort
+                          baseRequest.Workspace
+                          [ "reports/**/*.xml" ]
+                          None
+                          abort
+
+                  Expect.equal
+                      observed
+                      (Error JUnitProblem.Interrupted)
+                      "enumeration returns the typed interruption"
+                  Expect.equal polls.Value 2 "cancellation wins before the denied target is traversed"
+              finally
+                  File.SetUnixFileMode(blocked, originalMode)
+          }
+
+          test "junit fails closed when a selected symlink target is not accessible" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let reports = Path.Combine(baseRequest.Workspace, "reports")
+              Directory.CreateDirectory reports |> ignore
+              let denied = tempRoot ()
+              let target = Path.Combine(denied, "target.xml")
+              File.WriteAllText(
+                  target,
+                  "<testsuite name=\"denied\"><testcase name=\"pass\"/></testsuite>")
+              File.CreateSymbolicLink(Path.Combine(reports, "permission-link.xml"), target) |> ignore
+              let originalMode = File.GetUnixFileMode denied
+
+              let junit pattern =
+                  Executor.runStep
+                      { baseRequest with
+                          Name = "junit"
+                          Script = None
+                          Named = [ "testResults", pattern ]
+                          JUnitAllowEmptyResults = true }
+
+              try
+                  File.SetUnixFileMode(denied, UnixFileMode.None)
+
+                  for pattern in [ "reports/permission-link.xml"; "reports/permission-*.xml" ] do
+                      let observed = junit pattern
+                      Expect.equal observed.Status Failure $"{pattern}: authority failure is not allow-empty success"
+                      Expect.isNone observed.TestTotals $"{pattern}: authority failure publishes no synthetic counts"
+                      Expect.isNone observed.TestDuration $"{pattern}: authority failure publishes no duration"
+                      Expect.stringContains
+                          observed.Diagnostic.Value
+                          "UnauthorizedAccessException"
+                          $"{pattern}: the original authority failure class is retained"
+              finally
+                  File.SetUnixFileMode(denied, originalMode)
+          }
+
+          test "junit fails closed when a selected directory-link target is not accessible" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let reports = Path.Combine(baseRequest.Workspace, "reports")
+              Directory.CreateDirectory reports |> ignore
+              let deniedParent = tempRoot ()
+              let targetDirectory = Path.Combine(deniedParent, "target-dir")
+              Directory.CreateDirectory targetDirectory |> ignore
+              File.WriteAllText(
+                  Path.Combine(targetDirectory, "result.xml"),
+                  "<testsuite name=\"denied\"><testcase name=\"pass\"/></testsuite>")
+              Directory.CreateSymbolicLink(Path.Combine(reports, "external"), targetDirectory) |> ignore
+              let originalMode = File.GetUnixFileMode deniedParent
+
+              try
+                  File.SetUnixFileMode(deniedParent, UnixFileMode.None)
+
+                  let observed =
+                      Executor.runStep
+                          { baseRequest with
+                              Name = "junit"
+                              Script = None
+                              Named = [ "testResults", "reports/external/**/*.xml" ]
+                              JUnitAllowEmptyResults = true }
+
+                  Expect.equal observed.Status Failure "directory-link authority failure is not allow-empty success"
+                  Expect.isNone observed.TestTotals "directory-link authority failure publishes no counts"
+                  Expect.isNone observed.TestDuration "directory-link authority failure publishes no duration"
+                  Expect.stringContains
+                      observed.Diagnostic.Value
+                      "UnauthorizedAccessException"
+                      "the directory-link authority failure class is retained"
+              finally
+                  File.SetUnixFileMode(deniedParent, originalMode)
+          }
+
+          test "junit stops branching symlink scans at the configured logical-entry budget" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let loops = Path.Combine(baseRequest.Workspace, "loops")
+              Directory.CreateDirectory loops |> ignore
+              File.WriteAllText(
+                  Path.Combine(loops, "result.xml"),
+                  "<testsuite name=\"loop\"><testcase name=\"pass\"/></testsuite>")
+              Directory.CreateSymbolicLink(Path.Combine(loops, "a"), ".") |> ignore
+              Directory.CreateSymbolicLink(Path.Combine(loops, "b"), ".") |> ignore
+
+              let observed =
+                  Publish.parseJUnitWithAbortUsingScanLimit
+                      20
+                      baseRequest.Workspace
+                      [ "loops/**/*.xml" ]
+                      None
+                      (fun () -> false)
+
+              Expect.equal
+                  observed
+                  (Error(Unreadable "JUnit report scan exceeded the 20 logical-entry safety limit"))
+                  "branching aliases fail with a stable named safety limit"
+
+              let patternBound =
+                  Publish.parseJUnitWithAbortUsingScanLimit
+                      20
+                      baseRequest.Workspace
+                      (List.init 30 (fun index -> $"missing-{index}.xml"))
+                      None
+                      (fun () -> false)
+
+              Expect.equal
+                  patternBound
+                  (Error(Unreadable "JUnit report scan exceeded the 20 logical-entry safety limit"))
+                  "pattern compilation and evaluation share the same stable work ceiling"
+          }
+
+          test "junit retains the selected physical report across directory-link retargeting" {
+              let root = tempRoot ()
+              let baseRequest = request root ""
+              let reports = Path.Combine(baseRequest.Workspace, "reports")
+              Directory.CreateDirectory reports |> ignore
+              let targetA = tempRoot ()
+              let targetB = tempRoot ()
+              File.WriteAllText(
+                  Path.Combine(targetA, "result.xml"),
+                  "<testsuite name=\"a\" time=\"1\"><testcase name=\"pass\"/></testsuite>")
+              File.WriteAllText(
+                  Path.Combine(targetB, "result.xml"),
+                  "<testsuite name=\"b\" time=\"9\"><testcase name=\"pass\"/></testsuite>")
+
+              let link = Path.Combine(reports, "external")
+              Directory.CreateSymbolicLink(link, targetA) |> ignore
+              let polls = ref 0
+
+              let retargetAfterSelection () =
+                  polls.Value <- polls.Value + 1
+
+                  if polls.Value = 8 then
+                      Directory.Delete link
+                      Directory.CreateSymbolicLink(link, targetB) |> ignore
+
+                  false
+
+              let observed =
+                  Publish.parseJUnitWithAbort
+                      baseRequest.Workspace
+                      [ "reports/external/*.xml" ]
+                      None
+                      retargetAfterSelection
+
+              Expect.equal
+                  observed
+                  (Ok(1, 0, 0, Some 1.0f))
+                  "the scanner opens target A by its retained physical path after the logical link points to B"
+              Expect.isGreaterThanOrEqual polls.Value 8 "the deterministic retarget seam ran after selection"
+          }
+
           test "junit skipOldReports filters before report construction at the pinned build-time boundary" {
               let root = tempRoot ()
               let baseRequest = request root ""
@@ -1426,11 +3355,15 @@ let externalInterrupt =
                   (buildStart + 1000L)
 
               let mutable polls = 0
+              let deleteAtPoll =
+                  (Directory.EnumerateFileSystemEntries(baseRequest.Workspace) |> Seq.length)
+                  + (Directory.EnumerateFileSystemEntries(Path.GetDirectoryName vanishedPath) |> Seq.length)
+                  + 4
 
               let vanishAfterScan () =
                   polls <- polls + 1
 
-                  if polls = 2 then
+                  if polls = deleteAtPoll then
                       File.Delete vanishedPath
 
                   false
@@ -1954,10 +3887,14 @@ let externalInterrupt =
               let ioReport = Path.Combine(baseRequest.Workspace, "io.xml")
               File.WriteAllText(ioReport, "<testsuite tests=\"1\" failures=\"0\" skipped=\"0\"/>")
               let vanishedPolls = ref 0
+              let deleteAtPoll =
+                  Directory.EnumerateFileSystemEntries(baseRequest.Workspace)
+                  |> Seq.length
+                  |> fun scannedEntries -> scannedEntries + 3
 
               let deleteAfterGlob () =
                   vanishedPolls.Value <- vanishedPolls.Value + 1
-                  if vanishedPolls.Value = 1 then File.Delete ioReport
+                  if vanishedPolls.Value = deleteAtPoll then File.Delete ioReport
                   false
 
               let vanished = junit "io.xml" false false (Some deleteAfterGlob)
@@ -2077,9 +4014,48 @@ let maskingOnOutputPath =
 
 [<EntryPoint>]
 let main argv =
-    // These tests spawn real processes and assert on /proc; running them in
-    // parallel makes the survivor counts race against each other.
-    runTestsWithCLIArgs
-        []
-        argv
-        (testSequenced (testList "Fogell.Execution" [ workspaceHygiene; shellExecution; containment; secrets; deadProcessDetection; externalInterrupt; maskingOnOutputPath ]))
+    match argv with
+    | [| "--containment-child"; registry; pidFile; readyFile |] ->
+        runContainmentChild registry pidFile readyFile
+    | [| "--containment-exited-leader-child"; registry; pidFile; readyFile |] ->
+        runExitedLeaderContainmentChild registry pidFile readyFile
+    | [| "--containment-term-grace-child"; registry; pidFile; termFile |] ->
+        runTermGraceContainmentChild registry pidFile termFile
+    | [| "--containment-hostile-path-child"; registry; pidFile; readyFile; hostilePath |] ->
+        runHostilePathContainmentChild registry pidFile readyFile hostilePath
+    | [| "--containment-pre-setsid-child";
+          registry;
+          effectFile;
+          releaseFile;
+          readyFile;
+          observedFile;
+          stoppedFile;
+          cleanupReleaseFile |] ->
+        runPreSetsidContainmentChild
+            registry
+            effectFile
+            releaseFile
+            readyFile
+            observedFile
+            stoppedFile
+            cleanupReleaseFile
+    | _ ->
+        // These tests spawn real processes and assert on /proc; running them in
+        // parallel makes the survivor counts race against each other.
+        runTestsWithCLIArgs
+            []
+            argv
+            (testSequenced
+                (testList
+                    "Fogell.Execution"
+                    [ workspaceHygiene
+                      shellExecution
+                      environmentIsolation
+                      containment
+                      eventDrivenWaits
+                      credentialKeyBoundaries
+                      stashDefaultExcludes
+                      secrets
+                      deadProcessDetection
+                      externalInterrupt
+                      maskingOnOutputPath ]))

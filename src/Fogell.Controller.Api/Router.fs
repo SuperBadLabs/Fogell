@@ -1,6 +1,8 @@
 namespace Fogell.Controller.Api
 
 open System
+open System.IO
+open System.Text
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.Routing
@@ -16,8 +18,10 @@ open Fogell.Store
 type ApiState =
     { Store: Store
       Auth: Authorization.Config
-      /// Trust pool assigned to a submission that does not name one.
-      DefaultTrustPool: string }
+      /// Placement is controller policy. A bearer is not a placement grant.
+      TrustPool: string
+      MaxPipelineBytes: int
+      MaxLogChunks: int }
 
 module Router =
 
@@ -51,6 +55,35 @@ module Router =
         | true, g -> Some g
         | _ -> None
 
+    let private readBoundedBody (ctx: HttpContext) maxBytes =
+        task {
+            if ctx.Request.ContentLength.HasValue && ctx.Request.ContentLength.Value > int64 maxBytes then
+                return Error "pipeline_too_large"
+            else
+                use bytes = new MemoryStream(min maxBytes 65536)
+                let buffer = Array.zeroCreate<byte> 16384
+                let mutable finished = false
+                let mutable tooLarge = false
+
+                while not finished && not tooLarge do
+                    let remaining = maxBytes + 1 - int bytes.Length
+                    let! count =
+                        ctx.Request.Body.ReadAsync(
+                            buffer.AsMemory(0, min buffer.Length remaining),
+                            ctx.RequestAborted)
+
+                    if count = 0 then
+                        finished <- true
+                    else
+                        bytes.Write(buffer, 0, count)
+                        tooLarge <- bytes.Length > int64 maxBytes
+
+                if tooLarge then
+                    return Error "pipeline_too_large"
+                else
+                    return Ok(bytes.ToArray())
+        }
+
     /// POST …/builds — submit a Jenkinsfile.
     ///
     /// The body is the pipeline source. It is PARSED before admission, so a
@@ -67,55 +100,113 @@ module Router =
                 | None, _
                 | _, None -> return! fail ctx 400 "malformed_identifier" "organization and project must be UUIDs" None
                 | Some org, Some project ->
-                    match header ctx "idempotency-key" with
-                    | None ->
-                        // Required, not optional: without it a retried submission
-                        // silently creates a second build.
+                    if ctx.Request.Headers.ContainsKey "fogell-trust-pool" then
                         return!
-                            fail ctx 400 "idempotency_key_required"
-                                "an Idempotency-Key header is required so a retry cannot create a second build" None
-                    | Some key when key.Length > 256 ->
-                        return! fail ctx 400 "idempotency_key_too_long" "Idempotency-Key must be at most 256 bytes" None
-                    | Some key ->
-                        use reader = new IO.StreamReader(ctx.Request.Body)
-                        let! source = reader.ReadToEndAsync()
-
-                        match Fogell.Pipeline.Parser.Parser.parse source with
-                        | Result.Error e ->
+                            fail ctx 400 "placement_override_forbidden"
+                                "execution placement is controller policy and cannot be selected by a request" None
+                    else
+                        match header ctx "idempotency-key" with
+                        | None ->
+                            // Required, not optional: without it a retried submission
+                            // silently creates a second build.
                             return!
-                                fail ctx 422
-                                    (Fogell.Admission.ErrorCode.toWireString e.Code)
-                                    e.Message
-                                    (Some(string e.Position))
-                        | Result.Ok pipeline ->
-                            let stages =
-                                Fogell.Ir.Pipeline.flattenStages pipeline.Stages
-                                |> List.map (fun s -> s.Name)
+                                fail ctx 400 "idempotency_key_required"
+                                    "an Idempotency-Key header is required so a retry cannot create a second build" None
+                        | Some key when Encoding.UTF8.GetByteCount key > 256 ->
+                            return! fail ctx 400 "idempotency_key_too_long" "Idempotency-Key must be at most 256 bytes" None
+                        | Some key ->
+                            let! body = readBoundedBody ctx state.MaxPipelineBytes
 
-                            let trustPool =
-                                header ctx "fogell-trust-pool" |> Option.defaultValue state.DefaultTrustPool
+                            match body with
+                            | Error _ ->
+                                return!
+                                    fail ctx 413 "pipeline_too_large"
+                                        $"pipeline source must be at most {state.MaxPipelineBytes} bytes" None
+                            | Ok sourceBytes ->
+                                let probe: AdmissionProbe =
+                                    { OrganizationId = OrganizationId org
+                                      ProjectId = ProjectId project
+                                      IdempotencyKey = key
+                                      PipelineSource = sourceBytes
+                                      RequiredTrustPool = state.TrustPool
+                                      RequiredCapabilities = [ "linux" ] }
 
-                            let input =
-                                { OrganizationId = OrganizationId org
-                                  ProjectId = ProjectId project
-                                  IdempotencyKey = key
-                                  StageNames = stages
-                                  RequiredTrustPool = trustPool
-                                  RequiredCapabilities = [ "linux" ] }
+                                let respond (admission: Fogell.Store.Admission) =
+                                    let payload: AdmissionResponse =
+                                        { BuildId = string admission.BuildId.Value
+                                          NodeId = string admission.NodeId.Value
+                                          AttemptId = string admission.AttemptId.Value
+                                          Number = admission.Number
+                                          WasExisting = admission.WasExisting }
 
-                            match state.Store.AdmitBuild input with
-                            | Result.Error e -> return! fail ctx 409 "admission_refused" e None
-                            | Result.Ok a ->
-                                let payload: AdmissionResponse =
-                                    { BuildId = string a.BuildId.Value
-                                      NodeId = string a.NodeId.Value
-                                      AttemptId = string a.AttemptId.Value
-                                      Number = a.Number
-                                      WasExisting = a.WasExisting }
+                                    json ctx (if admission.WasExisting then 200 else 201) payload
 
-                                // 200 for a replay, 201 for a fresh admission —
-                                // the status code carries the same fact as the body.
-                                return! json ctx (if a.WasExisting then 200 else 201) payload
+                                // Resolve an already-bound raw request before decoding, parsing, or
+                                // applying today's execution rules. Once a key is durable, every
+                                // different byte sequence or placement fingerprint is the same 409
+                                // conflict regardless of whether the replacement happens to parse.
+                                // A miss creates nothing and takes no authority: AdmitBuild remains
+                                // the race arbiter after fresh-source preflight.
+                                match state.Store.TryReplayAdmission probe with
+                                | Result.Error e when
+                                    e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
+                                    ->
+                                    return! fail ctx 409 "idempotency_conflict" e None
+                                | Result.Error _ ->
+                                    return!
+                                        fail ctx 503 "admission_unavailable"
+                                            "build admission is temporarily unavailable" None
+                                | Result.Ok(Some admission) -> return! respond admission
+                                | Result.Ok None ->
+                                    let sourceResult =
+                                        try
+                                            Ok(UTF8Encoding(false, true).GetString sourceBytes)
+                                        with :? DecoderFallbackException ->
+                                            Error "pipeline source must be valid UTF-8"
+
+                                    match sourceResult with
+                                    | Error message -> return! fail ctx 400 "invalid_utf8" message None
+                                    | Ok source ->
+                                        match Fogell.Pipeline.Parser.Parser.parse source with
+                                        | Result.Error e ->
+                                            return!
+                                                fail ctx 422
+                                                    (Fogell.Admission.ErrorCode.toWireString e.Code)
+                                                    (Fogell.Admission.AdmissionError.render source e)
+                                                    (Some(string e.Position))
+                                        | Result.Ok pipeline ->
+                                            let stages =
+                                                Fogell.Ir.Pipeline.flattenStages pipeline.Stages
+                                                |> List.map (fun stage -> stage.Name)
+
+                                            let input: NewBuild =
+                                                { OrganizationId = probe.OrganizationId
+                                                  ProjectId = probe.ProjectId
+                                                  IdempotencyKey = probe.IdempotencyKey
+                                                  PipelineSource = probe.PipelineSource
+                                                  StageNames = stages
+                                                  RequiredTrustPool = probe.RequiredTrustPool
+                                                  RequiredCapabilities = probe.RequiredCapabilities }
+
+                                            // Parse success is deliberately broader than execution
+                                            // capability. Only a fresh key must satisfy the same
+                                            // fail-closed persisted preflight as Run.Host before
+                                            // binding a build number or idempotency key.
+                                            match Fogell.Differential.FogellSide.preflightControllerExecution source with
+                                            | Result.Error why ->
+                                                return!
+                                                    fail ctx 422 "execution_unsupported" why None
+                                            | Result.Ok _ ->
+                                                match state.Store.AdmitBuild input with
+                                                | Result.Error e when
+                                                    e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
+                                                    ->
+                                                    return! fail ctx 409 "idempotency_conflict" e None
+                                                | Result.Error _ ->
+                                                    return!
+                                                        fail ctx 503 "admission_unavailable"
+                                                            "build admission is temporarily unavailable" None
+                                                | Result.Ok admission -> return! respond admission
         }
         :> Threading.Tasks.Task
 
@@ -125,11 +216,13 @@ module Router =
                 return! fail ctx 401 "unauthorized" "a valid bearer token is required" None
             else
                 match guid (string ctx.Request.RouteValues["organizationId"]),
+                      guid (string ctx.Request.RouteValues["projectId"]),
                       guid (string ctx.Request.RouteValues["buildId"]) with
-                | None, _
-                | _, None -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
-                | Some org, Some build ->
-                    match state.Store.BuildSnapshot(OrganizationId org, BuildId build) with
+                | None, _, _
+                | _, None, _
+                | _, _, None -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
+                | Some org, Some project, Some build ->
+                    match state.Store.BuildSnapshot(OrganizationId org, ProjectId project, BuildId build) with
                     | None -> return! fail ctx 404 "not_found" "no such build" None
                     | Some(s, cancelled) ->
                         let payload: StatusResponse =
@@ -148,32 +241,45 @@ module Router =
                 return! fail ctx 401 "unauthorized" "a valid bearer token is required" None
             else
                 match guid (string ctx.Request.RouteValues["organizationId"]),
+                      guid (string ctx.Request.RouteValues["projectId"]),
                       guid (string ctx.Request.RouteValues["buildId"]) with
-                | None, _
-                | _, None -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
-                | Some org, Some build ->
+                | None, _, _
+                | _, None, _
+                | _, _, None -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
+                | Some org, Some project, Some build ->
                     let from =
                         match ctx.Request.Query.TryGetValue "from" with
                         | true, v when v.Count > 0 ->
                             match Int32.TryParse v.[0] with
-                            | true, n when n >= 0 -> n
-                            | _ -> 0
-                        | _ -> 0
+                            | true, n when n >= 0 -> Ok n
+                            | _ -> Error()
+                        | _ -> Ok 0
 
-                    let chunks = state.Store.ReadLog(OrganizationId org, BuildId build, from)
+                    match from with
+                    | Error _ -> return! fail ctx 400 "invalid_log_cursor" "from must be a non-negative integer" None
+                    | Ok from ->
+                        match
+                            state.Store.ReadLogPage(
+                                OrganizationId org,
+                                ProjectId project,
+                                BuildId build,
+                                from,
+                                state.MaxLogChunks)
+                        with
+                        | None -> return! fail ctx 404 "not_found" "no such build" None
+                        | Some chunks ->
+                            let next =
+                                match chunks with
+                                | [] -> from
+                                | _ -> (chunks |> List.map fst |> List.max) + 1
 
-                    let next =
-                        match chunks with
-                        | [] -> from
-                        | _ -> (chunks |> List.map fst |> List.max) + 1
+                            let payload: LogResponse =
+                                { BuildId = string build
+                                  FromSequence = from
+                                  NextSequence = next
+                                  Chunks = chunks |> List.map (fun (s, b) -> { Sequence = s; Body = b }) }
 
-                    let payload: LogResponse =
-                        { BuildId = string build
-                          FromSequence = from
-                          NextSequence = next
-                          Chunks = chunks |> List.map (fun (s, b) -> { Sequence = s; Body = b }) }
-
-                    return! json ctx 200 payload
+                            return! json ctx 200 payload
         }
         :> Threading.Tasks.Task
 
@@ -183,11 +289,13 @@ module Router =
                 return! fail ctx 401 "unauthorized" "a valid bearer token is required" None
             else
                 match guid (string ctx.Request.RouteValues["organizationId"]),
+                      guid (string ctx.Request.RouteValues["projectId"]),
                       guid (string ctx.Request.RouteValues["buildId"]) with
-                | None, _
-                | _, None -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
-                | Some org, Some build ->
-                    match state.Store.RequestCancellation(OrganizationId org, BuildId build) with
+                | None, _, _
+                | _, None, _
+                | _, _, None -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
+                | Some org, Some project, Some build ->
+                    match state.Store.RequestCancellation(OrganizationId org, ProjectId project, BuildId build) with
                     | CancellationAccepted -> return! json ctx 202 {| accepted = true; already_requested = false |}
                     // Idempotent: a retry after a client timeout must not look
                     // like a failure, because the caller's intent is satisfied.
@@ -217,7 +325,7 @@ module Router =
                     let pool =
                         match ctx.Request.Query.TryGetValue "trustPool" with
                         | true, v when v.Count > 0 && not (String.IsNullOrWhiteSpace v.[0]) -> v.[0]
-                        | _ -> state.DefaultTrustPool
+                        | _ -> state.TrustPool
 
                     let payload: ExplainResponse =
                         { TrustPool = pool

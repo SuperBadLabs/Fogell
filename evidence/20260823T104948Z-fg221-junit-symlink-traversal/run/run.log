@@ -1,0 +1,8 @@
+jenkins:   http://127.0.0.1:18099 (core 2.568.1)
+workspace: remote collector: ssh luigi "podman exec jenkins-lab sh -c \"cd /var/jenkins_h...
+
+  fg221-junit-symlink-loop.Jenkinsfile           PROVEN           fg221-junit-symlink-loop.receipt.txt
+  fg221-junit-dangling-links.Jenkinsfile         PROVEN           fg221-junit-dangling-links.receipt.txt
+
+tier-1 proven (incl. workspace): 2 / 2
+proven-partial (result+output):  0 / 2

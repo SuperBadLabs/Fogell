@@ -1,8 +1,8 @@
 # Differential receipt — script-bodyless-dir.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         b769251d303fe1253cc71ab773371a7bd1ad99e159603ce1676f037ac48606c5
-case-digest:  86c7a68928f1e24c156fb80b3e3bb3819ca95b9d5e8a8bceb8caec5b060cbd4b
+seal:         e6e99cbb7b38d1e9367b750f8814a6a11dc77d17b1d07fc1f6ce22df3e61f731
+case-digest:  5b9831c20a0091dc3e043277ac1073cce2120cd5804363e1aea22f2114d4e773
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
@@ -13,15 +13,15 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
     which compare as a MULTISET; those receipts say so under `## Output comparison notes`
   compared: canonical workspace hash over sorted (path, content-hash) pairs
   excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
-  compared as a CLASSIFICATION — none / partial / all — approximate, see FG-118:
+  compared as a CLASSIFICATION — none / partial / all — over COMPARED survivors:
     timestamps() coverage. Two engines read two clocks, so the instants can never
     agree; an engine that IGNORED the option, or honoured it for only some lines,
     would otherwise compare equal to one that honoured it fully. Line COUNTS are
     printed but never compared — the engines do not emit the same number of lines.
-    LIMIT: the numerator counts stamped RAW lines while the denominator is the
-    compared-output length, so a stamped-but-suppressed line can offset an
-    unstamped compared one. Catches a total miss and an ordinary partial
-    implementation (both planted); not a per-line proof. FG-118 makes it exact.
+    FG-118: prefix provenance follows each line through the complete contextual
+    normaliser, and both counts come from its final survivor set. `all` means every
+    compared survivor carried a prefix; suppressed narration and other raw console
+    lines are outside both output comparison and this coverage claim.
     FG-053: this exclusion was CLAIMED and unimplemented until a case first used
     the option, and read as true only because none did.
   excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines

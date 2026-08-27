@@ -1,0 +1,7 @@
+build-identity	138d144cc105450f8f89db1d211a8f7a
+script-digest	3a35f9a0431c2d1d11b419f3d5bd67fef77117362ebebf67175fe61ac858770c
+workspace-identity	64:/tmp/fogell-fg222-bench-20ec7cb.AXpxMG/runs/parallel-warmup/1/ws|64:/tmp/fogell-fg222-bench-20ec7cb.AXpxMG/runs/parallel-warmup/1/ws|68:/tmp/fogell-fg222-bench-20ec7cb.AXpxMG/runs/parallel-warmup/1/ws/job|75:/tmp/fogell-fg222-bench-20ec7cb.AXpxMG/runs/parallel-warmup/1/ws/_artifacts	job
+step-started	one	0	echo
+step-finished	one	0	success
+stage-committed	one
+build-finished	success

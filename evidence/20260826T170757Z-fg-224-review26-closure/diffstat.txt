@@ -1,0 +1,7 @@
+ docs/EXECUTION_BOARD.md                  |  2 +-
+ docs/runbooks/controller-host.md         | 12 ++++-
+ docs/tickets/FG-224.md                   | 22 ++++++--
+ src/Fogell.Controller.Host/Worker.fs     | 89 ++++++++++++++++++++------------
+ tests/Fogell.Differential.Tests/Tests.fs | 43 +++++++++++++++
+ tests/Fogell.Store.Tests/Tests.fs        |  6 +--
+ 6 files changed, 132 insertions(+), 42 deletions(-)

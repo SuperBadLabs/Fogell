@@ -301,6 +301,178 @@ let retryAttempts =
                   "the earlier FlowNode remains inside the Jenkins stage graph"
           } ]
 
+/// FG-207. A failed/aborted completion and the reason that explains it remain
+/// two historical wire records, but they are appended as one locked durability
+/// group. The internal observer can count only forces that completed through the
+/// real Flush(true); it cannot replace production I/O.
+let groupedStepDurability =
+    let openObserved policy =
+        let dir = tempDir ()
+        let path = Path.Combine(dir, "grouped.journal")
+        let forces = ResizeArray<ForceObservation>()
+        let journal = Journal.openAtObserved path policy forces.Add
+        path, forces, journal
+
+    let records path = Journal.read path
+
+    testList
+        "FG-207 grouped step completion durability"
+        [ test "EveryStep writes Finish then Reason and forces the pair exactly once" {
+              let path, forces, journal = openObserved EveryStep
+              let reason = "script returned exit code 7"
+              journal.AppendStepFinished("Gate", 3, BuildStatus.Failure, Some reason)
+
+              Expect.equal
+                  (records path)
+                  [ StepFinished("Gate", 3, BuildStatus.Failure)
+                    StepReason("Gate", 3, reason) ]
+                  "the historical bytes and ordering are exact"
+
+              let expectedBytes =
+                  [ StepFinished("Gate", 3, BuildStatus.Failure)
+                    StepReason("Gate", 3, reason) ]
+                  |> List.map (fun record -> Record.encode record + "\n")
+                  |> String.concat ""
+                  |> Text.Encoding.UTF8.GetBytes
+
+              Expect.sequenceEqual
+                  (File.ReadAllBytes path)
+                  expectedBytes
+                  "the grouped write preserves exact wire lines and the final newline"
+
+              Expect.equal forces.Count 1 "one append-policy force for both records"
+              Expect.equal forces[0].Origin AppendPolicy "the automatic policy owns it"
+              Expect.equal forces[0].RecordCount 2 "the observation names the whole group"
+              Expect.equal forces[0].Length (FileInfo(path).Length) "the force returned after both bytes"
+              journal.Close()
+          }
+
+          test "the original public two-argument constructor remains available" {
+              let dir = tempDir ()
+              let path = Path.Combine(dir, "public-constructor.journal")
+              use journal = new Journal(path, Never)
+              journal.AppendStepFinished("Build", 0, BuildStatus.Success, None)
+              Expect.equal (records path) [ StepFinished("Build", 0, BuildStatus.Success) ] "public API"
+          }
+
+          test "finish-only completion is one record and one EveryStep force" {
+              let path, forces, journal = openObserved EveryStep
+              journal.AppendStepFinished("Build", 0, BuildStatus.Success, None)
+              Expect.equal (records path) [ StepFinished("Build", 0, BuildStatus.Success) ] "one wire record"
+              Expect.equal forces.Count 1 "one automatic force"
+              Expect.equal forces[0].RecordCount 1 "the observed group is singleton"
+              journal.Close()
+          }
+
+          test "EveryStage and Never defer completion force; Sync and Close still force" {
+              for policy in [ EveryStage; Never ] do
+                  let path, forces, journal = openObserved policy
+                  journal.AppendStepFinished("Gate", 0, BuildStatus.Aborted, Some "Rejected")
+                  Expect.equal forces.Count 0 $"{policy}: append performs no policy force"
+                  Expect.equal (records path).Length 2 $"{policy}: ordinary Flush publishes both records"
+
+                  journal.Sync()
+                  Expect.equal forces.Count 1 $"{policy}: explicit Sync forces"
+                  Expect.equal forces[0].Origin ExplicitSync $"{policy}: Sync origin"
+                  journal.Close()
+                  Expect.equal forces.Count 2 $"{policy}: Close independently forces"
+                  Expect.equal forces[1].Origin Closing $"{policy}: Close origin"
+          }
+
+          test "stage/build boundaries retain the exact automatic policy matrix" {
+              for policy, expected in [ EveryStep, 1; EveryStage, 1; Never, 0 ] do
+                  let _, forces, journal = openObserved policy
+                  journal.Append(StageCommitted "Build")
+                  Expect.equal forces.Count expected $"{policy}: StageCommitted force count"
+                  journal.Close()
+
+              for policy, expected in [ EveryStep, 1; EveryStage, 1; Never, 0 ] do
+                  let _, forces, journal = openObserved policy
+                  journal.Append(BuildFinished BuildStatus.Success)
+                  Expect.equal forces.Count expected $"{policy}: BuildFinished force count"
+                  journal.Close()
+          }
+
+          test "reason/status domain refuses green explanations but permits historical unexplained failures" {
+              for status in [ BuildStatus.Success; BuildStatus.Unstable ] do
+                  let _, _, journal = openObserved EveryStep
+
+                  Expect.throws
+                      (fun () -> journal.AppendStepFinished("Build", 0, status, Some "not a failure reason"))
+                      $"{status}: a green disposition cannot carry StepReason"
+
+                  journal.Close()
+
+              let path, forces, journal = openObserved EveryStep
+              journal.AppendStepFinished("Legacy", 0, BuildStatus.Failure, None)
+              journal.AppendStepFinished("Legacy", 1, BuildStatus.Aborted, None)
+              Expect.equal
+                  (records path)
+                  [ StepFinished("Legacy", 0, BuildStatus.Failure)
+                    StepFinished("Legacy", 1, BuildStatus.Aborted) ]
+                  "capture-site gaps remain readable and writable without invented reasons"
+              Expect.equal forces.Count 2 "each finish-only completion is its own durability unit"
+              journal.Close()
+
+              let _, _, notBuilt = openObserved EveryStep
+              Expect.throws
+                  (fun () -> notBuilt.AppendStepFinished("Build", 0, BuildStatus.NotBuilt, None))
+                  "NotBuilt is not a finished step"
+              notBuilt.Close()
+          }
+
+          test "parallel completion groups stay adjacent with exact multiplicity" {
+              let path, forces, journal = openObserved Never
+              let count = 128
+
+              [| for i in 0 .. count - 1 ->
+                     Threading.Tasks.Task.Run(fun () ->
+                         journal.AppendStepFinished($"Branch-{i}", i, BuildStatus.Failure, Some $"reason-{i}")) |]
+              |> Threading.Tasks.Task.WaitAll
+
+              let written = records path
+              Expect.equal written.Length (count * 2) "every finish and reason is present once"
+              Expect.equal forces.Count 0 "Never performs no append force under concurrency"
+
+              written
+              |> List.chunkBySize 2
+              |> List.iter (function
+                  | [ StepFinished(stage, index, BuildStatus.Failure); StepReason(reasonStage, reasonIndex, reason) ] ->
+                      Expect.equal reasonStage stage "no branch interleaves inside a group"
+                      Expect.equal reasonIndex index "reason index matches its finish"
+                      Expect.equal reason $"reason-{index}" "reason payload matches its finish"
+                  | other -> failtestf "non-adjacent completion group: %A" other)
+
+              journal.Close()
+          }
+
+          test "historical nonadjacent, finish-only and torn-reason prefixes retain resume semantics" {
+              let historical =
+                  Resume.plan
+                      [ StepFinished("A", 0, BuildStatus.Failure)
+                        StepStarted("B", 0, "sh")
+                        StepReason("A", 0, "old nonadjacent explanation") ]
+
+              Expect.equal
+                  (Resume.dispositionOf historical "A" 0)
+                  (AlreadyFinished BuildStatus.Failure)
+                  "a historical nonadjacent reason never changes disposition"
+
+              let dir = tempDir ()
+              let path = Path.Combine(dir, "prefix.journal")
+              File.WriteAllText(
+                  path,
+                  Record.encode (StepFinished("Gate", 0, BuildStatus.Aborted))
+                  + "\nstep-reason\tGate\t0")
+
+              let prefix = Journal.read path
+              Expect.equal prefix [ StepFinished("Gate", 0, BuildStatus.Aborted) ] "torn reason is not trusted"
+              Expect.equal
+                  (Resume.dispositionOf (Resume.plan prefix) "Gate" 0)
+                  (AlreadyFinished BuildStatus.Aborted)
+                  "finish-only prefix still skips the completed step"
+          } ]
+
 let stepReasons =
     testList
         "FG-114 step reasons"
@@ -338,7 +510,32 @@ let stepReasons =
 
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs
-        []
-        argv
-        (testSequenced (testList "Fogell.Journal" [ roundTrip; resumePlanning; retryAttempts; stepReasons; crashResume ]))
+    match argv with
+    | [| "--fg207-probe"; path |] ->
+        let journal = Journal.openAt path EveryStep
+
+        journal.AppendStepFinished(
+            "Probe",
+            0,
+            BuildStatus.Failure,
+            Some "script returned exit code 7"
+        )
+
+        // Keep the object alive through the observation point without Close's
+        // explicit force adding a second syscall to the append-policy probe.
+        GC.KeepAlive journal
+        0
+    | _ ->
+        runTestsWithCLIArgs
+            []
+            argv
+            (testSequenced (
+                testList
+                    "Fogell.Journal"
+                    [ roundTrip
+                      resumePlanning
+                      retryAttempts
+                      stepReasons
+                      groupedStepDurability
+                      crashResume ]
+            ))

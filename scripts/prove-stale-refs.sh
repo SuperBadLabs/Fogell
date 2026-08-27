@@ -25,6 +25,150 @@ AUDIT="$(pwd)/scripts/audit-stale-refs.bb"
 FAIL=0
 note() { printf '  %-34s %s\n' "$1" "$2"; }
 
+expect_clean() {
+  local label=$1 repo=$2 removed_count=$3 forbidden_ids=$4
+  local out rc id forbidden_ok=1
+  out=$( cd "$repo" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+  for id in $forbidden_ids; do
+    grep -qE "^  $id[[:space:]]" <<<"$out" && forbidden_ok=0
+  done
+  if [ "$rc" -eq 0 ] \
+     && grep -qF "stale-reference audit: $removed_count identifier(s) removed vs HEAD, $removed_count fully gone" <<<"$out" \
+     && grep -qF "no surviving comment names a deleted identifier" <<<"$out" \
+     && [ "$forbidden_ok" -eq 1 ]; then
+    note "$label" "silent with exact diagnostic (exit 0) — OK"
+  else
+    note "$label" "FALSE POSITIVE/VACUOUS — exit $rc"
+    printf '%s\n' "$out" | sed 's/^/      /'
+    FAIL=1
+  fi
+}
+
+expect_reported() {
+  local label=$1 repo=$2 removed_count=$3 expected_ids=$4 forbidden_ids=$5
+  local out rc id expected_ok=1 forbidden_ok=1
+  out=$( cd "$repo" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+  for id in $expected_ids; do
+    grep -qE "^  $id[[:space:]]" <<<"$out" || expected_ok=0
+  done
+  for id in $forbidden_ids; do
+    grep -qE "^  $id[[:space:]]" <<<"$out" && forbidden_ok=0
+  done
+  if [ "$rc" -eq 1 ] \
+     && grep -qF "stale-reference audit: $removed_count identifier(s) removed vs HEAD, $removed_count fully gone" <<<"$out" \
+     && grep -qF "comment(s) name an identifier this diff deleted" <<<"$out" \
+     && [ "$expected_ok" -eq 1 ] \
+     && [ "$forbidden_ok" -eq 1 ]; then
+    note "$label" "reported exact binder (exit $rc) — OK"
+  else
+    note "$label" "MISSED/WRONG DIAGNOSTIC — exit $rc"
+    printf '%s\n' "$out" | sed 's/^/      /'
+    FAIL=1
+  fi
+}
+
+replace_line_once() {
+  local file=$1 old=$2 new=$3 count tmp line
+  count=$(grep -Fxc -- "$old" "$file")
+  [ "$count" -eq 1 ] || return 1
+  tmp=$(mktemp /tmp/stale-mutant-line.XXXXXX)
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$line" = "$old" ]; then
+      printf '%s\n' "$new"
+    else
+      printf '%s\n' "$line"
+    fi
+  done < "$file" > "$tmp"
+  mv "$tmp" "$file"
+}
+
+prove_false_positive_mutation() {
+  local label=$1 repo=$2 expected_id=$3 old=$4 new=$5
+  local original original_rc d mutant before after out rc
+  original=$( cd "$repo" && bb "$AUDIT" HEAD --strict 2>&1 ); original_rc=$?
+  d=$(mktemp -d /tmp/stale-mutant.XXXXXX)
+  mutant="$d/audit-stale-refs.bb"
+  cp "$AUDIT" "$mutant"
+  before=$(sha256sum "$mutant" | cut -d' ' -f1)
+  if ! replace_line_once "$mutant" "$old" "$new"; then
+    note "$label mutation" "MUTATION TARGET NOT UNIQUE"
+    FAIL=1
+    return
+  fi
+  after=$(sha256sum "$mutant" | cut -d' ' -f1)
+  out=$( cd "$repo" && bb "$mutant" HEAD --strict 2>&1 ); rc=$?
+  if [ "$original_rc" -eq 0 ] \
+     && grep -qF "no surviving comment names a deleted identifier" <<<"$original" \
+     && [ "$before" != "$after" ] \
+     && [ "$rc" -eq 1 ] \
+     && grep -qE "^  $expected_id[[:space:]]" <<<"$out"; then
+    note "$label mutation" "changed bytes; false positive exposed — KILLED"
+  else
+    note "$label mutation" "SURVIVED/VACUOUS — original $original_rc mutant $rc"
+    printf '%s\n' "$out" | sed 's/^/      /'
+    FAIL=1
+  fi
+}
+
+prove_coverage_mutation() {
+  local label=$1 repo=$2 expected_id=$3 old=$4 new=$5
+  local original original_rc d mutant before after out rc
+  original=$( cd "$repo" && bb "$AUDIT" HEAD --strict 2>&1 ); original_rc=$?
+  d=$(mktemp -d /tmp/stale-mutant.XXXXXX)
+  mutant="$d/audit-stale-refs.bb"
+  cp "$AUDIT" "$mutant"
+  before=$(sha256sum "$mutant" | cut -d' ' -f1)
+  if ! replace_line_once "$mutant" "$old" "$new"; then
+    note "$label mutation" "MUTATION TARGET NOT UNIQUE"
+    FAIL=1
+    return
+  fi
+  after=$(sha256sum "$mutant" | cut -d' ' -f1)
+  out=$( cd "$repo" && bb "$mutant" HEAD --strict 2>&1 ); rc=$?
+  if [ "$original_rc" -eq 1 ] \
+     && grep -qE "^  $expected_id[[:space:]]" <<<"$original" \
+     && [ "$before" != "$after" ] \
+     && [ "$rc" -eq 0 ] \
+     && ! grep -qE "^  $expected_id[[:space:]]" <<<"$out" \
+     && grep -qF "no surviving comment names a deleted identifier" <<<"$out"; then
+    note "$label mutation" "changed bytes; missing binder exposed — KILLED"
+  else
+    note "$label mutation" "SURVIVED/VACUOUS — original $original_rc mutant $rc"
+    printf '%s\n' "$out" | sed 's/^/      /'
+    FAIL=1
+  fi
+}
+
+prove_coverage_pair_mutation() {
+  local label=$1 repo=$2 expected_one=$3 expected_two=$4 old=$5 new=$6
+  local original original_rc d mutant before after out rc
+  original=$( cd "$repo" && bb "$AUDIT" HEAD --strict 2>&1 ); original_rc=$?
+  d=$(mktemp -d /tmp/stale-mutant.XXXXXX)
+  mutant="$d/audit-stale-refs.bb"
+  cp "$AUDIT" "$mutant"
+  before=$(sha256sum "$mutant" | cut -d' ' -f1)
+  if ! replace_line_once "$mutant" "$old" "$new"; then
+    note "$label mutation" "MUTATION TARGET NOT UNIQUE"
+    FAIL=1
+    return
+  fi
+  after=$(sha256sum "$mutant" | cut -d' ' -f1)
+  out=$( cd "$repo" && bb "$mutant" HEAD --strict 2>&1 ); rc=$?
+  if [ "$original_rc" -eq 1 ] \
+     && grep -qE "^  $expected_one[[:space:]]" <<<"$original" \
+     && grep -qE "^  $expected_two[[:space:]]" <<<"$original" \
+     && [ "$before" != "$after" ] \
+     && [ "$rc" -eq 0 ] \
+     && ! grep -qE "^  ($expected_one|$expected_two)[[:space:]]" <<<"$out" \
+     && grep -qF "no surviving comment names a deleted identifier" <<<"$out"; then
+    note "$label mutation" "changed bytes; both missing binders exposed — KILLED"
+  else
+    note "$label mutation" "SURVIVED/VACUOUS — original $original_rc mutant $rc"
+    printf '%s\n' "$out" | sed 's/^/      /'
+    FAIL=1
+  fi
+}
+
 # one fixture: plant a binding plus a comment naming it, delete the binding, and
 # require the audit to name the surviving comment
 prove_form() {
@@ -537,5 +681,352 @@ else
   note "literal in a pattern (by design)" "FALSE POSITIVE — exit $rc"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
 fi
 
-[ "$FAIL" -eq 0 ] && echo "STALE-REF PROOF: every supported form fails when it should, and all five scope boundaries hold" \
+echo "=== FG-117 false-positive tranche ==="
+
+# (b) BOOLEAN AND NULL LITERALS are values matched by a pattern, not names
+# introduced by it. First the pure false-positive shape: there is deliberately
+# no eligible binder, and the exact zero-count diagnostic prevents a broad
+# "ignore the whole diff" change from passing silently.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (true, x) = true, 1\nlet (false, y) = false, 2\nlet (null, z) = null, 3\nlet keeper = 1\n// true false and null are literal patterns\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1,3d' src/F.fs ) >/dev/null 2>&1
+expect_clean "literal patterns only" "$d" 0 'true false null'
+fg117_b_fixture=$d
+
+# The neighboring real binders must still be extracted. Each literal sits in
+# the same deleted tuple as one supported binder, so filtering the whole pattern
+# instead of only the literal fails this arm.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (true, staleGateValue) = true, 1\nlet (false, foldedGate) = false, 2\nlet (null, otherGate) = null, 3\nlet keeper = 1\n// true guards staleGateValue; false guards foldedGate; null guards otherGate\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1,3d' src/F.fs ) >/dev/null 2>&1
+expect_reported "literal neighbor binder" "$d" 3 'staleGateValue foldedGate otherGate' 'true false null'
+
+# (c) ACTIVE-PATTERN AND OPERATOR HEADERS are definitions. The identifiers
+# after the closing parenthesis are parameters, not top-level destructured
+# binders.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (|LongCase|_|) inputValue = Some inputValue\nlet (+.) leftValue rightValue = leftValue + rightValue\nlet keeper = 1\n// inputValue and leftValue are definition parameters\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1,2d' src/F.fs ) >/dev/null 2>&1
+expect_clean "definition paren forms" "$d" 0 'inputValue leftValue rightValue'
+fg117_c_fixture=$d
+
+# A conventional tuple deleted beside those two definitions remains covered.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (|LongCase|_|) inputValue = Some inputValue\nlet (+.) leftValue rightValue = leftValue + rightValue\nlet (staleGateValue, foldedGate) = 1, 2\nlet keeper = 1\n// inputValue leftValue staleGateValue and foldedGate are discussed\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1,3d' src/F.fs ) >/dev/null 2>&1
+expect_reported "definition neighbor tuple" "$d" 2 'staleGateValue foldedGate' 'inputValue leftValue rightValue'
+
+# A leading operator CHARACTER does not make a tuple an operator definition.
+# The pure control carries no eligible binder; the paired tuple's lowercase
+# neighbor must still be extracted. Requiring a real parameter after an exact
+# operator/active-pattern head is what separates both from the definitions
+# above.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (-1, x) = -1, 2\nlet keeper = 1\n// -1 is a numeric literal pattern, not a definition header\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_clean "numeric tuple literal only" "$d" 0 'staleGateValue'
+
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (-1, staleGateValue) = -1, 2\nlet keeper = 1\n// staleGateValue is the numeric tuple neighbor\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_reported "numeric tuple neighbor binder" "$d" 1 'staleGateValue' ''
+fg117_c_numeric_fixture=$d
+
+# (e) A LEADING UNDERSCORE belongs to the identifier. A comment containing
+# only the old, invented suffix must not fire, while the summary proves the
+# actual underscore-prefixed binder was still collected.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (_staleGateValue, x) = 1, 2\nlet keeper = 1\n// staleGateValue is not the name that was bound\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_clean "underscore suffix not invented" "$d" 1 'staleGateValue'
+fg117_e_fixture=$d
+
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (_staleGateValue, x) = 1, 2\nlet keeper = 1\n// _staleGateValue is the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_reported "underscore binder retained" "$d" 1 '_staleGateValue' ''
+
+# One-or-more leading underscores are the binder, not a prefix to preserve once
+# and not a reason to suppress the token. The suffix-only control must stay
+# silent while the exact double-underscore name remains reportable.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (__staleGateValue, x) = 1, 2\nlet keeper = 1\n// staleGateValue is not the name that was bound\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_clean "multi-underscore suffix not invented" "$d" 1 'staleGateValue _staleGateValue'
+
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (__staleGateValue, x) = 1, 2\nlet keeper = 1\n// __staleGateValue is the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_reported "multi-underscore binder retained" "$d" 1 '__staleGateValue' '_staleGateValue staleGateValue'
+fg117_e_multi_fixture=$d
+
+# Once an identifier begins with an underscore, an uppercase or digit next
+# character is part of a binder rather than an unprefixed constructor. Keep the
+# full prefixed spelling in both domains: suffix-only prose stays silent, while
+# the exact binder remains reportable.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (_StaleGateValue, x) = 1, 2\nlet keeper = 1\n// StaleGateValue is not the name that was bound\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_clean "uppercase underscore suffix not invented" "$d" 1 'StaleGateValue'
+
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (_StaleGateValue, x) = 1, 2\nlet keeper = 1\n// _StaleGateValue is the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_reported "uppercase underscore binder retained" "$d" 1 '_StaleGateValue' 'StaleGateValue'
+
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (_123GateValue, x) = 1, 2\nlet keeper = 1\n// 123GateValue is not the name that was bound\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_clean "digit underscore suffix not invented" "$d" 1 '123GateValue'
+
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (_123GateValue, x) = 1, 2\nlet keeper = 1\n// _123GateValue is the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_reported "digit underscore binder retained" "$d" 1 '_123GateValue' '123GateValue'
+
+# One fixture makes the domain broadening jointly load-bearing: reverting the
+# underscore arm to lowercase-only must lose both supported binders.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (_StaleGateValue, x) = 1, 2\nlet (_123GateValue, y) = 3, 4\nlet keeper = 1\n// _StaleGateValue and _123GateValue are gate hooks\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1,2d' src/F.fs ) >/dev/null 2>&1
+expect_reported "underscore uppercase and digit binders" "$d" 2 '_StaleGateValue _123GateValue' 'StaleGateValue 123GateValue'
+fg117_e_domain_fixture=$d
+
+# The length floor applies to the COMPLETE captured identifier. These three are
+# exactly four characters, including their leading underscore run. First prove
+# that suffix-only prose does not invent a shorter name while the exact removed
+# count proves all three full tokens were collected.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (__Ab, _Abc, _123, x) = 1, 2, 3, 4\nlet keeper = 1\n// Ab Abc and 123 are suffixes, not the names that were bound\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_clean "underscore boundary suffixes" "$d" 3 'Ab Abc 123'
+
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (__Ab, _Abc, _123, x) = 1, 2, 3, 4\nlet keeper = 1\n// __Ab _Abc and _123 are exact four-character binders\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_reported "underscore boundary binders" "$d" 3 '__Ab _Abc _123' 'Ab Abc 123'
+
+# Keep a single-hit __Ab fixture for the suffix-floor mutation below. The other
+# two supported binders remain unmentioned, so restoring the old suffix-based
+# floor removes the only hit and must make the mutant incorrectly exit clean.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (__Ab, _Abc, _123, x) = 1, 2, 3, 4\nlet keeper = 1\n// __Ab is the load-bearing four-character binder\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_reported "double-underscore length floor" "$d" 3 '__Ab' 'Ab Abc 123'
+fg117_e_total_floor_fixture=$d
+
+# Three total characters stay below the deliberate floor even when two of them
+# are underscores. Exact zero is what makes removal of the full-token filter a
+# non-vacuous false-positive mutation.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (__A, _Ab, x) = 1, 2, 3\nlet keeper = 1\n// __A and _Ab are deliberately below the four-character floor\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_clean "underscore below length floor" "$d" 0 '__A _Ab'
+fg117_e_short_floor_fixture=$d
+
+# (f) REMOVED-LINE COMMENT STATE comes from the full base blob, not from a
+# zero-context hunk. The deleted binding-shaped text is several lines after the
+# opener, so resetting state at the hunk reproduces the false positive.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf '(*\nblock comment preface\nanother comment line\nlet staleDirectValue = 1\nStaleFieldValue: int\nlet (staleGateValue, foldedGate) = 1, 2\ncomment tail\n*)\nlet keeper = 1\n// staleDirectValue StaleFieldValue staleGateValue and foldedGate are documentation examples\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '4,6d' src/F.fs ) >/dev/null 2>&1
+expect_clean "removed block-comment text" "$d" 0 'staleDirectValue StaleFieldValue staleGateValue foldedGate'
+fg117_f_fixture=$d
+
+# In the paired arm a real tuple is deleted in a separate hunk. The fake tuple
+# inside the old block comment must be ignored while the real binders report.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf '(*\nblock comment preface\nanother comment line\nlet staleDirectValue = 1\nStaleFieldValue: int\nlet (staleGateValue, foldedGate) = 1, 2\ncomment tail\n*)\nlet keeperOne = 1\nlet keeperTwo = 2\nlet keeperThree = 3\nlet (actualGateValue, actualFoldedGate) = 4, 5\n// staleDirectValue StaleFieldValue staleGateValue foldedGate actualGateValue and actualFoldedGate are discussed\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '4,6d;12d' src/F.fs ) >/dev/null 2>&1
+expect_reported "block-comment neighbor code" "$d" 2 'actualGateValue actualFoldedGate' 'staleDirectValue StaleFieldValue staleGateValue foldedGate'
+
+# The same full-base scanner must exclude binding-shaped continuation lines in
+# each F# string mode. Each clean control is paired with a real deleted binder
+# after the string, which must remain visible.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let payload =\n    "begin\nlet staleOrdinaryValue = 1\nend"\nlet keeper = 1\n// staleOrdinaryValue is string data\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '3d' src/F.fs ) >/dev/null 2>&1
+expect_clean "ordinary string continuation" "$d" 0 'staleOrdinaryValue'
+
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let payload =\n    "begin\nlet staleOrdinaryValue = 1\nend"\nlet actualOrdinaryGate = 2\n// staleOrdinaryValue is data; actualOrdinaryGate is a binder\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '3d;5d' src/F.fs ) >/dev/null 2>&1
+expect_reported "ordinary string neighbor" "$d" 1 'actualOrdinaryGate' 'staleOrdinaryValue'
+
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let payload =\n    @"begin\nlet staleVerbatimValue = 1\nend"\nlet keeper = 1\n// staleVerbatimValue is string data\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '3d' src/F.fs ) >/dev/null 2>&1
+expect_clean "verbatim string continuation" "$d" 0 'staleVerbatimValue'
+
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let payload =\n    @"begin\nlet staleVerbatimValue = 1\nend"\nlet actualVerbatimGate = 2\n// staleVerbatimValue is data; actualVerbatimGate is a binder\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '3d;5d' src/F.fs ) >/dev/null 2>&1
+expect_reported "verbatim string neighbor" "$d" 1 'actualVerbatimGate' 'staleVerbatimValue'
+
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let payload =\n    """begin\nlet staleTripleValue = 1\nend"""\nlet keeper = 1\n// staleTripleValue is string data\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '3d' src/F.fs ) >/dev/null 2>&1
+expect_clean "triple string continuation" "$d" 0 'staleTripleValue'
+
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let payload =\n    """begin\nlet staleTripleValue = 1\nend"""\nlet actualTripleGate = 2\n// staleTripleValue is data; actualTripleGate is a binder\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '3d;5d' src/F.fs ) >/dev/null 2>&1
+expect_reported "triple string neighbor" "$d" 1 'actualTripleGate' 'staleTripleValue'
+
+# Nested F# block comments carry depth across the whole base blob too.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf '(*\nouter docs\n(* nested docs *)\nlet staleNestedValue = 1\n*)\nlet keeper = 1\n// staleNestedValue is documentation\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '4d' src/F.fs ) >/dev/null 2>&1
+expect_clean "nested removed comment" "$d" 0 'staleNestedValue'
+
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf '(*\nouter docs\n(* nested docs *)\nlet staleNestedValue = 1\n*)\nlet actualNestedGate = 2\n// staleNestedValue is docs; actualNestedGate is a binder\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '4d;6d' src/F.fs ) >/dev/null 2>&1
+expect_reported "nested comment neighbor" "$d" 1 'actualNestedGate' 'staleNestedValue'
+
+# A character literal holding a quote must not enter string mode and hide the
+# real binding on the following line.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let quote = %s\nlet actualCharGate = 2\n// actualCharGate follows a quote character literal\n' "'\"'" > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '2d' src/F.fs ) >/dev/null 2>&1
+expect_reported "char literal adjacency" "$d" 1 'actualCharGate' ''
+
+# A line that starts in a comment but closes into code is projected from its
+# first real token, rather than discarded with the comment prefix.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf '(* old docs *) let afterCommentGate = 1\n// afterCommentGate is the live binder after the close\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_reported "code after comment close" "$d" 1 'afterCommentGate' ''
+
+# (g) A LOWERCASE match must begin at an identifier boundary. Entering Choice
+# at its second character invents hoice.
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (Choice x, y) = Choice 1, 2\nlet keeper = 1\n// hoice is merely a fragment of the constructor name\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_clean "constructor fragment" "$d" 0 'hoice'
+fg117_g_fixture=$d
+
+d=$(mktemp -d /tmp/stale-proof.XXXXXX)
+( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
+  && mkdir -p src \
+  && printf 'let (Choice staleGateValue, x) = Choice 1, 2\nlet keeper = 1\n// hoice is not a binder, but staleGateValue is the gate hook\n' > src/F.fs \
+  && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
+expect_reported "constructor neighbor binder" "$d" 1 'staleGateValue' 'hoice'
+
+echo "=== FG-117 direct mutation kills ==="
+prove_false_positive_mutation \
+  "literal allowlist" "$fg117_b_fixture" true \
+  '  #{"true" "false" "null"})' \
+  '  #{})'
+
+prove_false_positive_mutation \
+  "definition-form filter" "$fg117_c_fixture" inputValue \
+  '                        (remove definition-paren-form?)' \
+  '                        (remove (constantly false))'
+
+prove_coverage_mutation \
+  "numeric tuple discrimination" "$fg117_c_numeric_fixture" staleGateValue \
+  '  (boolean (re-find #"^(?:\(\s*[!%&*+\-./<=>?@^|~:]+\s*\)|\(\s*\|(?:[A-Z][A-Za-z0-9_'"'"']*\|)+(?:_\|)?\s*\))\s+[^,=\s]" (str/trim t))))' \
+  '  (boolean (re-find #"^\(\s*[!%&*+\-./<=>?@^|~:]" (str/trim t))))'
+
+prove_false_positive_mutation \
+  "underscore preservation" "$fg117_e_fixture" staleGateValue \
+  '                        (mapcat #(map second (re-seq destructured-token %)))' \
+  '                        (mapcat #(map (fn [[_ id]] (if (str/starts-with? id "_") (subs id 1) id)) (re-seq destructured-token %)))'
+
+prove_coverage_mutation \
+  "multi-underscore binder" "$fg117_e_multi_fixture" __staleGateValue \
+  '  #"(?:^|[^A-Za-z0-9_'"'"'])(_+[A-Za-z0-9][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})")' \
+  '  #"(?:^|[^A-Za-z0-9_'"'"'])(_[A-Za-z0-9][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})")'
+
+prove_coverage_pair_mutation \
+  "underscore uppercase/digit domain" "$fg117_e_domain_fixture" _StaleGateValue _123GateValue \
+  '  #"(?:^|[^A-Za-z0-9_'"'"'])(_+[A-Za-z0-9][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})")' \
+  '  #"(?:^|[^A-Za-z0-9_'"'"'])(_+[a-z][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})")'
+
+prove_false_positive_mutation \
+  "underscore complete-token length floor" "$fg117_e_short_floor_fixture" __A \
+  '                        (filter #(>= (count %) 4))' \
+  '                        (filter (constantly true))'
+
+prove_coverage_mutation \
+  "underscore suffix-floor regression" "$fg117_e_total_floor_fixture" __Ab \
+  '  #"(?:^|[^A-Za-z0-9_'"'"'])(_+[A-Za-z0-9][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})")' \
+  '  #"(?:^|[^A-Za-z0-9_'"'"'])(_+[A-Za-z0-9][A-Za-z0-9_'"'"']{2,}|[a-z][A-Za-z0-9_'"'"']{3,})")'
+
+prove_false_positive_mutation \
+  "base lexical projection" "$fg117_f_fixture" staleDirectValue \
+  '                 (when-let [code (get-in old-code-projections [file n])]' \
+  '                 (when-let [code (or (get-in old-code-projections [file n]) (subs _removed-text 1))]'
+
+prove_false_positive_mutation \
+  "constructor left boundary" "$fg117_g_fixture" hoice \
+  "  #\"(?:^|[^A-Za-z0-9_'])(_+[A-Za-z0-9][A-Za-z0-9_']*|[a-z][A-Za-z0-9_']{3,})\")" \
+  "  #\"(?:^|.)(_+[A-Za-z0-9][A-Za-z0-9_']*|[a-z][A-Za-z0-9_']{3,})\")"
+
+[ "$FAIL" -eq 0 ] && echo "STALE-REF PROOF: supported forms report, pinned boundaries stay silent, and FG-117 false positives are excluded (10 direct mutations killed)" \
                   || { echo "STALE-REF PROOF FAILED"; exit 1; }

@@ -86,7 +86,7 @@
       :else nil)))
 
 (defn- scan-line
-  "[comment-start depth' mode'] for one line, given the depth and lexical mode it
+  "[comment-start depth' mode' code? code-start] for one line, given the depth and lexical mode it
    begins with. nil start means the line holds no comment.
 
    A CHARACTER SCAN carrying state ACROSS lines, and the first version carried
@@ -105,28 +105,28 @@
   [^String l depth mode]
   (let [n (.length l)
         at? (fn [i ^String t] (and (<= (+ i (.length t)) n) (= t (.substring l i (+ i (.length t))))))]
-    (loop [i 0, d depth, m mode, start (when (and (pos? depth) (= m :code)) 0)]
+    (loop [i 0, d depth, m mode, start (when (and (pos? depth) (= m :code)) 0), code? false, code-start nil]
       (if (>= i n)
-        [start d m]
+        [start d m code? code-start]
         (let [c (.charAt l i)]
           (cond
             ;; inside a block comment: only its own delimiters matter, and F#
             ;; block comments NEST
             (pos? d)
             (cond
-              (at? i "*)") (recur (+ i 2) (dec d) m (or start i))
-              (at? i "(*") (recur (+ i 2) (inc d) m (or start i))
-              :else (recur (inc i) d m (or start i)))
+              (at? i "*)") (recur (+ i 2) (dec d) m (or start i) code? code-start)
+              (at? i "(*") (recur (+ i 2) (inc d) m (or start i) code? code-start)
+              :else (recur (inc i) d m (or start i) code? code-start))
 
-            (= m :tstr) (if (at? i "\"\"\"") (recur (+ i 3) d :code start) (recur (inc i) d m start))
+            (= m :tstr) (if (at? i "\"\"\"") (recur (+ i 3) d :code start code? code-start) (recur (inc i) d m start code? code-start))
             (= m :vstr) (cond
-                          (at? i "\"\"") (recur (+ i 2) d m start)
-                          (= c \") (recur (inc i) d :code start)
-                          :else (recur (inc i) d m start))
+                          (at? i "\"\"") (recur (+ i 2) d m start code? code-start)
+                          (= c \") (recur (inc i) d :code start code? code-start)
+                          :else (recur (inc i) d m start code? code-start))
             (= m :str) (cond
-                         (and (= c \\) (< (inc i) n)) (recur (+ i 2) d m start)
-                         (= c \") (recur (inc i) d :code start)
-                         :else (recur (inc i) d m start))
+                         (and (= c \\) (< (inc i) n)) (recur (+ i 2) d m start code? code-start)
+                         (= c \") (recur (inc i) d :code start code? code-start)
+                         :else (recur (inc i) d m start code? code-start))
 
             :else
             (cond
@@ -142,15 +142,17 @@
               ;; and `state'` ends an identifier. A literal is `'x'` or an
               ;; escape `'\\n'`/`'\\''`, so it is recognised only when a closing
               ;; quote actually follows.
-              (char-literal-len l i n) (recur (+ i (char-literal-len l i n)) d m start)
-              (at? i "\"\"\"") (recur (+ i 3) d :tstr start)
-              (at? i "@\"") (recur (+ i 2) d :vstr start)
-              (= c \") (recur (inc i) d :str start)
-              (at? i "//") [(or start i) d m]
-              (at? i ";;") [(or start i) d m]
-              (= c \#) [(or start i) d m]
-              (at? i "(*") (recur (+ i 2) (inc d) m (or start i))
-              :else (recur (inc i) d m start))))))))
+              (char-literal-len l i n) (recur (+ i (char-literal-len l i n)) d m start true (or code-start i))
+              (at? i "\"\"\"") (recur (+ i 3) d :tstr start true (or code-start i))
+              (at? i "@\"") (recur (+ i 2) d :vstr start true (or code-start i))
+              (= c \") (recur (inc i) d :str start true (or code-start i))
+              (at? i "//") [(or start i) d m code? code-start]
+              (at? i ";;") [(or start i) d m code? code-start]
+              (= c \#) [(or start i) d m code? code-start]
+              (at? i "(*") (recur (+ i 2) (inc d) m (or start i) code? code-start)
+              :else (recur (inc i) d m start
+                           (or code? (not (Character/isWhitespace c)))
+                           (if (and (nil? code-start) (not (Character/isWhitespace c))) i code-start)))))))))
 
 (defn- comment-spans
   "[[line-no text whole?] ...] for every line that is, or begins, a comment.
@@ -164,7 +166,7 @@
     (if (nil? l)
       acc
       (let [inside? (and (pos? depth) (= mode :code))
-            [idx depth' mode'] (scan-line l depth mode)
+            [idx depth' mode' _ _] (scan-line l depth mode)
             ;; ENTIRELY a comment — as opposed to code with a trailing one.
             whole? (or inside?
                        (and (some? idx) (str/blank? (subs l 0 idx))))
@@ -173,6 +175,18 @@
                (if carry? depth' 0)
                (if carry? mode' :code)
                (if text (conj acc [n text whole?]) acc))))))
+
+(defn- code-line-projections
+  "Line numbers mapped to source beginning at their first token outside a
+   carried string or block/line comment. State always begins at the full file's
+   first line, and code after a closing comment/string remains visible."
+  [lines]
+  (loop [[l & more] lines, n 1, depth 0, mode :code, acc {}]
+    (if (nil? l)
+      acc
+      (let [[_ depth' mode' code? code-start] (scan-line l depth mode)]
+        (recur more (inc n) depth' mode'
+               (cond-> acc code? (assoc n (subs l code-start))))))))
 
 ;; THE BASE MUST RESOLVE, and this script shipped without checking it: `git diff`
 ;; ran with :continue true, a bad revision went to stderr, stdout came back empty
@@ -230,6 +244,85 @@
   ;; to `removed` and a comment naming it passed the blocking audit clean.
   "\\{?\\s*(?:\\[<[^>]*>\\]\\s*)?(?:mutable\\s+)?")
 
+(def ^:private pattern-literals
+  ;; These are literal patterns, never binders. Keeping this allowlist beside
+  ;; the token extraction makes its intentionally bounded claim visible: this
+  ;; is not an F# pattern parser.
+  #{"true" "false" "null"})
+
+(def ^:private destructured-token
+  ;; The LEFT boundary is load-bearing. Without it Choice is entered at its
+  ;; second character and hoice becomes a fictitious lowercase binder. A
+  ;; run of leading underscores belongs to the identifier too; preserving only
+  ;; one suppresses __staleGateValue entirely, while dropping the run invents
+  ;; staleGateValue from the real binder. Tokenize the WHOLE underscore-prefixed
+  ;; spelling here; the four-character floor is applied to that captured token
+  ;; below. Applying `{2,}` only to the non-underscore suffix silently drops a
+  ;; valid four-character binder such as __Ab.
+  #"(?:^|[^A-Za-z0-9_'])(_+[A-Za-z0-9][A-Za-z0-9_']*|[a-z][A-Za-z0-9_']{3,})")
+
+(defn- definition-paren-form?
+  "True when a parenthesised token after let is an active-pattern or operator
+   DEFINITION header with a real following parameter, rather than a
+   destructuring pattern. Its following names are parameters of that
+   definition, not top-level tuple binders."
+  [t]
+  (boolean (re-find #"^(?:\(\s*[!%&*+\-./<=>?@^|~:]+\s*\)|\(\s*\|(?:[A-Z][A-Za-z0-9_']*\|)+(?:_\|)?\s*\))\s+[^,=\s]" (str/trim t))))
+
+(defn- removed-fsharp-lines
+  "Removed F# code projections (with the diff's leading minus), excluding lines
+   wholly inside comments or carried strings in the BASE blob.
+
+   The old line number is parsed from each hunk, but comment state is derived
+   from the complete old file. Resetting lexical state at a -U0 hunk makes an
+   interior line of a multi-line block comment look like code."
+  [base diff]
+  (let [removed (->> (str/split-lines (or diff ""))
+                     (reduce
+                       (fn [{:keys [file old-line in-hunk? acc] :as st} l]
+                         (cond
+                           ;; In a hunk, prefixes describe content. Test these
+                           ;; before file headers so deleted source beginning
+                           ;; with two dashes cannot impersonate a file header.
+                           (and in-hunk? (str/starts-with? l "-"))
+                           (let [entry (when (and file
+                                                  (re-find #"\.(fs|fsi|fsx)$" file))
+                                         [file old-line l])]
+                             (assoc st :old-line (inc old-line)
+                                       :acc (cond-> acc entry (conj entry))))
+
+                           (and in-hunk? (str/starts-with? l "+")) st
+                           (and in-hunk? (str/starts-with? l " "))
+                           (assoc st :old-line (inc old-line))
+                           (and in-hunk? (= l "\\ No newline at end of file")) st
+
+                           (str/starts-with? l "--- ")
+                           (let [p (subs l 4)]
+                             (assoc st :file (when (str/starts-with? p "a/") (subs p 2))
+                                       :in-hunk? false :old-line nil))
+
+                           :else
+                           (if-let [[_ start] (re-find #"^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@" l)]
+                             (assoc st :old-line (parse-long start) :in-hunk? true)
+                             (assoc st :in-hunk? false))))
+                       {:file nil :old-line nil :in-hunk? false :acc []})
+                     :acc)
+        old-code-projections
+        (into {}
+              (for [file (distinct (map first removed))]
+                (let [r (shell {:out :string :err :string :continue true}
+                               "git" "show" (str base ":" file))]
+                  (when-not (zero? (:exit r))
+                    (println (format "stale-reference audit: cannot read base blob %s:%s: %s"
+                                     base file (str/trim (or (:err r) ""))))
+                    (System/exit 2))
+                  [file (code-line-projections (str/split-lines (:out r)))])))]
+    (->> removed
+         (keep (fn [[file n _removed-text]]
+                 (when-let [code (get-in old-code-projections [file n])]
+                   (str "-" code))))
+         vec)))
+
 (let [args *command-line-args*
       strict? (some #{"--strict"} args)
       base (or (first (remove #{"--strict"} args)) "origin/main")
@@ -237,7 +330,7 @@
           (when-not (zero? (:exit r))
             (println (format "stale-reference audit: base ref %s does not resolve — refusing to report a clean tree it never compared against" base))
             (System/exit 2)))
-      dr (apply shell {:out :string :err :string :continue true} "git" "diff" "-U0" base "--"
+      dr (apply shell {:out :string :err :string :continue true} "git" "diff" "--no-ext-diff" "--no-renames" "-U0" base "--"
                 (filterv #(.isDirectory (java.io.File. %)) ["src" "tools" "scripts" "tests"]))
       _ (when-not (zero? (:exit dr))
           (println (format "stale-reference audit: `git diff %s` failed: %s" base (str/trim (or (:err dr) ""))))
@@ -257,21 +350,7 @@
       ;; The old path (`--- a/...`) is what the removed lines belong to, so a
       ;; wholly deleted .fs file is still read; `+++` would be /dev/null there.
       ;; Comments in scripts are still SEARCHED — only collection is narrowed.
-      fsharp-removed (->> (str/split-lines (or diff ""))
-                   (reduce (fn [{:keys [file acc]} l]
-                             (cond
-                               (str/starts-with? l "--- ")
-                               {:file (str/replace (subs l 4) #"^a/" "") :acc acc}
-
-                               (and (str/starts-with? l "-")
-                                    (not (str/starts-with? l "---"))
-                                    file
-                                    (re-find #"\.(fs|fsi|fsx)$" file))
-                               {:file file :acc (conj acc l)}
-
-                               :else {:file file :acc acc}))
-                           {:file nil :acc []})
-                   :acc)
+      fsharp-removed (removed-fsharp-lines base diff)
       removed (->> fsharp-removed
                    ;; F# puts MODIFIERS between the keyword and the name, and the
                    ;; first draft allowed only `private` — so `let mutable OldGate`
@@ -394,6 +473,14 @@
                                           ;; Fourth time on this branch. Built
                                           ;; from `binding-core` so it cannot
                                           ;; drift from the extractor again.
+                                          ;; FG-117's false-positive tranche
+                                          ;; deliberately leaves two MISS shapes
+                                          ;; open here: [^=]* may cross quoted
+                                          ;; literal text, and id has no explicit
+                                          ;; left boundary, so it may match a
+                                          ;; suffix of a longer binder. They are
+                                          ;; the separately tracked (a)/(d)
+                                          ;; follow-up, not claims of this fix.
                                           (format "^\\s*%s%s%s|^\\s*%s%s\\s*:|^\\s*%s\\([^=]*%s%s"
                                                   binding-core id fsharp-boundary
                                                   field-lead id
@@ -448,6 +535,10 @@
                        second))
       destructured (->> fsharp-removed
                         (keep #(second (re-find (re-pattern (str "^\\-\\s*" binding-core "(\\(.*?)=")) %)))
+                        ;; An active-pattern or parenthesised operator here is a
+                        ;; DEFINITION. Names following its closing paren are
+                        ;; parameters, not destructured top-level binders.
+                        (remove definition-paren-form?)
                         ;; depth > 1 is a NESTED pattern and stays uncovered —
                         ;; consistently. An earlier version tested for a `(`
                         ;; SUBSTRING, which worked only while the capture stopped
@@ -491,7 +582,13 @@
                         ;; collecting it reported the word "Some" as a deleted
                         ;; identifier — a false positive against any comment in
                         ;; the tree that mentions it.
-                        (mapcat #(map second (re-seq #"([a-z][A-Za-z0-9_']{3,})" %)))
+                        (mapcat #(map second (re-seq destructured-token %)))
+                        ;; The documented floor is the COMPLETE identifier's
+                        ;; length. This is separate from tokenization so every
+                        ;; leading underscore counts, while __A and _Ab remain
+                        ;; deliberately below scope.
+                        (filter #(>= (count %) 4))
+                        (remove pattern-literals)
                         set)
 
       removed (into removed destructured)

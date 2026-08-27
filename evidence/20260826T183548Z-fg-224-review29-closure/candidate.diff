@@ -1,0 +1,189 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index 00d9ab7..fc66c98 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -740,7 +740,7 @@ before their no-effect validation refusal. Compatibility counts are unchanged.
+ | FG-062 | P1 | TODO | `Fogell.Agent.Protocol` + `Runtime` (`adr/0008`): mTLS, versioned, agent-local durable log, offset recovery | **network partition ≥ 45 s costs zero log lines** — the Jenkins parity bar |
+ | FG-063 | P1 | TODO | Agent death handling: announce reconnect grace with a budget, then ABORTED with a named cause | matches Jenkins' behavior, which is exemplary here |
+ | FG-064 | P1 | **DONE** | Progressive console over the API (`adr/0005` match) | `GET …/logs?from=N` returns chunks plus a `next_sequence` cursor, so a client tails a running build rather than waiting for completion |
+-| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Local exact-tree acceptance closes the review findings: outer Run.Host cleanup binds every leader/group signal to the launcher's captured Linux birth identity and fails closed on PID/PGID reuse; durable raw-byte idempotency is resolved before decoding or parsing, so an exact malformed legacy replay remains 200 while changed malformed bytes remain the bound key's 409 conflict; and invalid-definition quarantine atomically moves attempt → node → build with exactly one reasoned event/outbox pair. Review25 closes Codex `3866957698`: shutdown interrupts the active poll promptly and retains the durable `controller_shutdown` disposition. It also closes `3866957703`: readiness detects a missing or unwritable state root beyond startup through lazy ordered dependency checks and a lock-protected one-second cache; the worker checks cached readiness before claiming, forces a fresh probe after an offer, and fenced-requeues an unstarted offer on failure, so cached success never authorizes materialization after storage loss. Review26 closes Codex `3867130539`: after an offer, the lazy launcher-first guard performs the fresh state-root probe only when launchers are available, and either dependency loss makes one immediate fenced `RequeueOwnedAttempt` before logging. The unstarted attempt/node/build return to `queued` without materialization, execution, reconciliation, event, or outbox publication; the exact owner/fence/unexpired-lease/current-restore-epoch contract applies in attempt → node → build lock order, a replacement advances the fence, and concurrent cancellation remains set for it to observe. Review27 closes Codex `3867267809`: `RequireReconciliation` now needs the exact owner/fence, live lease, and current restore epoch, so expired or pre-restore workers publish nothing while the lease scanner or restore path owns disposition. It also closes `3867267816`: whitespace-only required configuration, including the local trust pool, refuses startup before admission. Review28 closes Codex `3867404726`: after `BeginExecution` but before any `Process.Start`, a setup failure disposes partial process ownership and performs one fenced requeue before logging, restoring queued lineage without reconciliation publication; an actual attempted launch remains conservatively reasoned reconciliation. The adjacent lease-expiry audit remains closed: expired `accepted`/`running`/`finalizing`/`cancelling` attempts atomically emit one `lease_expired` pair, while safe `offered` → `queued` recovery emits neither. Engine-created inner step groups are registered before release and reaped across Run.Host death; progressive publication is FIFO-serialized outside the output lock; and ambiguous post-launch exits enter reconciliation with a stable reason event and outbox while retaining the event fence until terminal publication. The fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth, plus graceful-shutdown reconciliation and byte-exact recovery evidence. Controller API is 34/34, Differential is 273/273, Store is 91/91, and the aggregate locked gate is 907/907. Fresh exact-head hosted gates and Copilot/Codex review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
++| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Local exact-tree acceptance closes the review findings: outer Run.Host cleanup binds every leader/group signal to the launcher's captured Linux birth identity and fails closed on PID/PGID reuse; durable raw-byte idempotency is resolved before decoding or parsing, so an exact malformed legacy replay remains 200 while changed malformed bytes remain the bound key's 409 conflict; and invalid-definition quarantine atomically moves attempt → node → build with exactly one reasoned event/outbox pair. Review25 closes Codex `3866957698`: shutdown interrupts the active poll promptly and retains the durable `controller_shutdown` disposition. It also closes `3866957703`: readiness detects a missing or unwritable state root beyond startup through lazy ordered dependency checks and a lock-protected one-second cache; the worker checks cached readiness before claiming, forces a fresh probe after an offer, and fenced-requeues an unstarted offer on failure, so cached success never authorizes materialization after storage loss. Review26 closes Codex `3867130539`: after an offer, the lazy launcher-first guard performs the fresh state-root probe only when launchers are available, and either dependency loss makes one immediate fenced `RequeueOwnedAttempt` before logging. The unstarted attempt/node/build return to `queued` without materialization, execution, reconciliation, event, or outbox publication; the exact owner/fence/unexpired-lease/current-restore-epoch contract applies in attempt → node → build lock order, a replacement advances the fence, and concurrent cancellation remains set for it to observe. Review27 closes Codex `3867267809`: `RequireReconciliation` now needs the exact owner/fence, live lease, and current restore epoch, so expired or pre-restore workers publish nothing while the lease scanner or restore path owns disposition. It also closes `3867267816`: whitespace-only required configuration, including the local trust pool, refuses startup before admission. Review28 closes Codex `3867404726`: after `BeginExecution` but before any `Process.Start`, a setup failure disposes partial process ownership and performs one fenced requeue before logging, restoring queued lineage without reconciliation publication; an actual attempted launch remains conservatively reasoned reconciliation. Review29 closes Codex `3867560435`: after natural exit, verified extinction, and a complete drain, final-refresh cancellation delegates to Store terminal arbitration and publishes `aborted` when cancellation won; shutdown, lease loss, or incomplete drain still reconcile. The adjacent lease-expiry audit remains closed: expired `accepted`/`running`/`finalizing`/`cancelling` attempts atomically emit one `lease_expired` pair, while safe `offered` → `queued` recovery emits neither. Engine-created inner step groups are registered before release and reaped across Run.Host death; progressive publication is FIFO-serialized outside the output lock; and ambiguous post-launch exits enter reconciliation with a stable reason event and outbox while retaining the event fence until terminal publication. The fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth, plus graceful-shutdown reconciliation and byte-exact recovery evidence. Controller API is 34/34, Differential is 274/274, Store is 91/91, and the aggregate locked gate is 908/908. Fresh exact-head hosted gates and Copilot/Codex review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
+ | FG-065 | P2 | TODO | Jenkins-shaped REST compatibility shim, **off by default**, explicitly bounded | enabled only via env var; limitations documented |
+ | FG-066 | P2 | TODO | `Fogell.Cli`: validate / plan / run / build / resume / list / history | each subcommand has a golden-output test |
+ | FG-067 | P3 | TODO | `Fogell.Web` read-only build UI | renders a build's stages and log |
+diff --git a/docs/runbooks/controller-host.md b/docs/runbooks/controller-host.md
+index 46add4d..4612318 100644
+--- a/docs/runbooks/controller-host.md
++++ b/docs/runbooks/controller-host.md
+@@ -130,6 +130,14 @@ build to `queued` without a reconciliation event or outbox row. Once
+ ambiguous and retains reasoned `launcher_failed` reconciliation; the worker does
+ not convert an attempted launch into the safe setup-only requeue path.
+ 
++After a natural leader exit, verified process extinction, and a complete
++terminal event drain, the final control refresh may observe a cancellation that
++raced with completion. The worker delegates that race to `PublishTerminal`: if
++the cancellation committed first, the Store atomically publishes `aborted`; if
++terminal publication committed first, the later cancellation reports the
++existing terminal result. Shutdown, lease loss, or an incomplete terminal drain
++remain reconciliation conditions and never enter this natural-exit arbitration.
++
+ ## Acceptance and recovery checks
+ 
+ From HeMan, with the PostgreSQL container and host port selected:
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index 5a599f2..eeb5b0a 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -215,6 +215,17 @@ is reconciled by restore; an insert that waits is born in the new epoch.
+   exceptional launch outcomes retain the conservative reasoned
+   `launcher_failed` reconciliation path.
+ 
++## Review 29 closure
++
++- Codex finding `3867560435` is closed at the final-refresh cancellation race.
++  After natural leader exit, verified process extinction, and a complete
++  terminal event drain, a cancellation first observed by that final refresh is
++  delegated to `PublishTerminal`. The Store arbitrates the build row: a
++  cancellation that committed first publishes one `aborted` terminal
++  event/outbox pair, while publication that committed first remains terminal.
++  Shutdown, lease loss, or an incomplete drain still require reconciliation;
++  none is reclassified as a safe terminal publication.
++
+ These are local exact-tree closure claims only. Exact-head hosted gates, fresh
+ Copilot/Codex review coverage, publication, and merge remain outstanding.
+ 
+@@ -241,12 +252,12 @@ Exact-tree HeMan acceptance on fresh databases:
+ 
+ - Store: 91/91 passed;
+ - Controller API: 34/34 passed;
+-- Differential: 273/273 passed;
++- Differential: 274/274 passed;
+ - Execution: 100/100 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-locked repository gate also passes all 907 main-suite tests and every blocking
++locked repository gate also passes all 908 main-suite tests and every blocking
+ proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
+ recorded at publication rather than predicted here.
+ 
+diff --git a/src/Fogell.Controller.Host/Worker.fs b/src/Fogell.Controller.Host/Worker.fs
+index deb1763..6b69e84 100644
+--- a/src/Fogell.Controller.Host/Worker.fs
++++ b/src/Fogell.Controller.Host/Worker.fs
+@@ -86,6 +86,24 @@ module internal WorkerControl =
+         else
+             fallback
+ 
++    [<RequireQualifiedAccess>]
++    type NaturalExitFinalAction =
++        | PublishTerminal
++        | RequireReconciliation
++
++    let naturalExitFinalAction (cancelled: bool) interrupted leaseLost =
++        // This decision is reached only after a natural leader exit, verified
++        // process extinction, and a complete terminal event drain. A cancellation
++        // first observed by the final refresh is therefore not ambiguous process
++        // state: PublishTerminal owns the build-row arbitration and will publish
++        // Aborted when that cancellation committed first. Shutdown and lost lease
++        // authority still make terminal publication unsafe.
++        if interrupted || leaseLost then
++            NaturalExitFinalAction.RequireReconciliation
++        else
++            let _ = cancelled
++            NaturalExitFinalAction.PublishTerminal
++
+ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWorker>) =
+     inherit BackgroundService()
+ 
+@@ -700,11 +718,15 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                             // Close the drain-to-terminal race with a fresh lease.
+                             refreshControl true
+ 
+-                            if cancelled || interrupted || leaseLost then
+-                                // A control change after natural leader exit is
+-                                // still ambiguous with nested step sessions.
++                            match
++                                WorkerControl.naturalExitFinalAction
++                                    cancelled
++                                    interrupted
++                                    leaseLost
++                            with
++                            | WorkerControl.NaturalExitFinalAction.RequireReconciliation ->
+                                 requireReconciliation (currentReconciliationReason ())
+-                            else
++                            | WorkerControl.NaturalExitFinalAction.PublishTerminal ->
+                                 Journal.repairTail journalPath
+                                 let plan = journalPath |> Journal.read |> Resume.plan
+ 
+diff --git a/tests/Fogell.Differential.Tests/Tests.fs b/tests/Fogell.Differential.Tests/Tests.fs
+index 2290c03..dbc6add 100644
+--- a/tests/Fogell.Differential.Tests/Tests.fs
++++ b/tests/Fogell.Differential.Tests/Tests.fs
+@@ -541,6 +541,30 @@ let controllerWorkerTiming =
+                   "the non-throwing wake reaches the reason persisted by RequireReconciliation"
+           }
+ 
++          test "late cancellation delegates natural terminal arbitration to the Store" {
++              let decide cancelled interrupted leaseLost =
++                  WorkerControl.naturalExitFinalAction cancelled interrupted leaseLost
++
++              Expect.equal
++                  (decide false false false)
++                  WorkerControl.NaturalExitFinalAction.PublishTerminal
++                  "an unchanged final refresh publishes the drained terminal journal"
++              Expect.equal
++                  (decide true false false)
++                  WorkerControl.NaturalExitFinalAction.PublishTerminal
++                  "cancellation first observed after natural exit and complete drain is Store-arbitrated"
++
++              for cancelled, interrupted, leaseLost, cause in
++                  [ false, true, false, "shutdown"
++                    true, true, false, "shutdown concurrent with cancellation"
++                    false, false, true, "lease loss"
++                    true, false, true, "lease loss concurrent with cancellation" ] do
++                  Expect.equal
++                      (decide cancelled interrupted leaseLost)
++                      WorkerControl.NaturalExitFinalAction.RequireReconciliation
++                      $"{cause} preserves the conservative reconciliation boundary"
++          }
++
+           test "idle state-root readiness is probed at most once per second" {
+               let mutable now = 0L
+               let mutable probes = 0
+diff --git a/tests/Fogell.Store.Tests/Tests.fs b/tests/Fogell.Store.Tests/Tests.fs
+index bbc16be..815af6a 100644
+--- a/tests/Fogell.Store.Tests/Tests.fs
++++ b/tests/Fogell.Store.Tests/Tests.fs
+@@ -2244,6 +2244,10 @@ let fencing =
+                   (store.BuildSnapshot(org, project, admitted.BuildId))
+                   (Some("aborted", false))
+                   "build agrees with attempt truth"
++              Expect.equal
++                  (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
++                  0
++                  "late cancellation is terminal arbitration, not manual reconciliation"
+ 
+               use conn = new Npgsql.NpgsqlConnection(connectionString)
+               conn.Open()
+@@ -2262,6 +2266,20 @@ let fencing =
+               Expect.isTrue (truth.Read()) "terminal projections exist"
+               Expect.equal (truth.GetString 0) "aborted" "event records effective result"
+               Expect.equal (truth.GetString 1) "aborted" "outbox records effective result"
++              truth.Close()
++
++              use noReconciliationOutbox = conn.CreateCommand()
++              noReconciliationOutbox.CommandText <-
++                  "SELECT count(*) FROM outbox
++                    WHERE organization_id = @o
++                      AND topic = 'build.reconciliation_required'
++                      AND body->>'build' = @build"
++              noReconciliationOutbox.Parameters.AddWithValue("o", org.Value) |> ignore
++              noReconciliationOutbox.Parameters.AddWithValue("build", admitted.BuildId.Value.ToString()) |> ignore
++              Expect.equal
++                  (noReconciliationOutbox.ExecuteScalar() :?> int64)
++                  0L
++                  "late cancellation emits no reconciliation outbox"
+           }
+ 
+           test "publication linearized before cancellation remains terminal" {

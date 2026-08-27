@@ -11,6 +11,39 @@ open Fogell.Ir
 /// step, and reduces the run to a [Trace] in the same canonical form.
 module FogellSide =
 
+    /// A build-scoped agent HOME owned by Fogell rather than by the controller
+    /// account. Its root is an explicit execution input, never controller
+    /// TMPDIR. Stable job/build identity makes a restarted build converge on
+    /// the same HOME without sharing mutable state with another build.
+    let agentHome (workspaceRoot: string) (jobName: string) (buildNumber: int) =
+        let identity =
+            jobName
+            + "\u0000"
+            + buildNumber.ToString(Globalization.CultureInfo.InvariantCulture)
+            |> Text.Encoding.UTF8.GetBytes
+            |> Security.Cryptography.SHA256.HashData
+            |> Convert.ToHexString
+
+        Path.Combine(workspaceRoot, "_agent_home", identity.ToLowerInvariant())
+
+    let coordinatedAgentHomeReplacement coordinated workspaceRoot jobName buildNumber =
+        if coordinated |> List.exists (fun (_, token) -> token = "${HOME}") then
+            [ agentHome workspaceRoot jobName buildNumber, "${HOME}" ]
+        else
+            []
+
+    let private privateDirectoryMode =
+        UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute
+
+    let private ensurePrivateDirectory path =
+        if Directory.Exists path then
+            if File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint) then
+                invalidOp $"refusing symlinked private directory: {path}"
+
+            File.SetUnixFileMode(path, privateDirectoryMode)
+        else
+            Directory.CreateDirectory(path, privateDirectoryMode) |> ignore
+
     /// Pipeline options accepted by this execution engine. Keeping the behaviour
     /// and any collection-shaped argument exception in one closed descriptor list
     /// prevents the option allowlist and the shared named-collection preflight from
@@ -51,6 +84,68 @@ module FogellSide =
             descriptor.Behaviour = InertForSingleBuild
             && descriptor.UnevaluatedNamedCollectionArgs.Contains argumentName)
 
+    /// FG-130a. `parallelsAlwaysFailFast` is a zero-argument Declarative option.
+    /// Jenkins rejects an argument-bearing declaration while compiling the model;
+    /// reading the option by name alone made `parallelsAlwaysFailFast(false)` enable
+    /// failFast and run a build Jenkins never starts. Inspect EVERY occurrence: a
+    /// valid declaration beside an invalid one does not make the model valid.
+    ///
+    /// This slice validates positional and named arguments only. A trailing closure,
+    /// other option signatures, and duplicate section cardinality remain outside its
+    /// claim.
+    let rejectParallelsAlwaysFailFast (emit: string -> unit) (options: Step list) =
+        let declarations =
+            options |> List.filter (fun option -> option.Name = "parallelsAlwaysFailFast")
+
+        if
+            declarations
+            |> List.exists (fun option ->
+                not (List.isEmpty option.Positional) || not (List.isEmpty option.Named))
+        then
+            emit
+                "ERROR: pipeline declares an unusable parallelsAlwaysFailFast option: the parallelsAlwaysFailFast() option takes no arguments"
+
+            true
+        else
+            false
+
+    let private ansiColorMap (option: Step) =
+        match option.Positional, option.Named with
+        | [ map ], [] -> Some map
+        | [], [ ("colorMapName", map) ] -> Some map
+        | _ -> None
+
+    /// FG-123a. Declarative `ansiColor` is an option declaration, not the
+    /// block-taking scripted step of the same name. Jenkins rejects every
+    /// trailing-block spelling while compiling the model, including `{}` and
+    /// trivia-only bodies whose parsed `Block` list is empty.
+    ///
+    /// One operation owns both classification and the emitted diagnostic so
+    /// production cannot substitute unrelated narration after a helper test has
+    /// pinned the right reason. Duplicate cardinality remains the first owner;
+    /// only a single declaration reaches block-presence and then arity checks.
+    let rejectInvalidAnsiColor (emit: string -> unit) (options: Step list) =
+        let declarations = options |> List.filter (fun option -> option.Name = "ansiColor")
+
+        let rejection =
+            if List.length declarations > 1 then
+                Some
+                    "ERROR: pipeline declares an unusable ansiColor option: the ansiColor option is declared more than once"
+            elif declarations |> List.exists (fun option -> option.HasBlock) then
+                Some
+                    "ERROR: pipeline declares an unusable ansiColor option: the ansiColor(<colorMapName>) option does not accept a trailing block"
+            elif declarations |> List.exists (fun option -> (ansiColorMap option).IsNone) then
+                Some
+                    "ERROR: pipeline declares an unusable ansiColor option: the ansiColor(<colorMapName>) option takes exactly one argument, positional or named colorMapName"
+            else
+                None
+
+        match rejection with
+        | Some diagnostic ->
+            emit diagnostic
+            true
+        | None -> false
+
     /// Walk a parsed declarative pipeline. This is the minimum sequencer needed
     /// to make the differential meaningful; the durable scheduler (Wave 2) is a
     /// separate concern and is not on this path.
@@ -58,7 +153,10 @@ module FogellSide =
     /// engines bind the SAME values and a receipt means something. Supplied out of band
     /// (FOGELL_CREDENTIALS="id=value,id2=user:pass") rather than committed, so a real
     /// secret never enters the repository.
-    let credentialStore () : Map<string, Credential> =
+    /// Decode the credential wire format independently of its process-level source.
+    /// Keeping this step pure lets callers prove the byte and fail-closed contracts
+    /// without mutating environment variables shared by parallel runs.
+    let credentialStoreFromSpec (spec: string) : Map<string, Credential> =
         // The value of a credential is ARBITRARY BYTES. Two rounds of review found a
         // delimiter bug here: the type was first inferred from the presence of a colon
         // (breaking any secret text holding a URL), and my fix then split entries on a
@@ -70,12 +168,6 @@ module FogellSide =
         //
         // `userpass` decodes to "user\npassword". Supplied via FOGELL_CREDENTIALS_FILE
         // so a real secret never appears in a process listing either.
-        let spec =
-            match Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS_FILE" with
-            | null
-            | "" -> Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS"
-            | path -> if File.Exists path then File.ReadAllText path else null
-
         match spec with
         | null
         | "" -> Map.empty
@@ -123,6 +215,15 @@ module FogellSide =
                     eprintfn $"FOGELL_CREDENTIALS: '{id}' has malformed base64 and was DROPPED; the step will fail closed"
 
                 Map.ofList entries
+
+    let credentialStore () : Map<string, Credential> =
+        let spec =
+            match Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS_FILE" with
+            | null
+            | "" -> Environment.GetEnvironmentVariable "FOGELL_CREDENTIALS"
+            | path -> if File.Exists path then File.ReadAllText path else null
+
+        credentialStoreFromSpec spec
 
     let rec private scriptBodies (steps: Step list) : string list =
         steps
@@ -220,11 +321,9 @@ module FogellSide =
     /// Declarative tools selection against the agent, installs/translates it, and wraps
     /// the relevant body in the tool's environment. Fogell does none of those things yet.
     ///
-    /// This preflight is public because the persisted host prepares its workspace before
-    /// calling [runPersisted]. The host calls this same function before that preparation;
-    /// every actual execution entry (run, runScm, runMany, runPersisted) then converges on
-    /// [runWith], which calls it again before WalkerCtx creation or workspace mutation.
-    /// One rule therefore guards both the outer durable host and the deepest shared walker.
+    /// This generic preflight guards every execution entry before WalkerCtx creation or
+    /// workspace mutation. Persisted execution adds journal-key constraints through
+    /// [preflightPersistedExecution] below.
     let preflightExecution (script: string) : Result<Pipeline, string> =
         match Fogell.Pipeline.Parser.Parser.parse script with
         | Result.Error e ->
@@ -318,7 +417,130 @@ module FogellSide =
                                 + String.concat ", " unsupportedCollections
                             )
 
-    let internal runWith
+    /// FG-103 persisted journals key steps by (stage name, step index), so their
+    /// admissible name space is narrower than generic, non-durable execution. Keep
+    /// these constraints in one preflight shared by controller admission, Run.Host's
+    /// pre-mutation guard, and runPersisted's deepest guard.
+    let preflightPersistedExecution (script: string) : Result<Pipeline, string> =
+        preflightExecution script
+        |> Result.bind (fun pipeline ->
+            let stages = Pipeline.flattenStages pipeline.Stages
+
+            let dupes =
+                stages
+                |> List.countBy (fun stage -> stage.Name)
+                |> List.filter (fun (_, count) -> count > 1)
+                |> List.map fst
+
+            if not (List.isEmpty dupes) then
+                Result.Error(
+                    "persisted runs require globally unique stage names; duplicated: "
+                    + String.concat ", " dupes
+                )
+            else
+                // The journal's wire format delimits with tabs and newlines; a
+                // stage name carrying any record delimiter would tear the record
+                // and truncate every later read. Refuse the name, do not escape it.
+                let unsafe =
+                    stages
+                    |> List.filter (fun stage ->
+                        stage.Name.Contains '\t'
+                        || stage.Name.Contains '\n'
+                        || stage.Name.Contains '\r')
+                    |> List.map (fun stage ->
+                        stage.Name.Replace("\t", "\\t").Replace("\n", "\\n").Replace("\r", "\\r"))
+
+                if List.isEmpty unsafe then
+                    Result.Ok pipeline
+                else
+                    Result.Error(
+                        "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: "
+                        + String.concat ", " unsafe
+                    ))
+
+    /// The runnable controller does not yet have a brokered, authenticated
+    /// approval capability. Run.Host's optional filesystem inbox is valid for a
+    /// trusted standalone operator, but exposing it from the controller would
+    /// let build code running as the same OS identity forge its own decision.
+    /// Refuse only prompts that can wait without a deadline; a timeout-scoped
+    /// input still has a safe, Jenkins-compatible abort-on-expiry outcome.
+    let preflightControllerExecution (script: string) : Result<Pipeline, string> =
+        let hasUsableTimeout (options: Step list) =
+            options
+            |> List.exists (fun (option: Step) ->
+                option.Name = "timeout"
+                && (match WalkerRules.timeoutMs option with
+                    | Ok _ -> true
+                    | Error _ -> false))
+
+        let rec firstUnboundedStep bounded (steps: Step list) =
+            steps
+            |> List.tryPick (fun step ->
+                if step.Name = "input" && not bounded then
+                    Some step.Position
+                else
+                    let bodyBounded =
+                        bounded
+                        || (step.Name = "timeout"
+                            && (match WalkerRules.timeoutMs step with
+                                | Ok _ -> true
+                                | Error _ -> false))
+
+                    firstUnboundedStep bodyBounded step.Block)
+
+        let firstUnboundedPost bounded post =
+            post
+            |> List.tryPick (fun (_, steps) -> firstUnboundedStep bounded steps)
+
+        let rec firstUnboundedStage inherited (stage: Stage) =
+            // A stage option bounds its body and nested stages, but Jenkins runs
+            // that stage's own post outside its declared deadline. An inherited
+            // pipeline/parent-stage deadline still bounds the post.
+            let bodyBounded = inherited || hasUsableTimeout stage.Options
+
+            firstUnboundedStep bodyBounded stage.Steps
+            |> Option.orElseWith (fun () ->
+                stage.Nested |> List.tryPick (firstUnboundedStage bodyBounded))
+            |> Option.orElseWith (fun () -> firstUnboundedPost inherited stage.Post)
+
+        preflightPersistedExecution script
+        |> Result.bind (fun pipeline ->
+            let pipelineBounded = hasUsableTimeout pipeline.Options
+
+            let unbounded =
+                pipeline.Stages
+                |> List.tryPick (firstUnboundedStage pipelineBounded)
+                |> Option.orElseWith (fun () -> firstUnboundedPost pipelineBounded pipeline.Post)
+
+            match unbounded with
+            | None -> Ok pipeline
+            | Some position ->
+                Error(
+                    $"unsupported_input_approval: controller execution has no authenticated approval broker; unbounded input at {position.Line}:{position.Column} is refused before admission (wrap it in timeout or use trusted standalone Run.Host approval orchestration)"
+                ))
+
+    /// FG-129. A bad input and an unavailable Fogell capability were both
+    /// `Result.Error` before this boundary. Only the former is evidence that the
+    /// reference engine also refused before execution; the latter must remain
+    /// NOT COMPARABLE unless Jenkins independently reports a disposition.
+    type private ExecutionPreflight =
+        | Ready of Pipeline
+        | ReferenceRejected of Fogell.Admission.AdmissionError
+        | EngineUnavailable of string
+
+    let private executionPreflight (script: string) =
+        match Fogell.Pipeline.Parser.Parser.parse script with
+        | Result.Error e when Fogell.Admission.ErrorCode.isInputDefect e.Code -> ReferenceRejected e
+        | Result.Error e ->
+            EngineUnavailable $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
+        | Result.Ok _ ->
+            match preflightExecution script with
+            | Result.Ok pipeline -> Ready pipeline
+            | Result.Error why -> EngineUnavailable why
+
+    let private runWithCredentialStore
+        (credentials: unit -> Map<string, Credential>)
+        (controllerScmEnvironment: ControllerScmEnvironment option)
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
@@ -334,14 +556,88 @@ module FogellSide =
         // Capture the closest Fogell analogue at build entry, before preflight.
         let buildStartTimeInMillis = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         let isRestartedRun = persistence |> Option.exists (fun hooks -> hooks.IsRestartedRun)
+        // The execution root belongs to the caller and may intentionally be a
+        // shared/mounted parent.  Create it when absent, but never chmod or
+        // otherwise reinterpret an existing root; only Fogell's child HOME is
+        // private agent state.
+        Directory.CreateDirectory workspaceRoot |> ignore
+        let workspace = Path.Combine(workspaceRoot, jobName)
+        // Artifacts and SCM history live outside the workspace hash.
+        let artifactRoot = Path.Combine(workspaceRoot, "_artifacts")
 
-        match preflightExecution script with
-        | Result.Error why -> Result.Error why
-        | Result.Ok pipeline ->
+        let prepareFreshJob () =
+            // Fresh-job semantics precede every sealable outcome. A stale
+            // workspace or build-history record from an earlier invocation must
+            // not appear in a new job's refusal evidence. Retained builds skip both.
+            if freshWorkspace && Directory.Exists workspace then
+                Directory.Delete(workspace, true)
+
+            if freshWorkspace then
+                WalkerGit.resetHistory artifactRoot jobName
+
+        // SCM definition identity precedes every sealable outcome, including a
+        // parser refusal. Jenkins executes the remote bytes, so a local invalid
+        // case cannot be credited until those bytes are independently attested.
+        let verifyScmDefinition () =
+            match scm with
+            | Some spec ->
+                let fetched =
+                    match controllerScmEnvironment with
+                    | Some environment ->
+                        WalkerGit.readRemoteJenkinsfileWithEnvironment environment spec.Url spec.Branch
+                    | None -> WalkerGit.readRemoteJenkinsfile spec.Url spec.Branch
+
+                match fetched with
+                | Result.Error e ->
+                    failwith $"SCM case verification unavailable ({e}) — refusing to seal against unverified bytes"
+                | Result.Ok remote ->
+                    if remote.Script.Replace("\r\n", "\n").Trim() <> script.Replace("\r\n", "\n").Trim() then
+                        failwith (
+                            "SCM case drift: the local case body does not match the SCM's Jenkinsfile — "
+                            + "sync the fixture repo (scripts/sync-scm-cases.bb) before sealing"
+                        )
+
+                    if Environment.GetEnvironmentVariable "FOGELL_SCM_ATTESTATION" = "fg177-probes-v1" then
+                        [ $"scm-preflight branch={spec.Branch} revision={remote.Revision} tree={remote.Tree} jenkinsfile-blob={remote.JenkinsfileBlob}" ]
+                    else
+                        []
+            | None -> []
+
+        match executionPreflight script with
+        | EngineUnavailable why -> Result.Error why
+        | ReferenceRejected _ ->
+            let scmPreflightNotes = verifyScmDefinition ()
+            prepareFreshJob ()
+            // After the fresh-job reset above, do not create a workspace. A new
+            // job hashes as the historical empty workspace; a retained build was
+            // not reset and hashes exactly what its prior build left behind.
+            let workspaceHash, files = Trace.hashWorkspace workspace
+
+            Result.Ok
+                { Disposition = RefusedBeforeExecution
+                  Result = "failure"
+                  EngineNotes = scmPreflightNotes
+                  Output = []
+                  WorkspaceHash = workspaceHash
+                  WorkspaceFiles = files
+                  Concurrent = false
+                  Timestamps = (0, 0)
+                  ReportedFailureReason = true }
+        | Ready pipeline ->
+            let scmPreflightNotes = verifyScmDefinition ()
+            prepareFreshJob ()
+            let buildHomeRoot = Path.Combine(workspaceRoot, "_agent_home")
+            ensurePrivateDirectory buildHomeRoot
+            let buildHome = agentHome workspaceRoot jobName buildNumber
+            ensurePrivateDirectory buildHome
             // FG-105: the run-scoped mutable state lives in WalkerCtx — one record,
             // one stated contract (see WalkerCtx.fs for its two-lock discipline).
             // These rebinds keep call sites unchanged.
-            let runCtx = WalkerCtx.create buildStartTimeInMillis isRestartedRun
+            let runCtx =
+                WalkerCtx.create
+                    buildStartTimeInMillis
+                    isRestartedRun
+                    (persistence |> Option.map (fun hooks -> hooks.OnOutput))
 
             // FG-053. The SCRIPT decides whether a timestamp-shaped prefix is
             // engine decoration or the build's own output — nothing in a line's
@@ -373,7 +669,7 @@ module FogellSide =
             let ansiColorOptions =
                 pipeline.Options |> List.filter (fun o -> o.Name = "ansiColor")
 
-            // Jenkins' ansiColor step exposes ONE parameter, the colour map name.
+            // Jenkins' ansiColor option exposes ONE parameter, the colour map name.
             // `ansiColor('xterm', 'vga')` ran here with TERM=xterm and the extra
             // argument silently dropped — the same fail-open shape the timestamps
             // arg check closed, and every entry is validated for the same reason
@@ -383,22 +679,6 @@ module FogellSide =
             // either way. A positional-only check REFUSED the named form, which
             // is worse than the fail-open it replaced: it rejects a Jenkinsfile
             // Jenkins accepts.
-            let ansiColorMap (o: Step) =
-                match o.Positional, o.Named with
-                | [ m ], [] -> Some m
-                | [], [ ("colorMapName", m) ] -> Some m
-                | _ -> None
-
-            let ansiColorArgError =
-                if List.length ansiColorOptions > 1 then
-                    // Declarative rejects a repeated option at compile time; we
-                    // silently applied the first and ignored the rest.
-                    Some "the ansiColor option is declared more than once"
-                elif ansiColorOptions |> List.exists (fun o -> (ansiColorMap o).IsNone) then
-                    Some "the ansiColor(<colorMapName>) option takes exactly one argument, positional or named colorMapName"
-                else
-                    None
-
             // STAGE-LEVEL `options { timestamps() }` is REFUSED, not ignored.
             // Jenkins 2.568.1 honours it and stamps that stage's output; Fogell
             // enables the wrapper for the whole build or not at all, so honouring
@@ -603,20 +883,6 @@ module FogellSide =
             let bump = runCtx.Bump
             let deadlineDidFire = runCtx.DeadlineDidFire
 
-            let workspace = Path.Combine(workspaceRoot, jobName)
-            // artifacts live OUTSIDE the workspace so archiving cannot perturb
-            // the workspace hash the differential compares
-            let artifactRoot = Path.Combine(workspaceRoot, "_artifacts")
-            // FG-110: only a sequence's FIRST build starts clean — Jenkins does
-            // not wipe the workspace between builds of one job, and neither do we.
-            if freshWorkspace && Directory.Exists workspace then
-                Directory.Delete(workspace, true)
-
-            // a NEW job has no build history — mirror the harness's doDelete
-            // (the record otherwise survives from a previous run of this case)
-            if freshWorkspace then
-                WalkerGit.resetHistory artifactRoot jobName
-
             Directory.CreateDirectory workspace |> ignore
 
             /// Environment visible to a step: pipeline scope, overridden by stage
@@ -630,14 +896,18 @@ module FogellSide =
             let jenkinsProvided =
                 // FG-110: in a sequence these must INCREMENT — Jenkins' do, and
                 // `when { environment name: 'BUILD_NUMBER' ... }` selects on them.
-                [ "BUILD_NUMBER", string buildNumber
-                  "BUILD_ID", string buildNumber
-                  "BUILD_DISPLAY_NAME", $"#{buildNumber}"
-                  "JOB_NAME", jobName
-                  "JOB_BASE_NAME", jobName
-                  "WORKSPACE", Path.Combine(workspaceRoot, jobName)
-                  "EXECUTOR_NUMBER", "0"
-                  "NODE_NAME", "built-in" ]
+                // FG-222: PATH and HOME are the measured compatibility baseline.
+                // They enter the same explicit map used by GStrings, shell and
+                // runtime Git. No other controller variable is build-visible.
+                LaunchEnvironment.buildBaseline buildHome
+                @ [ ("BUILD_NUMBER", string buildNumber)
+                    ("BUILD_ID", string buildNumber)
+                    ("BUILD_DISPLAY_NAME", $"#{buildNumber}")
+                    ("JOB_NAME", jobName)
+                    ("JOB_BASE_NAME", jobName)
+                    ("WORKSPACE", Path.Combine(workspaceRoot, jobName))
+                    ("EXECUTOR_NUMBER", "0")
+                    ("NODE_NAME", "built-in") ]
 
             // FG-105: env resolution and argument rendering live in WalkerArgs.
             let root =
@@ -664,37 +934,11 @@ module FogellSide =
 
             let mutable scmWrapperEnv: (string * string) list = []
 
-            // EVERY SCM case, BEFORE anything can set `root.Failed`. This is the
-            // lane's core invariant: the bytes this engine was handed must be the
-            // bytes the SCM serves, because Jenkins executes the latter.
-            //
-            // It lived inside `match scm with Some spec when not root.Failed.Value`,
-            // so the FG-053 option refusals — which set `root.Failed` above — made a
-            // refused SCM case skip verification entirely and seal against unverified
-            // bytes. The comment on this check already recorded it vanishing once
-            // before, "exactly when skipDefaultCheckout did"; guarding it on a
-            // failure flag is how it keeps happening. Unconditional now: a check that
-            // any later short-circuit can switch off is not fail-closed.
-            match scm with
-            | Some spec ->
-                match WalkerGit.readRemoteJenkinsfile spec.Url spec.Branch with
-                | Result.Error e ->
-                    failwith $"SCM case verification unavailable ({e}) — refusing to seal against unverified bytes"
-                // the subprocess reader trims trailing whitespace, so compare TRIMMED
-                // on both sides (a trailing newline is not a different script) with
-                // line endings normalised
-                | Ok remote ->
-                    if Environment.GetEnvironmentVariable "FOGELL_SCM_ATTESTATION" = "fg177-probes-v1" then
-                        runCtx.NoteEngine(
-                            $"scm-preflight branch={spec.Branch} revision={remote.Revision} tree={remote.Tree} jenkinsfile-blob={remote.JenkinsfileBlob}"
-                        )
-
-                    if remote.Script.Replace("\r\n", "\n").Trim() <> script.Replace("\r\n", "\n").Trim() then
-                        failwith (
-                            "SCM case drift: the local case body does not match the SCM's Jenkinsfile — "
-                            + "sync the fixture repo (scripts/sync-scm-cases.bb) before sealing"
-                        )
-            | None -> ()
+            // Definition identity was verified before semantic preflight so even
+            // parser-refused SCM cases are attested. Carry the same controller-owned
+            // notes into ordinary traces without a second remote read.
+            for note in scmPreflightNotes do
+                runCtx.NoteEngine note
 
 
             match scm with
@@ -770,13 +1014,12 @@ module FogellSide =
                 compileRejected <- true
                 bump BuildStatus.Failure
 
-            match ansiColorArgError with
-            | Some e ->
-                emit $"ERROR: pipeline declares an unusable ansiColor option: {e}"
+            let ansiColorRejected = rejectInvalidAnsiColor emit pipeline.Options
+
+            if ansiColorRejected then
                 root.Failed.Value <- true
                 compileRejected <- true
                 bump BuildStatus.Failure
-            | None -> ()
 
             match unstableArgError with
             | Some e ->
@@ -801,6 +1044,11 @@ module FogellSide =
                 compileRejected <- true
                 bump BuildStatus.Failure
             | None -> ()
+
+            if rejectParallelsAlwaysFailFast emit pipeline.Options then
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
 
             match timestampsArgError with
             | Some e ->
@@ -846,6 +1094,9 @@ module FogellSide =
                             runCtx
                             root
                             workspace
+                            (fun () ->
+                                Workspace.materializeUnder workspace workspace
+                                |> Result.mapError (fun e -> e.Describe))
                             None
                             jenkinsProvided
                             artifactRoot
@@ -908,7 +1159,7 @@ module FogellSide =
             // must override it, because a declaration applies INSIDE the wrapper.
             let ansiColorEnv =
                 match ansiColorOptions with
-                | [ o ] when ansiColorArgError.IsNone ->
+                | [ o ] when not ansiColorRejected ->
                     match ansiColorMap o with
                     | Some m -> [ "TERM", m.Trim().Trim('\'', '"') ]
                     | None -> []
@@ -948,7 +1199,7 @@ module FogellSide =
                       WorkspaceRoot = workspaceRoot
                       ArtifactRoot = artifactRoot
                       JobName = jobName
-                      Credentials = credentialStore
+                      Credentials = credentials
                       PreviousBuild = previousBuild
                       BuildNumber = buildNumber
                       Scm = scm
@@ -1057,6 +1308,12 @@ module FogellSide =
 
             announcePipelineExceeded ()
 
+            // The callback is an ordered infrastructure stream.  A slow
+            // publisher may still be draining lines emitted by a parallel
+            // branch; no terminal trace may overtake it, and any publisher
+            // failure must escape runPersisted for controller reconciliation.
+            runCtx.FlushOutput()
+
             let workspaceHash, files = Trace.hashWorkspace workspace
 
             // Fail CLOSED on a leaked secret, checked over the RAW output — before
@@ -1078,36 +1335,42 @@ module FogellSide =
                 )
             else
 
-            let outputLines =
+            let outputLines, timestampCounts =
                 let idReplacements =
                     runCtx.DurableIds()
                     |> Seq.map (fun i -> $"@tmp/durable-{i}/script.sh", "@tmp/durable-<id>/script.sh")
                     |> List.ofSeq
 
-                Trace.normaliseOutputShaped
+                // The CLI enables a HOME fold only for a case that actually
+                // references HOME. Supply this build's exact stable identity
+                // to that existing fold without teaching the CLI one shared
+                // cross-build path.
+                let buildEnvReplacements =
+                    if envReplacements |> List.exists (fun (_, token) -> token = "${HOME}") then
+                        (buildHome, "${HOME}") :: envReplacements
+                    else
+                        envReplacements
+
+                Trace.normaliseOutputShapedWithTimestampCoverage
                     declaresTimestamps
                     false
                     ((workspace, "${WORKSPACE}") :: idReplacements)
-                    envReplacements
+                    buildEnvReplacements
                     (runCtx.Output())
 
             let terminalStatus = runCtx.Status()
 
             let trace =
-                { Result = BuildStatus.toWireString terminalStatus
+                { Disposition = if compileRejected then RefusedBeforeExecution else ExecutedOrRuntime
+                  Result = BuildStatus.toWireString terminalStatus
                   EngineNotes = runCtx.EngineNotes()
                   Output = outputLines
                   WorkspaceHash = workspaceHash
                   WorkspaceFiles = files
                   Concurrent = pipeline.Stages |> Pipeline.flattenStages |> List.exists (fun st -> st.IsParallel)
-                  Timestamps =
-                      // same denominator as Jenkins.fs: the COMPARED output
-                      // gated on the declaration, for the reason stated in Jenkins.fs
-                      ((if declaresTimestamps then
-                            runCtx.Output() |> Seq.filter Trace.hasTimestampPrefix |> Seq.length
-                        else
-                            0),
-                       List.length outputLines)
+                  // FG-118: the counts come from the exact same tagged survivor
+                  // list as Output, including every contextual suppression.
+                  Timestamps = timestampCounts
                   ReportedFailureReason = Trace.reportedFailureReasonWhen declaresTimestamps (runCtx.Output()) }
 
             // FG-177. Checkout writes only a provisional revision record. The
@@ -1120,6 +1383,46 @@ module FogellSide =
             WalkerGit.finalizeBuild artifactRoot jobName buildNumber terminalStatus
             Result.Ok trace
 
+    let internal runWith
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (buildNumber: int)
+        (previousBuild: BuildStatus option)
+        (freshWorkspace: bool)
+        (scm: ScmSpec option)
+        (persistence: PersistenceHooks option)
+        (script: string)
+        : Result<Trace, string> =
+        runWithCredentialStore
+            credentialStore
+            None
+            envReplacements
+            workspaceRoot
+            jobName
+            buildNumber
+            previousBuild
+            freshWorkspace
+            scm
+            persistence
+            script
+
+    /// Run one Jenkinsfile with an explicit credential store. This entrypoint is
+    /// intended for hermetic callers such as the differential fixtures: credentials
+    /// remain scoped to this run instead of being published through process-global
+    /// environment variables that unrelated parallel runs can observe.
+    let runWithCredentials
+        (credentials: Map<string, Credential>)
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (script: string)
+        =
+        try
+            runWithCredentialStore (fun () -> credentials) None envReplacements workspaceRoot jobName 1 None true None None script
+        with ex ->
+            Result.Error ex.Message
+
     /// Run one Jenkinsfile as a fresh single build — the pre-FG-110 contract.
     let run (envReplacements: (string * string) list) (workspaceRoot: string) (jobName: string) (script: string) =
         try
@@ -1128,57 +1431,26 @@ module FogellSide =
             Result.Error ex.Message
 
     /// FG-112. Run one build with durability hooks — the restart lane's entry.
-    /// Same walker, same semantics; the hooks journal top-level steps.
+    /// Same walker, same semantics; the hooks journal top-level steps. The
+    /// caller supplies the durable project build number because persisted runs
+    /// are not necessarily the first build of a job.
     let runPersisted
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
+        (buildNumber: int)
         (freshWorkspace: bool)
         (hooks: PersistenceHooks)
         (script: string)
         =
         try
-            // The journal key is (stage name, step index) — a flat map. Two
-            // stages sharing a name (top-level, nested, or parallel branches)
-            // would collide, and a collision records a never-run step as
-            // durably done. REFUSED by name up front (FG-103), not keyed
-            // around: unique names are the corpus norm and the stated limit.
-            match Fogell.Pipeline.Parser.Parser.parse script with
-            | Result.Error _ -> () // the run itself reports parse errors
-            | Ok p ->
-                let dupes =
-                    p.Stages
-                    |> Pipeline.flattenStages
-                    |> List.countBy (fun st -> st.Name)
-                    |> List.filter (fun (_, n) -> n > 1)
-                    |> List.map fst
-
-                if not (List.isEmpty dupes) then
-                    failwith (
-                        "persisted runs require globally unique stage names; duplicated: "
-                        + String.concat ", " dupes
-                    )
-
-                // the journal's wire format delimits with tabs and newlines; a
-                // stage name carrying either would TEAR the record and truncate
-                // every later read — refused by name, not escaped around
-                let unsafe =
-                    p.Stages
-                    |> Pipeline.flattenStages
-                    |> List.filter (fun st ->
-                        st.Name.Contains '\t' || st.Name.Contains '\n' || st.Name.Contains '\r')
-                    |> List.map (fun st ->
-                        st.Name.Replace("\t", "\\t").Replace("\n", "\\n").Replace("\r", "\\r"))
-
-                if not (List.isEmpty unsafe) then
-                    failwith (
-                        "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: "
-                        + String.concat ", " unsafe
-                    )
-
-            runWith envReplacements workspaceRoot jobName 1 None freshWorkspace None (Some hooks) script
-        with ex ->
-            Result.Error ex.Message
+            match preflightPersistedExecution script with
+            | Result.Error why -> Result.Error why
+            | Result.Ok _ ->
+                runWith envReplacements workspaceRoot jobName buildNumber None freshWorkspace None (Some hooks) script
+        with
+        | :? OutputPublicationException -> reraise ()
+        | ex -> Result.Error ex.Message
 
     /// FG-052. Run one build of an SCM-DEFINED job: the script is what the
     /// harness pushed to the SCM (the same bytes Jenkins obtains), and the spec
@@ -1192,6 +1464,32 @@ module FogellSide =
         =
         try
             runWith envReplacements workspaceRoot jobName 1 None true (Some scm) None script
+        with ex ->
+            Result.Error ex.Message
+
+    /// Test seam for proving that controller-only transport authority used for
+    /// definition fetch cannot flow into the subsequent build-side checkout.
+    let internal runScmWithControllerEnvironment
+        (controllerEnvironment: ControllerScmEnvironment)
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (scm: ScmSpec)
+        (script: string)
+        =
+        try
+            runWithCredentialStore
+                credentialStore
+                (Some controllerEnvironment)
+                envReplacements
+                workspaceRoot
+                jobName
+                1
+                None
+                true
+                (Some scm)
+                None
+                script
         with ex ->
             Result.Error ex.Message
 

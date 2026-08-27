@@ -33,7 +33,24 @@ module Credentials =
     /// raw source (ADR 0002), so the shape is decided here, where it is needed.
     let parseRequests (raw: string) : CredentialRequest list =
         let named (args: string) (key: string) =
-            let m = Regex.Match(args, key + @"\s*:\s*'([^']*)'|" + key + @"\s*:\s*""([^""]*)""")
+            // A key is a Groovy/Java identifier token, not any matching suffix.
+            // `\b` is insufficient: `$credentialsId` has a word boundary before
+            // `credentialsId`, and Unicode identifier parts extend beyond `\w`.
+            // Java admits spacing/nonspacing marks, decimal digits, letter numbers,
+            // connector punctuation, currency, and identifier-ignorable format chars.
+            // Other-number and enclosing-mark categories are deliberately excluded.
+            let tokenStart = @"(?<![\p{L}\p{Mn}\p{Mc}\p{Nd}\p{Nl}\p{Pc}\p{Sc}\p{Cf}])"
+
+            let m =
+                Regex.Match(
+                    args,
+                    tokenStart
+                    + Regex.Escape key
+                    + @"\s*:\s*'([^']*)'|"
+                    + tokenStart
+                    + Regex.Escape key
+                    + @"\s*:\s*""([^""]*)"""
+                )
 
             if not m.Success then None
             elif m.Groups[1].Success then Some m.Groups[1].Value
@@ -42,21 +59,23 @@ module Credentials =
         [ for m in Regex.Matches(raw, @"([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)") do
               let kind = m.Groups[1].Value
               let args = m.Groups[2].Value
-              let id = named args "credentialsId" |> Option.defaultValue ""
-
               match kind with
               | "string" ->
-                  match named args "variable" with
-                  | Some v -> BindText(id, v)
-                  | None -> BindUnmodelled(kind, args)
+                  match named args "credentialsId", named args "variable" with
+                  | Some id, Some v -> BindText(id, v)
+                  | _ -> BindUnmodelled(kind, args)
               | "usernamePassword" ->
-                  match named args "usernameVariable", named args "passwordVariable" with
-                  | Some u, Some p -> BindUserPass(id, u, p)
+                  match
+                      named args "credentialsId",
+                      named args "usernameVariable",
+                      named args "passwordVariable"
+                  with
+                  | Some id, Some u, Some p -> BindUserPass(id, u, p)
                   | _ -> BindUnmodelled(kind, args)
               | "file" ->
-                  match named args "variable" with
-                  | Some v -> BindFile(id, v)
-                  | None -> BindUnmodelled(kind, args)
+                  match named args "credentialsId", named args "variable" with
+                  | Some id, Some v -> BindFile(id, v)
+                  | _ -> BindUnmodelled(kind, args)
               | other -> BindUnmodelled(other, args) ]
 
     /// The credential ids a request set needs, for a fail-closed check before running.

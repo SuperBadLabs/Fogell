@@ -1,0 +1,9 @@
+ docs/tickets/FG-224.md                             |   4 +-
+ scripts/prove-runnable-controller.sh               |  71 ++++++++++-
+ src/Fogell.Controller.Host/EventStream.fs          |  78 ++++++++----
+ .../Fogell.Controller.Host.fsproj                  |   1 +
+ src/Fogell.Controller.Host/Worker.fs               |  43 +++----
+ src/Fogell.Controller.Host/WorkerScheduling.fs     |  38 ++++++
+ .../Fogell.Differential.Tests.fsproj               |   1 +
+ tests/Fogell.Differential.Tests/Tests.fs           | 140 ++++++++++++++++++---
+ 8 files changed, 310 insertions(+), 66 deletions(-)

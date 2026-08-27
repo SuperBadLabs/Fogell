@@ -22,10 +22,12 @@ type JenkinsConfig =
       /// container, often on another host. Rather than give up on comparing
       /// workspaces (which would cap every receipt at PROVEN-PARTIAL forever),
       /// the harness can be handed a command that hashes the workspace WHERE IT
-      /// LIVES and prints `<sha256>  <relative-path>` lines on stdout.
+      /// LIVES and prints the strict version-2 file/empty-leaf manifest consumed
+      /// by `Trace.collectRemote`.
       ///
       /// `{job}` is substituted with the job name. Example:
-      ///   ssh luigi 'podman exec jenkins-lab sh -c "cd /var/jenkins_home/workspace/{job} && find . -type f | sort | xargs -r sha256sum"'
+      /// The committed runner is the executable reference emitter; `{job}` is
+      /// substituted with the job name before invocation.
       ///
       /// The output is normalised through exactly the same exclusion rules as a
       /// local hash, so neither side gets a different definition of "workspace".
@@ -49,6 +51,41 @@ type JobDefinition =
 module Jenkins =
 
     let private client = new HttpClient(Timeout = TimeSpan.FromMinutes 10.0)
+
+    /// FG-129. Jenkins has no structured "compiler refused" result, so the
+    /// distinction is reduced from the controller-owned terminal result and raw
+    /// console. All three guards are load-bearing: compiler-shaped text is
+    /// script-writable after execution begins, and a retained workspace says
+    /// nothing about whether this build executed.
+    let classifyExecutionDisposition (terminal: string) (rawLines: string[]) =
+        let compilerHead = "org.codehaus.groovy.control.MultipleCompilationErrorsException: startup failed:"
+
+        let firstIndex predicate = rawLines |> Array.tryFindIndex predicate
+
+        let compilerLine = firstIndex (fun line -> line.Trim() = compilerHead)
+
+        let workflowLine =
+            firstIndex (fun line ->
+                Regex.IsMatch(
+                    line.Trim(),
+                    @"^WorkflowScript: [1-9][0-9]*: .+ @ line [1-9][0-9]*, column [1-9][0-9]*\.$"
+                ))
+
+        let summaryLine =
+            firstIndex (fun line -> Regex.IsMatch(line.Trim(), @"^[1-9][0-9]* errors?$"))
+
+        let orderedEnvelope =
+            match compilerLine, workflowLine, summaryLine with
+            | Some c, Some w, Some e -> c < w && w < e
+            | _ -> false
+
+        let pipelineStarted =
+            rawLines |> Array.exists (fun line -> line.Contains("[Pipeline]", StringComparison.Ordinal))
+
+        if terminal = "failure" && not pipelineStarted && orderedEnvelope then
+            RefusedBeforeExecution
+        else
+            ExecutedOrRuntime
 
     /// Parse controller-owned git-plugin BuildData. Build output is script-
     /// writable and therefore cannot attest a checkout; this API action is the
@@ -117,6 +154,36 @@ module Jenkins =
             | _ ->
                 let joined = String.concat "," revisions
                 Error $"Jenkins console has multiple pre-Pipeline SCM definition revisions: {joined}"
+
+    /// FG-129. A compiler-refused SCM definition has no Pipeline-start marker.
+    /// The raw-console classifier is the authority that this is genuinely a
+    /// pre-execution refusal; only then may the exact compiler head replace the
+    /// Pipeline marker as the end of controller-owned definition-checkout text.
+    let parseScmDefinitionRevisionFor (disposition: ExecutionDisposition) (console: string) =
+        match disposition with
+        | ExecutedOrRuntime -> parseScmDefinitionRevision console
+        | RefusedBeforeExecution ->
+            let lines = console.Replace("\r\n", "\n").Split '\n'
+            let compilerHead = "org.codehaus.groovy.control.MultipleCompilationErrorsException: startup failed:"
+
+            match lines |> Array.tryFindIndex (fun line -> line.Trim() = compilerHead) with
+            | None -> Error "Jenkins refused disposition has no compiler boundary for SCM definition attestation"
+            | Some boundary ->
+                let revisions =
+                    lines
+                    |> Array.take boundary
+                    |> Array.choose (fun line ->
+                        let matched = Regex.Match(line.Trim(), @"^Checking out Revision ([0-9a-f]{40}) \(")
+                        if matched.Success then Some matched.Groups[1].Value else None)
+                    |> Array.distinct
+                    |> Array.toList
+
+                match revisions with
+                | [ revision ] -> Ok revision
+                | [] -> Error "Jenkins console has no pre-compiler SCM definition checkout revision"
+                | _ ->
+                    let joined = String.concat "," revisions
+                    Error $"Jenkins console has multiple pre-compiler SCM definition revisions: {joined}"
 
     let private crumb (cfg: JenkinsConfig) =
         task {
@@ -253,13 +320,16 @@ module Jenkins =
                     let console =
                         client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/{buildNumber}/consoleText").Result
 
+                    let rawLines = console.Replace("\r\n", "\n").Split '\n'
+                    let disposition = classifyExecutionDisposition terminal rawLines
+
                     let scmEngineNotes =
                         if Environment.GetEnvironmentVariable "FOGELL_SCM_ATTESTATION" = "fg177-probes-v1" then
                             let definitionNotes =
                                 match definition with
                                 | Inline _ -> []
                                 | FromScm _ ->
-                                    match parseScmDefinitionRevision console with
+                                    match parseScmDefinitionRevisionFor disposition console with
                                     | Ok revision -> [ $"scm-definition revision={revision}" ]
                                     | Error e -> failwith $"SCM definition attestation unavailable ({e})"
 
@@ -283,12 +353,11 @@ module Jenkins =
                         | None, Some template -> Trace.collectRemote (template.Replace("{job}", jobName))
                         | None, None -> "not-collected", []
 
-                    let rawLines = console.Replace("\r\n", "\n").Split '\n'
                     let declaresTimestamps = cfg.DeclaresTimestamps
 
                     // hoisted so the timestamp coverage can use the SAME list the
                     // comparison uses as its denominator
-                    let outputLines =
+                    let outputLines, timestampCounts =
                         let fromBanner =
                             rawLines
                             |> Array.tryPick (fun l ->
@@ -296,10 +365,16 @@ module Jenkins =
                                 if m.Success then Some m.Groups[1].Value else None)
 
                         let ws = defaultArg fromBanner $"/var/jenkins_home/workspace/{jobName}"
-                        Trace.normaliseOutputShaped declaresTimestamps true [ ws, "${WORKSPACE}" ] envReplacements rawLines
+                        Trace.normaliseOutputShapedWithTimestampCoverage
+                            declaresTimestamps
+                            true
+                            [ ws, "${WORKSPACE}" ]
+                            envReplacements
+                            rawLines
 
                     let trace =
-                        { Result = terminal
+                        { Disposition = disposition
+                          Result = terminal
                           EngineNotes = scmEngineNotes
                           // the workspace root is READ from the run's own banner —
                           // `Running on <node> in <path>` — so a non-default
@@ -311,29 +386,10 @@ module Jenkins =
                           // Jenkins does not tell us whether the script had a
                           // parallel block; the side that parses does.
                           Concurrent = false
-                          Timestamps =
-                              // THE DENOMINATOR IS THE COMPARED OUTPUT, arrived at
-                              // by measuring twice and being wrong twice. Against
-                              // raw non-blank lines Jenkins read PARTIAL (2/21);
-                              // against `normaliseLine` survivors, PARTIAL (2/20).
-                              // Both were the wrong question: `Output` is built by
-                              // `normaliseOutputShaped`, a deeper filter, and only
-                              // its survivors are ever compared. Jenkins stamps
-                              // what the BUILD prints — not its own [Pipeline]
-                              // annotations, banners or Started/Finished rows —
-                              // and those are excluded anyway, so counting them
-                              // judged an engine against lines nobody compares.
-                              // GATED on the declaration, for the same reason
-                              // the strip is: a timestamp-shaped line is only
-                              // decoration when the script asked for it. Ungated,
-                              // a build printing a literal `[ISO-8601] value` was
-                              // counted, rendered and SEALED as `timestamps()`
-                              // coverage in a case that never used the option.
-                              ((if declaresTimestamps then
-                                    rawLines |> Seq.filter Trace.hasTimestampPrefix |> Seq.length
-                                else
-                                    0),
-                               List.length outputLines)
+                          // FG-118: the counts come from the same tagged survivor
+                          // list as Output. A stamped annotation can no longer
+                          // offset an unstamped line that is actually compared.
+                          Timestamps = timestampCounts
                           ReportedFailureReason = Trace.reportedFailureReasonWhen declaresTimestamps rawLines }
 
                     Ok trace

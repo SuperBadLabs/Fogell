@@ -1,0 +1,8 @@
+Scope: isolated git archive of signed Fogell HEAD 20ec7cbc8171be8dd7b0e6f1c2df15e7abe65406 on HeMan.
+Warmups excluded: FG-222 proof 1; durable echo 3; per-step lane 1 echo; parallel lane 1 echo. No sh200 or parallel workload warmup.
+Workloads: echo=1 in-engine echo; sh200=200 sequential sh true steps in one stage; parallel=8 branches x 10 sh true = 80 process steps plus outer stage.
+Isolation: every measured durable run used OUT/runs/<case>/<rep>/ws as workspace root, job name job, and OUT/runs/<case>/<rep>/build.journal outside the workspace. FG-222 proof creates and self-cleans its own /tmp/fogell-control-env.XXXXXX lab.
+Percentiles match archived stats.bb: ascending sort, zero-based index min(n-1,floor(p*n)); thus n=15 p95 is the maximum and even-n median is upper-middle. CV uses sample standard deviation divided by mean.
+Timing: GNU /usr/bin/time %e, 0.01-second reported resolution; one cold .NET process per sample.
+No threshold gate exists; these are host-bound observations, not a cross-host regression verdict.
+Discarded preflight: restore.time and logs/restore.log preserve an initial exit-1 attempt against nonexistent Fogell.sln. It was corrected to Fogell.slnx, is excluded from every metric, and is not repeated by campaign-reproduction.sh.

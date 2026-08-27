@@ -293,6 +293,30 @@ module Interpreter =
           JenkinsEnvMaps: System.Collections.Generic.HashSet<Map<string, Value> ref>
           mutable Binding: Map<string, Value> }
 
+    /// Refresh every host-owned `env` map without detaching aliases the script
+    /// already holds. Jenkins exposes one live environment object: wrapper entry
+    /// and exit change what that object reads, not which object an alias points at.
+    /// A script-owned map never enters `JenkinsEnvMaps`, so it is never mutated.
+    /// When hosted machinery needs a cell, reuse a registered map before minting.
+    let private refreshJenkinsEnvMaps (st: State) (ownedCell: Value ref option) current =
+        match ownedCell with
+        | Some cell ->
+            match cell.Value with
+            | VMap existing when st.JenkinsEnvMaps.Contains existing -> ()
+            | _ ->
+                match st.JenkinsEnvMaps |> Seq.tryHead with
+                | Some existing -> cell.Value <- VMap existing
+                | None ->
+                    let fresh = ref Map.empty
+                    st.JenkinsEnvMaps.Add fresh |> ignore
+                    cell.Value <- VMap fresh
+        | None -> ()
+
+        let values = current |> List.map (fun (k, v) -> k, VStr v) |> Map.ofList
+
+        for existing in st.JenkinsEnvMaps do
+            existing.Value <- values
+
     let private tick (st: State) =
         st.Steps <- st.Steps + 1
 
@@ -886,11 +910,17 @@ module Interpreter =
             // receiver is, with the method never dispatched — not a property read
             // followed by a rejected `call`. Groovy's order: the RECEIVER evaluates
             // first (its side effects are performed and survive a later denial),
-            // THEN the sandbox rules on the method — before the null test, so `?.`
-            // is no doorway past it — and only then does a non-null receiver
-            // dispatch.
+            // THEN, after receiver/null classification but before returning the
+            // null-safe short-circuit, the sandbox rules on the method — so `?.`
+            // is no doorway past it. Only a non-null receiver then dispatches.
             (match evalExpr st env recv with
-             | VNull -> VNull // short-circuit: arguments never evaluate either
+             | VNull ->
+                 // Admission still happens for a null-safe call. Only evaluation of
+                 // the receiver is complete at this point; arguments remain lazy and
+                 // therefore cannot perform effects when the admitted call short-circuits.
+                 match Sandbox.admitMethod name with
+                 | Error d -> raise (Stop(Denied d))
+                 | Ok _ -> VNull
              | r ->
                  // Groovy's order on a non-null receiver: ARGUMENTS evaluate (their
                  // side effects are performed and survive a denial), THEN the
@@ -1107,20 +1137,11 @@ module Interpreter =
                             // closure's binding lives in a different `Env` entirely and can
                             // no longer reach across.
                             //
-                            // UPDATING THE CELL rather than rebinding the name is still
-                            // required: a fresh `ref` detaches any closure that already
-                            // captured `env`, which is the capture-by-value defect this
-                            // change exists to remove, reintroduced at one name.
+                            // UPDATING THE MAP behind the owned cell is required. Reusing
+                            // the cell but storing a fresh VMap still detaches `def saved =
+                            // env`; the alias and the cell must retain the same map ref.
                             st.Host
                             |> Option.iter (fun h ->
-                                let current = h.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
-                                let freshMap = ref (Map.ofList current)
-                                // FG-193: the minted map IS the Jenkins environment,
-                                // by value identity — an aliased write must route to
-                                // the host however many rebinds separate it
-                                st.JenkinsEnvMaps.Add freshMap |> ignore
-                                let fresh = VMap freshMap
-
                                 // FG-201. "Ours" is membership in JenkinsEnvCells — the set of
                                 // every cell hosted machinery installed — NOT the one cell THIS
                                 // invocation minted. The first version compared against a
@@ -1135,13 +1156,16 @@ module Interpreter =
                                 // refuse the refresh: a `def env` mints its cell through
                                 // `Env.withVar`, which never enters the set.
                                 match Map.tryFind "env" bodyEnv.Value.Vars with
-                                | Some cell when st.JenkinsEnvCells.Contains cell -> cell.Value <- fresh
+                                | Some cell when st.JenkinsEnvCells.Contains cell ->
+                                    refreshJenkinsEnvMaps st (Some cell) (h.CurrentEnv())
                                 | Some _ ->
-                                    // the script's own `env` — leave it alone entirely
-                                    ()
+                                    // Leave the script's own `env` cell alone; any
+                                    // separately retained host aliases still stay live.
+                                    refreshJenkinsEnvMaps st None (h.CurrentEnv())
                                 | None ->
-                                    let cell = ref fresh
+                                    let cell = ref VNull
                                     st.JenkinsEnvCells.Add cell |> ignore
+                                    refreshJenkinsEnvMaps st (Some cell) (h.CurrentEnv())
 
                                     bodyEnv.Value <-
                                         { bodyEnv.Value with Vars = Map.add "env" cell bodyEnv.Value.Vars })
@@ -1271,13 +1295,7 @@ module Interpreter =
                             transportValue
                     finally
                         if runBody.IsSome then
-                            match Map.tryFind "env" env.Vars with
-                            | Some cell when st.JenkinsEnvCells.Contains cell ->
-                                let current = host.CurrentEnv() |> List.map (fun (k, v) -> k, VStr v)
-                                let freshMap = ref (Map.ofList current)
-                                st.JenkinsEnvMaps.Add freshMap |> ignore
-                                cell.Value <- VMap freshMap
-                            | _ -> ()
+                            refreshJenkinsEnvMaps st None (host.CurrentEnv())
                 | None ->
                     // BATCH: a step is a request, not something we perform.
                     //

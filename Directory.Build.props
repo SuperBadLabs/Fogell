@@ -4,6 +4,12 @@
     <LangVersion>latest</LangVersion>
     <InvariantGlobalization>true</InvariantGlobalization>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- Generate project-local locks and enforce every existing lock graph.
+         The gate separately refuses a missing lock because NuGet creates an
+         initial file even in locked mode. Updating dependencies explicitly
+         opts out of locked mode and forces NuGet to reevaluate the graph. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode>true</RestoreLockedMode>
     <!-- Incomplete matches are errors, not warnings: an unhandled DU case in a
          parser or interpreter is a silent compatibility bug. Inherited from
          Forge, which learned it the hard way. -->

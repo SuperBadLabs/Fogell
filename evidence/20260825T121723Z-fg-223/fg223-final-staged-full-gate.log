@@ -1,0 +1,641 @@
+=== sdk ===
+10.0.301
+=== dependency-lock inventory ===
+=== network-enabled locked restore into an empty isolated package cache ===
+isolated package cache populated; vulnerability freshness is not asserted by this proof
+project locks present: 25/25
+mutation rejected: non-first project disabled RestoreLockedMode
+mutation rejected: non-first project disabled RestorePackagesWithLockFile
+mutation rejected: repo-wide project omitted from Fogell.slnx
+mutation rejected: missing lock (inventory)
+mutation rejected: package-reference-drift (NU1004)
+mutation rejected: content-hash-tamper (NU1403)
+mutation rejected: dependency-edge tamper (regeneration mismatch)
+=== source-cleared locked restore using the populated isolated cache ===
+source-cleared locked restore passed; this is not an OS-level no-egress proof
+=== no-restore build (warnings are errors for FS0025/FS0026) ===
+/home/srikanth/projects/fogell-worktrees/fg-223-seal-evidence-fail-closed/src/Fogell.Pipeline.Parser/Parser.fs(925,121): warning FS0040: This and other recursive references to the object(s) being defined will be checked for initialization-soundness at runtime through the use of a delayed reference. This is because you are defining one or more recursive objects, rather than recursive functions. This warning may be suppressed by using '#nowarn "40"' or '--nowarn:40'. [/home/srikanth/projects/fogell-worktrees/fg-223-seal-evidence-fail-closed/src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj]
+    1 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:11.17
+dependency-lock proof passed
+=== tests ===
+--- Fogell.Controller.Api.Tests ---
+EXPECTO! [36m18[37m tests run in [32m00:00:00.2249861[37m for [36mFogell.Controller.Api[37m – [36m18[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+--- Fogell.Differential.Tests ---
+EXPECTO! [36m226[37m tests run in [32m00:00:04.1487163[37m for [36mFogell.Differential[37m – [36m226[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+--- Fogell.Domain.Tests ---
+EXPECTO! [36m34[37m tests run in [32m00:00:00.0764559[37m for [36mFogell.Domain[37m – [36m34[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+--- Fogell.Execution.Tests ---
+EXPECTO! [36m87[37m tests run in [32m00:00:14.4464206[37m for [36mFogell.Execution[37m – [36m87[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+--- Fogell.Groovy.Tests ---
+EXPECTO! [36m224[37m tests run in [32m00:00:00.1916072[37m for [36mFogell.Groovy[37m – [36m224[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+--- Fogell.Journal.Tests ---
+EXPECTO! [36m31[37m tests run in [32m00:00:00.2353883[37m for [36mFogell.Journal[37m – [36m31[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+--- Fogell.Pipeline.Parser.Tests ---
+EXPECTO! [36m120[37m tests run in [32m00:00:00.2450622[37m for [36mFogell.Pipeline.Parser[37m – [36m120[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+--- Fogell.Store.Tests ---
+EXPECTO! [36m55[37m tests run in [32m00:00:00.6874407[37m for [36mFogell.Store[37m – [36m55[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+=== grouped step-finish force proof (FG-207, blocking) ===
+[37m[[37m22:42:23 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0m[1000D[?25h[37m[[37m22:42:23 [37mINF[37m] [37mEXPECTO! [36m8[37m tests run in [32m00:00:00.0692236[37m for [36mFogell.Journal.FG-207 grouped step completion durability[37m – [36m8[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0mFG-207 optional strace proof: one journal force
+FG-207 grouped step-finish force proof passed
+=== claim audit + its citation proof (FG-104/FG-174, blocking) ===
+=== citations that must be REJECTED ===
+  ok      rejects: colon form naming a receipt that does not exist
+  ok      rejects: backticked citation naming a receipt that does not exist
+  ok      rejects: citation split across two comment lines
+  ok      rejects: one bad name in a list of good ones
+  ok      rejects: a real receipt name with a typo'd build suffix
+  ok      rejects: a compact citation whose SECOND build does not exist
+  ok      rejects: colon form, second name after 'and' does not exist
+  ok      rejects: a glob matching nothing
+
+=== spellings that must be ACCEPTED ===
+  ok      accepts: plain backticked citation of a receipt that exists
+  ok      accepts: colon form
+  ok      accepts: multi-build case cited by its base name
+  ok      accepts: multi-build case cited as b1/.b2
+  ok      accepts: a family cited by glob
+  ok      accepts: the file spelling
+  ok      accepts: prose that merely contains the word receipt
+  ok      accepts: a missing name that appears in a STRING, not a comment
+
+CLAIM-CITATION PROOF: every planted dangling citation is rejected, and every real spelling — backticked, colon, multi-build, glob, file — is accepted
+OK
+MEASURED claims: 58 source files scanned, 283 receipts + 33 lane scenarios + 23 proof cases citable
+every MEASURED claim resolves: cited by a receipt, or admitted UNPROVEN (20)
+every receipt CITATION resolves to a receipt, lane scenario or proof case that exists
+=== stale-reference audit + its own proof (FG-104b, blocking) ===
+=== planted fixtures, one per binding form ===
+  let name                           reported (exit 1) — OK
+  let private name                   reported (exit 1) — OK
+  let mutable name                   reported (exit 1) — OK
+  let rec name                       reported (exit 1) — OK
+  let inline name                    reported (exit 1) — OK
+  let private mutable name           reported (exit 1) — OK
+  type name                          reported (exit 1) — OK
+  member _.name                      reported (exit 1) — OK
+  member this.name                   reported (exit 1) — OK
+  member val name                    reported (exit 1) — OK
+  static member name                 reported (exit 1) — OK
+  override this.name                 reported (exit 1) — OK
+  abstract member name               reported (exit 1) — OK
+  default this.name                  reported (exit 1) — OK
+  let name' (apostrophe)             reported (exit 1) — OK
+  let name'' (two)                   reported (exit 1) — OK
+  and Name (recursive type)          reported (exit 1) — OK
+  and name (recursive fn)            reported (exit 1) — OK
+  and private name                   reported (exit 1) — OK
+  let! (computation expr)            reported (exit 1) — OK
+  use binding                        reported (exit 1) — OK
+  use! binding                       reported (exit 1) — OK
+  comment repeats the keyword        reported (exit 1) — OK
+  record field on the brace line     reported (exit 1) — OK
+  nested (* block comment *)         reported (exit 1) — OK
+  string that looks like a def       reported (exit 1) — OK
+  deleting a comment is not a deletion silent (exit 0) — OK
+  field named inside a block comment reported (exit 1) — OK
+  field moved onto the brace line    silent (exit 0) — OK
+  keyword prose is not an identifier not reported — OK
+  inert (* does not mask a real def  silent (exit 0) — OK
+  attributed record field            reported (exit 1) — OK
+  mutable record field               reported (exit 1) — OK
+  non-F# deletion (out of scope)     not extracted (exit 0) — OK
+  multi-line string with (*          silent (exit 0) — OK
+  char literal holding a quote       reported (exit 1) — OK
+  destructuring let (all three)      reported (exit 1) — OK
+=== the checker's own failure modes ===
+  unresolvable base                  refused (exit 2) — OK
+  clean tree                         silent (exit 0) — OK
+  search tool errors                 refused (exit 2) — OK
+  short identifier (by design)       not tracked (exit 0) — OK
+  lowercase field (by design)        not tracked (exit 0) — OK
+  typed destructuring (by design)    not tracked (exit 0) — OK
+  constructor skipped, binder kept   reported (exit 1) — OK
+  nested pattern (by design)         not tracked (exit 0) — OK
+  destructured binding survives      silent (exit 0) — OK
+  destructured name ending in '      reported (exit 1) — OK
+  literal in a pattern (by design)   not tracked (exit 0) — OK
+=== FG-117 false-positive tranche ===
+  literal patterns only              silent with exact diagnostic (exit 0) — OK
+  literal neighbor binder            reported exact binder (exit 1) — OK
+  definition paren forms             silent with exact diagnostic (exit 0) — OK
+  definition neighbor tuple          reported exact binder (exit 1) — OK
+  numeric tuple literal only         silent with exact diagnostic (exit 0) — OK
+  numeric tuple neighbor binder      reported exact binder (exit 1) — OK
+  underscore suffix not invented     silent with exact diagnostic (exit 0) — OK
+  underscore binder retained         reported exact binder (exit 1) — OK
+  multi-underscore suffix not invented silent with exact diagnostic (exit 0) — OK
+  multi-underscore binder retained   reported exact binder (exit 1) — OK
+  uppercase underscore suffix not invented silent with exact diagnostic (exit 0) — OK
+  uppercase underscore binder retained reported exact binder (exit 1) — OK
+  digit underscore suffix not invented silent with exact diagnostic (exit 0) — OK
+  digit underscore binder retained   reported exact binder (exit 1) — OK
+  underscore uppercase and digit binders reported exact binder (exit 1) — OK
+  underscore boundary suffixes       silent with exact diagnostic (exit 0) — OK
+  underscore boundary binders        reported exact binder (exit 1) — OK
+  double-underscore length floor     reported exact binder (exit 1) — OK
+  underscore below length floor      silent with exact diagnostic (exit 0) — OK
+  removed block-comment text         silent with exact diagnostic (exit 0) — OK
+  block-comment neighbor code        reported exact binder (exit 1) — OK
+  ordinary string continuation       silent with exact diagnostic (exit 0) — OK
+  ordinary string neighbor           reported exact binder (exit 1) — OK
+  verbatim string continuation       silent with exact diagnostic (exit 0) — OK
+  verbatim string neighbor           reported exact binder (exit 1) — OK
+  triple string continuation         silent with exact diagnostic (exit 0) — OK
+  triple string neighbor             reported exact binder (exit 1) — OK
+  nested removed comment             silent with exact diagnostic (exit 0) — OK
+  nested comment neighbor            reported exact binder (exit 1) — OK
+  char literal adjacency             reported exact binder (exit 1) — OK
+  code after comment close           reported exact binder (exit 1) — OK
+  constructor fragment               silent with exact diagnostic (exit 0) — OK
+  constructor neighbor binder        reported exact binder (exit 1) — OK
+=== FG-117 direct mutation kills ===
+  literal allowlist mutation         changed bytes; false positive exposed — KILLED
+  definition-form filter mutation    changed bytes; false positive exposed — KILLED
+  numeric tuple discrimination mutation changed bytes; missing binder exposed — KILLED
+  underscore preservation mutation   changed bytes; false positive exposed — KILLED
+  multi-underscore binder mutation   changed bytes; missing binder exposed — KILLED
+  underscore uppercase/digit domain mutation changed bytes; both missing binders exposed — KILLED
+  underscore complete-token length floor mutation changed bytes; false positive exposed — KILLED
+  underscore suffix-floor regression mutation changed bytes; missing binder exposed — KILLED
+  base lexical projection mutation   changed bytes; false positive exposed — KILLED
+  constructor left boundary mutation changed bytes; false positive exposed — KILLED
+STALE-REF PROOF: supported forms report, pinned boundaries stay silent, and FG-117 false positives are excluded (10 direct mutations killed)
+=== stage options: a dropped timeout is a build past its bound ===
+  control stage-opts-ok: completed: aborted
+  refused stage-opts-bad
+=== top-level options: same section, other fallback ===
+  control top-opts-ok: completed: aborted
+  refused top-opts-bad
+=== environment, both levels: a dropped var runs the shell without it ===
+  control top-env-ok: FOO reached the shell
+  refused top-env-bad
+  control stage-env-ok: FOO reached the shell
+  refused stage-env-bad
+=== stage-level input DIRECTIVE: an unsupported human gate must stop the build ===
+  refused stage-input-directive
+=== stage steps: the original silent fallback (FG-143) ===
+  control stage-steps-ok: completed: success
+  refused stage-steps-bad
+=== break/continue outside a loop: Jenkins refuses at compile time, before any stage ===
+  control break-in-loop-ok: completed: success
+  refused break-outside-loop, and no stage ran
+  refused continue-outside-loop, and no stage ran
+  control when-valid-ok: completed: success
+  refused when-malformed-expression, and no stage ran
+  refused when-duplicate-equals, and no stage ran
+  refused when-duplicate-tag, and no stage ran
+  refused when-duplicate-change-request, and no stage ran
+  refused when-duplicate-nested, and no stage ran
+  refused when-duplicate-parenthesised-opaque, and no stage ran
+  refused when-invalid-changeset-glob, and no stage ran
+  refused when-invalid-directive-value, and no stage ran
+  control when-valid-unmodelled-filter: admitted, filtered, and continued
+  control when-valid-unmodelled-equals: admitted and failed closed without running the gated stage
+SECTION-REFUSAL PROOF: acted-on sections and every measured compile-invalid when route refuse BEFORE any stage runs, while valid controls still run
+=== sandbox-denial proof (FG-072, blocking) ===
+=== FG-072 live sandbox denial matrix (31 vectors / 30 names) ===
+  denied file as new File
+  denied file-input as new FileInputStream
+  denied file-output as new FileOutputStream
+  denied random-access as new RandomAccessFile
+  denied process-builder as new ProcessBuilder
+  denied runtime as Runtime
+  denied system as System
+  denied class as Class
+  denied class-loader as ClassLoader
+  denied groovy-shell as new GroovyShell
+  denied groovy-loader as new GroovyClassLoader
+  denied eval as Eval
+  denied evaluate as evaluate
+  denied url as new URL
+  denied url-connection as URLConnection
+  denied socket as new Socket
+  denied server-socket as new ServerSocket
+  denied http-url-connection as HttpURLConnection
+  denied thread as new Thread
+  denied unsafe as Unsafe
+  denied method-handles as MethodHandles
+  denied get-class as getClass
+  denied safe-null-get-class as getClass
+  denied for-name as forName
+  denied new-instance as newInstance
+  denied declared-method as getDeclaredMethod
+  denied declared-field as getDeclaredField
+  denied set-accessible as setAccessible
+  denied invoke as invoke
+  denied execute as execute
+  denied exec as exec
+=== sanctioned-call control ===
+  allowed control: registered steps + script function + trim builtin
+=== checker self-proof ===
+  checker rejects planted timeout-status state
+  checker rejects planted signal-status state
+  checker rejects planted non-failure-terminal state
+  checker rejects planted extra-terminal state
+  checker rejects planted generic-failure state
+  checker rejects planted unnamed state
+  checker rejects planted no-boundary-reason state
+  checker rejects planted no-halt state
+FG-072 sandbox denial proof: PASS
+=== controller/build environment isolation proof (FG-222, blocking) ===
+  live shell/GString/build-Git boundary: PASS
+  checker rejected planted ordinary-status state
+  checker rejected planted timeout-status state
+  checker rejected planted signal-status state
+  checker rejected planted simple-gstring state
+  checker rejected planted complex-gstring state
+  checker rejected planted shell-env state
+  checker rejected planted build-git-env state
+  checker rejected planted controller-home state
+  checker rejected planted declared-env state
+  checker rejected planted credential-binding state
+  checker rejected planted credential-mask state
+FG-222 controller environment proof: PASS
+=== fail-closed evidence sealer proof (FG-223, blocking) ===
+planted permissive sealer: rejected by proof oracle
+FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, inventory and input-boundary failures publish no manifest; one concurrent publisher wins; success verifies)
+board numbers consistent with the ledger: tier1=1 tier3=28 admitted=199 (quoted retractions exempt; prose numbers unchecked)
+=== board-number audit: proven against known-bad states ===
+  passed compliant board
+  rejected board drift (tier3 off by one)
+  rejected live tier2= claim
+  rejected admitted drift alone
+  rejected tier1 drift alone
+  rejected ledger drift under fixed board
+  passed quoted retraction (exempt)
+BOARD-NUMBER PROOF: the audit fails every planted drift and passes the compliant and quoted-retraction cases
+=== queue-row audit: proven against planted overclaims ===
+  passed committed board
+  rejected planted cause/fix claim
+  rejected planted scope claim
+  rejected planted positional claim
+  passed quoted retraction with bare apostrophe (exempt)
+  rejected queue tables missing (refuses vacuous pass)
+  rejected tell hidden behind an escaped pipe
+  passed adjacent quoted spans do not merge into a tell
+  rejected a track heading with no table beneath it
+QUEUE-ROW PROOF: the audit fails every planted shape, passes the committed board and the quoted retraction, and refuses a board it cannot parse
+queue-row audit: 40 rows scanned in EXECUTION_BOARD.md
+no tells matched. FLOOR, NOT PROOF: this deny-list catches known spellings;
+a cause named in words it does not know passes silently.
+=== review coverage: recorded known-bad heads ===
+  PR #58 rejects Copilot's earlier-head review     rc=1 — OK
+  PR #59 rejects both earlier-head reviews         rc=1 — OK
+  PR #60 separates earlier from absent             rc=1 — OK
+=== review coverage: positive and identity arms ===
+  formal Copilot + bot-authored clean Codex pass   rc=0 — OK
+  human copy of a Codex result cannot cover Codex  rc=1 — OK
+  Codex clean result on an older head is stale     rc=1 — OK
+  impossible reviewer is absent, never approval    rc=1 — OK
+  empty required-reviewer set passes explicitly    rc=0 — OK
+  exact reviews on pagination page two count       rc=0 — OK
+=== review coverage: refusal arms ===
+  head moving during the check refuses a verdict   rc=2 — OK
+  closed-unmerged PR refuses a verdict             rc=2 — OK
+  malformed GitHub JSON fails closed               rc=2 — OK
+  GitHub transport failure fails closed            rc=2 — OK
+  non-string PR title fails closed                 rc=2 — OK
+  malformed Codex clean timestamp fails closed     rc=2 — OK
+=== review coverage: JSON and historical audit compatibility ===
+  single-PR JSON reports a covered full head       rc=0 — OK
+  historical audit accepts strict clean Codex evidence and casing rc=0 — OK
+  historical audit refuses a malformed merged PR   rc=2 — OK
+  historical audit refuses a malformed review      rc=2 — OK
+  historical audit refuses malformed unrelated submitted review rc=2 — OK
+  historical audit refuses malformed Codex clean timestamp rc=2 — OK
+  unexpected internal exception fails closed without traceback rc=2 — OK
+REVIEW-COVERAGE PROOF: known-bad heads reject for the named reason; exact formal and Codex-clean evidence pass in both modes; identity, casing, malformed titles/timestamps/historical shapes, pagination, race, lifecycle, transport, unexpected failure, JSON and audit arms hold
+=== release-provenance gate proof (FG-093, blocking) ===
+=== FG-093 positive control ===
+  accepted the exact clean tuple; downstream marker ran
+  rejected non-executable repository checker before fixture setup
+  rejected symlink repository checker before fixture setup
+  accepted downstream argv literally; no shell expansion occurred
+  exported five exact bindings and removed inherited Git state downstream
+=== FG-093 four tuple mismatches ===
+  rejected commit mismatch before downstream execution
+  rejected tree mismatch before downstream execution
+  rejected artifact digest mismatch before downstream execution
+  rejected corpus-manifest digest mismatch before downstream execution
+=== FG-093 strict manifest grammar ===
+  rejected unknown schema version before downstream execution
+  rejected boolean is not integer schema version before downstream execution
+  rejected short commit before downstream execution
+  rejected mixed-case commit guessed as lowercase before downstream execution
+  rejected short artifact digest before downstream execution
+  rejected mixed-case digest guessed as lowercase before downstream execution
+  rejected malformed JSON before downstream execution
+  rejected duplicate key before downstream execution
+  rejected missing key before downstream execution
+  rejected unknown key before downstream execution
+  rejected non-string value before downstream execution
+=== FG-093 checkout and file boundaries ===
+  rejected manifest inside checkout before downstream execution
+  rejected tracked artifact inside checkout before downstream execution
+  rejected tracked dirt before downstream execution
+  rejected clean-filter hidden raw tracked-byte mismatch before downstream execution
+  rejected untracked dirt before downstream execution
+  rejected .git/info/exclude hidden physical untracked file before downstream execution
+  rejected assume-unchanged masked tracked dirt before downstream execution
+  rejected skip-worktree masked tracked dirt before downstream execution
+  rejected core.fileMode=false masked executable-bit dirt before downstream execution
+  rejected core.ignoreCase case-collision dirt before downstream execution
+  rejected submodule dirt before downstream execution
+  rejected nested submodule assume-unchanged dirt before downstream execution
+  rejected plain directory at gitlink path before downstream execution
+  rejected initialized submodule at wrong HEAD before downstream execution
+  rejected nested submodule skip-worktree dirt before downstream execution
+=== FG-093 inherited Git-environment attacks ===
+  rejected GIT_CONFIG_COUNT core.ignoreCase collision; inherited Git environment could not hide dirt
+  rejected GIT_CONFIG_COUNT core.fileMode masking; inherited Git environment could not hide dirt
+  rejected GIT_INDEX_FILE alternate index; inherited Git environment could not hide dirt
+  ignored inherited GIT_DIR/GIT_WORK_TREE; exact repository still executed
+  rejected symlink artifact before downstream execution
+=== FG-093 comparison-removal mutations ===
+  killed commit comparison-removal mutation: its known-bad arm became executable
+  killed tree comparison-removal mutation: its known-bad arm became executable
+  killed artifact_sha256 comparison-removal mutation: its known-bad arm became executable
+  killed corpus_manifest_sha256 comparison-removal mutation: its known-bad arm became executable
+  killed artifact-boundary mutation: tracked in-checkout artifact became executable
+=== FG-093 downstream environment-binding mutations ===
+  killed FOGELL_VERIFIED_COMMIT mutation: exact downstream binding assertion detected it
+  killed FOGELL_VERIFIED_TREE mutation: exact downstream binding assertion detected it
+  killed FOGELL_VERIFIED_ARTIFACT mutation: exact downstream binding assertion detected it
+  killed FOGELL_VERIFIED_ARTIFACT_SHA256 mutation: exact downstream binding assertion detected it
+  killed FOGELL_VERIFIED_CORPUS_MANIFEST_SHA256 mutation: exact downstream binding assertion detected it
+  killed downstream Git-environment scrub mutation: hostile values reached the probe
+=== FG-093 Git-cleanliness guard mutations ===
+  killed assume-unchanged cleanliness mutation: its masked bad arm became executable
+  killed skip-worktree cleanliness mutation: its masked bad arm became executable
+  killed filemode-config cleanliness mutation: its masked bad arm became executable
+  killed recursive-submodule cleanliness mutation: its masked bad arm became executable
+  killed ignorecase-override cleanliness mutation: its masked bad arm became executable
+  killed physical-untracked cleanliness mutation: its masked bad arm became executable
+  killed raw-tracked-identity cleanliness mutation: its masked bad arm became executable
+  killed required-gitlink mutation: evil plain-directory bytes became executable
+  killed inherited-Git-environment scrub mutation: ambient Git state changed the judgment
+FG-093 provenance proof PASSED
+=== scorecard receipt-mapping proof (FG-166, blocking) ===
+SCORECARD RECEIPT-MAPPING PROOF: literal .b1, independent and repeated multi-build warnings, fresh singleton controls, exact sorting, and pre-map collision refusal all hold
+=== compatibility-regression gate proof (FG-094, blocking) ===
+=== FG-094 positive set controls ===
+  passed exact baseline
+  passed out-of-order unique corpus manifest
+  passed hostile inherited Git environment is ignored
+  passed accepted-set gain
+  passed admitted to tier-1 promotion
+  passed vinsguru compiled-but-not-reached accepted loss
+=== FG-094 forbidden set regressions ===
+  rejected reached-agent accepted loss
+  rejected same-count accepted swap
+  rejected oracle-not-ready tier-1 loss
+  rejected same-count tier-1 swap
+=== FG-094 schema, binding, and environment refusals ===
+  rejected missing current ledger row
+  rejected duplicate current ledger row
+  rejected boolean schema version
+  rejected wrong baseline tree
+  rejected wrong oracle digest
+  rejected baseline inside checkout
+  rejected symlink baseline
+  rejected oversized baseline
+  rejected duplicate baseline key
+  rejected extra baseline key
+  rejected non-ancestor baseline commit
+  rejected wrong historical ledger digest
+  rejected wrong corpus manifest digest
+  rejected LF-only oracle
+  rejected wrong oracle header
+  rejected nonexact oracle boolean
+  rejected reached without compiled oracle row
+  rejected current ledger extra column
+  rejected corpus manifest malformed row
+  rejected duplicate corpus manifest filename
+  rejected missing corpus-host baseline/oracle configuration
+  rejected partial corpus-host configuration
+  reported explicit no-corpus skip
+  rejected scorecard failure precedes malformed baseline comparison
+=== FG-094 direct checker mutations ===
+  passed counts-only mutant exposes same-count accepted swap
+  rejected compiled-vs-reached mutant on vinsguru control
+  passed tier1-set omission mutant exposes oracle-not-ready tier1 loss
+  passed missing-row default mutant exposes absent oracle row
+  rejected replacement-sanitization mutant
+  rejected malformed filename suffix
+  passed suffix-permissiveness mutant exposes malformed shared filename
+  rejected historical ledger extra column
+  passed schema-permissiveness mutant exposes extra ledger column
+FG-094 compatibility regression proof PASSED
+seal verification: 283 receipt(s) recomputed from their own content, all match
+=== seal verification: proven against known-bad receipts ===
+  accepted the committed receipts, unmodified
+  rejected a FLIPPED VERDICT line
+  rejected an edited OUTPUT line
+  rejected a DELETED output line
+  rejected an edited RESULT
+  rejected an edited WORKSPACE HASH
+  rejected an edited CASE DIGEST
+  rejected an edited JENKINS CORE
+  rejected a REORDERED output block in a SEQUENCE receipt
+  accepted a REORDERED output block in a MULTISET receipt (declared unsealed)
+  rejected an edited output line in a MULTISET receipt
+  rejected an edited COMPARISON NOTE
+  rejected a receipt with no sealed-output field
+  rejected a truncated receipt
+  accepted an ADDED RECOVERED block (FG-128, declared unsealed)
+  rejected a FLIPPED sealed-output mode
+  rejected a BLANK OUTPUT LINE added to a zero-output side
+  rejected a DOCTORED output line count
+  rejected a DUPLICATED result field inside a side block
+  rejected a DUPLICATED workspace-hash inside a side block
+  rejected a SECOND conflicting timestamps() line
+  rejected a valid receipt COPIED onto another case name
+  rejected a side claiming '(did not run)' beside real evidence
+  rejected an UNRECOGNISED line inside a sealed section
+  rejected arbitrary text behind a recognised coverage word
+  rejected a FABRICATED empty notes section
+  rejected a FORGED unknown section
+  rejected a '(did not run)' side carrying workspace evidence
+  rejected an INDENTED forged line in the header
+  accepted the committed receipts, still, after the header rule
+  rejected an OVERSIZED output count
+  rejected an ALTERED timestamps() explanatory suffix
+  rejected a FORGED SECOND VERDICT line
+  rejected a DUPLICATED jenkins-core field
+  rejected a receipt with NO verdict line
+  rejected an empty receipt directory
+SEAL VERIFICATION PROOF: every arm above is rejected, the declared-unsealed regions are accepted, and an empty directory refuses (this is NOT a claim that every possible tamper is caught — see the header and FG-169)
+FG-094 COMPATIBILITY REGRESSION GATE PASSED: files=228 baseline_accepted=200 current_accepted=200 baseline_tier1=1 current_tier1=1 allowed_oracle_not_ready_losses=0 gains=0
+stale-reference audit: 99 identifier(s) removed vs origin/main, 12 fully gone
+no surviving comment names a deleted identifier
+=== restart lane (FG-112, blocking) ===
+=== attempt 1: SIGKILL mid-step ===
+killed host mid-step (verified dead); journal now:
+  | build-identity	f1ae2e8a7e7c4500903dce16abf0d7a3
+  | script-digest	967e503b6b5bee6bc8ee112bf14067359875216c5bc24d7c5bfc37062f54e5a5
+  | workspace-identity	34:/tmp/fogell-restart-lane.1ctaCv/ws|34:/tmp/fogell-restart-lane.1ctaCv/ws|47:/tmp/fogell-restart-lane.1ctaCv/ws/restart-lane|45:/tmp/fogell-restart-lane.1ctaCv/ws/_artifacts	restart-lane
+  | step-started	Build	0	sh
+  | step-finished	Build	0	success
+  | step-started	Build	1	sh
+=== attempt 2: resume must REFUSE (interrupted step, exit 3) ===
+refused, step named: needs-reconciliation: Build#1 — a started step has no recorded outcome; refusing to guess
+=== attempt 2b: a CHANGED definition must refuse (exit 4) ===
+refused the drifted definition; original restored
+=== operator reconciliation: the marker shows the effect landed ===
+appended step-finished for Build#1 (evidence: marker line 'two' exists)
+=== attempt 3: clean resume — durable steps skip, the rest run ===
+=== isRestartedRun: the Recovery stage ran on the RESUMED attempt only ===
+=== integrity: each effect exactly once ===
+        1 one
+        1 recovered
+        1 three
+        1 two
+=== attempt 4: terminal journal is a no-op ===
+=== FG-171: a SIGKILL between two script{} children — the BLOCK is the unit ===
+refused by name; s1/s2 exactly-once — the claimed double-run does NOT happen
+reconciled resume: block skipped WHOLE (s3 deliberately absent — the stated limit), every effect exactly once
+=== FG-135: a SIGKILL mid-attempt of a RETRIED stage — attempts have identity ===
+refused on the LIVE attempt's step — the superseded failure no longer reads as finished
+reconciled resume CONTINUED the loop: attempt 3 ran once, build success, every attempt's step exactly once
+=== FG-135: input inside a journaled retried stage stays REFUSED ===
+refused before any step — a prior attempt's approval can never be replayed
+=== FG-135: NESTED stages under a journaled retry stay REFUSED (leaf-only) ===
+refused before any step — nested records cannot masquerade as the live attempt's
+=== FG-206: an ABSORBED failure's reason does not explain a later refusal ===
+an absorbed reason cannot explain a later refusal, and an uncaught one still explains itself
+post-halt warning and constructor calls stay silent, effectless, and cannot replace the original reason
+=== FG-177: named retry count promotes and controls the attempt budget ===
+named count promoted to one integer positional and governed exactly two attempts
+=== FG-177: non-integer named retry count refuses before body effects ===
+non-integer named count refused with a stable reason before body, retry, or successor effects
+=== FG-177: a hosted child halt returns to retry ownership ===
+attempt 1 halted inside nested wrappers, attempt 2 recovered, and terminal replay duplicated nothing
+=== FG-177: exhausted retry runs finally cleanup once per attempt ===
+two attempts, two cleanup effects, original final failure, and terminal replay duplicated nothing
+=== FG-177: every retry attempt halting propagates final failure ===
+two halted attempts, one Retrying boundary, final failure, no continuation
+=== FG-177: retry keeps the final attempt's original refusal reason ===
+each attempt kept its halt boundary; the final durable reason stayed the original refusal
+=== FG-177: a status-only cleanup halt owns durability and terminal replay ===
+fresh cleanup status replaced the inherited halt once; terminal replay duplicated no reason or effect
+=== FG-177: binding failures preserve their measured exception class ===
+junit and dir bind failures are caught by their measured NullPointerException class
+=== FG-177: a successful JUnit step replays its durable stage warning ===
+durable warning preceded successful finish; resume selected stage unstable while build and pipeline stayed successful
+=== FG-220: resumed JUnit skipOldReports fails closed without the original cutoff ===
+=== FG-220: resumed omitted and explicit-false JUnit still parse old reports ===
+resumed true refused before scan; resumed explicit false and default parsed the old report
+RESTART LANE: ALL ASSERTIONS PASSED
+=== inbox-watcher proof (FG-046e, blocking) ===
+=== does it see a breach the sampler could not? ===
+  overlapping publish (the breach)       exit 1 — OK
+  overlap published by atomic rename     exit 1 — OK
+  withdraw-then-publish (compliant)      exit 0 — OK
+  two published when two expected        exit 0 — OK
+  only one published, two expected       exit 1 — OK
+  same prompt twice, two expected        exit 1 — OK
+=== the watcher's own failure modes ===
+  watcher saw nothing at all             refused (exit 3) — OK
+  runtime dropped events                 refused (exit 3) — OK
+APPROVAL-WATCH PROOF: it catches the breach and the miscount, clears the compliant case, and refuses both blind spots
+=== approval lane (FG-046b, blocking) ===
+=== A1: SIGKILL while the prompt is UNANSWERED ===
+prompt published as 1e12d601630beb0c91b4449e93ddcfe359dca7f9bd9a040ae8d5532ea3cccaf0:
+  | stage	Gate
+  | step	1
+  | prompt#	1
+  | prompt	Deploy?
+=== A2: an UNANSWERED interrupted input must still refuse (exit 3) ===
+refused: needs-reconciliation: Gate#1 — a started step has no recorded outcome; refusing to guess
+=== A3: the human answers; the resumed attempt proceeds SILENTLY ===
+answered, proceeded silently, journal:
+  | build-identity	401e57d4c60e48ca842f14a5d4f27bcd
+  | script-digest	2cbb9f5aeb86996fbc930664f8298a75c9b122213a62a51aa7394fa9a0ccf9d4
+  | workspace-identity	37:/tmp/fogell-approval-lane.NYkdeo/a/ws|37:/tmp/fogell-approval-lane.NYkdeo/a/ws|42:/tmp/fogell-approval-lane.NYkdeo/a/ws/gate|48:/tmp/fogell-approval-lane.NYkdeo/a/ws/_artifacts	gate
+  | step-started	Gate	0	sh
+  | step-finished	Gate	0	success
+  | step-started	Gate	1	input
+  | input-decision	Gate	1	1	approved	alice
+  | step-started	Gate	1	input
+  | step-finished	Gate	1	success
+  | step-started	Gate	2	sh
+  | step-finished	Gate	2	success
+  | stage-committed	Gate
+  | build-finished	success
+=== B: the answer lives in the JOURNAL — inbox deleted, no second ask ===
+resumed with no inbox at all; the prompt was answered from the journal
+=== C: reject — the build is ABORTED and the next step never runs ===
+rejected, aborted, nothing after the prompt ran
+=== D: an answer is consumed — a second build must ask again ===
+build 2 asked again and waited; the first build's answer did not carry over
+=== E: no inbox means no approver — fail closed, do not hang ===
+failed closed at the prompt with the reason on the durable record (FG-114)
+=== F: neither a fragment nor an ambiguous two-line answer counts ===
+waited through the fragment AND the ambiguous pair, then took the completed answer with its submitter intact
+=== G: the same journal through a symlink alias finds the same answer ===
+same journal, same recorded identity, same action id; nobody was asked twice
+=== G2: a terminal journal sweeps a marker its build left behind ===
+swept on the already-terminal path
+=== I: a HARD LINK to the journal is the same build ===
+same inode, same identity, same action id; nobody was asked twice
+=== H: two prompts under one wrapper are two gates ===
+two prompts, two ids, two answers; journal:
+  | input-prompt-cancellable	Gate	0	1
+  | input-answer-provisional	Gate	0	1	approved	heidi
+  | input-prompt-cancellable	Gate	0	2
+  | input-answer-provisional	Gate	0	2	rejected	heidi
+=== J: an unwritable inbox fails the build, it does not ship unapproved ===
+failed closed, inbox named, exit 1
+=== K: a marker from a DEAD attempt is swept when the build finishes ===
+swept a marker this process never published
+=== L: retry does not re-ask a human who said no ===
+asked once, declined once, aborted
+=== M: a rejection escapes NESTED retries ===
+declined once at depth two, aborted, never re-asked
+=== N: a timed-out prompt is withdrawn before the retry publishes ===
+approval-watch: 2 distinct prompt(s), peak 1 live prompt(s)
+never more than one live prompt (by event order); both attempts asked, neither lingered
+=== O: a submitter-restricted gate is refused, not approved by anyone ===
+both options failed closed with their own reasons on the durable record (FG-114)
+=== P: a VOIDED answer is not replayed by a resumed attempt ===
+same state, one void record apart: honoured without it, refused with it
+=== Q: a PROVISIONAL answer is not actionable on resume ===
+provisional only, never actionable; the crash state refuses
+=== QL: an answer returned after cancellation is provisionally recorded and VOIDED ===
+late poll wrote provisional + audit-truth void; bounded replay refused (void is not claimed as the sole barrier)
+=== QF: failFast capability makes an answer provisional before a sibling faults ===
+ordinary parallel wrote one actionable decision; failFast capability wrote only one provisional answer
+=== R: an OFFLINE answer to a bounded gate is not adopted ===
+bounded gate, offline answer: refused for reconciliation, nothing actionable recorded
+=== S: a FAULTING branch interrupts its failFast siblings ===
+fault signalled from the branch itself; the sibling stopped before its next effect
+=== T: a secret in the prompt is masked BEFORE it reaches the inbox ===
+masked (as ****) on the console, on disk and in the journal; build succeeded
+=== U: cleanup keeps an answer the journal never recorded ===
+marker swept, unrecorded answer preserved, RE-PLANTED durable answer consumed
+=== V: adoption will not take a decision file that is still changing ===
+refused while changing, adopted once settled
+=== W: a gate argument that is a NUMERIC DIVISION still gates ===
+an expression-argument gate published its prompt and waited
+=== X: a gate whose message is a CONCATENATION still gates ===
+a concatenated-message gate published its prompt and waited
+=== Y: a POSITIONAL concatenated gate message still gates ===
+a positional concatenated gate published its prompt and waited
+=== Z: a gate argument the grammar cannot parse is REFUSED, not skipped ===
+an unparseable gate argument was refused, not silently skipped
+=== Z2: a PARENTHESISED slashy gate message publishes its EVALUATED words ===
+a parenthesised slashy gate published its evaluated words and waited
+=== Z3: a MIXED positional slashy gate with an ACTIVE '{' publishes its words ===
+a mixed positional slashy gate published its evaluated words and waited
+=== Z4: a VALID triple-quoted gate publishes its MESSAGE and waits ===
+a valid triple-quoted gate published its message and waited
+=== Z5: a gate whose message is a NESTED CALL must not publish its SOURCE ===
+a nested-call gate failed closed instead of publishing its source text
+a script-block input was refused by name in the journal and nothing published
+APPROVAL LANE: ALL ASSERTIONS PASSED
+OK

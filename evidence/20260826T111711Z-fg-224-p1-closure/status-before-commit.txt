@@ -1,0 +1,13 @@
+M  docs/tickets/FG-224.md
+M  scripts/prove-runnable-controller.sh
+M  src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj
+M  src/Fogell.Controller.Api/Router.fs
+M  src/Fogell.Controller.Api/packages.lock.json
+M  src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj
+M  src/Fogell.Controller.Host/Worker.fs
+A  src/Fogell.Controller.Host/WorkerPaths.fs
+M  src/Fogell.Controller.Host/packages.lock.json
+M  tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj
+M  tests/Fogell.Controller.Api.Tests/Tests.fs
+M  tests/Fogell.Controller.Api.Tests/packages.lock.json
+?? evidence/.20260826T111711Z-fg-224-p1-closure.partial.jTXDcX/

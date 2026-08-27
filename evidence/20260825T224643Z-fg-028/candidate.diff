@@ -1,0 +1,916 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index ab85d0c..3bcbaa1 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -577,7 +577,7 @@ and [FG-015b closure](../evidence/20260821T083100Z-fg-015b-list-index).
+ | FG-026 | P0 | TODO | Fenced effect checkpoint ledger with `prepared`/`applied`/`confirmed`/`uncertain`; payload digest immutable | payload substitution rejected; uncertain effects listed for reconciliation |
+ | FG-027 | P1 | TODO | Retry semantics: never rewrite an attempt; one child attempt with immutable link; exhausted budget → dead-letter | replaying the retry decision returns the same child |
+ | FG-027a | P1 | **PARTIAL** | Pure immutable retry-decision foundation, intentionally outside `Fogell.Store` | Signed input `7399fa68f6092029563787c9882ad7f18d266ce7` (tree `935c24f91b9e11c7c68ecd5a51c2eac23d0b5750`) adds a Domain law that creates one queued child below a zero-based attempt limit, returns `BudgetExhausted` at the boundary, and validates an exact prior result before replaying it. The decision binds the parent organization, node, ordinal, ancestry, restore epoch and original limit; a child gets the next ordinal, immutable parent link, initial fence and no lease. This is foundation only: there is no Store persistence, transaction/concurrency arbitration, dead-letter or outbox record, or scheduler/controller wiring, and terminal-status retry policy remains external. Parent FG-027 therefore remains TODO. Publication, CI and merge remain — [→ detail](tickets/FG-027a.md) |
+-| FG-028 | P1 | TODO | Tenant isolation: forced RLS, transaction-local org setting, composite foreign keys | absent context exposes no rows; cross-tenant write rejected |
++| FG-028 | P1 | **DONE** | Tenant isolation: forced RLS, transaction-local org setting, composite foreign keys | A real `NOSUPERUSER NOBYPASSRLS` role sees zero rows without context across all 10 tenant tables; Store context is transaction-local and clears on reuse; malformed context fails closed; direct cross-tenant write is rejected; 2 remaining attempt-lineage FKs are tenant-composite — [→ detail](tickets/FG-028.md) |
+ | FG-029 | P2 | TODO | SQLite single-user mode, explicitly labelled non-production | `KNOWN-LIMITATIONS` states it; startup logs the mode |
+ 
+ ## Wave 3 — Execution and process lifecycle
+diff --git a/docs/tickets/FG-028.md b/docs/tickets/FG-028.md
+new file mode 100644
+index 0000000..2f6d793
+--- /dev/null
++++ b/docs/tickets/FG-028.md
+@@ -0,0 +1,94 @@
++# FG-028 — forced tenant isolation
++
++Status: **DONE locally; publication remains owner-controlled**.
++
++Fogell's PostgreSQL tenant boundary is now enforced by the database. Migration
++`0005_forced_tenant_rls.sql` enables and forces row-level security on all ten
++tenant-bearing tables. Every policy compares the row's organization with
++`fogell_current_organization_id()`. With no setting the function returns NULL,
++so no policy admits a row; malformed UUID context raises instead of widening
++access.
++
++`Store` opens a transaction for every organization-scoped operation and sets
++`fogell.organization_id` with `set_config(..., true)` before any tenant query.
++The final `true` is the load-bearing part: PostgreSQL clears the value at commit
++or rollback, including when Npgsql returns the physical connection to its pool.
++Explicit organization predicates remain as defence in depth and to keep tenant-
++prefixed indexes useful, but correctness no longer depends on remembering them.
++
++## Runtime and maintenance capabilities
++
++The optional second `Store` connection string is the maintenance capability:
++
++```fsharp
++Store(runtimeConnectionString, maintenanceConnectionString)
++```
++
++`Migrate()` and the fleet-wide `ActivateRestore()` use that connection. All
++tenant operations use the first connection. The one-string constructor remains
++compatible for tests and single-role development, but production should not use
++a superuser or `BYPASSRLS` role as its runtime connection.
++
++A runtime role needs schema usage, DML on the ten tenant tables, sequence usage,
++and read access to `controller_metadata`. PostgreSQL also requires an UPDATE
++privilege for `SELECT ... FOR SHARE`; grant that privilege only on the immutable
++`singleton` column, never on `restore_epoch`:
++
++```sql
++GRANT USAGE ON SCHEMA public TO fogell_runtime;
++GRANT SELECT, UPDATE(singleton) ON controller_metadata TO fogell_runtime;
++GRANT SELECT, INSERT, UPDATE, DELETE ON
++  organizations, projects, builds, nodes, attempts,
++  events, outbox, log_chunks, effect_checkpoints, retry_decisions
++TO fogell_runtime;
++GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO fogell_runtime;
++```
++
++The runtime role must be `NOSUPERUSER NOBYPASSRLS`. The maintenance role owns
++or can migrate the schema and is kept out of request handling.
++
++## Lineage closure
++
++The migration also adds tenant-composite foreign keys from `events` to
++`attempts` when `attempt_id` is present and from `log_chunks` to `attempts`.
++Together with the existing composite keys, a child row cannot substitute an
++attempt from another organization even when UUIDs are supplied directly.
++
++## Acceptance proof
++
++The live PostgreSQL test creates a real `NOSUPERUSER NOBYPASSRLS` role and
++actually assumes it for the runtime connection. Through that role it creates
++two complete tenant graphs using the production `Store` path, including build,
++node, attempt, event, outbox, log, effect checkpoint, and retry decision rows.
++It then proves:
++
++- absent context returns zero rows from every tenant table;
++- selected context returns rows for that organization and zero foreign rows;
++- commit clears context on the same reused physical connection, with Npgsql's
++  normal pool reset deliberately disabled so it cannot mask a session leak;
++- malformed context fails with PostgreSQL UUID validation;
++- a direct cross-tenant insert is rejected by `WITH CHECK`;
++- all ten tables have both `relrowsecurity` and `relforcerowsecurity` set;
++- all ten policies and both new composite foreign keys exist;
++- mixed-tenant event and log attempt lineage is rejected by those keys;
++- the runtime role cannot alter the restore epoch, while global restore succeeds
++  through the separate maintenance connection.
++
++The acceptance fixture was itself checked against three planted regressions on
++fresh databases: disabled outbox RLS, a dropped log→attempt tenant FK, and a
++session-scoped Store tenant setting. All three turned the suite red for their
++named invariant; the unmodified control stayed green.
++
++The migration source is SHA-256 pinned in the migration ledger test. Focused
++development proof on a fresh HeMan database: **57/57 Store tests passed**.
++The authoritative full-gate receipt and signed commit identity are recorded at
++closure, not predicted here.
++
++## Boundary
++
++RLS constrains a database role to the organization selected by the controller's
++authenticated request transaction. PostgreSQL custom settings are not an
++identity provider: code already able to issue arbitrary SQL as the runtime role
++can choose another organization setting. Preventing arbitrary SQL execution and
++binding request identity to `OrganizationId` are controller/authentication
++boundaries, not claims made by FG-028.
+diff --git a/src/Fogell.Store/Store.fs b/src/Fogell.Store/Store.fs
+index 17f0480..97764f7 100644
+--- a/src/Fogell.Store/Store.fs
++++ b/src/Fogell.Store/Store.fs
+@@ -81,15 +81,54 @@ type RetryPersistenceError =
+     | RetryStorageFailure of string
+ 
+ /// FG-021/FG-022. The controller's durable truth.
+-type Store(connectionString: string) =
++type Store(connectionString: string, ?maintenanceConnectionString: string) =
+ 
+     let retryDeadLetterReason = "attempt budget exhausted"
++    let maintenanceConnectionString = defaultArg maintenanceConnectionString connectionString
+ 
+     let openConn () =
+         let c = new NpgsqlConnection(connectionString)
+         c.Open()
+         c
+ 
++    let openMaintenanceConn () =
++        let c = new NpgsqlConnection(maintenanceConnectionString)
++        c.Open()
++        c
++
++    let setTenantContext
++        (conn: NpgsqlConnection)
++        (tx: NpgsqlTransaction)
++        (org: OrganizationId)
++        =
++        use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
++        cmd.CommandText <- "SELECT set_config('fogell.organization_id', @organization_id, true)"
++        cmd.Parameters.AddWithValue("organization_id", org.Value.ToString()) |> ignore
++        cmd.ExecuteScalar() |> ignore
++
++    let beginTenantTransaction (conn: NpgsqlConnection) (org: OrganizationId) =
++        let tx = conn.BeginTransaction()
++        try
++            setTenantContext conn tx org
++            tx
++        with _ ->
++            tx.Dispose()
++            reraise ()
++
++    let beginTenantTransactionAt
++        (conn: NpgsqlConnection)
++        (org: OrganizationId)
++        (isolationLevel: System.Data.IsolationLevel)
++        =
++        let tx = conn.BeginTransaction(isolationLevel)
++        try
++            setTenantContext conn tx org
++            tx
++        with _ ->
++            tx.Dispose()
++            reraise ()
++
+     let effectProjection =
+         "organization_id, attempt_id, effect_key, fence, authority_owner,
+          restore_epoch, encode(payload_digest, 'hex'), state, uncertain_from"
+@@ -365,11 +404,11 @@ type Store(connectionString: string) =
+         else
+             None
+ 
+-    member _.Migrate() = Migrations.run connectionString
++    member _.Migrate() = Migrations.run maintenanceConnectionString
+ 
+     member _.CreateProject(org: OrganizationId, orgSlug: string, project: ProjectId, projectSlug: string) =
+         use conn = openConn ()
+-        use tx = conn.BeginTransaction()
++        use tx = beginTenantTransaction conn org
+ 
+         use cmd = conn.CreateCommand()
+         cmd.Transaction <- tx
+@@ -402,7 +441,7 @@ type Store(connectionString: string) =
+         // parent lock, this transaction must see the decision that caller just
+         // committed and replay it. The explicit metadata/parent locks provide
+         // the required serialization.
+-        use tx = conn.BeginTransaction(System.Data.IsolationLevel.ReadCommitted)
++        use tx = beginTenantTransactionAt conn org System.Data.IsolationLevel.ReadCommitted
+ 
+         let rollback error =
+             try
+@@ -592,7 +631,9 @@ type Store(connectionString: string) =
+         : Result<PersistedRetryDecision list, RetryPersistenceError> =
+         try
+             use conn = openConn ()
++            use tx = beginTenantTransaction conn org
+             use cmd = conn.CreateCommand()
++            cmd.Transaction <- tx
+             cmd.CommandText <-
+                 $"SELECT {retryProjection}
+                   FROM retry_decisions d
+@@ -615,9 +656,13 @@ type Store(connectionString: string) =
+                 | Ok value -> values.Add value
+                 | Error error -> failure <- Some error
+ 
+-            match failure with
+-            | Some error -> Error error
+-            | None -> Ok(List.ofSeq values)
++            reader.Close()
++            let result =
++                match failure with
++                | Some error -> Error error
++                | None -> Ok(List.ofSeq values)
++            tx.Commit()
++            result
+         with ex ->
+             Error(RetryStorageFailure ex.Message)
+ 
+@@ -636,7 +681,7 @@ type Store(connectionString: string) =
+         | Some error -> Error error
+         | None ->
+             use conn = openConn ()
+-            use tx = conn.BeginTransaction()
++            use tx = beginTenantTransaction conn org
+ 
+             try
+                 match tryLockEffectAuthority conn tx org attempt fence owner with
+@@ -696,7 +741,7 @@ type Store(connectionString: string) =
+         | Some error -> Error error
+         | None ->
+             use conn = openConn ()
+-            use tx = conn.BeginTransaction()
++            use tx = beginTenantTransaction conn org
+ 
+             try
+                 match tryLockEffectAuthority conn tx org attempt fence owner with
+@@ -763,7 +808,7 @@ type Store(connectionString: string) =
+     member _.MarkStaleEffectsUncertain(org: OrganizationId) : Result<EffectCheckpoint list, string> =
+         let markOnce () =
+             use conn = openConn ()
+-            use tx = conn.BeginTransaction(System.Data.IsolationLevel.RepeatableRead)
++            use tx = beginTenantTransactionAt conn org System.Data.IsolationLevel.RepeatableRead
+ 
+             try
+                 // RepeatableRead gives the lock and update statements one stable
+@@ -837,7 +882,9 @@ type Store(connectionString: string) =
+ 
+     member _.ListUncertainEffects(org: OrganizationId) : EffectCheckpoint list =
+         use conn = openConn ()
++        use tx = beginTenantTransaction conn org
+         use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
+         cmd.CommandText <-
+             $"SELECT {effectProjection}
+               FROM effect_checkpoints
+@@ -845,7 +892,10 @@ type Store(connectionString: string) =
+               ORDER BY prepared_at, attempt_id, effect_key"
+         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+         use reader = cmd.ExecuteReader()
+-        [ while reader.Read() do yield readCheckpoint reader ]
++        let checkpoints = [ while reader.Read() do yield readCheckpoint reader ]
++        reader.Close()
++        tx.Commit()
++        checkpoints
+ 
+     /// FG-021. Build, first node, first attempt, a durable event and an outbox
+     /// message commit **together**. There is no window in which a build exists
+@@ -862,7 +912,7 @@ type Store(connectionString: string) =
+         else
+ 
+         use conn = openConn ()
+-        use tx = conn.BeginTransaction()
++        use tx = beginTenantTransaction conn input.OrganizationId
+ 
+         try
+             // Has this key already been admitted? Read inside the transaction so
+@@ -992,7 +1042,9 @@ type Store(connectionString: string) =
+     /// never publish against the next one.
+     member _.OfferAttempt(org: OrganizationId, attempt: AttemptId, owner: string, leaseSeconds: int) : Result<Fence, string> =
+         use conn = openConn ()
++        use tx = beginTenantTransaction conn org
+         use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
+         cmd.CommandText <-
+             "UPDATE attempts
+                 SET fence = fence + 1,
+@@ -1007,13 +1059,18 @@ type Store(connectionString: string) =
+         cmd.Parameters.AddWithValue("owner", owner) |> ignore
+         cmd.Parameters.AddWithValue("secs", float leaseSeconds) |> ignore
+ 
+-        match cmd.ExecuteScalar() with
+-        | null -> Error "attempt is not offerable"
+-        | v -> Ok(Fence(v :?> int64))
++        let result =
++            match cmd.ExecuteScalar() with
++            | null -> Error "attempt is not offerable"
++            | v -> Ok(Fence(v :?> int64))
++        tx.Commit()
++        result
+ 
+     member _.AcceptAttempt(org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string) : bool =
+         use conn = openConn ()
++        use tx = beginTenantTransaction conn org
+         use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
+         cmd.CommandText <-
+             "UPDATE attempts SET state = 'running'
+               WHERE organization_id = @o AND id = @a AND fence = @f AND lease_owner = @owner
+@@ -1022,7 +1079,9 @@ type Store(connectionString: string) =
+         cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+         cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
+         cmd.Parameters.AddWithValue("owner", owner) |> ignore
+-        cmd.ExecuteNonQuery() = 1
++        let accepted = cmd.ExecuteNonQuery() = 1
++        tx.Commit()
++        accepted
+ 
+     /// FG-022. Publish a terminal result. Admissible only from the exact current
+     /// fence, the exact lease owner, the current restore epoch, an unexpired
+@@ -1036,7 +1095,7 @@ type Store(connectionString: string) =
+         (org: OrganizationId, attempt: AttemptId, fence: Fence, owner: string, result: BuildStatus)
+         : Result<unit, string> =
+         use conn = openConn ()
+-        use tx = conn.BeginTransaction()
++        use tx = beginTenantTransaction conn org
+ 
+         try
+             use cmd = conn.CreateCommand()
+@@ -1086,7 +1145,7 @@ type Store(connectionString: string) =
+     /// A restore invalidates every lease issued before it. Pre-restore agents
+     /// can no longer renew or publish; their attempts require reconciliation.
+     member _.ActivateRestore() : RestoreEpoch =
+-        use conn = openConn ()
++        use conn = openMaintenanceConn ()
+         use tx = conn.BeginTransaction()
+ 
+         use bump = conn.CreateCommand()
+@@ -1111,7 +1170,9 @@ type Store(connectionString: string) =
+ 
+     member _.AttemptState(org: OrganizationId, attempt: AttemptId) : (string * int64 * string option) option =
+         use conn = openConn ()
++        use tx = beginTenantTransaction conn org
+         use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
+         cmd.CommandText <-
+             "SELECT state, fence, result FROM attempts WHERE organization_id = @o AND id = @a"
+         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+@@ -1119,20 +1180,28 @@ type Store(connectionString: string) =
+ 
+         use r = cmd.ExecuteReader()
+ 
+-        if r.Read() then
+-            Some(r.GetString 0, r.GetInt64 1, (if r.IsDBNull 2 then None else Some(r.GetString 2)))
+-        else
+-            None
++        let state =
++            if r.Read() then
++                Some(r.GetString 0, r.GetInt64 1, (if r.IsDBNull 2 then None else Some(r.GetString 2)))
++            else
++                None
++        r.Close()
++        tx.Commit()
++        state
+ 
+     member _.CountEvents(org: OrganizationId, build: BuildId, kind: string) : int =
+         use conn = openConn ()
++        use tx = beginTenantTransaction conn org
+         use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
+         cmd.CommandText <-
+             "SELECT count(*) FROM events WHERE organization_id = @o AND build_id = @b AND kind = @k"
+         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+         cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+         cmd.Parameters.AddWithValue("k", kind) |> ignore
+-        cmd.ExecuteScalar() :?> int64 |> int
++        let count = cmd.ExecuteScalar() :?> int64 |> int
++        tx.Commit()
++        count
+ 
+     /// FG-061. Claim the next offerable attempt for an agent.
+     ///
+@@ -1144,7 +1213,7 @@ type Store(connectionString: string) =
+         (org: OrganizationId, agentId: string, trustPool: string, capabilities: string list, leaseSeconds: int)
+         : Result<(AttemptId * NodeId * BuildId * Fence) option, string> =
+         use conn = openConn ()
+-        use tx = conn.BeginTransaction()
++        use tx = beginTenantTransaction conn org
+ 
+         try
+             use lock = conn.CreateCommand()
+@@ -1208,8 +1277,10 @@ type Store(connectionString: string) =
+     /// (JB-AGT-004), and it is far better than an unexplained wait.
+     member _.ExplainWait(org: OrganizationId, trustPool: string, capabilities: string list) : string =
+         use conn = openConn ()
++        use tx = beginTenantTransaction conn org
+ 
+         use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
+         cmd.CommandText <-
+             "SELECT count(*) FILTER (WHERE a.state = 'queued') AS queued,
+                     count(*) FILTER (WHERE a.state = 'queued' AND n.required_trust_pool = @pool) AS pool_ok,
+@@ -1231,26 +1302,32 @@ type Store(connectionString: string) =
+ 
+         use r = cmd.ExecuteReader()
+ 
+-        if not (r.Read()) then
+-            "queue is empty"
+-        else
+-            let queued = r.GetInt64 0
+-            let poolOk = r.GetInt64 1
+-            let claimable = r.GetInt64 2
+-            let missing = r.GetString 3
++        let explanation =
++            if not (r.Read()) then
++                "queue is empty"
++            else
++                let queued = r.GetInt64 0
++                let poolOk = r.GetInt64 1
++                let claimable = r.GetInt64 2
++                let missing = r.GetString 3
+ 
+-            if queued = 0L then "queue is empty"
+-            elif claimable > 0L then $"{claimable} attempt(s) claimable now"
+-            elif poolOk = 0L then $"{queued} attempt(s) queued, none in trust pool '{trustPool}'"
+-            elif missing <> "" then $"{queued} attempt(s) queued; missing capabilities: {missing}"
+-            else $"{queued} attempt(s) queued, none claimable"
++                if queued = 0L then "queue is empty"
++                elif claimable > 0L then $"{claimable} attempt(s) claimable now"
++                elif poolOk = 0L then $"{queued} attempt(s) queued, none in trust pool '{trustPool}'"
++                elif missing <> "" then $"{queued} attempt(s) queued; missing capabilities: {missing}"
++                else $"{queued} attempt(s) queued, none claimable"
++        r.Close()
++        tx.Commit()
++        explanation
+ 
+     /// FG-064a. The append and its attempt -> node -> build ownership check are
+     /// one statement. IDs are tenant-composite, so the attempt predicate and
+     /// node join both carry the tenant.
+     member _.AppendLog(org: OrganizationId, build: BuildId, attempt: AttemptId, sequence: int, body: string) : bool =
+         use conn = openConn ()
++        use tx = beginTenantTransaction conn org
+         use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
+         cmd.CommandText <-
+             "INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, body)
+              SELECT a.organization_id, n.build_id, a.id, @s, @body
+@@ -1263,14 +1340,18 @@ type Store(connectionString: string) =
+         cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+         cmd.Parameters.AddWithValue("s", sequence) |> ignore
+         cmd.Parameters.AddWithValue("body", body) |> ignore
+-        cmd.ExecuteNonQuery() = 1
++        let appended = cmd.ExecuteNonQuery() = 1
++        tx.Commit()
++        appended
+ 
+     /// FG-060a/FG-064. The build lineage and progressive read are one query.
+     /// Some [] therefore means a real build with no chunks at this offset,
+     /// while None means that org/project/build lineage does not exist.
+     member _.ReadLog(org: OrganizationId, project: ProjectId, build: BuildId, fromSequence: int) : (int * string) list option =
+         use conn = openConn ()
++        use tx = beginTenantTransaction conn org
+         use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
+         cmd.CommandText <-
+             "SELECT l.sequence, l.body
+                FROM builds b
+@@ -1297,7 +1378,10 @@ type Store(connectionString: string) =
+                   if not (r.IsDBNull 0) then
+                       yield r.GetInt32 0, r.GetString 1 ]
+ 
+-        if lineageExists then Some chunks else None
++        r.Close()
++        let result = if lineageExists then Some chunks else None
++        tx.Commit()
++        result
+ 
+     /// Cancellation is IDEMPOTENT by design. A retried request — after a client
+     /// timeout, say — must not look like an error: the caller's intent is already
+@@ -1305,7 +1389,9 @@ type Store(connectionString: string) =
+     /// has already finished, or one that does not exist.
+     member _.RequestCancellation(org: OrganizationId, project: ProjectId, build: BuildId) : CancellationOutcome =
+         use conn = openConn ()
++        use tx = beginTenantTransaction conn org
+         use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
+         cmd.CommandText <-
+             "SELECT status, cancellation_requested FROM builds
+               WHERE organization_id = @o AND project_id = @p AND id = @b"
+@@ -1324,6 +1410,7 @@ type Store(connectionString: string) =
+         | Some(_, true) -> AlreadyRequested
+         | Some _ ->
+             use upd = conn.CreateCommand()
++            upd.Transaction <- tx
+             upd.CommandText <-
+                 "UPDATE builds SET cancellation_requested = true
+                   WHERE organization_id = @o AND project_id = @p AND id = @b"
+@@ -1332,10 +1419,15 @@ type Store(connectionString: string) =
+             upd.Parameters.AddWithValue("b", build.Value) |> ignore
+             upd.ExecuteNonQuery() |> ignore
+             CancellationAccepted
++        |> fun outcome ->
++            tx.Commit()
++            outcome
+ 
+     member _.BuildSnapshot(org: OrganizationId, project: ProjectId, build: BuildId) : (string * bool) option =
+         use conn = openConn ()
++        use tx = beginTenantTransaction conn org
+         use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
+         cmd.CommandText <-
+             "SELECT status, cancellation_requested FROM builds
+               WHERE organization_id = @o AND project_id = @p AND id = @b"
+@@ -1343,11 +1435,18 @@ type Store(connectionString: string) =
+         cmd.Parameters.AddWithValue("p", project.Value) |> ignore
+         cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+         use r = cmd.ExecuteReader()
+-        if r.Read() then Some(r.GetString 0, r.GetBoolean 1) else None
++        let snapshot = if r.Read() then Some(r.GetString 0, r.GetBoolean 1) else None
++        r.Close()
++        tx.Commit()
++        snapshot
+ 
+     member _.CountOutbox(org: OrganizationId) : int =
+         use conn = openConn ()
++        use tx = beginTenantTransaction conn org
+         use cmd = conn.CreateCommand()
++        cmd.Transaction <- tx
+         cmd.CommandText <- "SELECT count(*) FROM outbox WHERE organization_id = @o"
+         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+-        cmd.ExecuteScalar() :?> int64 |> int
++        let count = cmd.ExecuteScalar() :?> int64 |> int
++        tx.Commit()
++        count
+diff --git a/src/Fogell.Store/migrations/0005_forced_tenant_rls.sql b/src/Fogell.Store/migrations/0005_forced_tenant_rls.sql
+new file mode 100644
+index 0000000..fa84e40
+--- /dev/null
++++ b/src/Fogell.Store/migrations/0005_forced_tenant_rls.sql
+@@ -0,0 +1,89 @@
++-- FG-028. PostgreSQL, not caller discipline, is the tenant boundary.
++--
++-- A tenant is selected only inside a transaction with:
++--   SELECT set_config('fogell.organization_id', '<uuid>', true);
++-- `true` makes the setting transaction-local. Missing context resolves to NULL,
++-- so every policy below exposes zero rows. Invalid context fails closed while
++-- casting to uuid.
++
++CREATE FUNCTION fogell_current_organization_id()
++RETURNS uuid
++LANGUAGE sql
++STABLE
++PARALLEL SAFE
++AS $$
++    SELECT NULLIF(current_setting('fogell.organization_id', true), '')::uuid
++$$;
++
++-- Complete the tenant-composite lineage where the early schema carried only
++-- the build relation. Nullable event attempt ids remain valid for build-level
++-- events; when present, they must belong to the same organization.
++ALTER TABLE events
++    ADD CONSTRAINT events_attempt_tenant_fk
++    FOREIGN KEY (attempt_id, organization_id)
++    REFERENCES attempts (id, organization_id);
++
++ALTER TABLE log_chunks
++    ADD CONSTRAINT log_chunks_attempt_tenant_fk
++    FOREIGN KEY (attempt_id, organization_id)
++    REFERENCES attempts (id, organization_id);
++
++ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
++ALTER TABLE organizations FORCE ROW LEVEL SECURITY;
++CREATE POLICY organizations_tenant_isolation ON organizations
++    USING (id = fogell_current_organization_id())
++    WITH CHECK (id = fogell_current_organization_id());
++
++ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
++ALTER TABLE projects FORCE ROW LEVEL SECURITY;
++CREATE POLICY projects_tenant_isolation ON projects
++    USING (organization_id = fogell_current_organization_id())
++    WITH CHECK (organization_id = fogell_current_organization_id());
++
++ALTER TABLE builds ENABLE ROW LEVEL SECURITY;
++ALTER TABLE builds FORCE ROW LEVEL SECURITY;
++CREATE POLICY builds_tenant_isolation ON builds
++    USING (organization_id = fogell_current_organization_id())
++    WITH CHECK (organization_id = fogell_current_organization_id());
++
++ALTER TABLE nodes ENABLE ROW LEVEL SECURITY;
++ALTER TABLE nodes FORCE ROW LEVEL SECURITY;
++CREATE POLICY nodes_tenant_isolation ON nodes
++    USING (organization_id = fogell_current_organization_id())
++    WITH CHECK (organization_id = fogell_current_organization_id());
++
++ALTER TABLE attempts ENABLE ROW LEVEL SECURITY;
++ALTER TABLE attempts FORCE ROW LEVEL SECURITY;
++CREATE POLICY attempts_tenant_isolation ON attempts
++    USING (organization_id = fogell_current_organization_id())
++    WITH CHECK (organization_id = fogell_current_organization_id());
++
++ALTER TABLE events ENABLE ROW LEVEL SECURITY;
++ALTER TABLE events FORCE ROW LEVEL SECURITY;
++CREATE POLICY events_tenant_isolation ON events
++    USING (organization_id = fogell_current_organization_id())
++    WITH CHECK (organization_id = fogell_current_organization_id());
++
++ALTER TABLE outbox ENABLE ROW LEVEL SECURITY;
++ALTER TABLE outbox FORCE ROW LEVEL SECURITY;
++CREATE POLICY outbox_tenant_isolation ON outbox
++    USING (organization_id = fogell_current_organization_id())
++    WITH CHECK (organization_id = fogell_current_organization_id());
++
++ALTER TABLE log_chunks ENABLE ROW LEVEL SECURITY;
++ALTER TABLE log_chunks FORCE ROW LEVEL SECURITY;
++CREATE POLICY log_chunks_tenant_isolation ON log_chunks
++    USING (organization_id = fogell_current_organization_id())
++    WITH CHECK (organization_id = fogell_current_organization_id());
++
++ALTER TABLE effect_checkpoints ENABLE ROW LEVEL SECURITY;
++ALTER TABLE effect_checkpoints FORCE ROW LEVEL SECURITY;
++CREATE POLICY effect_checkpoints_tenant_isolation ON effect_checkpoints
++    USING (organization_id = fogell_current_organization_id())
++    WITH CHECK (organization_id = fogell_current_organization_id());
++
++ALTER TABLE retry_decisions ENABLE ROW LEVEL SECURITY;
++ALTER TABLE retry_decisions FORCE ROW LEVEL SECURITY;
++CREATE POLICY retry_decisions_tenant_isolation ON retry_decisions
++    USING (organization_id = fogell_current_organization_id())
++    WITH CHECK (organization_id = fogell_current_organization_id());
+diff --git a/tests/Fogell.Store.Tests/Tests.fs b/tests/Fogell.Store.Tests/Tests.fs
+index 34d489e..a41b2a6 100644
+--- a/tests/Fogell.Store.Tests/Tests.fs
++++ b/tests/Fogell.Store.Tests/Tests.fs
+@@ -25,6 +25,18 @@ let private available =
+ 
+ let private store = Store(connectionString)
+ 
++let private tenantTables =
++    [ "organizations", "id"
++      "projects", "organization_id"
++      "builds", "organization_id"
++      "nodes", "organization_id"
++      "attempts", "organization_id"
++      "events", "organization_id"
++      "outbox", "organization_id"
++      "log_chunks", "organization_id"
++      "effect_checkpoints", "organization_id"
++      "retry_decisions", "organization_id" ]
++
+ let private freshProject () =
+     let org = OrganizationId(Guid.NewGuid())
+     let project = ProjectId(Guid.NewGuid())
+@@ -200,6 +212,251 @@ let migrations =
+                       (string value)
+                       "cea314ca6fdbb18dd5fea9d3edb1efff2c9d61acee9bec4f68d4048c2e980096"
+                       "migration 0004 exact source checksum"
++          }
++
++          test "tenant isolation migration 0005 is checksum-pinned" {
++              use conn = new Npgsql.NpgsqlConnection(connectionString)
++              conn.Open()
++              use cmd = conn.CreateCommand()
++              cmd.CommandText <- "SELECT checksum FROM schema_migrations WHERE version = '0005'"
++
++              match cmd.ExecuteScalar() with
++              | null -> failtest "migration ledger has no 0005 row"
++              | value ->
++                  Expect.equal
++                      (string value)
++                      "af4f5fadfbccfdbba78b785753386b09f9385e1ac88167d18960b03d9635f920"
++                      "migration 0005 exact source checksum"
++          } ]
++
++let tenantIsolation =
++    testList
++        "FG-028 forced tenant isolation"
++        [ test "a real NOBYPASSRLS runtime role is fail-closed and Store sets only transaction-local context" {
++              let roleName = $"fogell_runtime_{Guid.NewGuid():N}"
++
++              let admin sql =
++                  use conn = new Npgsql.NpgsqlConnection(connectionString)
++                  conn.Open()
++                  use cmd = conn.CreateCommand()
++                  cmd.CommandText <- sql
++                  cmd.ExecuteNonQuery() |> ignore
++
++              admin $"CREATE ROLE {roleName} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"
++
++              try
++                  admin
++                      $"GRANT USAGE ON SCHEMA public TO {roleName};
++                        GRANT SELECT, UPDATE(singleton) ON controller_metadata TO {roleName};
++                        GRANT SELECT, INSERT, UPDATE, DELETE ON
++                          organizations, projects, builds, nodes, attempts,
++                          events, outbox, log_chunks, effect_checkpoints, retry_decisions
++                        TO {roleName};
++                        GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {roleName}"
++
++                  // Deliberately disable Npgsql's pool reset and force one physical
++                  // connection. Otherwise a session-scoped set_config mutant is
++                  // cleaned up by the client and this test falsely credits the
++                  // Store for transaction-local isolation PostgreSQL never got.
++                  let runtimeConnectionString =
++                      $"{connectionString};Options=-c role={roleName};No Reset On Close=true;Maximum Pool Size=1"
++                  let runtimeStore = Store(runtimeConnectionString, connectionString)
++
++                  do
++                      use identityConn = new Npgsql.NpgsqlConnection(runtimeConnectionString)
++                      identityConn.Open()
++                      use identity = identityConn.CreateCommand()
++                      identity.CommandText <-
++                          "SELECT current_user, rolsuper, rolbypassrls
++                           FROM pg_roles WHERE rolname = current_user"
++                      use identityReader = identity.ExecuteReader()
++                      Expect.isTrue (identityReader.Read()) "runtime identity exists"
++                      Expect.equal (identityReader.GetString 0) roleName "the connection actually assumed the application role"
++                      Expect.isFalse (identityReader.GetBoolean 1) "application role is not superuser"
++                      Expect.isFalse (identityReader.GetBoolean 2) "application role cannot bypass RLS"
++
++                  let seed key =
++                      let org = OrganizationId(Guid.NewGuid())
++                      let project = ProjectId(Guid.NewGuid())
++                      runtimeStore.CreateProject(org, $"org-{org.Value}", project, $"project-{key}")
++                      let admitted =
++                          match runtimeStore.AdmitBuild(newBuild org project key [ "tenant-proof" ]) with
++                          | Ok value -> value
++                          | Error error -> failtestf "runtime admission failed: %s" error
++                      let owner = $"agent-{key}"
++                      let fence =
++                          match runtimeStore.OfferAttempt(org, admitted.AttemptId, owner, 60) with
++                          | Ok value -> value
++                          | Error error -> failtestf "runtime offer failed: %s" error
++                      Expect.isTrue
++                          (runtimeStore.AcceptAttempt(org, admitted.AttemptId, fence, owner))
++                          "runtime role accepted its attempt"
++                      match runtimeStore.PrepareEffect(org, admitted.AttemptId, fence, owner, "publish", [| 1uy; 2uy |]) with
++                      | Error error -> failtestf "runtime effect preparation failed: %s" error
++                      | Ok _ -> ()
++                      Expect.isTrue
++                          (runtimeStore.AppendLog(org, admitted.BuildId, admitted.AttemptId, 0, key))
++                          "runtime role appended its log"
++                      match runtimeStore.PublishTerminal(org, admitted.AttemptId, fence, owner, Failure) with
++                      | Error error -> failtestf "runtime terminal publication failed: %s" error
++                      | Ok () -> ()
++                      match runtimeStore.DecideRetry(org, admitted.AttemptId, 2, AttemptId(Guid.NewGuid())) with
++                      | Error error -> failtestf "runtime retry decision failed: %A" error
++                      | Ok _ -> ()
++                      org, admitted
++
++                  let orgA, admissionA = seed "tenant-a"
++                  let orgB, admissionB = seed "tenant-b"
++
++                  let count (conn: Npgsql.NpgsqlConnection) (tx: Npgsql.NpgsqlTransaction option) table predicate =
++                      use cmd = conn.CreateCommand()
++                      tx |> Option.iter (fun value -> cmd.Transaction <- value)
++                      cmd.CommandText <- $"SELECT count(*) FROM {table} {predicate}"
++                      cmd.ExecuteScalar() :?> int64
++
++                  use runtime = new Npgsql.NpgsqlConnection(runtimeConnectionString)
++                  runtime.Open()
++
++                  for table, _ in tenantTables do
++                      Expect.equal (count runtime None table "") 0L $"{table} exposes no rows without context"
++
++                  use tenantTx = runtime.BeginTransaction()
++                  use setTenant = runtime.CreateCommand()
++                  setTenant.Transaction <- tenantTx
++                  setTenant.CommandText <- "SELECT set_config('fogell.organization_id', @o, true)"
++                  setTenant.Parameters.AddWithValue("o", orgA.Value.ToString()) |> ignore
++                  setTenant.ExecuteScalar() |> ignore
++
++                  for table, tenantColumn in tenantTables do
++                      Expect.isGreaterThan
++                          (count runtime (Some tenantTx) table "")
++                          0L
++                          $"{table} exposes the selected tenant's rows"
++                      Expect.equal
++                          (count runtime (Some tenantTx) table $"WHERE {tenantColumn} <> '{orgA.Value}'::uuid")
++                          0L
++                          $"{table} cannot expose another tenant"
++
++                  tenantTx.Commit()
++
++                  for table, _ in tenantTables do
++                      Expect.equal
++                          (count runtime None table "")
++                          0L
++                          $"{table} context did not leak past commit or pooled reuse"
++
++                  use malformedTx = runtime.BeginTransaction()
++                  use setMalformed = runtime.CreateCommand()
++                  setMalformed.Transaction <- malformedTx
++                  setMalformed.CommandText <- "SELECT set_config('fogell.organization_id', 'not-a-uuid', true)"
++                  setMalformed.ExecuteScalar() |> ignore
++
++                  let malformedRejected =
++                      try
++                          count runtime (Some malformedTx) "attempts" "" |> ignore
++                          false
++                      with :? Npgsql.PostgresException as error ->
++                          error.SqlState = "22P02"
++
++                  Expect.isTrue malformedRejected "malformed context fails closed instead of exposing rows"
++                  malformedTx.Rollback()
++
++                  use hostileTx = runtime.BeginTransaction()
++                  use setHostileTenant = runtime.CreateCommand()
++                  setHostileTenant.Transaction <- hostileTx
++                  setHostileTenant.CommandText <- "SELECT set_config('fogell.organization_id', @o, true)"
++                  setHostileTenant.Parameters.AddWithValue("o", orgA.Value.ToString()) |> ignore
++                  setHostileTenant.ExecuteScalar() |> ignore
++                  use crossTenantWrite = runtime.CreateCommand()
++                  crossTenantWrite.Transaction <- hostileTx
++                  crossTenantWrite.CommandText <-
++                      "INSERT INTO outbox (organization_id, topic, body)
++                       VALUES (@other, 'cross-tenant', '{}'::jsonb)"
++                  crossTenantWrite.Parameters.AddWithValue("other", orgB.Value) |> ignore
++
++                  let crossTenantRejected =
++                      try
++                          crossTenantWrite.ExecuteNonQuery() |> ignore
++                          false
++                      with :? Npgsql.PostgresException as error ->
++                          error.SqlState = "42501"
++
++                  Expect.isTrue crossTenantRejected "WITH CHECK rejects a cross-tenant write"
++                  hostileTx.Rollback()
++                  runtime.Close()
++
++                  let crossLineageRejected sql =
++                      use conn = new Npgsql.NpgsqlConnection(connectionString)
++                      conn.Open()
++                      use cmd = conn.CreateCommand()
++                      cmd.CommandText <- sql
++                      cmd.Parameters.AddWithValue("o", orgA.Value) |> ignore
++                      cmd.Parameters.AddWithValue("b", admissionA.BuildId.Value) |> ignore
++                      cmd.Parameters.AddWithValue("a", admissionB.AttemptId.Value) |> ignore
++
++                      try
++                          cmd.ExecuteNonQuery() |> ignore
++                          false
++                      with :? Npgsql.PostgresException as error ->
++                          error.SqlState = "23503"
++
++                  Expect.isTrue
++                      (crossLineageRejected
++                          "INSERT INTO events (organization_id, build_id, attempt_id, kind)
++                           VALUES (@o, @b, @a, 'cross-lineage')")
++                      "event cannot substitute another tenant's attempt"
++                  Expect.isTrue
++                      (crossLineageRejected
++                          "INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, body)
++                           VALUES (@o, @b, @a, 99, 'cross-lineage')")
++                      "log cannot substitute another tenant's attempt"
++
++                  use catalog = new Npgsql.NpgsqlConnection(connectionString)
++                  catalog.Open()
++                  use rls = catalog.CreateCommand()
++                  rls.CommandText <-
++                      "SELECT count(*)
++                       FROM pg_class c
++                       WHERE c.relname = ANY(@tables)
++                         AND c.relrowsecurity
++                         AND c.relforcerowsecurity"
++                  rls.Parameters.AddWithValue("tables", tenantTables |> List.map fst |> List.toArray) |> ignore
++                  Expect.equal (rls.ExecuteScalar() :?> int64) 10L "every tenant table enables and forces RLS"
++
++                  use policies = catalog.CreateCommand()
++                  policies.CommandText <-
++                      "SELECT count(*) FROM pg_policies
++                       WHERE tablename = ANY(@tables)
++                         AND policyname LIKE '%tenant_isolation'"
++                  policies.Parameters.AddWithValue("tables", tenantTables |> List.map fst |> List.toArray) |> ignore
++                  Expect.equal (policies.ExecuteScalar() :?> int64) 10L "every tenant table has an isolation policy"
++
++                  use lineage = catalog.CreateCommand()
++                  lineage.CommandText <-
++                      "SELECT count(*) FROM pg_constraint
++                       WHERE conname IN ('events_attempt_tenant_fk', 'log_chunks_attempt_tenant_fk')"
++                  Expect.equal (lineage.ExecuteScalar() :?> int64) 2L "remaining attempt lineage is tenant-composite"
++
++                  use forbidden = new Npgsql.NpgsqlConnection(runtimeConnectionString)
++                  forbidden.Open()
++                  use changeEpoch = forbidden.CreateCommand()
++                  changeEpoch.CommandText <-
++                      "UPDATE controller_metadata SET restore_epoch = restore_epoch + 1 WHERE singleton"
++                  let runtimeEpochWriteRejected =
++                      try
++                          changeEpoch.ExecuteNonQuery() |> ignore
++                          false
++                      with :? Npgsql.PostgresException as error ->
++                          error.SqlState = "42501"
++                  Expect.isTrue runtimeEpochWriteRejected "runtime role cannot alter the global restore epoch"
++                  forbidden.Close()
++
++                  let beforeRestore = runtimeStore.CurrentRestoreEpoch()
++                  let afterRestore = runtimeStore.ActivateRestore()
++                  Expect.equal afterRestore.Value (beforeRestore.Value + 1L) "maintenance connection performs global restore"
++              finally
++                  Npgsql.NpgsqlConnection.ClearAllPools()
++                  admin $"DROP OWNED BY {roleName}; DROP ROLE {roleName}"
+           } ]
+ 
+ let admission =
+@@ -1962,6 +2219,7 @@ let main argv =
+                     (testList
+                         "Fogell.Store"
+                         [ migrations
++                          tenantIsolation
+                           admission
+                           fencing
+                           effectCheckpoints

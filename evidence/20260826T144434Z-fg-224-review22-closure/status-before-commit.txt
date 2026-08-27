@@ -1,0 +1,13 @@
+M  docs/runbooks/controller-host.md
+M  docs/tickets/FG-224.md
+M  scripts/backup-restore-drill.sh
+M  scripts/migration-rollback-drill.sh
+M  scripts/prove-runnable-controller.sh
+M  src/Fogell.Controller.Api/Router.fs
+M  src/Fogell.Differential/Fogell.fs
+M  src/Fogell.Store/Store.fs
+A  src/Fogell.Store/migrations/0010_attempt_restore_epoch_guard.sql
+M  tests/Fogell.Controller.Api.Tests/Tests.fs
+M  tests/Fogell.Store.Tests/Tests.fs
+M  tools/Fogell.Run.Host/Program.fs
+?? evidence/.20260826T144434Z-fg-224-review22-closure.partial.Za0ITb/

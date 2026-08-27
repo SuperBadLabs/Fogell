@@ -486,11 +486,12 @@ stepRef.Value <-
         // walker could never run one. `Fogell.Groovy.Parser` is what understands this
         // text; the walker hands it over at execution.
         if name = "script" then
-            (attempt (balancedBody '{' '}') |>> fun raw -> pos, name, args, [], Some raw)
-            <|> preturn (pos, name, args, [], None)
+            (attempt (balancedBody '{' '}') |>> fun raw -> pos, name, args, [], true, Some raw)
+            <|> preturn (pos, name, args, [], false, None)
         else
-            opt (attempt stepBlock) |>> fun b -> pos, name, args, defaultArg b [], None)
-    |>> fun (pos, name, args, block, scriptBody) ->
+            opt (attempt stepBlock)
+            |>> fun b -> pos, name, args, defaultArg b [], Option.isSome b, None)
+    |>> fun (pos, name, args, block, hasBlock, scriptBody) ->
             // The DOWNGRADE THAT USED TO LIVE HERE IS GONE, not merely guarded. It
             // re-parsed the paren body and, on failure, invented a single positional
             // argument from the raw text — which is how an approval prompt came to
@@ -508,6 +509,7 @@ stepRef.Value <-
               ExpressionArgs = expressionArgs
               ArgumentOrder = argOrder
               Block = block
+              HasBlock = hasBlock
               // Only ever populated on the OPAQUE paren path, which no longer exists.
               // No code reads this field — `rg RawArgs` finds the record definition,
               // this assignment and one test literal — so emptying it drops nothing.

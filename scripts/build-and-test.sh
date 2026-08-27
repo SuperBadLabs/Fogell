@@ -3,10 +3,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 echo "=== sdk ==="; dotnet --version
-echo "=== build (warnings are errors for FS0025/FS0026) ==="
-dotnet build -c Release --nologo 2>&1 | tail -5
-rc=${PIPESTATUS[0]}
-[ "$rc" -ne 0 ] && { echo "BUILD FAILED"; exit 1; }
+./scripts/prove-dependency-locks.sh \
+  || { echo "DEPENDENCY-LOCK/SOURCE-CLEARED BUILD PROOF FAILED"; exit 1; }
 echo "=== tests ==="
 fail=0
 for p in tests/*/; do
@@ -21,14 +19,27 @@ for p in tests/*/; do
   # instead of read.
   test_out="$(dotnet run --project "$p" -c Release --no-build 2>&1)"
   test_rc=$?
-  if [ "$test_rc" -ne 0 ]; then
+  test_summary="$(printf '%s\n' "$test_out" | rg -o "EXPECTO! .*" | tail -1)"
+  if [ "$test_rc" -ne 0 ] || [ -z "$test_summary" ]; then
     fail=1
     printf '%s\n' "$test_out"
+    if [ "$test_rc" -eq 0 ]; then
+      echo "TEST PROJECT PRODUCED NO EXPECTO SUMMARY: $(basename "$p")"
+    fi
   else
-    printf '%s\n' "$test_out" | rg -o "EXPECTO! .*" | tail -1
+    printf '%s\n' "$test_summary"
   fi
 done
 [ "$fail" -ne 0 ] && { echo "TESTS FAILED"; exit 1; }
+
+# FG-207. StepFinished and its optional StepReason are historical records but
+# one current durability group: exact order under one lock and exactly one
+# EveryStep Flush(true). The deterministic observer proof runs everywhere;
+# strace adds a syscall-level count only on hosts that provide it.
+echo "=== grouped step-finish force proof (FG-207, blocking) ==="
+./scripts/prove-fg207-fsync.sh \
+  || { echo "GROUPED STEP-FINISH FORCE PROOF FAILED"; exit 1; }
+
 # FG-104. BLOCKING. Every MEASURED claim must cite a receipt or admit UNPROVEN. The
 # backlog it was introduced against (30) is zero, so the check now fails the build instead
 # of printing at it — an advisory check nobody must act on decays into noise.
@@ -81,6 +92,33 @@ echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
 # times before this proof existed to notice.
 ./scripts/prove-section-refusals.sh || { echo "SECTION-REFUSAL PROOF FAILED"; exit 1; }
 
+# FG-072. The interpreter sandbox is a load-bearing security boundary, not a
+# unit-test implementation detail. Exercise every name in Sandbox.knownEscapes
+# through the real parser/interpreter/host path, prove sanctioned calls still
+# work, and prove the checker rejects timeout/signal execution states plus six
+# record/workspace mutations: unique non-failure terminal, extra terminal,
+# generic-failure, unnamed, missing-boundary-reason, and no-halt. The proof binds
+# the exact current-worktree net10 Release host; no ambient binary override exists.
+echo "=== sandbox-denial proof (FG-072, blocking) ==="
+./scripts/prove-sandbox-denials.sh || { echo "SANDBOX-DENIAL PROOF FAILED"; exit 1; }
+
+# FG-222. The host has controller credentials, database configuration and SCM
+# transport authority in its environment. A build receives only the fixed system
+# PATH plus a run-scoped neutral Fogell HOME and explicit pipeline overlays. The proof drives
+# GString, shell and a recording Git launcher, then mutates status and content
+# artifacts to demonstrate that its checker rejects planted regressions.
+echo "=== controller/build environment isolation proof (FG-222, blocking) ==="
+./scripts/prove-control-env-isolation.sh \
+  || { echo "CONTROLLER/BUILD ENVIRONMENT ISOLATION PROOF FAILED"; exit 1; }
+
+# FG-223. A checksum-valid bundle is not evidence when a prerequisite failed.
+# The scratch proof plants failures in corpus verification, build, test exit,
+# summary emission and extra-file binding, and first rejects an always-green
+# sealer so the proof's own exit-code oracle is observed failing.
+echo "=== fail-closed evidence sealer proof (FG-223, blocking) ==="
+./scripts/prove-seal-evidence.sh \
+  || { echo "FAIL-CLOSED EVIDENCE SEALER PROOF FAILED"; exit 1; }
+
 # FG-162. Board rows quoting generated counts are re-derived from the committed
 # ledger. Runs EVERYWHERE including CI — both files are in the repo, unlike the
 # corpus-dependent scorecard check below.
@@ -100,6 +138,41 @@ echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
 ./scripts/prove-review-coverage.sh \
   || { echo "REVIEW-COVERAGE PROOF FAILED"; exit 1; }
 
+# FG-093. The live provenance manifest is created outside the candidate checkout
+# and exists only at release time, so the ordinary pre-publication gate cannot
+# perform a live release verification. Its OFFLINE proof can and must run here:
+# a recursive scratch Git repository proves the exact tuple, initialized gitlink
+# identities, filter-free raw stage-0 worktree bytes/modes against index blobs,
+# physical-untracked inventory, clean index/config view, five downstream
+# bindings, Git-environment removal, and argv-only exec boundary.
+# Direct mutations prove comparisons, exports, downstream/subprocess scrubs,
+# mask scans, recursion, required gitlinks, raw identity, fixed config, and
+# ignored-file detection are load-bearing. Live release uses a pristine,
+# untransformed checkout with its exact artifact external; this ordinary build
+# may retain ignored bin/obj because only the scratch proof invokes the checker.
+echo "=== release-provenance gate proof (FG-093, blocking) ==="
+./scripts/prove-release-provenance.sh \
+  || { echo "RELEASE-PROVENANCE PROOF FAILED"; exit 1; }
+
+# FG-166. The live freshness warning is corpus-host-only, but its case-to-receipt
+# mapping is pure filename/mtime logic and must be proven everywhere. The scratch
+# proof holds literal `.b1` singleton names apart from multi-build `.b1` receipts,
+# checks every emitted build independently, and refuses name collisions before a
+# map can silently deduplicate them.
+echo "=== scorecard receipt-mapping proof (FG-166, blocking) ==="
+./scripts/prove-scorecard-receipt-mapping.sh \
+  || { echo "SCORECARD RECEIPT-MAPPING PROOF FAILED"; exit 1; }
+
+# FG-094. The live comparison needs the private 228-file corpus, a pinned
+# Jenkins oracle and an operator-provided external baseline, so it cannot run
+# in ordinary corpus-free CI. The self-contained proof still runs everywhere.
+# It plants filename-set regressions (including equal-count swaps), schema and
+# digest damage, reached_agent/compiled confusion, Git object replacement, and
+# mutations that make each comparison incorrectly executable.
+echo "=== compatibility-regression gate proof (FG-094, blocking) ==="
+./scripts/prove-compatibility-regression.sh \
+  || { echo "COMPATIBILITY-REGRESSION PROOF FAILED"; exit 1; }
+
 # FG-161. Every committed receipt's seal, RECOMPUTED from the receipt's own content.
 # The scorecard classifies a receipt as proven by reading its VERDICT LINE, and nothing
 # re-derived the hash that claim rests on — a receipt edited with that line left intact
@@ -112,8 +185,9 @@ dotnet run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fspro
   -- --verify-seals differential/receipts || { echo "SEAL VERIFICATION FAILED"; exit 1; }
 ./scripts/prove-seal-verification.sh || { echo "SEAL VERIFICATION PROOF FAILED"; exit 1; }
 
-# FG-090/091/092. The published compatibility artifacts are GENERATED, and this
-# checks they match the evidence — ONLY ON A HOST THAT HAS THE CORPUS.
+# FG-090/091/092/094. The published compatibility artifacts are GENERATED, and
+# the regression checker runs their --check before comparing exact filename
+# sets — ONLY ON A HOST THAT HAS THE CORPUS.
 #
 # CI does not: the corpus lives outside the repo (see the workflow header), so on
 # GitHub this check does not run and stale artifacts WOULD pass. That is a real
@@ -121,9 +195,10 @@ dotnet run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fspro
 # nowhere else. Hard-failing instead would break every CI run, which trades a
 # gap in coverage for a gate nobody can pass.
 if [ -d "${FOGELL_CORPUS:-/sn8100/work/exchange/crucible-gate/corpus}" ]; then
-  ./scripts/generate-scorecard.bb --check || { echo "SCORECARD STALE"; exit 1; }
+  ./scripts/check-compatibility-regression.py \
+    || { echo "COMPATIBILITY REGRESSION OR SCORECARD CHECK FAILED"; exit 1; }
 else
-  echo "scorecard check NOT RUN: corpus not mounted — generated artifacts are UNVERIFIED on this host"
+  echo "scorecard/regression check NOT RUN: corpus not mounted — generated artifacts and live compatibility non-regression are UNVERIFIED on this host"
 fi
 ./scripts/audit-stale-refs.bb "${FOGELL_STALE_REF_BASE:-origin/main}" --strict \
   || { echo "STALE REFERENCE AUDIT FAILED"; exit 1; }

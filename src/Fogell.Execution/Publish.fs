@@ -52,6 +52,12 @@ module Publish =
     type private MissingJUnitTestNameException() =
         inherit IOException("JUnit testcase has no name attribute or class fallback")
 
+    type private OldJUnitReportException() =
+        inherit IOException("JUnit report predates the build timestamp boundary")
+
+    type private EmptyJUnitReportException() =
+        inherit IOException("JUnit report is empty")
+
     let private compileGlobRegex (caseSensitive: bool) (pattern: string) =
         let normalised = pattern.Replace('\\', '/').Trim()
 
@@ -74,9 +80,11 @@ module Publish =
         Regex("^" + escaped + "$", options)
 
     // Ant 1.10.17 DirectoryScanner.DEFAULTEXCLUDES. JUnit creates a FileSet and
-    // leaves useDefaultExcludes at its true default, so these exclusions remain
+    // leaves useDefaultExcludes at its true default; stash does the same unless
+    // its public flag is explicitly false. These exclusions therefore remain
     // active even when an include names one of the paths literally. The pinned
-    // list is case-sensitive and deliberately private to JUnit report selection.
+    // list is case-sensitive and shared only by those two Ant-backed selectors;
+    // archive retains its established matcher and behavior.
     let private antDefaultExcludePatterns =
         [ "**/*~"
           "**/#*#"
@@ -110,7 +118,7 @@ module Publish =
     let private antDefaultExcludeRegexes =
         antDefaultExcludePatterns |> List.map (compileGlobRegex true)
 
-    let private isAntDefaultExcluded (relative: string) =
+    let internal isAntDefaultExcluded (relative: string) =
         antDefaultExcludeRegexes |> List.exists (fun regex -> regex.IsMatch relative)
 
     /// Expand a Jenkins-style ant glob (`**/*.jar`, `target/*.txt`, `out.txt`)
@@ -159,11 +167,352 @@ module Publish =
         else
             [ normalized ]
 
-    let private expandJUnitGlob workspace pattern =
-        pattern
-        |> normalizeJUnitPatterns
-        |> List.collect (expandGlobWithCase true workspace)
-        |> List.filter (isAntDefaultExcluded >> not)
+    type private JUnitPatternSpec =
+        { Matcher: Regex
+          IsLiteral: bool
+          LiteralPrefix: string
+          IsRooted: bool }
+
+    type private JUnitFileCandidate =
+        { Relative: string
+          PhysicalPath: string }
+
+    type private JUnitSelectedCandidate =
+        { Relative: string
+          PhysicalTarget: string option }
+
+    let private compileJUnitPatternSpec (normalized: string) =
+        let prefix =
+            normalized.Split('/', StringSplitOptions.RemoveEmptyEntries)
+            |> Array.takeWhile (fun segment -> not (segment.Contains('*') || segment.Contains('?')))
+            |> String.concat "/"
+
+        { Matcher = compileGlobRegex true normalized
+          IsLiteral = not (normalized.Contains('*') || normalized.Contains('?'))
+          LiteralPrefix = prefix
+          IsRooted = Path.IsPathRooted normalized }
+
+    // This is deliberately conservative after the first wildcard: it may walk
+    // extra descendants under the literal prefix, but never an unrelated top-
+    // level tree for a narrow include. The shared work budget bounds that extra.
+    let private junitPatternMayMatchDescendant (spec: JUnitPatternSpec) logicalDirectory =
+        if spec.IsRooted then
+            false
+        elif String.IsNullOrEmpty spec.LiteralPrefix || String.IsNullOrEmpty logicalDirectory then
+            true
+        else
+            spec.LiteralPrefix = logicalDirectory
+            || spec.LiteralPrefix.StartsWith(logicalDirectory + "/", StringComparison.Ordinal)
+            || logicalDirectory.StartsWith(spec.LiteralPrefix + "/", StringComparison.Ordinal)
+
+    let private junitScanLimit = 100_000
+
+    // Ant DirectoryScanner follows healthy links by their logical scanner path,
+    // including directory links whose target is outside the FileSet base. Its
+    // cycle guard is not a global symlink-depth limit: it prunes a branch only
+    // after the same canonical directory target has been followed five times.
+    // Enumerate JUnit inputs privately so archive/stash keep their established
+    // matcher. The explicit stack, cancellation polling, pattern pruning, and a
+    // hard logical-entry ceiling bound CPU, memory, and queue growth.
+    let private enumerateJUnitFiles
+        (scanLimit: int)
+        (workspace: string)
+        (specs: JUnitPatternSpec list)
+        (workUnits: int ref)
+        (abort: unit -> bool)
+        : Result<JUnitFileCandidate list, JUnitProblem> =
+        if not (Directory.Exists workspace) then
+            Ok []
+        else
+            let files = System.Collections.Generic.List<JUnitFileCandidate>()
+            let pending =
+                System.Collections.Generic.Stack<string * string * Map<string, int> * bool>()
+            let mutable problem: JUnitProblem option = None
+
+            let chargeWork () =
+                if workUnits.Value >= scanLimit then
+                    problem <-
+                        Some(
+                            Unreadable(
+                                $"JUnit report scan exceeded the {scanLimit} logical-entry safety limit"))
+                    false
+                else
+                    workUnits.Value <- workUnits.Value + 1
+                    true
+
+            let anySpec (predicate: JUnitPatternSpec -> bool) =
+                let mutable matched = false
+                use enumerator = (specs :> seq<JUnitPatternSpec>).GetEnumerator()
+
+                while Option.isNone problem && not matched && enumerator.MoveNext() do
+                    if chargeWork () then
+                        matched <- predicate enumerator.Current
+
+                matched
+
+            pending.Push(workspace, "", Map.empty, false)
+
+            try
+                while pending.Count > 0 && Option.isNone problem do
+                    if abort () then
+                        problem <- Some Interrupted
+                    else
+                        let physicalDirectory, logicalDirectory, followedTargets, missingAllowed = pending.Pop()
+
+                        try
+                            use entries = DirectoryInfo(physicalDirectory).EnumerateFileSystemInfos().GetEnumerator()
+
+                            while Option.isNone problem && entries.MoveNext() do
+                                if abort () then
+                                    problem <- Some Interrupted
+                                elif chargeWork () then
+                                    let entry = entries.Current
+                                    let logical =
+                                        if logicalDirectory = "" then entry.Name
+                                        else logicalDirectory + "/" + entry.Name
+
+                                    let excluded = isAntDefaultExcluded logical
+                                    let selectFile =
+                                        not excluded && anySpec (fun spec -> spec.Matcher.IsMatch logical)
+                                    let descend =
+                                        not excluded
+                                        && anySpec (fun spec -> junitPatternMayMatchDescendant spec logical)
+
+                                    // Do not even resolve a symlink whose logical
+                                    // path cannot contribute to an include.
+                                    if selectFile || descend then
+                                        let isLink = not (isNull entry.LinkTarget)
+
+                                        if isLink then
+                                            try
+                                                let directTarget =
+                                                    if Path.IsPathRooted entry.LinkTarget then entry.LinkTarget
+                                                    else Path.Combine(Path.GetDirectoryName entry.FullName, entry.LinkTarget)
+
+                                                let isDirectSelfLoop =
+                                                    String.Equals(
+                                                        Path.GetFullPath directTarget,
+                                                        Path.GetFullPath entry.FullName,
+                                                        StringComparison.Ordinal)
+
+                                                if isDirectSelfLoop then
+                                                    if selectFile then
+                                                        files.Add
+                                                            { Relative = logical
+                                                              PhysicalPath = entry.FullName }
+                                                else
+                                                    let target = entry.ResolveLinkTarget(true)
+
+                                                    if not (isNull target) then
+                                                        if
+                                                            target :? DirectoryInfo
+                                                            || (descend && not selectFile && not target.Exists)
+                                                        then
+                                                            if descend then
+                                                                let canonicalTarget = Path.GetFullPath target.FullName
+                                                                let followed =
+                                                                    followedTargets
+                                                                    |> Map.tryFind canonicalTarget
+                                                                    |> Option.defaultValue 0
+
+                                                                if followed < 5 then
+                                                                    pending.Push(
+                                                                        target.FullName,
+                                                                        logical,
+                                                                        followedTargets
+                                                                        |> Map.add canonicalTarget (followed + 1),
+                                                                        true)
+                                                        elif selectFile then
+                                                            files.Add
+                                                                { Relative = logical
+                                                                  PhysicalPath = entry.FullName }
+                                            with
+                                            | :? FileNotFoundException
+                                            | :? DirectoryNotFoundException ->
+                                                // A wildcard-selected file link
+                                                // that vanishes during resolution
+                                                // remains a lexical synthetic
+                                                // candidate. Literal selection is
+                                                // filtered by its later open probe.
+                                                if selectFile then
+                                                    files.Add
+                                                        { Relative = logical
+                                                          PhysicalPath = entry.FullName }
+                                            | ex ->
+                                                problem <-
+                                                    Some(
+                                                        Unreadable(
+                                                            $"JUnit report scan failed: {logical}: {ex.GetType().Name}"))
+                                        elif entry :? DirectoryInfo then
+                                            if descend then
+                                                pending.Push(entry.FullName, logical, followedTargets, false)
+                                        elif selectFile then
+                                            // Wildcard scans retain dangling file
+                                            // links lexically; the literal fast
+                                            // path filters them after resolution.
+                                            files.Add
+                                                { Relative = logical
+                                                  PhysicalPath = entry.FullName }
+                        with
+                        | (:? FileNotFoundException | :? DirectoryNotFoundException)
+                            when missingAllowed -> ()
+                        | ex ->
+                            problem <-
+                                Some(
+                                    Unreadable(
+                                        $"JUnit report scan failed: {logicalDirectory}: {ex.GetType().Name}"))
+
+                match problem with
+                | Some failure -> Error failure
+                | None -> Ok(files |> Seq.sort |> Seq.toList)
+            with ex ->
+                match problem with
+                | Some Interrupted -> Error Interrupted
+                | Some failure -> Error failure
+                | None -> Error(Unreadable($"JUnit report scan failed: {ex.GetType().Name}"))
+
+    // FileInfo.Exists/Length do not consistently follow a dangling Unix link the
+    // way java.io.File does: Exists may describe the link entry and Length can
+    // then throw while Java's exists()/length() report false/zero. Resolve links
+    // explicitly for the JUnit paths whose Ant/Jenkins behavior depends on the
+    // final target. Other publishers intentionally keep their existing semantics.
+    type private JUnitTargetResolution =
+        | TargetMissing
+        | TargetFound of FileInfo
+        | TargetUnreadable of exn
+
+    let private junitFileTargetInfo (fullPath: string) =
+        let candidate = FileInfo fullPath
+
+        try
+            let linkTarget = candidate.LinkTarget
+
+            if isNull linkTarget then
+                candidate.Refresh()
+                if candidate.Exists then TargetFound candidate else TargetMissing
+            else
+                let directTarget =
+                    if Path.IsPathRooted linkTarget then linkTarget
+                    else Path.Combine(candidate.DirectoryName, linkTarget)
+
+                // The measured file self-loop is absence in java.io.File terms.
+                // Recognise only that exact loop; other resolver/I/O failures
+                // must remain distinguishable from a dangling target.
+                if
+                    String.Equals(
+                        Path.GetFullPath directTarget,
+                        Path.GetFullPath candidate.FullName,
+                        StringComparison.Ordinal)
+                then
+                    TargetMissing
+                else
+                    match candidate.ResolveLinkTarget(true) with
+                    | null -> TargetMissing
+                    | target ->
+                        let targetInfo = FileInfo target.FullName
+                        targetInfo.Refresh()
+                        // ResolveLinkTarget returns a physical path even when its
+                        // final target is absent. Preserve that path so an open can
+                        // distinguish FileNotFound from authority and other I/O.
+                        TargetFound targetInfo
+        with
+        | :? FileNotFoundException
+        | :? DirectoryNotFoundException -> TargetMissing
+        | ex -> TargetUnreadable ex
+
+    let private expandJUnitGlobs
+        (scanLimit: int)
+        (workspace: string)
+        (patterns: string list)
+        (abort: unit -> bool) =
+        let rawPatternWork =
+            patterns
+            |> List.fold (fun total pattern ->
+                min (scanLimit + 1) (total + pattern.Length + 1)) 0
+
+        let patternLimitExceeded = rawPatternWork > scanLimit
+        let normalized =
+            if patternLimitExceeded then []
+            else patterns |> List.collect normalizeJUnitPatterns
+        let specs = normalized |> List.map compileJUnitPatternSpec
+        let workUnits = ref rawPatternWork
+        let scanResult = enumerateJUnitFiles scanLimit workspace specs workUnits abort
+
+        match patternLimitExceeded, scanResult with
+        | true, _ ->
+            Error(
+                Unreadable(
+                    $"JUnit report scan exceeded the {scanLimit} logical-entry safety limit"))
+        | false, Error problem -> Error problem
+        | false, Ok files ->
+            let selected = System.Collections.Generic.List<JUnitSelectedCandidate>()
+            let mutable problem: JUnitProblem option = None
+            use patternEnumerator = (specs :> seq<JUnitPatternSpec>).GetEnumerator()
+
+            while Option.isNone problem && patternEnumerator.MoveNext() do
+                let spec = patternEnumerator.Current
+                use candidates = (files :> seq<JUnitFileCandidate>).GetEnumerator()
+
+                while Option.isNone problem && candidates.MoveNext() do
+                  if abort () then
+                    problem <- Some Interrupted
+                  elif workUnits.Value >= scanLimit then
+                    problem <-
+                        Some(
+                            Unreadable(
+                                $"JUnit report scan exceeded the {scanLimit} logical-entry safety limit"))
+                  else
+                    workUnits.Value <- workUnits.Value + 1
+                    let candidate = candidates.Current
+
+                    if spec.Matcher.IsMatch candidate.Relative then
+                      // Resolve a final file link exactly once during selection.
+                      // The stored physical target survives a later retarget of
+                      // either the file link or an ancestor directory link.
+                      match junitFileTargetInfo candidate.PhysicalPath with
+                        | TargetFound targetInfo ->
+                            if spec.IsLiteral then
+                                try
+                                    use probe =
+                                        new FileStream(
+                                            targetInfo.FullName,
+                                            FileMode.Open,
+                                            FileAccess.Read,
+                                            FileShare.ReadWrite ||| FileShare.Delete)
+                                    selected.Add
+                                        { Relative = candidate.Relative
+                                          PhysicalTarget = Some targetInfo.FullName }
+                                with
+                                | :? FileNotFoundException
+                                | :? DirectoryNotFoundException -> ()
+                                | ex ->
+                                    problem <-
+                                        Some(
+                                            Unreadable(
+                                                $"unparsable test report(s): {candidate.Relative}: {ex.GetType().Name}"))
+                            else
+                                selected.Add
+                                    { Relative = candidate.Relative
+                                      PhysicalTarget = Some targetInfo.FullName }
+                        | TargetMissing ->
+                            if not spec.IsLiteral then
+                                selected.Add
+                                    { Relative = candidate.Relative
+                                      PhysicalTarget = None }
+                        | TargetUnreadable ex ->
+                            problem <-
+                                Some(
+                                    Unreadable(
+                                        $"unparsable test report(s): {candidate.Relative}: {ex.GetType().Name}"))
+
+            match problem with
+            | Some failure -> Error failure
+            | None ->
+                Ok(
+                    selected
+                    |> Seq.distinctBy (fun candidate -> candidate.Relative)
+                    |> Seq.sortBy (fun candidate -> candidate.Relative)
+                    |> Seq.toList)
 
     /// Copy matched files into the artifact store under `buildKey`, preserving
     /// relative layout. Returns the sorted relative paths actually published.
@@ -226,24 +575,33 @@ module Publish =
     /// StepRequest.DeadlineExpired was documented as polled by "archive, junit" and
     /// only archive read it, so a `timeout` whose last step is `junit` could scan many
     /// reports and return Success or Unstable after the deadline.
-    let parseJUnitWithAbort
+    let internal parseJUnitWithAbortUsingScanLimit
+        (scanLimit: int)
         (workspace: string)
         (patterns: string list)
         (skipOldReportsSince: int64 option)
         (abort: unit -> bool)
         : Result<int * int * int * single option, JUnitProblem> =
-        let files =
-            patterns
-            |> List.collect (expandJUnitGlob workspace)
-            |> List.distinct
-            |> List.sort
+        let files, selectionProblem =
+            match expandJUnitGlobs scanLimit workspace patterns abort with
+            | Ok selected -> selected, None
+            | Error problem -> [], Some problem
 
         // REVIEW FIX (Codex, PR #14 round 12): the mirror of the archive zero-match
         // case. With no matching report the scan can still have been long, and an
         // interrupt firing during it was reported as "no test report matched" — a
         // pattern problem the user would go and debug — instead of an abort.
-        if abort () then
+        let scanInterrupted =
+            match selectionProblem with
+            | Some Interrupted -> true
+            | _ -> false
+
+        if scanInterrupted then
             Error Interrupted
+        elif abort () then
+            Error Interrupted
+        elif Option.isSome selectionProblem then
+            Error selectionProblem.Value
         elif List.isEmpty files then
             // Keep absence distinct from a report which matched but could not be
             // read. `allowEmptyResults` may permit this condition, but must never
@@ -264,43 +622,12 @@ module Publish =
 
             let mutable aborted = false
 
-            // Pinned JUnit 1416 uses the build timestamp, not the time the
-            // `junit` step begins, and tolerates the filesystem's timestamp
-            // precision by 3000 ms. A report exactly on the adjusted boundary
-            // is retained; only a strict older value is skipped. Filtering is
-            // before length/XML/identity construction, as in TestResult.parse.
-            let isOldReport relative =
-                match skipOldReportsSince with
-                | None -> false
-                | Some buildStartTimeInMillis ->
-                    let fullPath = Path.Combine(workspace, relative)
-
-                    try
-                        // One refreshed FileInfo snapshot mirrors Java's one
-                        // Files.getLastModifiedTime lookup. It also avoids a
-                        // File.Exists/GetLastWriteTimeUtc race whose second call
-                        // can return the 1601 sentinel for a vanished path.
-                        let reportInfo = FileInfo fullPath
-                        reportInfo.Refresh()
-
-                        if not reportInfo.Exists then
-                            raise (FileNotFoundException("selected JUnit report vanished before timestamp inspection", fullPath))
-
-                        let modified = DateTimeOffset(reportInfo.LastWriteTimeUtc).ToUnixTimeMilliseconds()
-                        modified < buildStartTimeInMillis - 3000L
-                    with ex ->
-                        immediateProblem <-
-                            Some(Unreadable($"unparsable test report(s): {relative}: {ex.GetType().Name}"))
-                        false
-
-            for relative in files do
+            for candidate in files do
               if not aborted && Option.isNone immediateProblem then
+                let relative = candidate.Relative
+
                 if abort () then
                     aborted <- true
-                elif isOldReport relative then
-                    ()
-                elif Option.isSome immediateProblem then
-                    ()
                 else
                 try
                     // Jenkins calls File.length() before opening or parsing. Java
@@ -308,13 +635,45 @@ module Publish =
                     // vanished after glob expansion, so both become one synthetic
                     // `[empty]` failure without an open attempt. A non-empty parse
                     // failure is recovered only for an exact lowercase `.xml` path.
-                    let report = FileInfo(Path.Combine(workspace, relative))
+                    match candidate.PhysicalTarget with
+                    | None ->
+                        match skipOldReportsSince with
+                        | Some _ ->
+                            immediateProblem <-
+                                Some(
+                                    Unreadable(
+                                        $"unparsable test report(s): {relative}: FileNotFoundException"))
+                        | None ->
+                            total <- total + 1L
+                            failed <- failed + 1L
+                    | Some physicalTarget ->
+                        // Resolve once, open once, and use this handle for length,
+                        // timestamp, and XML bytes. Retargeting the logical link
+                        // cannot split metadata from parsed content. `/proc/self/fd`
+                        // names the open inode on the pinned Linux agent.
+                        use stream =
+                            new FileStream(
+                                physicalTarget,
+                                FileMode.Open,
+                                FileAccess.Read,
+                                FileShare.ReadWrite ||| FileShare.Delete)
 
-                    if not report.Exists || report.Length = 0L then
-                        total <- total + 1L
-                        failed <- failed + 1L
-                    else
-                        use stream = report.OpenRead()
+                        match skipOldReportsSince with
+                        | Some buildStartTimeInMillis ->
+                            let modified =
+                                File.GetLastWriteTimeUtc(stream.SafeFileHandle)
+                                |> DateTimeOffset
+                                |> fun value -> value.ToUnixTimeMilliseconds()
+
+                            // Pinned JUnit tolerates timestamp precision by 3000
+                            // ms and retains equality at the adjusted boundary.
+                            if modified < buildStartTimeInMillis - 3000L then
+                                raise (OldJUnitReportException())
+                        | None -> ()
+
+                        if stream.Length = 0L then
+                            raise (EmptyJUnitReportException())
+
                         let doc = Xml.Linq.XDocument.Load(stream)
 
                         let directElements name (element: Xml.Linq.XElement) =
@@ -575,6 +934,17 @@ module Publish =
                                     |> Array.rev
                                     |> Array.iter (fun nested -> pending.Push(nested, false))
                 with
+                | :? OldJUnitReportException -> ()
+                | :? EmptyJUnitReportException ->
+                    total <- total + 1L
+                    failed <- failed + 1L
+                | (:? FileNotFoundException | :? DirectoryNotFoundException)
+                    when Option.isNone skipOldReportsSince ->
+                    // A wildcard-selected dangling target is one synthetic empty
+                    // report. Timestamp filtering deliberately keeps the existing
+                    // unreadable FileNotFound classification instead.
+                    total <- total + 1L
+                    failed <- failed + 1L
                 | :? System.Xml.XmlException
                     when relative.EndsWith(".xml", StringComparison.Ordinal) ->
                     // Pinned junit-plugin 1416.vd753e036de5e:
@@ -602,6 +972,14 @@ module Publish =
                      |> List.forall (fun value -> value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue) ->
                 Ok(int total, int failed, int skipped, duration)
             | false, None, false -> Error(Unreadable "test report counts exceed the JUnit Integer summary range")
+
+    let parseJUnitWithAbort workspace patterns skipOldReportsSince abort =
+        parseJUnitWithAbortUsingScanLimit
+            junitScanLimit
+            workspace
+            patterns
+            skipOldReportsSince
+            abort
 
     let parseJUnit (workspace: string) (patterns: string list) =
         match parseJUnitWithAbort workspace patterns None (fun () -> false) with
@@ -653,6 +1031,7 @@ module Stash =
         (name: string)
         (patterns: string list)
         (excludes: string list)
+        (useDefaultExcludes: bool)
         (abort: unit -> bool)
         =
         let target = dir store buildKey name
@@ -669,6 +1048,10 @@ module Stash =
             |> List.collect (Publish.expandGlob workspace)
             |> List.distinct
             |> List.filter (fun f -> not (excluded.Contains f))
+            // Ant's defaults are an independent filter, not implicit include
+            // patterns. They still win when the Jenkinsfile names a hidden path
+            // literally; only useDefaultExcludes:false disables this filter.
+            |> List.filter (fun f -> not useDefaultExcludes || not (Publish.isAntDefaultExcluded f))
             |> List.sort
 
         // Same during-and-after-copy polling as the archive path: a `stash` inside a

@@ -278,6 +278,181 @@ let grammar =
               Expect.contains (Ast.definedFunctions script) "helper" "declared function found"
           } ]
 
+/// FG-190/192. Trivia is lexed forward and its break fact is scoped to one
+/// exact stream index. Expression-bearing delimiters may continue an index
+/// across a break; statement bodies and the command/typed/return seams may not.
+let fg190192TriviaState =
+    testList
+        "FG-190/192 forward trivia state"
+        [ test "a same-line block comment keeps a postfix index attached" {
+              match parseOk "def xs = [1]\ndef value = xs /* same line */ [0]\n" with
+              | [ SDef("xs", _); SDef("value", Some(EIndex(EVar "xs", EInt 0L))) ] -> ()
+              | other -> failtestf "same-line index split unexpectedly: %A" other
+          }
+
+          test "comment text containing an opener stays non-nesting and preserves a same-line index" {
+              match parseOk "def xs = [1]\ndef value = xs /* text /* is ordinary */ [0]\n" with
+              | [ SDef("xs", _); SDef("value", Some(EIndex(EVar "xs", EInt 0L))) ] -> ()
+              | other -> failtestf "nested-looking comment changed the index: %A" other
+          }
+
+          test "a break before nested-looking comment text ends the top-level expression" {
+              let source = "def xs = [1]\nxs /*\ntext /* is ordinary */ [0]\n"
+
+              match parseOk source with
+              | [ SDef("xs", _); SExpr(EVar "xs"); SExpr(EList [ EInt 0L ]) ] -> ()
+              | other -> failtestf "forward comment boundary was lost: %A" other
+          }
+
+          test "the FG-187 top-level split remains strict" {
+              match parseOk "xs\n[0]\n" with
+              | [ SExpr(EVar "xs"); SExpr(EList [ EInt 0L ]) ] -> ()
+              | other -> failtestf "top-level lines merged: %A" other
+          }
+
+          test "line comments record LF, CR and CRLF terminators" {
+              for label, ending in [ "LF", "\n"; "CR", "\r"; "CRLF", "\r\n" ] do
+                  match parseOk ("xs // comment" + ending + "[0]") with
+                  | [ SExpr(EVar "xs"); SExpr(EList [ EInt 0L ]) ] -> ()
+                  | other -> failtestf "%s line-comment terminator was lost: %A" label other
+          }
+
+          test "line and block trivia preserve exact LF, CR and CRLF error positions" {
+              let expectPosition label expected source =
+                  match Fogell.Groovy.Parser.Parser.parse source with
+                  | Error e -> Expect.equal e.Position expected $"{label}: physical error position"
+                  | Ok parsed -> failtestf "%s unexpectedly parsed as %A" label parsed
+
+              for label, ending in [ "LF", "\n"; "CR", "\r"; "CRLF", "\r\n" ] do
+                  expectPosition
+                      $"{label} line comment"
+                      { Line = 2L; Column = 1L }
+                      ("def x = 1 // comment" + ending + "@")
+
+                  expectPosition
+                      $"{label} block comment"
+                      { Line = 2L; Column = 14L }
+                      ("def x = 1 /* comment" + ending + "continued */ @")
+          }
+
+          test "a parenthesised expression may continue an index across a break" {
+              match parseOk "(xs\n[0])\n" with
+              | [ SExpr(EIndex(EVar "xs", EInt 0L)) ] -> ()
+              | other -> failtestf "grouped index did not continue: %A" other
+          }
+
+          test "a call argument is an expression-bearing group" {
+              match parseOk "pick(xs\n[0])\n" with
+              | [ SExpr(ECall(FreeCall "pick", [ APos(EIndex(EVar "xs", EInt 0L)) ], None)) ] -> ()
+              | other -> failtestf "call argument lost its grouped index: %A" other
+          }
+
+          test "a GString placeholder is an expression-bearing group" {
+              match parseOk "def value = \"${xs\n[0]}\"\n" with
+              | [ SDef("value", Some(EGString [ GExpr(EIndex(EVar "xs", EInt 0L)) ])) ] -> ()
+              | other -> failtestf "GString placeholder lost its grouped index: %A" other
+          }
+
+          test "group exit keeps an immediate outer index attached" {
+              match parseOk "(xs\n[0])[1]\n" with
+              | [ SExpr(EIndex(EIndex(EVar "xs", EInt 0L), EInt 1L)) ] -> ()
+              | other -> failtestf "outer index chain changed: %A" other
+          }
+
+          test "group exit keeps ordinary binary and index chains intact" {
+              match parseOk "(xs\n[0]) + ys[1]\n" with
+              | [ SExpr(EBinary("+", EIndex(EVar "xs", EInt 0L), EIndex(EVar "ys", EInt 1L))) ] -> ()
+              | other -> failtestf "binary/index chain changed: %A" other
+          }
+
+          test "nested expression groups retain continuation depth" {
+              Expect.isTrue
+                  (parses "pick(([xs\n[0]])[0])\n")
+                  "nested call, paren, list and index groups all stay expression-bearing"
+          }
+
+          test "a closure body resets inherited expression depth" {
+              match parseOk "pick({ xs\n[0] })\n" with
+              | [ SExpr(ECall(FreeCall "pick", [ APos(EClosure c) ], None)) ] ->
+                  Expect.equal
+                      c.Body
+                      [ SExpr(EVar "xs"); SExpr(EList [ EInt 0L ]) ]
+                      "closure statements remain split inside an outer call group"
+              | other -> failtestf "closure argument shape changed: %A" other
+          }
+
+          test "unterminated block trivia survives speculative backtracking as a refusal" {
+              for source in
+                  [ "def xs = [1]\nxs /* never closed"
+                    "def value = tool /* never closed"
+                    "def value = (xs /* never closed" ] do
+                  match Fogell.Groovy.Parser.Parser.parse source with
+                  | Error e ->
+                      Expect.stringContains
+                          (string e)
+                          "terminated block comment"
+                          "the trivia refusal remains visible after attempted alternatives"
+                  | Ok parsed -> failtestf "unterminated block comment parsed as %A" parsed
+          }
+
+          test "a failed typed-declaration attempt restores trivia state" {
+              match parseOk "echo msg\n[0]\n" with
+              | [ SExpr(ECall(FreeCall "echo", [ APos(EVar "msg") ], None)); SExpr(EList [ EInt 0L ]) ] -> ()
+              | other -> failtestf "attempted declaration leaked state into fallback: %A" other
+          }
+
+          test "command expression, typed seam and return remain strict across comment breaks" {
+              match parseOk "def value = tool /*\ntext /* ordinary */ 'M3'\n" with
+              | [ SDef("value", Some(EVar "tool")); SExpr(EStr "M3") ] -> ()
+              | other -> failtestf "command expression crossed a break: %A" other
+
+              match parseOk "echo msg /*\ntext /* ordinary */ (x) { echo 'y' }\n" with
+              | SExpr(ECall(FreeCall "echo", _, _)) :: _ -> ()
+              | other -> failtestf "typed declaration seam crossed a break: %A" other
+
+              match parseOk "return /*\ntext /* ordinary */ value\n" with
+              | [ SReturn None; SExpr(EVar "value") ] -> ()
+              | other -> failtestf "return swallowed the next line: %A" other
+          }
+
+          test "statement command calls cannot swallow newline or comment-break successors" {
+              let expected =
+                  [ SExpr(EVar "pwd")
+                    SExpr(ECall(FreeCall "sh", [ APos(EStr "danger") ], None)) ]
+
+              Expect.equal (parseOk "pwd\nsh 'danger'\n") expected "plain newline keeps both statements"
+
+              Expect.equal
+                  (parseOk "pwd /*\ntext /* ordinary */ sh 'danger'\n")
+                  expected
+                  "forward non-nesting comment break keeps both statements"
+          }
+
+          test "switch headers are expression groups and switch bodies reset depth" {
+              let source = "switch (xs\n[0]) { case 1: item\n[0] }\n"
+
+              match parseOk source with
+              | [ SSwitch(
+                    EIndex(EVar "xs", EInt 0L),
+                    [ Some(EInt 1L), [ SExpr(EVar "item"); SExpr(EList [ EInt 0L ]) ] ]
+                  ) ] -> ()
+              | other -> failtestf "switch group/body state changed: %A" other
+          }
+
+          test "for headers retain expression grouping without leaking into their bodies" {
+              Expect.isTrue
+                  (parses "for (item in xs\n[0]) { echo item }\n")
+                  "for-in source continues inside its header"
+
+              Expect.isTrue
+                  (parses "for (int i = xs\n[0]; i < 1; i++) { echo i }\n")
+                  "C-style initializer continues inside its header"
+
+              match parseOk "for (item in xs) { item\n[0] }\n" with
+              | [ SForIn(_, _, [ SExpr(EVar "item"); SExpr(EList [ EInt 0L ]) ]) ] -> ()
+              | other -> failtestf "for body inherited header group depth: %A" other
+          } ]
+
 /// FG-013: the sandbox is the reason ADR 0002 was affordable. These tests are
 /// the acceptance criterion.
 let sandbox =
@@ -337,11 +512,128 @@ let sandbox =
               Expect.isSome o.Fault "faulted"
           }
 
-          test "every known escape name is denied" {
-              for name in Sandbox.knownEscapes do
-                  match Sandbox.admitCall steps Set.empty name with
-                  | Error _ -> ()
-                  | Ok _ -> failtestf "%s must not be admissible" name
+          test "test-owned escape inventory matches production and both direct gates deny every name" {
+              let expectedEscapeNames =
+                  set
+                      [ "File"
+                        "FileInputStream"
+                        "FileOutputStream"
+                        "RandomAccessFile"
+                        "ProcessBuilder"
+                        "Runtime"
+                        "System"
+                        "Class"
+                        "ClassLoader"
+                        "GroovyShell"
+                        "GroovyClassLoader"
+                        "Eval"
+                        "evaluate"
+                        "URL"
+                        "URLConnection"
+                        "Socket"
+                        "ServerSocket"
+                        "HttpURLConnection"
+                        "Thread"
+                        "Unsafe"
+                        "MethodHandles"
+                        "getClass"
+                        "forName"
+                        "newInstance"
+                        "getDeclaredMethod"
+                        "getDeclaredField"
+                        "setAccessible"
+                        "invoke"
+                        "execute"
+                        "exec" ]
+
+              Expect.equal Sandbox.knownEscapes expectedEscapeNames "production escape inventory changed without review"
+
+              for name in expectedEscapeNames do
+                  match Sandbox.admitCall Set.empty Set.empty name with
+                  | Error d -> Expect.equal d.Attempted name $"free call {name}: exact denied name"
+                  | Ok admitted -> failtestf "free call %s unexpectedly admitted as %A" name admitted
+
+                  match Sandbox.admitMethod name with
+                  | Error d -> Expect.equal d.Attempted name $"method {name}: exact denied name"
+                  | Ok admitted -> failtestf "method %s unexpectedly admitted as %A" name admitted
+          }
+
+          test "independent escape matrix is denied before any successor effect" {
+              // Test-owned inputs are deliberate. Deriving this matrix from
+              // Sandbox.knownEscapes made deletion from the production set delete the
+              // corresponding test vector too, and exercised only the free-call gate.
+              let escapeCases =
+                  [ "constructor", "new File('/etc/passwd')\n", "new File"
+                    "free call", "evaluate('1 + 1')\n", "evaluate"
+                    "method", "'ls'.execute()\n", "execute"
+                    "safe null", "def target = null\ntarget?.execute()\n", "execute"
+                    "safe value", "'ls'?.execute()\n", "execute" ]
+
+              for family, source, attempted in escapeCases do
+                  let o = run (source + "sh 'successor'\n")
+
+                  match o.Fault with
+                  | Some(Denied d) -> Expect.equal d.Attempted attempted $"{family}: exact denied call"
+                  | other -> failtestf "%s: expected typed Denied, got %A" family other
+
+                  Expect.isEmpty o.Effects $"{family}: no successor effect after denial"
+          }
+
+          test "admitted null-safe builtin keeps arguments lazy and execution continues" {
+              let o = run "def target = null\ntarget?.trim(sh('argument'))\nsh 'successor'\n"
+              Expect.isNone o.Fault "the admitted builtin short-circuits normally"
+              Expect.equal (stepArgs o) [ "sh", [ "successor" ] ] "argument was not evaluated; successor ran"
+          }
+
+          test "registered steps, pure builtins and script helpers remain admitted" {
+              let registered = run "sh 'registered'\n"
+              Expect.isNone registered.Fault "registered step"
+              Expect.equal (stepArgs registered) [ "sh", [ "registered" ] ] "registered effect emitted"
+
+              let builtin = run "def value = '  clean  '.trim()\nsh value\n"
+              Expect.isNone builtin.Fault "pure builtin"
+              Expect.equal (stepArgs builtin) [ "sh", [ "clean" ] ] "builtin result reached the step"
+
+              let helper = run "def helper() { return 'local' }\nhelper()\nsh 'successor'\n"
+              Expect.isNone helper.Fault "script helper"
+              Expect.equal (stepArgs helper) [ "sh", [ "successor" ] ] "helper returned without blocking later work"
+          }
+
+          test "Value union remains an explicitly reviewed closed boundary" {
+              // The exact case-name snapshot makes a new runtime carrier (especially a
+              // host-object wrapper) an intentional security-review change rather than
+              // an unnoticed expansion of the interpreter's authority.
+              let expectedCases =
+                  set
+                      [ "VNull"
+                        "VBool"
+                        "VInt"
+                        "VInteger"
+                        "VArithmeticInteger"
+                        "VFloat"
+                        "VStr"
+                        "VList"
+                        "VRange"
+                        "VMap"
+                        "VScmMap"
+                        "VScmKeySet"
+                        "VJUnitSummary"
+                        "VClosure"
+                        "VFunc" ]
+
+              let cases =
+                  Microsoft.FSharp.Reflection.FSharpType.GetUnionCases typeof<Value>
+
+              let actualCases =
+                  cases |> Array.map (fun case -> case.Name) |> Set.ofArray
+
+              Expect.equal actualCases expectedCases "every Value carrier is explicitly security-reviewed"
+
+              for case in cases do
+                  for field in case.GetFields() do
+                      Expect.isFalse
+                          (field.PropertyType = typeof<obj>)
+                          $"{case.Name}.{field.Name} must not directly wrap System.Object"
           } ]
 
 /// Budgets: the interpreter runs on the admission path, so a runaway script is
@@ -2488,6 +2780,130 @@ let fg180Grammar =
               Expect.isTrue (parses "parallel('UI Tests': { echo 'x' })\n") "parenthesised"
           }
 
+          test "double-quoted constant names keep their decoded AST names in both call forms" {
+              match ast "parallel(\"UI\\tTests\": { echo 'x' }, 'API': { echo 'y' })\n" with
+              | [ SExpr(
+                    ECall(
+                        FreeCall "parallel",
+                        [ ANamed("UI\tTests", EClosure _); ANamed("API", EClosure _) ],
+                        None
+                    )
+                  ) ] -> ()
+              | other -> failtestf "wrong parenthesised AST: %A" other
+
+              match ast "parallel \"UI\\\"Tests\": { echo 'x' }, 'API': { echo 'y' }\n" with
+              | [ SExpr(
+                    ECall(
+                        FreeCall "parallel",
+                        [ ANamed("UI\"Tests", EClosure _); ANamed("API", EClosure _) ],
+                        None
+                    )
+                  ) ] -> ()
+              | other -> failtestf "wrong command-form AST: %A" other
+          }
+
+          test "all four quoted consumers share Java numeric escape decoding" {
+              let source =
+                  "def single = '\\b\\f\\u0041\\uu0042\\7\\77\\377\\400\\777'\n"
+                  + "def tripleSingle = '''\\b\\f\\u0041\\uu0042\\7\\77\\377\\400\\777'''\n"
+                  + "def double = \"\\b\\f\\u0041\\uu0042\\7\\77\\377\\400\\777\"\n"
+                  + "def tripleDouble = \"\"\"\\b\\f\\u0041\\uu0042\\7\\77\\377\\400\\777\"\"\"\n"
+
+              let expected = "\b\fAB\u0007?\u00ff 0?7"
+
+              match ast source with
+              | [ SDef("single", Some(EStr single))
+                  SDef("tripleSingle", Some(EStr tripleSingle))
+                  SDef("double", Some(EStr double))
+                  SDef("tripleDouble", Some(EStr tripleDouble)) ] ->
+                  Expect.equal single expected "single quoted"
+                  Expect.equal tripleSingle expected "triple single quoted"
+                  Expect.equal double expected "double quoted"
+                  Expect.equal tripleDouble expected "triple double quoted"
+              | other -> failtestf "numeric escapes did not stay plain strings: %A" other
+          }
+
+          test "numeric escapes also decode in constant names without creating interpolation" {
+              match ast "f(\"\\b\\f\\u0041\\uu0042\\7\\77\\377\\400\\777\": 1)\n" with
+              | [ SExpr(ECall(FreeCall "f", [ ANamed(name, EInt 1L) ], None)) ] ->
+                  Expect.equal name "\b\fAB\u0007?\u00ff 0?7" "constant-name decoder"
+              | other -> failtestf "wrong numeric constant-name AST: %A" other
+
+              match ast "def value = \"\\044MISSING\"\n" with
+              | [ SDef("value", Some(EStr "$MISSING")) ] -> ()
+              | other -> failtestf "an octal dollar became interpolation: %A" other
+          }
+
+          test "slashy strings retain numeric-looking escapes literally" {
+              match ast "def pattern = /\\b\\7\\77\\377/\n" with
+              | [ SDef("pattern", Some(EStr value)) ] ->
+                  Expect.equal value "\\b\\7\\77\\377" "slashy has delimiter-only escaping"
+              | other -> failtestf "wrong slashy AST: %A" other
+          }
+
+          test "all four quoted consumers remove each physical continuation spelling" {
+              for label, ending in [ "LF", "\n"; "CRLF", "\r\n"; "CR", "\r" ] do
+                  let sources =
+                      [ "single", "def value = 'before\\" + ending + "after'\n"
+                        "triple-single", "def value = '''before\\" + ending + "after'''\n"
+                        "double", "def value = \"before\\" + ending + "after\"\n"
+                        "triple-double", "def value = \"\"\"before\\" + ending + "after\"\"\"\n" ]
+
+                  for consumer, source in sources do
+                      match ast source with
+                      | [ SDef("value", Some(EStr "beforeafter")) ] -> ()
+                      | other -> failtestf "%s continuation in %s decoded incorrectly: %A" label consumer other
+          }
+
+          test "double-quoted named keys use the same escape decoding as string values" {
+              match ast "f(\"line\\nname\": \"line\\nname\")\n" with
+              | [ SExpr(ECall(FreeCall "f", [ ANamed(name, EStr value) ], None)) ] ->
+                  Expect.equal name value "the key and value share the string decoder"
+                  Expect.equal name "line\nname" "the escape is decoded, not retained as source text"
+              | other -> failtestf "wrong AST: %A" other
+
+              match ast "f(\"\\$branch\": 1)\n" with
+              | [ SExpr(ECall(FreeCall "f", [ ANamed("$branch", EInt 1L) ], None)) ] -> ()
+              | other -> failtestf "an escaped dollar is literal key text, got: %A" other
+          }
+
+          test "raw physical breaks are refused and line-continuation escapes stay fail-closed" {
+              for source in
+                  [ "f(\"line\nname\": 1)\n"
+                    "f(\"line\rname\": 1)\n"
+                    "f(\"line\r\nname\": 1)\n" ] do
+                  Expect.isFalse (parses source) $"an ordinary double-quoted key is single-line: {source}"
+
+              for source in
+                  [ "f(\"line\\\nname\": 1)\n"
+                    "f(\"line\\\rname\": 1)\n"
+                    "f(\"line\\\r\nname\": 1)\n" ] do
+                  Expect.isFalse
+                      (parses source)
+                      $"physical line-continuation escapes are an explicit fail-closed residual: {source}"
+
+              match ast "def label = \"\"\"line\nname\"\"\"\n" with
+              | [ SDef("label", Some(EStr "line\nname")) ] -> ()
+              | other -> failtestf "triple-double multiline literal regressed: %A" other
+          }
+
+          test "interpolated double-quoted names remain refused" {
+              for source in
+                  [ "f(\"$branch\": 1)\n"
+                    "f(\"${branch}\": 1)\n"
+                    "f(\"prefix-${branch}\": 1)\n" ] do
+                  Expect.isFalse (parses source) $"a GString is not a constant key: {source.Trim()}"
+          }
+
+          test "mixed-quote duplicate names keep the FG-174 refusal" {
+              for source in
+                  [ "f('same': 1, \"same\": 2)\n"
+                    "f(\"same\": 1, 'same': 2)\n"
+                    "f 'same': 1, \"same\": 2\n"
+                    "f('$branch': 1, \"\\$branch\": 2)\n" ] do
+                  Expect.isFalse (parses source) $"decoded names collide regardless of quote kind: {source.Trim()}"
+          }
+
           test "an index assignment is not swallowed into a command call" {
               match ast "builds['a'] = { echo 'x' }" with
               | [ SAssign(EIndex(EVar "builds", _), EClosure _) ] -> ()
@@ -3020,4 +3436,4 @@ let fg015ClosureAudit =
 
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg015ClosureAudit; fg015bSortAndRangeReview; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; scmMapValues; junitSummaryValues; callableResolution; mapIdentity; cyclicValues ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg190192TriviaState; fg015ClosureAudit; fg015bSortAndRangeReview; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; scmMapValues; junitSummaryValues; callableResolution; mapIdentity; cyclicValues ])

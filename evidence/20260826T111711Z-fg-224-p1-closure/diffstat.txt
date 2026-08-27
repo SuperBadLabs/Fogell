@@ -1,0 +1,13 @@
+ docs/tickets/FG-224.md                             |  17 ++-
+ scripts/prove-runnable-controller.sh               | 164 ++++++++++++++++++++-
+ .../Fogell.Controller.Api.fsproj                   |   1 +
+ src/Fogell.Controller.Api/Router.fs                |  67 +++++----
+ src/Fogell.Controller.Api/packages.lock.json       |  26 ++++
+ .../Fogell.Controller.Host.fsproj                  |   1 +
+ src/Fogell.Controller.Host/Worker.fs               |   2 +-
+ src/Fogell.Controller.Host/WorkerPaths.fs          |  15 ++
+ src/Fogell.Controller.Host/packages.lock.json      |  19 +++
+ .../Fogell.Controller.Api.Tests.fsproj             |   5 +-
+ tests/Fogell.Controller.Api.Tests/Tests.fs         |  62 ++++++++
+ .../Fogell.Controller.Api.Tests/packages.lock.json |  27 ++++
+ 12 files changed, 367 insertions(+), 39 deletions(-)

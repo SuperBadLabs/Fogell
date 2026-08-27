@@ -15,6 +15,9 @@ module internal Native =
     let SIGKILL = 9
 
     [<Literal>]
+    let SIGCONT = 18
+
+    [<Literal>]
     let ESRCH = 3 // no such process
 
     /// `kill(2)`. A negative pid targets the whole process group, which is how

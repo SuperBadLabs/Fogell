@@ -10,6 +10,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Fogell.Store/Fogell.Store.fsproj" />
+    <ProjectReference Include="../Fogell.Differential/Fogell.Differential.fsproj" />
     <ProjectReference Include="../Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />
   </ItemGroup>
 </Project>

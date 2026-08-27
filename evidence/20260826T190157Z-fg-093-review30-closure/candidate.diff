@@ -1,0 +1,633 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index fc66c98..371f803 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -784,7 +784,7 @@ before their no-effect validation refusal. Compatibility counts are unchanged.
+ | FG-169 | P2 | TODO | Seal the WHOLE receipt minus delimited unsealed regions, instead of field-by-field | **SEVEN rounds of one class in FG-161**, six of them found by the pre-push verifier and most introduced by the fix for the previous one: the verdict, an appended second verdict, the `sealed-output` mode that steers hashing, `[]` vs `[""]`, the printed `output (N lines):` count, duplicate fields inside a side block, and finally the comparison contract + workspace file listing + engine notes — printed, trusted, unbound, while `prove-seal-verification.sh` claimed 'every tamper is rejected'. Each fix bound one more field and the next round found another. THE SHAPE IS THE PROBLEM: a seal over an ENUMERATED SUBSET of a rendered document needs someone to notice every new printed thing forever, and the enumeration and the document drift by default. THE FIX: hash the receipt TEXT with the seal line blanked and explicitly DELIMITED unsealed regions removed, so everything printed is bound unless it is fenced and named. Verification becomes 'strip the fences, rehash', deleting ~100 lines of extraction and every question of the form 'is this printed thing bound'. TWO PREREQUISITES, both now met or cheap: FG-167 already seals multiset output sorted, so PRINT it sorted too and printed==sealed (it also kills the residual receipt churn FG-167 documented); and the FG-119 RECOVERED block gets explicit fence markers rather than being recognised by prose. I rejected this design at the start of FG-161 as too large and shipped the enumerating one — seven rounds is the cost of that call, recorded so the next person does not repeat it **THREE OPEN BYPASSES BLOCK FG-161 FROM BEING TRUSTED**, all one family — the extractor parses LENIENTLY and tolerates content it did not account for: (a) an unindented line inserted inside `## Output comparison notes` verifies, because `sectionBody` only collects indented lines and nothing rejects the rest; (b) `jenkins=all (1)` edited to `jenkins=alligator...` passes, because coverage is matched with `StartsWith`; (c) adding a `## Output comparison notes (1)` heading plus a two-space line to a receipt that had none reconstructs an empty list and leaves the seal intact. THE ONE FIX FOR ALL THREE, and it is FG-169 applied to the existing extractor rather than the full redesign: ACCOUNT FOR EVERY LINE — refuse any nonblank line the verifier did not consume and that is not inside a declared-unsealed region. Lenient parsing is why this ticket ran to 14 rounds; strict accounting is what ends it. **DONE UNDER FG-161 INSTEAD**, as line accounting over the existing extractor — every nonblank line must match a known shape or the receipt is refused, which closed all three bypasses. FG-169 REMAINS worth doing as SIMPLIFICATION, not as a fix: hashing the document minus fenced regions would delete the extraction layer entirely rather than police it. Downgraded from P1 to P2 — the hole is closed, the complexity is not | 14 rounds on one ticket; all closed |
+ | FG-170 | **P1** | **DONE** | A SILENT Fogell failure is never named when JENKINS SUCCEEDED | `Compare.traces` raises `DiagnosticSilence` — 'failed without reporting a reason' — inside `if jenkins.Result = "failure" || jenkins.Result = "aborted"`, and that guard wraps BOTH engines' checks, including Fogell's. So the one case where a silent failure is most likely to be a Fogell defect — Jenkins succeeds, Fogell fails — is exactly the case the rule cannot fire in. MEASURED: a `script { sh 'echo INSIDE-SCRIPT' }` probe gives fogell=failure with **0 output lines** and NO DiagnosticSilence in the receipt; the run is caught only as a result/output divergence. NOT A MISSED DIVERGENCE — the case does diverge and does fail — but the receipt does not say the failure was undiagnosed, which is the fact a reader needs to tell a wrong answer from no answer. The guard reads as 'if the build failed' and is written on ONE engine; the check belongs per-engine, on that engine's own result. FIXED: each engine is asked about its OWN result, which is what the sentence above the guard always said. GUARDED by 5 tests including the MIRROR — a silent JENKINS failure against a Fogell success — written because the fix could have been applied to one arm and left the other keyed on the wrong engine, which is the habit this session kept catching. PROVEN TO FAIL: reverting to the old guard fails the fogell test; keying both arms on fogell fails the jenkins test. NO DIFFERENTIAL CASE, stated rather than dressed up: the probe DIVERGES, and a diverging case cannot join a suite that requires 118/118 proven, so it stays in scratch until FG-160 makes `script` blocks run. The unit tests are the committed evidence | 5 tests, 2 mutations |
+ | FG-173 | P2 | **PARTIAL** | Strict workspace manifests now distinguish physical empty leaf directories | Signed source input `89ccd8ab956ddf310b4c988d5e7451588bd06b59` (tree `9bc4c1e86fb94c42411c453f5f28172b7ea987eb`) adds v2 local/remote file-plus-empty-leaf collection while retaining the established canonical bytes for file records. Signed follow-up `bd0f2df6c8735bd10a04d2012376e65a54a4b8cc` (tree `2edd2900c7cfe816ed12db2a7dd2706bc35aecf3`) restores the established `manifest` binding name so the stale-reference audit keeps its lexical identity; it changes neither protocol nor receipt. The parser refuses malformed framing, paths, order, duplicates, impossible leaf hierarchies and failed collectors, without following directory symlinks. Exactly one case, `script-bodyless-dir`, was rerun live and is tier 1; the other 279 receipts are historical and were not upgraded. Protocol framing and the human file listing remain unsealed. Publication, CI and merge remain — [→ detail](tickets/FG-173.md) |
+-| FG-093 | P1 | **PARTIAL** | Strict external release-provenance tuple and fail-before-exec gate | The local candidate accepts only an external exact-key JSON manifest with integer `schema_version=1`, full lowercase commit/tree IDs, and lowercase artifact/canonical-corpus-manifest SHA-256 values; duplicate/unknown/missing/malformed/short/mixed-case fields refuse without normalization. It requires exact clean HEAD/tree, every recursive gitlink initialized at its exact indexed commit, no assume-unchanged/skip-worktree or `core.fileMode=false`, and no physical untracked path even when ignored. A filter-free raw stage-0 audit binds regular-file bytes/modes and symlink-target bytes directly to index blobs, so clean filters, autocrlf/eol, encoding, or ident transformations cannot hide release-visible bytes. The exact caller-supplied artifact must resolve outside the checkout. It scrubs inherited `GIT_*`, directly execs downstream argv without a shell, removes inherited `GIT_*`, and overwrites all five exact `FOGELL_VERIFIED_*` bindings. The 60-outcome scratch proof covers tuple/JSON/file/gitlink/raw-byte/artifact-boundary/cleanliness/environment refusals and 20 corresponding direct mutations. Signed pre-reconciliation commit `8b59a1e01fd6ef8f1ab6a2cc202dbdf6f18eb982` records exact reviewed/gated tree `e171c8e790607afd1a5c2d21d62ec0c6b064ee60`; the authoritative gate passed all lanes, 280 seals, and the 279/279 scorecard, with only the existing cold-build FS0040 warning. This row/ticket update is status-only and the final identity belongs in the external handoff. Live release still needs a pristine untransformed checkout with its artifact external; empty untracked directories remain outside Git's path inventory. `artifact` is not FG-080's undefined canonical package, and live invocation/trusted-manifest authority remains external. Local hostile-process/TOCTOU replacement, PATH-selected Git compromise, command use of different bytes, signatures, SBOM, reproducibility, and corpus-content verification are explicitly not claimed; formal PR review coverage, CI, publication, and merge remain — [→ detail](tickets/FG-093.md) |
++| FG-093 | P1 | **PARTIAL** | Strict external release-provenance tuple and fail-before-exec gate | The local candidate accepts only an external exact-key JSON manifest with integer `schema_version=1`, full lowercase commit/tree IDs, and lowercase artifact/canonical-corpus-manifest SHA-256 values; duplicate/unknown/missing/malformed/short/mixed-case fields refuse without normalization. It requires exact clean HEAD/tree, every recursive gitlink initialized at its exact indexed commit, no replacement refs, no assume-unchanged/skip-worktree or `core.fileMode=false`, and no physical untracked path even when ignored. Every verifier Git subprocess and downstream Git receive `GIT_NO_REPLACE_OBJECTS=1`. A filter-free raw stage-0 audit binds regular-file bytes/modes and symlink-target bytes directly to index blobs. The external artifact is hashed into a sealed anonymous snapshot; downstream receives the immutable inherited `/proc/self/fd/N`, so pathname replacement or in-place writes cannot change the verified bytes. The 65-outcome scratch proof covers the original tuple/JSON/file/gitlink/raw-byte/artifact-boundary/cleanliness/environment cases plus deterministic replacement-object, artifact-swap, in-place-write, and seal-removal attacks with load-bearing mutations. Signed commit `8b59a1e01fd6ef8f1ab6a2cc202dbdf6f18eb982` and tree `e171c8e790607afd1a5c2d21d62ec0c6b064ee60` remain historical pre-hardening evidence; current exact identity and authoritative-gate evidence belong in the external handoff. Live release still needs a pristine Linux checkout, external artifact, canonical FG-080 package definition, and trusted manifest authority. The sealed descriptor is inherited-descriptor-lifetime scoped and must be consumed before a container/remote boundary. PATH-selected Git compromise, hostile administrator/kernel, command use of different bytes, signatures, SBOM, reproducibility, and corpus-content verification are not claimed; formal exact-head review, CI, publication, and merge remain — [→ detail](tickets/FG-093.md) |
+ | FG-094 | P1 | **PARTIAL** | Exact-set compatibility regression gate over a strict external baseline and Jenkins `reached_agent` oracle | Local checker runs scorecard `--check` first, binds the baseline ancestor/tree/historical-ledger digest plus exact corpus/current-ledger/oracle schemas, digests, and unique equal 228-filename sets (ledger rows are sorted; the pinned manifest's historical row order is canonicalized for set comparison), and refuses partial corpus-host configuration. `accepted` means tier-1 OR `admitted` (which is parse-only, NOT tier 2). PASS iff baseline tier-1 filenames remain tier-1 and every baseline-accepted `reached_agent=True` filename remains accepted; gains and accepted losses confined to pinned `reached_agent=False` pass. Counts never decide, so same-count swaps fail. The proof's synthetic `vinsguru_jenkins-pipeline.Jenkinsfile` (`fixture/repo`) is the load-bearing compiled-but-not-reached allowed-loss control. The real pinned `vinsguru_docker-selenium-jenkinsfile.Jenkinsfile` row is also compiled but not reached, but remains admitted baseline/current; the live gate measured zero losses. The 43-outcome offline proof covers exact-set/schema/digest/environment rules and direct mutants; it runs everywhere. Live comparison runs only on a corpus host with both operator-provided external files, while corpus-free CI explicitly skips and remains uncovered. The candidate baseline's authenticity/owner authority, semantic correctness, progress for already-rejected files, cross-version Jenkins behavior, and automatic baseline updates are not claimed — [→ detail](tickets/FG-094.md) |
+ 
+ ---
+diff --git a/docs/tickets/FG-093.md b/docs/tickets/FG-093.md
+index f347517..fdba1ce 100644
+--- a/docs/tickets/FG-093.md
++++ b/docs/tickets/FG-093.md
+@@ -1,13 +1,14 @@
+ # FG-093 — Exact release provenance before downstream execution
+ 
+ Status: **PARTIAL**. Signed pre-reconciliation implementation commit
+-`8b59a1e01fd6ef8f1ab6a2cc202dbdf6f18eb982` records tree
+-`e171c8e790607afd1a5c2d21d62ec0c6b064ee60`. That exact five-path content
+-cleared independent local review, its 60-outcome focused proof, and the
+-authoritative gate with 280 verified seals and a 279/279 scorecard; the only
+-build warning was the existing cold-build FS0040. This status-only reconciliation
+-cannot name its own final commit, so that identity belongs in the external
+-handoff. The candidate does not create Fogell's canonical release artifact
++`8b59a1e01fd6ef8f1ab6a2cc202dbdf6f18eb982` records historical tree
++`e171c8e790607afd1a5c2d21d62ec0c6b064ee60`. The current candidate additionally
++refuses Git replacement-object refs and hands downstream an immutable sealed
++artifact snapshot; its 65-outcome focused proof includes deterministic hostile
++controls and load-bearing mutations for both boundaries. This uncommitted
++candidate cannot name its own final commit, so exact current identity and
++authoritative-gate evidence belong in the external handoff. The candidate does
++not create Fogell's canonical release artifact
+ (FG-080), create a trusted manifest, or install a live release invocation.
+ Formal PR review coverage, CI, publication, merge, and that live operational
+ wiring remain before DONE.
+@@ -49,25 +50,28 @@ The gate derives the repository from its own installed path and then requires:
+ 2. Every gitlink is an initialized, non-symlink Git worktree whose exact HEAD
+    commit equals the index gitlink, recursively. A missing checkout or plain
+    directory at a gitlink path refuses even when ordinary status would hide it.
+-3. Every worktree has `core.fileMode=true`, no assume-unchanged or skip-worktree
++3. The root and every recursive submodule have no `refs/replace/*`. Replacement
++   objects are disabled for every Git command even while this invariant is
++   checked, so repository-admin refs cannot substitute bytes behind trusted IDs.
++4. Every worktree has `core.fileMode=true`, no assume-unchanged or skip-worktree
+    index entry, no physical untracked path from NUL-safe `git ls-files --others`
+    (deliberately without `--exclude-standard`), and an empty `git status
+    --porcelain=v1 --untracked-files=all --ignore-submodules=none`. This includes
+    ignored build products, local/global exclude tricks, staged, unstaged,
+    executable-bit, case-collision, and nested submodule dirt. Sparse/
+    skip-worktree checkouts are intentionally ineligible for release provenance.
+-4. Every NUL-safe stage-0 regular-file entry has the indexed executable mode and
++5. Every NUL-safe stage-0 regular-file entry has the indexed executable mode and
+    raw worktree bytes whose filter-free `git hash-object --stdin` ID equals its
+    index blob. Every symlink's raw link-target bytes likewise equal its blob;
+    gitlinks are handled by the exact recursive rule above. Clean/smudge filters,
+    autocrlf/eol conversion, working-tree encoding, ident expansion, or any other
+    transformation that makes worktree bytes differ from the index makes the
+    checkout release-ineligible.
+-5. Manifest `commit` equals the full exact `HEAD^{commit}`.
+-6. Manifest `tree` equals the full exact `HEAD^{tree}`.
+-7. The resolved artifact path is outside the checkout, and manifest
++6. Manifest `commit` equals the full exact `HEAD^{commit}`.
++7. Manifest `tree` equals the full exact `HEAD^{tree}`.
++8. The resolved artifact path is outside the checkout, and manifest
+    `artifact_sha256` equals SHA-256 of that exact regular, non-symlink file.
+-8. Manifest `corpus_manifest_sha256` equals SHA-256 of this checkout's canonical
++9. Manifest `corpus_manifest_sha256` equals SHA-256 of this checkout's canonical
+    `corpus/CORPUS-SHA256SUMS` bytes.
+ 
+ The artifact in this ticket means only those exact caller-supplied bytes. It is
+@@ -77,20 +81,26 @@ contents. `scripts/verify-corpus.sh` remains the separate content check.
+ 
+ Manifest and artifact reads use `lstat`, no-follow open, `fstat`, and a second
+ `fstat` after the read. Symlinks, non-regular files, path/open identity changes,
+-and size/time/identity changes during hashing are refused.
++and size/time/identity changes during hashing are refused. While hashing, the
++artifact is copied into an anonymous Linux `memfd`; write, grow, shrink, and
++further-seal operations are then sealed, the descriptor is rewound, and its
++`/proc/self/fd/N` identity is verified before inheritance. Unsupported sealing or
++descriptor handoff refuses before downstream execution.
+ 
+-Every Git subprocess drops all inherited `GIT_*` values, disables system/global
+-configuration, and applies fixed `core.fileMode=true`, `core.ignoreCase=false`,
++Every Git subprocess drops all inherited `GIT_*` values, forces
++`GIT_NO_REPLACE_OBJECTS=1`, disables system/global configuration, and applies
++fixed `core.fileMode=true`, `core.ignoreCase=false`,
+ `core.trustctime=true`, `core.checkStat=default`, `core.fsmonitor=false`,
+ `core.untrackedCache=false`, and `core.ignoreStat=false` overrides. Thus ambient
+ Git configuration, alternate indexes, or alternate Git/work-tree pointers cannot
+ select a different cleanliness view.
+ 
+ Only after every check matches does the process print `PROVENANCE VERIFIED`, set
+-the five `FOGELL_VERIFIED_*` environment values, removes every inherited `GIT_*`
+-name from the downstream environment, and replaces itself directly with the
+-supplied argument vector through `execvpe`. There is no shell or command string
+-evaluation. A refusal exits non-zero before that call.
++the five `FOGELL_VERIFIED_*` environment values, remove inherited `GIT_*` names,
++restore only protective `GIT_NO_REPLACE_OBJECTS=1`, and replace itself directly
++with the supplied argument vector through `execvpe`. `FOGELL_VERIFIED_ARTIFACT`
++is the inherited sealed `/proc/self/fd/N`, not the mutable caller pathname. There
++is no shell or command string evaluation. A refusal exits non-zero first.
+ 
+ ## Offline acceptance proof
+ 
+@@ -121,6 +131,8 @@ NUL-safe record parsing. The proof rejects:
+   the raw tracked worktree bytes contain different release-visible content;
+ - inherited `GIT_CONFIG_COUNT`, `GIT_INDEX_FILE`, and `GIT_DIR`/`GIT_WORK_TREE`
+   attempts to alter the repository view;
++- a clean-looking checkout materialized through a malicious Git tree replacement
++  ref while the trusted commit/tree names still appear to match;
+ - a symlink supplied as the artifact; and
+ - a non-executable or symlink repository checker before fixture setup. The
+   checker copy preserves its source mode, so the proof cannot conceal a committed
+@@ -140,12 +152,19 @@ artifact invariant are load-bearing rather than sharing an earlier guard.
+ 
+ The downstream probe hostile-preseeds all five `FOGELL_VERIFIED_*` names plus
+ representative `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, and
+-`GIT_CONFIG_COUNT` state. It asserts exact verified bindings and absence of all
+-those Git values. Five assignment mutations and a downstream-scrub removal
+-mutation are detected individually. Separate mutations remove assume-unchanged,
++`GIT_CONFIG_COUNT` state. It asserts exact verified bindings, exact sealed bytes,
++absence of inherited Git values, and protective `GIT_NO_REPLACE_OBJECTS=1`.
++Another probe atomically swaps the caller pathname before consumption and still
++reads the original digest through the sealed descriptor. Five assignment
++mutations and a downstream-scrub removal mutation are detected individually.
++Separate mutations remove assume-unchanged,
+ skip-worktree, file-mode, recursive-submodule, required-gitlink, physical-
+ untracked, raw-tracked-identity, case-safety, and Git-subprocess-environment
+-defenses; each associated proof control detects the regression.
++defenses; each associated proof control detects the regression. Two further
++mutations jointly remove replacement-object defenses and rebind the artifact to
++its mutable source pathname; the corresponding hostile arms then execute or
++consume modified bytes. A third mutation removes the kernel seals and exposes
++writable snapshot bytes. The complete focused proof reports 65 outcomes.
+ 
+ The offline proof runs blocking in `scripts/build-and-test.sh`. The live gate does
+ not: there is no trusted external manifest or canonical release artifact during a
+@@ -157,13 +176,15 @@ boundary this ticket exists to enforce.
+ - The checker does not establish who created or approved the external manifest,
+   authenticate it, sign it, or protect its storage. The live release system must
+   supply that trust.
+-- It narrows same-read races but does not defend against a hostile local process
+-  replacing the artifact, manifest, checkout, or command after verification.
+-  In particular, the verified artifact descriptor is not handed to the downstream
+-  process. This is an explicit TOCTOU boundary, not local-host tamper resistance.
+-- The downstream command must consume `FOGELL_VERIFIED_ARTIFACT` (or the identical
+-  caller-supplied path). The gate cannot prove an arbitrary command did not ignore
+-  it and release different bytes.
++- The sealed artifact handoff is Linux-specific and inherited-descriptor-lifetime scoped.
++  Downstream must consume or copy `FOGELL_VERIFIED_ARTIFACT` before closing the
++  inherited descriptor or crossing a container/remote-process boundary. The
++  caller pathname is origin metadata only and is no longer authoritative.
++- The gate cannot prove an arbitrary downstream command did not close or ignore
++  `FOGELL_VERIFIED_ARTIFACT` and release different bytes.
++- Manifest, checkout, command, kernel, and hostile-administrator replacement
++  after verification remain outside the local boundary; only the artifact bytes
++  handed downstream are snapshotted and sealed.
+ - Live release requires a pristine checkout and an artifact outside it. Ignored
+   build products are physical untracked paths and therefore make it ineligible;
+   the ordinary build gate may create them because it invokes only the isolated
+diff --git a/scripts/prove-release-provenance.sh b/scripts/prove-release-provenance.sh
+index 804fff8..f0601f0 100755
+--- a/scripts/prove-release-provenance.sh
++++ b/scripts/prove-release-provenance.sh
+@@ -234,12 +234,19 @@ ENV_CAPTURE="$OUT/environment-capture"
+ ENV_EXPECTED="$OUT/environment-expected"
+ printf '%s\n' \
+   '#!/bin/sh' \
++  'case "${FOGELL_VERIFIED_ARTIFACT-}" in' \
++  '  /proc/self/fd/[0-9]*) artifact_binding="<sealed-descriptor>" ;;' \
++  '  *) artifact_binding="${FOGELL_VERIFIED_ARTIFACT-<unset>}" ;;' \
++  'esac' \
++  'artifact_bytes_sha=$(sha256sum "${FOGELL_VERIFIED_ARTIFACT-}" 2>/dev/null | awk '\''{print $1}'\'')' \
+   'printf "%s\n" \' \
+   '  "${FOGELL_VERIFIED_COMMIT-<unset>}" \' \
+   '  "${FOGELL_VERIFIED_TREE-<unset>}" \' \
+-  '  "${FOGELL_VERIFIED_ARTIFACT-<unset>}" \' \
++  '  "$artifact_binding" \' \
+   '  "${FOGELL_VERIFIED_ARTIFACT_SHA256-<unset>}" \' \
+   '  "${FOGELL_VERIFIED_CORPUS_MANIFEST_SHA256-<unset>}" \' \
++  '  "$artifact_bytes_sha" \' \
++  '  "${GIT_NO_REPLACE_OBJECTS-<unset>}" \' \
+   '  "${GIT_DIR-<unset>}" \' \
+   '  "${GIT_WORK_TREE-<unset>}" \' \
+   '  "${GIT_INDEX_FILE-<unset>}" \' \
+@@ -247,28 +254,55 @@ printf '%s\n' \
+   '  "${GIT_CONFIG_KEY_0-<unset>}" \' \
+   '  "${GIT_CONFIG_VALUE_0-<unset>}" > "$1"' > "$ENV_PROBE"
+ chmod +x "$ENV_PROBE"
+-printf '%s\n' "$COMMIT" "$TREE" "$(realpath "$ARTIFACT")" "$ARTIFACT_SHA" "$CORPUS_SHA" \
+-  '<unset>' '<unset>' '<unset>' '<unset>' '<unset>' '<unset>' > "$ENV_EXPECTED"
++printf '%s\n' "$COMMIT" "$TREE" '<sealed-descriptor>' "$ARTIFACT_SHA" "$CORPUS_SHA" "$ARTIFACT_SHA" \
++  '1' '<unset>' '<unset>' '<unset>' '<unset>' '<unset>' '<unset>' > "$ENV_EXPECTED"
+ rm -f "$ENV_CAPTURE"
+ set +e
+ env FOGELL_VERIFIED_COMMIT=hostile FOGELL_VERIFIED_TREE=hostile \
+   FOGELL_VERIFIED_ARTIFACT=/hostile FOGELL_VERIFIED_ARTIFACT_SHA256=hostile \
+   FOGELL_VERIFIED_CORPUS_MANIFEST_SHA256=hostile GIT_DIR=/hostile/git-dir \
+   GIT_WORK_TREE=/hostile/work-tree GIT_INDEX_FILE=/hostile/index \
+-  GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.ignoreCase GIT_CONFIG_VALUE_0=true \
++  GIT_NO_REPLACE_OBJECTS=0 GIT_CONFIG_COUNT=1 \
++  GIT_CONFIG_KEY_0=core.ignoreCase GIT_CONFIG_VALUE_0=true \
+   "$REPO/scripts/release-provenance-gate.py" --manifest "$GOOD" --artifact "$ARTIFACT" -- \
+   "$ENV_PROBE" "$ENV_CAPTURE" > "$OUT/environment.log" 2>&1
+ RC=$?
+ set -e
+ if [ "$RC" -ne 0 ] || [ ! -f "$ENV_CAPTURE" ] || ! cmp -s "$ENV_EXPECTED" "$ENV_CAPTURE"; then
+-  echo '  FAIL: downstream did not receive five exact bindings with inherited Git state removed'
++  echo '  FAIL: downstream did not receive five exact bindings, immutable artifact bytes, and scrubbed Git state'
+   sed 's/^/    | /' "$OUT/environment.log"
+   [ ! -f "$ENV_CAPTURE" ] || sed 's/^/    | actual: /' "$ENV_CAPTURE"
+   FAILED=1
+ else
+-  echo '  exported five exact bindings and removed inherited Git state downstream'
++  echo '  exported five exact bindings to immutable artifact bytes and removed inherited Git state downstream'
+ fi
+ 
++ARTIFACT_SWAP_PROBE="$OUT/artifact-swap-probe.sh"
++ARTIFACT_SWAP_CAPTURE="$OUT/artifact-swap.capture"
++printf '%s\n' \
++  '#!/bin/sh' \
++  'if printf "in-place hostile bytes\n" > "$FOGELL_VERIFIED_ARTIFACT" 2>/dev/null; then exit 97; fi' \
++  'printf "replacement artifact bytes\n" > "$1.replacement"' \
++  'mv "$1.replacement" "$1"' \
++  'sha256sum "$FOGELL_VERIFIED_ARTIFACT" | awk '\''{print $1}'\'' > "$2"' > "$ARTIFACT_SWAP_PROBE"
++chmod +x "$ARTIFACT_SWAP_PROBE"
++rm -f "$ARTIFACT_SWAP_CAPTURE"
++set +e
++"$REPO/scripts/release-provenance-gate.py" --manifest "$GOOD" --artifact "$ARTIFACT" -- \
++  "$ARTIFACT_SWAP_PROBE" "$ARTIFACT" "$ARTIFACT_SWAP_CAPTURE" > "$OUT/artifact-swap.log" 2>&1
++RC=$?
++set -e
++if [ "$RC" -ne 0 ] || [ ! -f "$ARTIFACT_SWAP_CAPTURE" ] || \
++   [ "$(cat "$ARTIFACT_SWAP_CAPTURE")" != "$ARTIFACT_SHA" ] || \
++   [ "$(sha256 "$ARTIFACT")" = "$ARTIFACT_SHA" ]; then
++  echo '  FAIL: downstream did not consume the immutable verified bytes after an artifact path swap'
++  sed 's/^/    | /' "$OUT/artifact-swap.log"
++  FAILED=1
++else
++  echo '  bound downstream consumption to immutable verified bytes across an artifact path swap'
++fi
++printf 'deterministic release artifact bytes\n' > "$ARTIFACT"
++
+ echo '=== FG-093 four tuple mismatches ==='
+ write_manifest "$OUT/bad-commit.json" 0000000000000000000000000000000000000000 "$TREE" "$ARTIFACT_SHA" "$CORPUS_SHA"
+ expect_reject 'commit mismatch' "$REPO/scripts/release-provenance-gate.py" "$OUT/bad-commit.json" "$ARTIFACT" 'commit mismatch'
+@@ -433,6 +467,30 @@ else
+   echo '  ignored inherited GIT_DIR/GIT_WORK_TREE; exact repository still executed'
+ fi
+ 
++REPLACE_ATTACK="$LAB/replacement-object-attack"
++clone_fixture "$REPLACE_ATTACK"
++identity "$REPLACE_ATTACK"
++REPLACE_TRUSTED_COMMIT=$COMMIT
++REPLACE_TRUSTED_TREE=$TREE
++REPLACE_MANIFEST="$OUT/replacement-object-attack.json"
++write_manifest "$REPLACE_MANIFEST" "$COMMIT" "$TREE" "$ARTIFACT_SHA" "$CORPUS_SHA"
++printf 'replacement-object malicious bytes\n' > "$REPLACE_ATTACK/tracked.txt"
++git -C "$REPLACE_ATTACK" add tracked.txt
++git -C "$REPLACE_ATTACK" commit -q -m 'build malicious replacement tree'
++REPLACE_MALICIOUS_TREE=$(git -C "$REPLACE_ATTACK" rev-parse 'HEAD^{tree}')
++git -C "$REPLACE_ATTACK" replace "$REPLACE_TRUSTED_TREE" "$REPLACE_MALICIOUS_TREE"
++git -C "$REPLACE_ATTACK" reset --hard -q "$REPLACE_TRUSTED_COMMIT"
++if [ -n "$(git -C "$REPLACE_ATTACK" status --porcelain=v1 --untracked-files=all)" ] || \
++   [ "$(git -C "$REPLACE_ATTACK" rev-parse 'HEAD^{tree}')" != "$REPLACE_TRUSTED_TREE" ] || \
++   ! grep -Fqx 'replacement-object malicious bytes' "$REPLACE_ATTACK/tracked.txt"; then
++  echo '  FAIL: replacement-object attack preconditions were not established'
++  FAILED=1
++else
++  expect_reject 'Git replacement-object attack' \
++    "$REPLACE_ATTACK/scripts/release-provenance-gate.py" "$REPLACE_MANIFEST" "$ARTIFACT" \
++    'checkout contains Git replacement-object refs'
++fi
++
+ ln -s "$ARTIFACT" "$OUT/artifact-link"
+ expect_reject 'symlink artifact' "$REPO/scripts/release-provenance-gate.py" "$GOOD" "$OUT/artifact-link" 'artifact is not a regular non-symlink file'
+ 
+@@ -547,9 +605,12 @@ mutation_exposes_environment_binding() {
+   git -C "$mutant" commit -q -m "mutate $binding environment binding"
+   identity "$mutant"
+   write_manifest "$manifest" "$COMMIT" "$TREE" "$ARTIFACT_SHA" "$CORPUS_SHA"
+-  printf '%s\n' "$COMMIT" "$TREE" "$(realpath "$ARTIFACT")" "$ARTIFACT_SHA" "$CORPUS_SHA" \
+-    '<unset>' '<unset>' '<unset>' '<unset>' '<unset>' '<unset>' > "$expected"
++  printf '%s\n' "$COMMIT" "$TREE" '<sealed-descriptor>' "$ARTIFACT_SHA" "$CORPUS_SHA" "$ARTIFACT_SHA" \
++    '1' '<unset>' '<unset>' '<unset>' '<unset>' '<unset>' '<unset>' > "$expected"
+   sed "${line_number}s/.*/FG-093-planted-wrong-binding/" "$expected" > "$detected"
++  if [ "$binding" = FOGELL_VERIFIED_ARTIFACT ]; then
++    sed -i '6s/.*//' "$detected"
++  fi
+ 
+   rm -f "$capture"
+   set +e
+@@ -592,8 +653,8 @@ else
+   DOWNSTREAM_SCRUB_CAPTURE="$OUT/mutant-downstream-git-environment-scrub.capture"
+   DOWNSTREAM_SCRUB_EXPECTED="$OUT/mutant-downstream-git-environment-scrub.expected"
+   write_manifest "$DOWNSTREAM_SCRUB_MANIFEST" "$COMMIT" "$TREE" "$ARTIFACT_SHA" "$CORPUS_SHA"
+-  printf '%s\n' "$COMMIT" "$TREE" "$(realpath "$ARTIFACT")" "$ARTIFACT_SHA" "$CORPUS_SHA" \
+-    /hostile/git-dir /hostile/work-tree /hostile/index 1 core.ignoreCase true > "$DOWNSTREAM_SCRUB_EXPECTED"
++  printf '%s\n' "$COMMIT" "$TREE" '<sealed-descriptor>' "$ARTIFACT_SHA" "$CORPUS_SHA" "$ARTIFACT_SHA" \
++    1 /hostile/git-dir /hostile/work-tree /hostile/index 1 core.ignoreCase true > "$DOWNSTREAM_SCRUB_EXPECTED"
+   rm -f "$DOWNSTREAM_SCRUB_CAPTURE"
+   set +e
+   env GIT_DIR=/hostile/git-dir GIT_WORK_TREE=/hostile/work-tree GIT_INDEX_FILE=/hostile/index \
+@@ -745,6 +806,117 @@ else
+   fi
+ fi
+ 
++echo '=== FG-093 replacement-object and artifact-handoff mutations ==='
++REPLACE_GUARD_MUTANT="$LAB/mutant-replacement-object-guards"
++clone_fixture "$REPLACE_GUARD_MUTANT"
++REPLACE_GUARD_CHECKER="$REPLACE_GUARD_MUTANT/scripts/release-provenance-gate.py"
++REPLACE_GUARD_BEFORE=$(sha256 "$REPLACE_GUARD_CHECKER")
++sed -i '/environment\["GIT_NO_REPLACE_OBJECTS"\] = "1"/d; /require_no_replacement_refs(worktree)/s/^/        # FG-093 planted replacement-object mutation: /' "$REPLACE_GUARD_CHECKER"
++REPLACE_GUARD_AFTER=$(sha256 "$REPLACE_GUARD_CHECKER")
++if [ "$REPLACE_GUARD_BEFORE" = "$REPLACE_GUARD_AFTER" ] || \
++   [ "$(grep -Fc 'environment["GIT_NO_REPLACE_OBJECTS"] = "1"' "$REPLACE_GUARD_CHECKER")" -ne 0 ] || \
++   [ "$(grep -Fc '# FG-093 planted replacement-object mutation:         require_no_replacement_refs(worktree)' "$REPLACE_GUARD_CHECKER")" -ne 1 ]; then
++  echo '  FAIL: replacement-object guard mutation was not planted exactly'
++  FAILED=1
++else
++  git -C "$REPLACE_GUARD_MUTANT" add scripts/release-provenance-gate.py
++  git -C "$REPLACE_GUARD_MUTANT" commit -q -m 'mutate replacement-object guards'
++  identity "$REPLACE_GUARD_MUTANT"
++  REPLACE_GUARD_TRUSTED_COMMIT=$COMMIT
++  REPLACE_GUARD_TRUSTED_TREE=$TREE
++  REPLACE_GUARD_MANIFEST="$OUT/mutant-replacement-object-guards.json"
++  REPLACE_GUARD_MARKER="$OUT/mutant-replacement-object-guards-ran"
++  write_manifest "$REPLACE_GUARD_MANIFEST" "$COMMIT" "$TREE" "$ARTIFACT_SHA" "$CORPUS_SHA"
++  printf 'mutation replacement-object malicious bytes\n' > "$REPLACE_GUARD_MUTANT/tracked.txt"
++  git -C "$REPLACE_GUARD_MUTANT" add tracked.txt
++  git -C "$REPLACE_GUARD_MUTANT" commit -q -m 'build mutation replacement tree'
++  REPLACE_GUARD_MALICIOUS_TREE=$(git -C "$REPLACE_GUARD_MUTANT" rev-parse 'HEAD^{tree}')
++  git -C "$REPLACE_GUARD_MUTANT" replace "$REPLACE_GUARD_TRUSTED_TREE" "$REPLACE_GUARD_MALICIOUS_TREE"
++  git -C "$REPLACE_GUARD_MUTANT" reset --hard -q "$REPLACE_GUARD_TRUSTED_COMMIT"
++  run_gate "$REPLACE_GUARD_CHECKER" "$REPLACE_GUARD_MANIFEST" "$ARTIFACT" \
++    "$REPLACE_GUARD_MARKER" "$OUT/mutant-replacement-object-guards.log"
++  if [ "$RC" -eq 0 ] && [ -f "$REPLACE_GUARD_MARKER" ] && \
++     grep -Fq 'PROVENANCE VERIFIED:' "$OUT/mutant-replacement-object-guards.log"; then
++    echo '  killed replacement-object guard mutation: malicious clean bytes became executable'
++  else
++    echo '  FAIL: replacement-object guard mutation did not expose its hostile arm'
++    sed 's/^/    | /' "$OUT/mutant-replacement-object-guards.log"
++    FAILED=1
++  fi
++fi
++
++ARTIFACT_HANDOFF_MUTANT="$LAB/mutant-artifact-descriptor-handoff"
++clone_fixture "$ARTIFACT_HANDOFF_MUTANT"
++ARTIFACT_HANDOFF_CHECKER="$ARTIFACT_HANDOFF_MUTANT/scripts/release-provenance-gate.py"
++ARTIFACT_HANDOFF_BEFORE=$(sha256 "$ARTIFACT_HANDOFF_CHECKER")
++sed -i 's/"FOGELL_VERIFIED_ARTIFACT": artifact_descriptor_path/"FOGELL_VERIFIED_ARTIFACT": str(parsed.artifact.resolve())/' "$ARTIFACT_HANDOFF_CHECKER"
++ARTIFACT_HANDOFF_AFTER=$(sha256 "$ARTIFACT_HANDOFF_CHECKER")
++if [ "$ARTIFACT_HANDOFF_BEFORE" = "$ARTIFACT_HANDOFF_AFTER" ] || \
++   [ "$(grep -Fc '"FOGELL_VERIFIED_ARTIFACT": str(parsed.artifact.resolve())' "$ARTIFACT_HANDOFF_CHECKER")" -ne 1 ]; then
++  echo '  FAIL: artifact descriptor-handoff mutation was not planted exactly'
++  FAILED=1
++else
++  git -C "$ARTIFACT_HANDOFF_MUTANT" add scripts/release-provenance-gate.py
++  git -C "$ARTIFACT_HANDOFF_MUTANT" commit -q -m 'mutate artifact descriptor handoff'
++  identity "$ARTIFACT_HANDOFF_MUTANT"
++  ARTIFACT_HANDOFF_MANIFEST="$OUT/mutant-artifact-descriptor-handoff.json"
++  ARTIFACT_HANDOFF_CAPTURE="$OUT/mutant-artifact-descriptor-handoff.capture"
++  write_manifest "$ARTIFACT_HANDOFF_MANIFEST" "$COMMIT" "$TREE" "$ARTIFACT_SHA" "$CORPUS_SHA"
++  printf 'deterministic release artifact bytes\n' > "$ARTIFACT"
++  rm -f "$ARTIFACT_HANDOFF_CAPTURE"
++  set +e
++  "$ARTIFACT_HANDOFF_CHECKER" --manifest "$ARTIFACT_HANDOFF_MANIFEST" --artifact "$ARTIFACT" -- \
++    "$ARTIFACT_SWAP_PROBE" "$ARTIFACT" "$ARTIFACT_HANDOFF_CAPTURE" > "$OUT/mutant-artifact-descriptor-handoff.log" 2>&1
++  RC=$?
++  set -e
++  if [ "$RC" -eq 97 ] && [ ! -f "$ARTIFACT_HANDOFF_CAPTURE" ] && \
++     [ "$(sha256 "$ARTIFACT")" != "$ARTIFACT_SHA" ]; then
++    echo '  killed artifact descriptor-handoff mutation: downstream modified mutable source bytes'
++  else
++    echo '  FAIL: artifact descriptor-handoff mutation did not expose swapped bytes'
++    sed 's/^/    | /' "$OUT/mutant-artifact-descriptor-handoff.log"
++    FAILED=1
++  fi
++  printf 'deterministic release artifact bytes\n' > "$ARTIFACT"
++fi
++
++ARTIFACT_SEAL_MUTANT="$LAB/mutant-artifact-seals"
++clone_fixture "$ARTIFACT_SEAL_MUTANT"
++ARTIFACT_SEAL_CHECKER="$ARTIFACT_SEAL_MUTANT/scripts/release-provenance-gate.py"
++ARTIFACT_SEAL_BEFORE=$(sha256 "$ARTIFACT_SEAL_CHECKER")
++sed -i \
++  -e 's/fcntl\.fcntl(sealed, fcntl\.F_ADD_SEALS, seals)/# FG-093 planted artifact-seal mutation: add omitted/' \
++  -e 's/applied = fcntl\.fcntl(sealed, fcntl\.F_GET_SEALS)/applied = seals  # FG-093 planted artifact-seal mutation: lie/' \
++  "$ARTIFACT_SEAL_CHECKER"
++ARTIFACT_SEAL_AFTER=$(sha256 "$ARTIFACT_SEAL_CHECKER")
++if [ "$ARTIFACT_SEAL_BEFORE" = "$ARTIFACT_SEAL_AFTER" ] || \
++   [ "$(grep -Fc 'FG-093 planted artifact-seal mutation:' "$ARTIFACT_SEAL_CHECKER")" -ne 2 ]; then
++  echo '  FAIL: artifact-seal mutation was not planted exactly'
++  FAILED=1
++else
++  git -C "$ARTIFACT_SEAL_MUTANT" add scripts/release-provenance-gate.py
++  git -C "$ARTIFACT_SEAL_MUTANT" commit -q -m 'mutate artifact seals'
++  identity "$ARTIFACT_SEAL_MUTANT"
++  ARTIFACT_SEAL_MANIFEST="$OUT/mutant-artifact-seals.json"
++  ARTIFACT_SEAL_CAPTURE="$OUT/mutant-artifact-seals.capture"
++  write_manifest "$ARTIFACT_SEAL_MANIFEST" "$COMMIT" "$TREE" "$ARTIFACT_SHA" "$CORPUS_SHA"
++  printf 'deterministic release artifact bytes\n' > "$ARTIFACT"
++  rm -f "$ARTIFACT_SEAL_CAPTURE"
++  set +e
++  "$ARTIFACT_SEAL_CHECKER" --manifest "$ARTIFACT_SEAL_MANIFEST" --artifact "$ARTIFACT" -- \
++    "$ARTIFACT_SWAP_PROBE" "$ARTIFACT" "$ARTIFACT_SEAL_CAPTURE" > "$OUT/mutant-artifact-seals.log" 2>&1
++  RC=$?
++  set -e
++  if [ "$RC" -eq 97 ] && [ ! -f "$ARTIFACT_SEAL_CAPTURE" ] && \
++     [ "$(sha256 "$ARTIFACT")" = "$ARTIFACT_SHA" ]; then
++    echo '  killed artifact-seal mutation: downstream modified the unsealed snapshot'
++  else
++    echo '  FAIL: artifact-seal mutation did not expose writable snapshot bytes'
++    sed 's/^/    | /' "$OUT/mutant-artifact-seals.log"
++    FAILED=1
++  fi
++fi
++
+ if [ "$FAILED" -ne 0 ]; then
+   echo 'FG-093 provenance proof FAILED'
+   exit 1
+diff --git a/scripts/release-provenance-gate.py b/scripts/release-provenance-gate.py
+index e3cddef..e08f685 100755
+--- a/scripts/release-provenance-gate.py
++++ b/scripts/release-provenance-gate.py
+@@ -9,6 +9,7 @@ nothing.  This program therefore verifies only; it never writes a manifest.
+ from __future__ import annotations
+ 
+ import argparse
++import fcntl
+ import hashlib
+ import json
+ import os
+@@ -49,6 +50,7 @@ def controlled_git_environment() -> dict[str, str]:
+     environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+     environment["GIT_CONFIG_NOSYSTEM"] = "1"
+     environment["GIT_CONFIG_GLOBAL"] = os.devnull
++    environment["GIT_NO_REPLACE_OBJECTS"] = "1"
+     return environment
+ 
+ 
+@@ -129,6 +131,91 @@ def sha256_file(path: Path, what: str) -> str:
+     return digest.hexdigest()
+ 
+ 
++def seal_artifact(path: Path) -> tuple[str, int]:
++    """Copy the artifact into immutable anonymous storage while hashing it."""
++    required = (
++        "F_ADD_SEALS",
++        "F_GET_SEALS",
++        "F_SEAL_SEAL",
++        "F_SEAL_SHRINK",
++        "F_SEAL_GROW",
++        "F_SEAL_WRITE",
++    )
++    if (
++        not hasattr(os, "memfd_create")
++        or not hasattr(os, "MFD_CLOEXEC")
++        or not hasattr(os, "MFD_ALLOW_SEALING")
++        or any(not hasattr(fcntl, name) for name in required)
++    ):
++        raise Refusal("host cannot create a sealed verified-artifact descriptor")
++
++    source, before = stable_regular_file(path, "artifact")
++    sealed = -1
++    try:
++        try:
++            sealed = os.memfd_create(
++                "fogell-verified-artifact",
++                os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING,
++            )
++        except OSError as error:
++            raise Refusal(f"sealed verified-artifact descriptor cannot be created: {error.strerror}") from error
++
++        digest = hashlib.sha256()
++        with os.fdopen(source, "rb", closefd=False) as source_handle, os.fdopen(
++            sealed, "wb", closefd=False
++        ) as sealed_handle:
++            while block := source_handle.read(1024 * 1024):
++                digest.update(block)
++                sealed_handle.write(block)
++            sealed_handle.flush()
++        unchanged(before, os.fstat(source), "artifact")
++
++        seals = (
++            fcntl.F_SEAL_WRITE
++            | fcntl.F_SEAL_GROW
++            | fcntl.F_SEAL_SHRINK
++            | fcntl.F_SEAL_SEAL
++        )
++        try:
++            fcntl.fcntl(sealed, fcntl.F_ADD_SEALS, seals)
++            applied = fcntl.fcntl(sealed, fcntl.F_GET_SEALS)
++        except OSError as error:
++            raise Refusal(f"verified-artifact descriptor cannot be sealed: {error.strerror}") from error
++        if applied & seals != seals:
++            raise Refusal("verified-artifact descriptor is missing required seals")
++        os.lseek(sealed, 0, os.SEEK_SET)
++        return digest.hexdigest(), sealed
++    except Refusal:
++        if sealed >= 0:
++            os.close(sealed)
++        raise
++    except OSError as error:
++        if sealed >= 0:
++            os.close(sealed)
++        raise Refusal(f"artifact cannot be copied into sealed storage: {error.strerror}") from error
++    finally:
++        os.close(source)
++
++
++def inherited_descriptor_path(descriptor: int) -> str:
++    path = Path("/proc/self/fd") / str(descriptor)
++    try:
++        descriptor_metadata = os.fstat(descriptor)
++        path_metadata = os.stat(path)
++    except OSError as error:
++        raise Refusal(f"verified-artifact descriptor cannot be handed downstream: {error.strerror}") from error
++    if (descriptor_metadata.st_dev, descriptor_metadata.st_ino) != (
++        path_metadata.st_dev,
++        path_metadata.st_ino,
++    ):
++        raise Refusal("verified-artifact descriptor path resolves to different bytes")
++    try:
++        os.set_inheritable(descriptor, True)
++    except OSError as error:
++        raise Refusal(f"verified-artifact descriptor cannot be inherited: {error.strerror}") from error
++    return str(path)
++
++
+ def require_external_path(path: Path, repository: Path, what: str) -> Path:
+     try:
+         resolved = path.resolve(strict=True)
+@@ -238,6 +325,11 @@ def require_no_skip_worktree(repository: Path) -> None:
+         raise Refusal("checkout index contains skip-worktree entries")
+ 
+ 
++def require_no_replacement_refs(repository: Path) -> None:
++    if git_bytes(repository, "for-each-ref", "--format=%(refname)", "refs/replace").strip():
++        raise Refusal("checkout contains Git replacement-object refs")
++
++
+ def required_submodules(repository: Path) -> list[Path]:
+     result: list[Path] = []
+     records = git_bytes(repository, "ls-files", "--stage", "-z").split(b"\0")
+@@ -340,6 +432,7 @@ def require_clean_checkout(repository: Path) -> None:
+         if worktree in visited:
+             raise Refusal("checkout contains a recursive submodule worktree")
+         visited.add(worktree)
++        require_no_replacement_refs(worktree)
+         require_filemode_tracking(worktree)
+         require_no_assume_unchanged(worktree)
+         require_no_skip_worktree(worktree)
+@@ -358,7 +451,7 @@ def require_clean_checkout(repository: Path) -> None:
+         queue.extend(submodules)
+ 
+ 
+-def repository_snapshot(repository: Path, artifact: Path) -> dict[str, str]:
++def repository_snapshot(repository: Path, artifact: Path) -> tuple[dict[str, str], int]:
+     top = Path(git(repository, "rev-parse", "--show-toplevel")).resolve()
+     if top != repository:
+         raise Refusal(f"checker belongs to {repository}, but git reports {top}")
+@@ -366,13 +459,18 @@ def repository_snapshot(repository: Path, artifact: Path) -> dict[str, str]:
+     require_external_path(artifact, repository, "artifact")
+     require_clean_checkout(repository)
+ 
+-    corpus_manifest = repository / "corpus" / "CORPUS-SHA256SUMS"
+-    return {
+-        "commit": git(repository, "rev-parse", "--verify", "HEAD^{commit}"),
+-        "tree": git(repository, "rev-parse", "--verify", "HEAD^{tree}"),
+-        "artifact_sha256": sha256_file(artifact, "artifact"),
+-        "corpus_manifest_sha256": sha256_file(corpus_manifest, "canonical corpus manifest"),
+-    }
++    artifact_sha256, artifact_descriptor = seal_artifact(artifact)
++    try:
++        corpus_manifest = repository / "corpus" / "CORPUS-SHA256SUMS"
++        return {
++            "commit": git(repository, "rev-parse", "--verify", "HEAD^{commit}"),
++            "tree": git(repository, "rev-parse", "--verify", "HEAD^{tree}"),
++            "artifact_sha256": artifact_sha256,
++            "corpus_manifest_sha256": sha256_file(corpus_manifest, "canonical corpus manifest"),
++        }, artifact_descriptor
++    except Exception:
++        os.close(artifact_descriptor)
++        raise
+ 
+ 
+ def require_match(field: str, expected: str, actual: str) -> None:
+@@ -403,15 +501,19 @@ def refuse(message: str) -> NoReturn:
+ def main() -> NoReturn:
+     parsed = arguments()
+     repository = Path(__file__).resolve().parent.parent
++    artifact_descriptor: int | None = None
+ 
+     try:
+         manifest = load_manifest(parsed.manifest, repository)
+-        snapshot = repository_snapshot(repository, parsed.artifact)
++        snapshot, artifact_descriptor = repository_snapshot(repository, parsed.artifact)
+         require_match("commit", manifest["commit"], snapshot["commit"])
+         require_match("tree", manifest["tree"], snapshot["tree"])
+         require_match("artifact_sha256", manifest["artifact_sha256"], snapshot["artifact_sha256"])
+         require_match("corpus_manifest_sha256", manifest["corpus_manifest_sha256"], snapshot["corpus_manifest_sha256"])
++        artifact_descriptor_path = inherited_descriptor_path(artifact_descriptor)
+     except Refusal as error:
++        if artifact_descriptor is not None:
++            os.close(artifact_descriptor)
+         refuse(str(error))
+ 
+     print(
+@@ -424,9 +526,10 @@ def main() -> NoReturn:
+     environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+     environment.update(
+         {
++            "GIT_NO_REPLACE_OBJECTS": "1",
+             "FOGELL_VERIFIED_COMMIT": snapshot["commit"],
+             "FOGELL_VERIFIED_TREE": snapshot["tree"],
+-            "FOGELL_VERIFIED_ARTIFACT": str(parsed.artifact.resolve()),
++            "FOGELL_VERIFIED_ARTIFACT": artifact_descriptor_path,
+             "FOGELL_VERIFIED_ARTIFACT_SHA256": snapshot["artifact_sha256"],
+             "FOGELL_VERIFIED_CORPUS_MANIFEST_SHA256": snapshot["corpus_manifest_sha256"],
+         }
+@@ -434,6 +537,7 @@ def main() -> NoReturn:
+     try:
+         os.execvpe(parsed.command[0], parsed.command, environment)
+     except OSError as error:
++        os.close(artifact_descriptor)
+         refuse(f"verified downstream command could not start: {error}")
+ 
+ 

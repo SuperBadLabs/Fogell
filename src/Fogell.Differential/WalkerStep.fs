@@ -241,6 +241,22 @@ module WalkerStep =
             else
                 None
 
+        // Jenkins' `dir` step is a logical FilePath context change, not a mkdir.
+        // The durable-task boundary materialises that context only after the shell
+        // call has passed argument binding and is actually about to launch. Keeping
+        // this HERE preserves both observable halves of the rule:
+        //   dir('x') { echo 'ok' } -> no x/
+        //   dir('x') { sh 'true' } -> an empty x/ remains
+        // It also keeps malformed shell calls side-effect free. Re-resolving from the
+        // attempt root immediately before creation narrows the interval in which a
+        // path component could be replaced after `dir` admission.
+        let materializeDurableWorkspace () =
+            if not ((step.Name = "sh" || step.Name = "bat") && script.IsSome) then
+                Result.Ok()
+            else
+                Workspace.materializeUnder workspace cwd
+                |> Result.mapError (fun e -> $"durable workspace refused: {e.Describe}")
+
         let result =
             match flagRejection, junitFlagRejection with
             // REFUSED WITHOUT RUNNING. `Executor.runStep` is not reached, so no shell
@@ -250,52 +266,55 @@ module WalkerStep =
             | Some why, _
             | None, Some why -> Executor.refusedBeforeRunning why
             | None, None ->
+                match materializeDurableWorkspace () with
+                | Result.Error why -> Executor.refusedBeforeRunning why
+                | Result.Ok() ->
+                    Executor.runStep
+                        { Name = step.Name
+                          Script = script
+                          Workspace = cwd
+                          WorkspaceRoot = Some workspace
+                          Environment = envForWith ctx.EnvOverlay stage
+                          // FG-174. `returnStdout` CAPTURES instead of printing — Jenkins' console
+                          // shows the xtrace and not the program's output, because durable-task
+                          // calls `captureOutput()`. `returnStatus` does NOT capture, so it is
+                          // deliberately not part of this condition.
+                          CaptureStdout = wantsStdout
+                          JUnitSkipMarkingBuildUnstable = junitSkipMarkingBuildUnstable
+                          JUnitAllowEmptyResults = junitAllowEmptyResults
+                          JUnitSkipOldReportsSince = junitSkipOldReportsSince
+                          JUnitSkipMarkingStageUnstable = junitSkipMarkingStageUnstable
+                          // FG-196. An undeclared deadline is UNBOUNDED — the oracle's
+                          // default. A 120 s constant sat here and aborted any step
+                          // outliving two minutes, invisible to every case that
+                          // finishes in seconds. MEASURED: receipt `undeclared-deadline-unbounded`
+                          // sleeps past the old constant and both engines succeed. None is
+                          // not fail-open: interrupt and failFast still arrive through
+                          // Interrupt, and the executor waits interrupt-only.
+                          TimeoutMs = WalkerCancellation.remainingMs runCtx deadline
+                          OnLine = Some runCtx.Emit
+                          // External cancellation only — a failFast sibling. The
+                          // deadline reaches the shell runner through TimeoutMs and
+                          // self-working steps through DeadlineExpired, so an expired
+                          // timeout is still reported as a timeout.
+                          Interrupt = ctx.Interrupt
+                          // ties inside one poll break on the WALKER's timestamps:
+                          // the sibling stamp against this step's effective deadline
+                          InterruptBeatsDeadline =
+                            Some(fun () ->
+                                let s = ctx.SiblingFailedAt.Value
 
-            Executor.runStep
-                { Name = step.Name
-                  Script = script
-                  Workspace = cwd
-                  WorkspaceRoot = Some workspace
-                  Environment = envForWith ctx.EnvOverlay stage
-                  // FG-174. `returnStdout` CAPTURES instead of printing — Jenkins' console
-                  // shows the xtrace and not the program's output, because durable-task
-                  // calls `captureOutput()`. `returnStatus` does NOT capture, so it is
-                  // deliberately not part of this condition.
-                  CaptureStdout = wantsStdout
-                  JUnitSkipMarkingBuildUnstable = junitSkipMarkingBuildUnstable
-                  JUnitAllowEmptyResults = junitAllowEmptyResults
-                  JUnitSkipOldReportsSince = junitSkipOldReportsSince
-                  JUnitSkipMarkingStageUnstable = junitSkipMarkingStageUnstable
-                  // FG-196. An undeclared deadline is UNBOUNDED — the oracle's
-                  // default. A 120 s constant sat here and aborted any step
-                  // outliving two minutes, invisible to every case that
-                  // finishes in seconds. MEASURED: receipt `undeclared-deadline-unbounded`
-                  // sleeps past the old constant and both engines succeed. None is
-                  // not fail-open: interrupt and failFast still arrive through
-                  // Interrupt, and the executor waits interrupt-only.
-                  TimeoutMs = WalkerCancellation.remainingMs runCtx deadline
-                  OnLine = Some runCtx.Emit
-                  // External cancellation only — a failFast sibling. The
-                  // deadline reaches the shell runner through TimeoutMs and
-                  // self-working steps through DeadlineExpired, so an expired
-                  // timeout is still reported as a timeout.
-                  Interrupt = ctx.Interrupt
-                  // ties inside one poll break on the WALKER's timestamps:
-                  // the sibling stamp against this step's effective deadline
-                  InterruptBeatsDeadline =
-                    Some(fun () ->
-                        let s = ctx.SiblingFailedAt.Value
-
-                        s >= 0L
-                        && (match deadline with
-                            | Some d -> s < d.AtMs
-                            | None -> true))
-                  DeadlineExpired =
-                    deadline |> Option.map (fun d -> fun () -> runCtx.RunClock.ElapsedMilliseconds >= d.AtMs)
-                  Secrets = ctx.Secrets
-                  Named = renderedNamed
-                  Artifacts = Some(ArtifactStore.under artifactRoot)
-                  BuildKey = jobName }
+                                s >= 0L
+                                && (match deadline with
+                                    | Some d -> s < d.AtMs
+                                    | None -> true))
+                          DeadlineExpired =
+                            deadline
+                            |> Option.map (fun d -> fun () -> runCtx.RunClock.ElapsedMilliseconds >= d.AtMs)
+                          Secrets = ctx.Secrets
+                          Named = renderedNamed
+                          Artifacts = Some(ArtifactStore.under artifactRoot)
+                          BuildKey = jobName }
 
         // Jenkins' JUnit step has two outcome channels: the build result and a
         // WarningAction attached to the current Pipeline node. Stage post observes

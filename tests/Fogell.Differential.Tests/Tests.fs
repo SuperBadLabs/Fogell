@@ -1,9 +1,1274 @@
 module Fogell.Differential.Tests
 
 open System
+open System.Runtime.InteropServices
 open Expecto
+open Fogell.Controller.Host
 open Fogell.Differential
+open Fogell.Domain
+open Fogell.Execution
+open Fogell.Groovy.Interpreter
 open Fogell.Ir
+
+[<DllImport("libc")>]
+extern uint32 private geteuid()
+
+let private effectiveIdentityIsRoot () = geteuid() = 0u
+
+/// FG-224. Progressive output leaves the engine at WalkerCtx.Emit, which is
+/// also the one run-scoped masking and ordering boundary.  These tests pin the
+/// publication contract directly so a future transport cannot accidentally
+/// publish raw bytes, reorder parallel lines, or replay the terminal snapshot.
+let progressiveOutputPublication =
+    let binding =
+        { ValueVariable = "TOKEN"
+          PathVariable = "TOKEN_FILE"
+          FilePath = "/not-used-by-this-test"
+          Value = "s3cr3t-value"
+          ValueVariableCarriesPath = false }
+
+    testList
+        "FG-224 progressive output publication"
+        [ test "OnOutput receives each safe line once, in trace order, after masking" {
+              let published = ResizeArray<string>()
+              let ctx = WalkerCtx.create 0L false (Some published.Add)
+
+              ctx.Emit "before"
+              ctx.BindSecrets [ binding ]
+              ctx.Emit "token=s3cr3t-value"
+              ctx.Emit "after"
+
+              let expected = [ "before"; "token=****"; "after" ]
+              Expect.equal (ctx.Output()) expected "the terminal trace stores the masked lines"
+              Expect.equal (List.ofSeq published) expected "progress is masked, ordered, and not replayed"
+          }
+
+          test "parallel publication has exactly the terminal trace order and cardinality" {
+              let published = ResizeArray<string>()
+              let ctx = WalkerCtx.create 0L false (Some published.Add)
+
+              System.Threading.Tasks.Parallel.For(
+                  0,
+                  256,
+                  Action<int>(fun i -> ctx.Emit $"parallel-{i}"))
+              |> ignore
+
+              let terminal = ctx.Output()
+              ctx.FlushOutput()
+              let progressive = List.ofSeq published
+              Expect.equal progressive terminal "the callback is ordered by the same lock as the trace"
+              Expect.equal progressive.Length 256 "every emission is published once"
+              Expect.equal
+                  (progressive |> Set.ofList |> Set.count)
+                  256
+                  "no emission is duplicated or lost"
+          }
+
+          test "a transformed secret is retained for terminal refusal but never published" {
+              let published = ResizeArray<string>()
+              let ctx = WalkerCtx.create 0L false (Some published.Add)
+              ctx.BindSecrets [ binding ]
+
+              ctx.Emit "eulav-t3rc3s"
+
+              Expect.equal
+                  (ctx.Output())
+                  [ "eulav-t3rc3s" ]
+                  "the terminal leak guard still receives the evidence"
+              Expect.isEmpty published "unsafe transformed bytes never cross the progressive boundary"
+          }
+
+          test "a slow callback cannot hold the output lock or block a later emitter" {
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let published = ResizeArray<string>()
+
+              let ctx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          published.Add line
+
+                          if line = "slow" then
+                              callbackEntered.Set()
+                              releaseCallback.Wait()))
+
+              let first = Threading.Tasks.Task.Run(fun () -> ctx.Emit "slow")
+
+              try
+                  Expect.isTrue (callbackEntered.Wait 2000) "the first callback started"
+                  let second = Threading.Tasks.Task.Run(fun () -> ctx.Emit "fast")
+                  Expect.isTrue (second.Wait 500) "a second Emit does not wait for the slow callback"
+                  Expect.equal (ctx.Output()) [ "slow"; "fast" ] "trace state remains independently readable"
+              finally
+                  releaseCallback.Set()
+
+              first.GetAwaiter().GetResult()
+              ctx.FlushOutput()
+              Expect.equal (List.ofSeq published) [ "slow"; "fast" ] "one consumer retains FIFO order"
+          }
+
+          test "a callback may synchronously wait for a reentrant emission without deadlock" {
+              let published = ResizeArray<string>()
+              let mutable emit = ignore
+
+              let ctx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          published.Add line
+
+                          if line = "outer" then
+                              let nested = Threading.Tasks.Task.Run(fun () -> emit "inner")
+                              if not (nested.Wait 500) then
+                                  failwith "reentrant emission was blocked by callback publication"))
+
+              emit <- ctx.Emit
+              let outer = Threading.Tasks.Task.Run(fun () -> emit "outer")
+              Expect.isTrue
+                  (Threading.SpinWait.SpinUntil((fun () -> outer.IsCompleted), 2000))
+                  "the outer callback and nested emitter complete"
+              outer.GetAwaiter().GetResult()
+              ctx.FlushOutput()
+              Expect.equal (ctx.Output()) [ "outer"; "inner" ] "reentrant trace order is stable"
+              Expect.equal (List.ofSeq published) [ "outer"; "inner" ] "reentrant publication is exact"
+          }
+
+          test "publisher failure is typed, sticky, and never retried as build output" {
+              let mutable attempts = 0
+
+              let ctx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun _ ->
+                          attempts <- attempts + 1
+                          raise (IO.IOException "event sink unavailable")))
+
+              Expect.throwsT<OutputPublicationException>
+                  (fun () -> ctx.Emit "one")
+                  "the publisher infrastructure failure escapes Emit"
+              Expect.throwsT<OutputPublicationException>
+                  (fun () -> ctx.FlushOutput())
+                  "terminal publication observes the same stored failure"
+              Expect.throwsT<OutputPublicationException>
+                  (fun () -> ctx.Emit "two")
+                  "later output cannot continue beyond a broken event stream"
+              Expect.equal attempts 1 "a failed callback is never retried or duplicated"
+          }
+
+          test "runPersisted preserves publisher failure for host reconciliation" {
+              let hooks =
+                  { OnOutput = fun _ -> raise (IO.IOException "event sink unavailable")
+                    IsRestartedRun = false
+                    ShouldExecute = fun _ _ -> true
+                    StageWasCommitted = fun _ -> false
+                    SkippedStatus = fun _ _ -> None
+                    SkippedStageWarning = fun _ _ -> None
+                    OnStepStarted = fun _ _ _ -> ()
+                    OnStepStageWarning = fun _ _ _ -> ()
+                    OnStepFinished = fun _ _ _ _ -> ()
+                    OnStageCommitted = fun _ -> ()
+                    OnRetryAttempt = fun _ _ -> ()
+                    RetryAttemptsSoFar = fun _ -> 1
+                    PollInputAnswer = None
+                    OnInputClosed = fun _ _ _ -> ()
+                    OnInputAnswerVoided = fun _ _ _ -> () }
+
+              let root =
+                  IO.Path.Combine(
+                      IO.Path.GetTempPath(),
+                      $"fogell-output-publication-{Guid.NewGuid():N}")
+
+              IO.Directory.CreateDirectory root |> ignore
+
+              try
+                  Expect.throwsT<OutputPublicationException>
+                      (fun () ->
+                          FogellSide.runPersisted
+                              []
+                              root
+                              "publisher-failure"
+                              2
+                              true
+                              hooks
+                              """pipeline {
+    agent any
+    stages {
+        stage('Build') {
+            steps {
+                echo 'hello'
+            }
+        }
+    }
+}
+"""
+                          |> ignore)
+                      "the persisted boundary must not collapse event transport into Result.Error"
+              finally
+                  IO.Directory.Delete(root, true)
+          } ]
+
+let controllerEventDrainBudgets =
+    let frame (value: string) =
+        Text.Encoding.ASCII.GetBytes(Convert.ToBase64String(Text.Encoding.UTF8.GetBytes value) + "\n")
+
+    let state () =
+        { Offset = 0L
+          Tail = Array.empty
+          DiscardingOversizedFrame = false }
+
+    testList
+        "FG-224 controller event drain budgets"
+        [ test "a fixed backlog is consumed in bounded, exactly-once batches" {
+              let expected = [ for i in 0 .. 99 -> $"line-{i}" ]
+              let bytes = expected |> List.collect (frame >> Array.toList) |> Array.ofList
+              use stream = new IO.MemoryStream(bytes)
+              let cursor = state ()
+              let observed = ResizeArray<string>()
+              let mutable batches = 0
+              let mutable reachedEof = false
+
+              while not reachedEof do
+                  let result =
+                      EventStream.drainBatch stream cursor 1024 4096 3 (function
+                          | Encoded value ->
+                              value
+                              |> Text.Encoding.ASCII.GetString
+                              |> Convert.FromBase64String
+                              |> Text.Encoding.UTF8.GetString
+                              |> observed.Add
+                              true
+                          | Oversized -> false)
+
+                  batches <- batches + 1
+                  Expect.isTrue (result.FramesProcessed <= 3) "one poll never exceeds its frame budget"
+                  Expect.isTrue (result.BytesProcessed <= 4096) "one poll never exceeds its byte budget"
+                  reachedEof <- result.ReachedEof
+
+              Expect.isGreaterThan batches 1 "the backlog cannot be drained by one unbounded poll"
+              Expect.equal (List.ofSeq observed) expected "offset and tail preserve exact order without replay"
+          }
+
+          test "a producer extending the stream during every callback cannot extend one poll forever" {
+              use stream = new IO.MemoryStream()
+              let seed = frame "seed"
+              stream.Write(seed, 0, seed.Length)
+              stream.Position <- 0L
+              let cursor = state ()
+              let mutable published = 0
+
+              let result =
+                  EventStream.drainBatch stream cursor 1024 4096 5 (fun _ ->
+                      published <- published + 1
+
+                      if published <= 100 then
+                          let position = stream.Position
+                          stream.Position <- stream.Length
+                          stream.Write(seed, 0, seed.Length)
+                          stream.Position <- position
+
+                      true)
+
+              Expect.equal published 5 "the frame budget returns control while output is still arriving"
+              Expect.equal result.FramesProcessed 5 "exactly the configured work was performed"
+              Expect.isFalse result.ReachedEof "new backlog is left for the next control-plane turn"
+          }
+
+          test "a byte budget split inside a frame preserves its tail for the next poll" {
+              let encoded = frame (String('x', 200))
+              use stream = new IO.MemoryStream(encoded)
+              let cursor = state ()
+              let observed = ResizeArray<byte array>()
+              let first = EventStream.drainBatch stream cursor 1024 17 10 (fun value ->
+                  match value with Encoded bytes -> observed.Add bytes | Oversized -> ()
+                  true)
+
+              Expect.equal first.FramesProcessed 0 "an incomplete frame is not published"
+              Expect.equal cursor.Tail.Length 17 "only the inspected prefix is retained"
+
+              let mutable reachedEof = first.ReachedEof
+              while not reachedEof do
+                  let next = EventStream.drainBatch stream cursor 1024 17 10 (fun value ->
+                      match value with Encoded bytes -> observed.Add bytes | Oversized -> ()
+                      true)
+                  reachedEof <- next.ReachedEof
+
+              Expect.equal observed.Count 1 "the completed frame is published once"
+              Expect.equal observed[0] encoded[.. encoded.Length - 2] "the carried bytes are exact"
+          }
+
+          test "an oversized frame spanning slices emits one refusal marker" {
+              let bytes = Array.append (Array.create 40 (byte 'A')) [| byte '\n' |]
+              use stream = new IO.MemoryStream(bytes)
+              let cursor = state ()
+              let mutable markers = 0
+              let mutable encoded = 0
+              let mutable reachedEof = false
+
+              while not reachedEof do
+                  let result = EventStream.drainBatch stream cursor 10 7 4 (function
+                      | Oversized -> markers <- markers + 1; true
+                      | Encoded _ -> encoded <- encoded + 1; true)
+                  reachedEof <- result.ReachedEof
+
+              Expect.equal markers 1 "discard mode ends with exactly one named marker"
+              Expect.equal encoded 0 "no oversized payload fragment is mispublished as a frame"
+          }
+
+          test "a refused fenced append leaves its newline and every later frame unconsumed" {
+              let first = frame "first"
+              let second = frame "second"
+              let third = frame "third"
+              let bytes = Array.concat [ first; second; third ]
+              use stream = new IO.MemoryStream(bytes)
+              let cursor = state ()
+              let observed = ResizeArray<string>()
+
+              let result = EventStream.drainBatch stream cursor 1024 4096 10 (function
+                  | Oversized -> false
+                  | Encoded value ->
+                      let text =
+                          value
+                          |> Text.Encoding.ASCII.GetString
+                          |> Convert.FromBase64String
+                          |> Text.Encoding.UTF8.GetString
+                      observed.Add text
+                      text = "first")
+
+              Expect.isTrue result.AuthorityLost "publication refusal is surfaced immediately"
+              Expect.equal (List.ofSeq observed) [ "first"; "second" ] "the later third frame was never attempted"
+              Expect.equal
+                  cursor.Offset
+                  (int64 (first.Length + second.Length - 1))
+                  "the refused frame's newline is not consumed"
+              Expect.equal cursor.Tail second[.. second.Length - 2] "the refused frame remains an exact retry boundary"
+          }
+
+          test "an extinct producer's finite tail beyond the former 16 MiB cap is published exactly once" {
+              let expected = [ for i in 0 .. 1539 -> $"{i:D4}:{String('x', 8192)}" ]
+              let backing = expected |> List.collect (frame >> Array.toList) |> Array.ofList
+              Expect.isGreaterThan backing.Length (16 * 1024 * 1024) "the regression crosses the removed aggregate cap"
+              let cursor = state ()
+              let observed = ResizeArray<int>()
+              let mutable controlChecks = 0
+
+              let openStream () =
+                  Some(new IO.MemoryStream(backing) :> IO.Stream)
+
+              let completion =
+                  EventStream.drainExtinguishedBoundary
+                      openStream
+                      cursor
+                      (16 * 1024)
+                      (256 * 1024)
+                      16
+                      (fun () -> controlChecks <- controlChecks + 1; true)
+                      (function
+                      | Encoded value ->
+                          let text =
+                              value
+                              |> Text.Encoding.ASCII.GetString
+                              |> Convert.FromBase64String
+                              |> Text.Encoding.UTF8.GetString
+                          let index = observed.Count
+                          Expect.isLessThan index expected.Length "no extra frame is published"
+                          Expect.equal text expected[index] "each frame retains every byte and its exact position"
+                          observed.Add index
+                          true
+                      | Oversized -> false)
+
+              Expect.equal completion.Stop EndOfStream "the complete frozen boundary authorizes terminal truth"
+              Expect.isTrue (EventStream.terminalPublicationAllowed completion) "complete EOF is terminal-safe"
+              Expect.equal (List.ofSeq observed) [ 0 .. 1539 ] "every tail frame is published once in order"
+              Expect.isGreaterThan controlChecks 1 "control is interleaved between bounded slices"
+          }
+
+          test "late cancellation drains the frozen post-exit boundary before terminal arbitration" {
+              let expected = [ "first"; "second"; "third" ]
+              let backing = expected |> List.collect (frame >> Array.toList) |> Array.ofList
+              let cursor = state ()
+              let observed = ResizeArray<string>()
+              let mutable controlChecks = 0
+              let mutable cancelled = false
+
+              let completion =
+                  EventStream.drainExtinguishedBoundary
+                      (fun () -> Some(new IO.MemoryStream(backing) :> IO.Stream))
+                      cursor
+                      1024
+                      4096
+                      1
+                      (fun () ->
+                          controlChecks <- controlChecks + 1
+
+                          if controlChecks = 2 then
+                              cancelled <- true
+
+                          WorkerControl.continueExtinguishedDrain cancelled false false)
+                      (function
+                      | Encoded value ->
+                          value
+                          |> Text.Encoding.ASCII.GetString
+                          |> Convert.FromBase64String
+                          |> Text.Encoding.UTF8.GetString
+                          |> observed.Add
+                          true
+                      | Oversized -> false)
+
+              Expect.isTrue cancelled "cancellation is first observed between bounded drain slices"
+              Expect.isGreaterThan controlChecks 2 "the control plane remains interleaved after cancellation"
+              Expect.equal completion.Stop EndOfStream "late cancellation does not truncate extinct evidence"
+              Expect.equal (List.ofSeq observed) expected "every frozen frame is published exactly once"
+              Expect.equal
+                  (WorkerControl.finalExitKind ChildExitKind.Natural true cancelled false false)
+                  ChildExitKind.Natural
+                  "a complete extinct drain stays eligible for terminal Store arbitration"
+              Expect.equal
+                  (WorkerControl.naturalExitFinalAction cancelled false false)
+                  WorkerControl.NaturalExitFinalAction.PublishTerminal
+                  "the accepted cancellation is delegated to PublishTerminal"
+
+              for cause, interrupted, leaseLost in
+                  [ "shutdown", true, false
+                    "lease loss", false, true ] do
+                  Expect.isFalse
+                      (WorkerControl.continueExtinguishedDrain cancelled interrupted leaseLost)
+                      $"{cause} still stops the finite drain immediately"
+                  Expect.equal
+                      (WorkerControl.finalExitKind ChildExitKind.Natural true cancelled interrupted leaseLost)
+                      ChildExitKind.Forced
+                      $"{cause} still requires conservative reconciliation"
+
+              Expect.equal
+                  (WorkerControl.finalExitKind ChildExitKind.Natural false cancelled false false)
+                  ChildExitKind.Forced
+                  "cancellation cannot authorize an incomplete terminal drain"
+              Expect.equal
+                  (WorkerControl.finalExitKind ChildExitKind.Forced true cancelled false false)
+                  ChildExitKind.Forced
+                  "the captured exit kind preserves a pre-extinction forced boundary"
+          }
+
+          test "growth after the extinction snapshot fails closed" {
+              let seed = frame "hot"
+              let stream = new IO.MemoryStream()
+              stream.Write(seed, 0, seed.Length)
+              stream.Position <- 0L
+              let cursor = state ()
+
+              let completion =
+                  EventStream.drainExtinguishedBoundary
+                      (fun () -> Some(stream :> IO.Stream))
+                      cursor
+                      1024
+                      4096
+                      1
+                      (fun () -> true)
+                      (fun _ -> stream.Write(seed, 0, seed.Length); true)
+
+              Expect.equal completion.Stop StreamChangedAfterExtinction "new bytes contradict producer extinction"
+              Expect.isFalse (EventStream.terminalPublicationAllowed completion) "unsafe growth cannot authorize terminal truth"
+          }
+
+          test "an incomplete final frame fails closed" {
+              let backing = Text.Encoding.ASCII.GetBytes(Convert.ToBase64String(Text.Encoding.UTF8.GetBytes "partial"))
+              let cursor = state ()
+
+              let completion =
+                  EventStream.drainExtinguishedBoundary
+                      (fun () -> Some(new IO.MemoryStream(backing) :> IO.Stream))
+                      cursor
+                      1024
+                      4096
+                      16
+                      (fun () -> true)
+                      (fun _ -> true)
+
+              Expect.equal completion.Stop IncompleteFrameAtEndOfStream "unterminated evidence is named"
+              Expect.isFalse (EventStream.terminalPublicationAllowed completion) "truncated evidence cannot authorize terminal truth"
+          } ]
+
+let controllerWorkerScheduling =
+    let organization suffix =
+        OrganizationId(Guid.Parse $"00000000-0000-0000-0000-{suffix}")
+
+    testList
+        "FG-224 controller worker scheduling"
+        [ test "busy organizations rotate while empty organizations do not block claims" {
+              let low = organization "000000000001"
+              let empty = organization "000000000002"
+              let later = organization "000000000003"
+              let mutable cursor = None
+              let attempts = ResizeArray<OrganizationId list>()
+
+              let scan () =
+                  let probed = ResizeArray<OrganizationId>()
+
+                  let claimed =
+                      [ later; empty; low; low ]
+                      |> WorkerScheduling.organizationsAfter cursor
+                      |> Array.tryFind (fun candidate ->
+                          probed.Add candidate
+                          candidate = low || candidate = later)
+
+                  cursor <- claimed
+                  attempts.Add(List.ofSeq probed)
+                  claimed
+
+              let claims = [ for _ in 1..6 -> scan () ]
+
+              Expect.equal
+                  claims
+                  [ Some low; Some later; Some low; Some later; Some low; Some later ]
+                  "a continuously busy low UUID cannot starve a later organization"
+              Expect.equal
+                  (List.ofSeq attempts)
+                  [ [ low ]; [ empty; later ]; [ low ]; [ empty; later ]; [ low ]; [ empty; later ] ]
+                  "ineligible organizations are skipped and rotation remains bounded to two claim cycles"
+          }
+
+          test "a removed cursor and newly inserted organizations retain deterministic rotation" {
+              let low = organization "000000000010"
+              let removed = organization "000000000020"
+              let inserted = organization "000000000030"
+              let high = organization "000000000040"
+
+              Expect.equal
+                  ([ high; low; inserted ]
+                   |> WorkerScheduling.organizationsAfter (Some removed)
+                   |> Array.toList)
+                  [ inserted; high; low ]
+                  "a missing cursor resumes at its sorted successor and wraps exactly once"
+
+              Expect.equal
+                  ([ inserted; low ]
+                   |> WorkerScheduling.organizationsAfter (Some high)
+                   |> Array.toList)
+                  [ low; inserted ]
+                  "removing the final organization wraps to the first current organization"
+          } ]
+
+let controllerWorkerTiming =
+    testList
+        "FG-224 controller worker timing"
+        [ test "a poll at the one-third lease boundary is accepted" {
+              Expect.equal
+                  (ControllerConfig.validateWorkerTiming 3333 10)
+                  (Ok())
+                  "the integer boundary retains a full final-third renewal margin"
+          }
+
+          test "a poll one millisecond beyond the one-third lease boundary is rejected" {
+              Expect.equal
+                  (ControllerConfig.validateWorkerTiming 3334 10)
+                  (Error
+                      "FOGELL_WORKER_POLL_MS must be no more than one third of FOGELL_WORKER_LEASE_SECONDS (3333 ms for 10 s)")
+                  "startup names both variables and the exact safe bound"
+          }
+
+          test "a longer lease admits a proportionally longer poll" {
+              Expect.equal
+                  (ControllerConfig.validateWorkerTiming 60000 180)
+                  (Ok())
+                  "the configured poll maximum remains usable with a sufficient lease"
+          }
+
+          test "shutdown interrupts an active maximum-length poll immediately" {
+              use stopping = new System.Threading.CancellationTokenSource()
+              let activePoll = WorkerControl.waitForActivePoll 60000 stopping.Token
+
+              stopping.Cancel()
+
+              Expect.isTrue
+                  (activePoll.Wait(TimeSpan.FromSeconds 1.0))
+                  "a sixty-second active poll wakes inside the shutdown grace window"
+              Expect.equal
+                  activePoll.Result
+                  WorkerControl.ActivePollResult.ShutdownRequested
+                  "shutdown is returned as control flow rather than a cancelled worker task"
+          }
+
+          test "an interrupted active poll retains the durable shutdown disposition" {
+              Expect.equal
+                  (ProcessGroup.handoff ChildExitKind.Forced ProcessGroupStopResult.Extinguished)
+                  ChildHandoff.ReconciliationRequired
+                  "verified process extinction still cannot publish terminal truth after shutdown"
+              Expect.equal
+                  (WorkerControl.reconciliationReason
+                      false
+                      false
+                      true
+                      ProcessGroupStopResult.Extinguished
+                      "worker_exception")
+                  "controller_shutdown"
+                  "the non-throwing wake reaches the reason persisted by RequireReconciliation"
+          }
+
+          test "late cancellation delegates natural terminal arbitration to the Store" {
+              let decide cancelled interrupted leaseLost =
+                  WorkerControl.naturalExitFinalAction cancelled interrupted leaseLost
+
+              Expect.equal
+                  (decide false false false)
+                  WorkerControl.NaturalExitFinalAction.PublishTerminal
+                  "an unchanged final refresh publishes the drained terminal journal"
+              Expect.equal
+                  (decide true false false)
+                  WorkerControl.NaturalExitFinalAction.PublishTerminal
+                  "cancellation first observed after natural exit and complete drain is Store-arbitrated"
+
+              for cancelled, interrupted, leaseLost, cause in
+                  [ false, true, false, "shutdown"
+                    true, true, false, "shutdown concurrent with cancellation"
+                    false, false, true, "lease loss"
+                    true, false, true, "lease loss concurrent with cancellation" ] do
+                  Expect.equal
+                      (decide cancelled interrupted leaseLost)
+                      WorkerControl.NaturalExitFinalAction.RequireReconciliation
+                      $"{cause} preserves the conservative reconciliation boundary"
+          }
+
+          test "idle state-root readiness is probed at most once per second" {
+              let mutable now = 0L
+              let mutable probes = 0
+              let mutable ready = true
+              let cache =
+                  ControllerConfig.StateRootReadinessCache(
+                      ControllerConfig.stateRootProbeIntervalMilliseconds,
+                      (fun () -> now),
+                      (fun () ->
+                          probes <- probes + 1
+                          ready))
+
+              Expect.isTrue (cache.Cached()) "the first claim boundary probes readiness"
+              ready <- false
+              for poll in 1L..39L do
+                  now <- poll * 25L
+                  Expect.isTrue
+                      (cache.Cached())
+                      "each minimum-interval idle poll uses the cached result"
+              Expect.equal probes 1 "forty 25 ms loops would still perform one durable probe"
+              now <- 1000L
+              Expect.isFalse (cache.Cached()) "the cadence boundary refreshes readiness"
+              Expect.equal probes 2 "one new interval performs exactly one new probe"
+          }
+
+          test "a cached state-root failure recovers on the next cadence boundary" {
+              let mutable now = 0L
+              let mutable ready = false
+              let cache =
+                  ControllerConfig.StateRootReadinessCache(
+                      ControllerConfig.stateRootProbeIntervalMilliseconds,
+                      (fun () -> now),
+                      (fun () -> ready))
+
+              Expect.isFalse (cache.Cached()) "an unavailable root suppresses claims"
+              ready <- true
+              now <- 999L
+              Expect.isFalse (cache.Cached()) "recovery waits for the bounded probe cadence"
+              now <- 1000L
+              Expect.isTrue (cache.Cached()) "the next cadence probe admits recovered storage"
+          }
+
+          test "a post-offer fresh probe overrides cached readiness before materialization" {
+              let mutable now = 0L
+              let mutable probes = 0
+              let mutable ready = true
+              let cache =
+                  ControllerConfig.StateRootReadinessCache(
+                      ControllerConfig.stateRootProbeIntervalMilliseconds,
+                      (fun () -> now),
+                      (fun () ->
+                          probes <- probes + 1
+                          ready))
+
+              Expect.isTrue (cache.Cached()) "cached readiness may authorize an offer"
+              ready <- false
+              Expect.isFalse (cache.Fresh()) "the post-offer boundary always probes again"
+              Expect.equal probes 2 "the forced check bypasses the one-second cache"
+              Expect.isFalse
+                  (cache.Cached())
+                  "the failed fresh result prevents another claim without probing again"
+              Expect.equal probes 2 "the forced failure also updates the idle cache"
+          }
+
+          test "post-offer dependency loss selects one immediate recovery before execution" {
+              let unavailable = ResizeArray<WorkerControl.PostOfferDependency>()
+              let mutable launcherChecks = 0
+              let mutable stateRootChecks = 0
+
+              let afterOffer launcherReady stateRootReady =
+                  WorkerControl.afterOfferReady
+                      (fun () ->
+                          launcherChecks <- launcherChecks + 1
+                          launcherReady)
+                      (fun () ->
+                          stateRootChecks <- stateRootChecks + 1
+                          stateRootReady)
+                      unavailable.Add
+
+              Expect.isFalse (afterOffer false true) "launcher loss refuses the offered claim"
+              Expect.equal launcherChecks 1 "launcher readiness is checked first"
+              Expect.equal stateRootChecks 0 "launcher loss short-circuits the durable probe"
+              Expect.equal
+                  (List.ofSeq unavailable)
+                  [ WorkerControl.PostOfferDependency.ExecutionLaunchers ]
+                  "launcher loss invokes the shared recovery exactly once with its precise cause"
+              Expect.equal
+                  (WorkerControl.postOfferDependencyName unavailable[0])
+                  "execution launchers"
+                  "launcher refusal retains its log cause"
+
+              unavailable.Clear()
+              Expect.isFalse (afterOffer true false) "state-root loss refuses the offered claim"
+              Expect.equal launcherChecks 2 "the second boundary rechecks launchers"
+              Expect.equal stateRootChecks 1 "state-root readiness follows a live launcher"
+              Expect.equal
+                  (List.ofSeq unavailable)
+                  [ WorkerControl.PostOfferDependency.StateRoot ]
+                  "state-root loss invokes the same recovery exactly once with its precise cause"
+
+              unavailable.Clear()
+              Expect.isTrue (afterOffer true true) "live dependencies admit execution"
+              Expect.equal launcherChecks 3 "the admitted boundary checks launchers once"
+              Expect.equal stateRootChecks 2 "the admitted boundary checks state root once"
+              Expect.isEmpty unavailable "the ready path does not requeue the offered claim"
+          }
+
+          test "pre-launch setup dispositions exactly once before diagnostics" {
+              let order = ResizeArray<string>()
+              let setupError = InvalidOperationException("next sequence unavailable")
+              let mutable observedDisposition = None
+
+              let failed : int option =
+                  WorkerControl.prepareBeforeChildLaunch
+                      (fun () ->
+                          order.Add "setup"
+                          raise setupError)
+                      (fun () ->
+                          order.Add "requeue"
+                          true)
+                      (fun observedError disposition ->
+                          order.Add "diagnostic"
+                          Expect.isTrue
+                              (Object.ReferenceEquals(observedError, setupError))
+                              "the exact setup exception reaches diagnostics"
+                          observedDisposition <- Some disposition)
+
+              Expect.equal failed None "a failed setup cannot cross Process.Start"
+              Expect.equal
+                  (List.ofSeq order)
+                  [ "setup"; "requeue"; "diagnostic" ]
+                  "one durable disposition precedes the first diagnostic"
+              Expect.equal
+                  observedDisposition
+                  (Some WorkerControl.PreLaunchDisposition.Requeued)
+                  "successful fenced recovery is classified exactly"
+
+              order.Clear()
+              observedDisposition <- None
+              let lostAuthority : int option =
+                  WorkerControl.prepareBeforeChildLaunch
+                      (fun () ->
+                          order.Add "setup"
+                          raise setupError)
+                      (fun () ->
+                          order.Add "requeue"
+                          false)
+                      (fun _ disposition ->
+                          order.Add "diagnostic"
+                          observedDisposition <- Some disposition)
+
+              Expect.equal lostAuthority None "lost recovery authority still blocks Process.Start"
+              Expect.equal
+                  (List.ofSeq order)
+                  [ "setup"; "requeue"; "diagnostic" ]
+                  "authority loss is returned once before diagnostics"
+              Expect.equal
+                  observedDisposition
+                  (Some WorkerControl.PreLaunchDisposition.AuthorityLost)
+                  "a false fenced Store result remains distinct from success and exception"
+
+              order.Clear()
+              observedDisposition <- None
+              let prepared =
+                  WorkerControl.prepareBeforeChildLaunch
+                      (fun () ->
+                          order.Add "setup"
+                          42)
+                      (fun () ->
+                          order.Add "unexpected-requeue"
+                          true)
+                      (fun _ disposition ->
+                          order.Add "unexpected-diagnostic"
+                          observedDisposition <- Some disposition)
+
+              Expect.equal prepared (Some 42) "successful setup returns its owned launch inputs"
+              Expect.equal (List.ofSeq order) [ "setup" ] "success performs no disposition or diagnostic"
+              Expect.equal observedDisposition None "success has no recovery outcome"
+
+              order.Clear()
+              let requeueError = InvalidOperationException("database unavailable")
+              let mutable observedRequeueError = None
+              let failedRequeue : int option =
+                  WorkerControl.prepareBeforeChildLaunch
+                      (fun () ->
+                          order.Add "setup"
+                          raise setupError)
+                      (fun () ->
+                          order.Add "requeue"
+                          raise requeueError)
+                      (fun _ disposition ->
+                          order.Add "diagnostic"
+
+                          match disposition with
+                          | WorkerControl.PreLaunchDisposition.RequeueFailed error ->
+                              observedRequeueError <- Some error
+                          | other -> failtestf "expected requeue failure, got %A" other)
+
+              Expect.equal failedRequeue None "a throwing Store callback still blocks launch"
+              Expect.equal
+                  (List.ofSeq order)
+                  [ "setup"; "requeue"; "diagnostic" ]
+                  "a throwing requeue is attempted once and classified before diagnostics"
+              Expect.isTrue
+                  (Object.ReferenceEquals(observedRequeueError.Value, requeueError))
+                  "the exact Store failure reaches the outcome diagnostic"
+          } ]
+
+let controllerStateRoot =
+    let variables =
+        [ "FOGELL_DATABASE_URL"
+          "FOGELL_MAINTENANCE_DATABASE_URL"
+          "FOGELL_API_TOKEN_FILE"
+          "FOGELL_LISTEN_URL"
+          "FOGELL_STATE_ROOT"
+          "FOGELL_RUN_HOST_PATH"
+          "FOGELL_LOCAL_TRUST_POOL"
+          "FOGELL_MAX_PIPELINE_BYTES"
+          "FOGELL_MAX_LOG_CHUNKS"
+          "FOGELL_WORKER_POLL_MS"
+          "FOGELL_WORKER_LEASE_SECONDS" ]
+
+    let withConfig stateRoot configure assertion =
+        let previous =
+            variables
+            |> List.map (fun name -> name, Environment.GetEnvironmentVariable name)
+
+        let fixtureRoot =
+            IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-config-{Guid.NewGuid():N}")
+
+        let tokenPath = IO.Path.Combine(fixtureRoot, "api-token")
+        let runHostPath = IO.Path.Combine(fixtureRoot, "Fogell.Run.Host")
+
+        try
+            IO.Directory.CreateDirectory fixtureRoot |> ignore
+            IO.File.WriteAllText(tokenPath, String('t', 32))
+            IO.File.WriteAllText(runHostPath, "test host placeholder")
+            IO.File.SetUnixFileMode(
+                runHostPath,
+                IO.UnixFileMode.UserRead
+                ||| IO.UnixFileMode.UserWrite
+                ||| IO.UnixFileMode.UserExecute)
+
+            Environment.SetEnvironmentVariable("FOGELL_DATABASE_URL", "postgres://runtime")
+            Environment.SetEnvironmentVariable("FOGELL_MAINTENANCE_DATABASE_URL", "postgres://maintenance")
+            Environment.SetEnvironmentVariable("FOGELL_API_TOKEN_FILE", tokenPath)
+            Environment.SetEnvironmentVariable("FOGELL_LISTEN_URL", "http://127.0.0.1:8080")
+            Environment.SetEnvironmentVariable("FOGELL_STATE_ROOT", stateRoot)
+            Environment.SetEnvironmentVariable("FOGELL_RUN_HOST_PATH", runHostPath)
+            Environment.SetEnvironmentVariable("FOGELL_LOCAL_TRUST_POOL", "local")
+            Environment.SetEnvironmentVariable("FOGELL_MAX_PIPELINE_BYTES", "1024")
+            Environment.SetEnvironmentVariable("FOGELL_MAX_LOG_CHUNKS", "100")
+            Environment.SetEnvironmentVariable("FOGELL_WORKER_POLL_MS", "1000")
+            Environment.SetEnvironmentVariable("FOGELL_WORKER_LEASE_SECONDS", "10")
+            configure fixtureRoot tokenPath runHostPath
+            assertion (ControllerConfig.load ())
+        finally
+            for name, value in previous do
+                Environment.SetEnvironmentVariable(name, value)
+
+            if IO.Directory.Exists fixtureRoot then
+                IO.Directory.Delete(fixtureRoot, true)
+
+    testSequenced
+        (testList
+            "FG-224 controller state root"
+            [ test "a missing state root remains required rather than defaulting to the cwd" {
+                  withConfig null (fun _ _ _ -> ()) (fun result ->
+                      Expect.equal
+                          result
+                          (Error "FOGELL_STATE_ROOT is required")
+                          "startup remains fail-closed when no durable root is configured")
+              }
+
+              test "a relative state root is refused before normalization" {
+                  let relative = $".fogell-relative-state-{Guid.NewGuid():N}"
+                  let accidentallyNormalized = IO.Path.GetFullPath relative
+
+                  try
+                      withConfig relative (fun _ _ _ -> ()) (fun result ->
+                          Expect.equal
+                              result
+                              (Error "FOGELL_STATE_ROOT must be absolute")
+                              "the configured relative path is rejected rather than bound to the process cwd")
+                      Expect.isFalse
+                          (IO.Directory.Exists accidentallyNormalized)
+                          "validation does not create the normalized relative directory"
+                  finally
+                      if IO.Directory.Exists accidentallyNormalized then
+                          IO.Directory.Delete(accidentallyNormalized, true)
+              }
+
+              test "a relative API token path is refused before normalization or state creation" {
+                  let stateRoot =
+                      IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-token-state-{Guid.NewGuid():N}")
+
+                  try
+                      withConfig
+                          stateRoot
+                          (fun _ tokenPath _ ->
+                              Environment.SetEnvironmentVariable(
+                                  "FOGELL_API_TOKEN_FILE",
+                                  IO.Path.GetFileName tokenPath))
+                          (fun result ->
+                              Expect.equal
+                                  result
+                                  (Error "FOGELL_API_TOKEN_FILE must be absolute")
+                                  "the raw relative token path is rejected before GetFullPath can bind it to the cwd")
+
+                      Expect.isFalse
+                          (IO.Directory.Exists stateRoot)
+                          "invalid token configuration cannot create durable state"
+                  finally
+                      if IO.Directory.Exists stateRoot then
+                          IO.Directory.Delete(stateRoot, true)
+              }
+
+              test "a non-executable run host is refused before state creation" {
+                  let stateRoot =
+                      IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-run-host-state-{Guid.NewGuid():N}")
+
+                  try
+                      withConfig
+                          stateRoot
+                          (fun _ _ runHostPath ->
+                              IO.File.SetUnixFileMode(
+                                  runHostPath,
+                                  IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite))
+                          (fun result ->
+                              Expect.equal
+                                  result
+                                  (Error "FOGELL_RUN_HOST_PATH does not name an executable file")
+                                  "an existing regular file without an execute bit is not launchable")
+
+                      Expect.isFalse
+                          (IO.Directory.Exists stateRoot)
+                          "an unlaunchable run host cannot create durable state"
+                  finally
+                      if IO.Directory.Exists stateRoot then
+                          IO.Directory.Delete(stateRoot, true)
+              }
+
+              test "run host execute permissions are evaluated for the effective identity" {
+                  let stateRoot =
+                      IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-other-execute-state-{Guid.NewGuid():N}")
+
+                  try
+                      withConfig
+                          stateRoot
+                          (fun _ _ runHostPath ->
+                              // The fixture belongs to this process. For an unprivileged owner,
+                              // the kernel selects the owner class and ignores OtherExecute;
+                              // Linux root may execute because at least one execute bit exists.
+                              IO.File.SetUnixFileMode(
+                                  runHostPath,
+                                  IO.UnixFileMode.UserRead
+                                  ||| IO.UnixFileMode.UserWrite
+                                  ||| IO.UnixFileMode.OtherExecute))
+                          (fun result ->
+                              if effectiveIdentityIsRoot () then
+                                  match result with
+                                  | Ok _ -> ()
+                                  | Error error ->
+                                      failtestf "root's effective execute access was refused: %s" error
+                              else
+                                  Expect.equal
+                                      result
+                                      (Error "FOGELL_RUN_HOST_PATH does not name an executable file")
+                                      "an other-only bit does not grant the owning unprivileged identity execute access")
+
+                      if effectiveIdentityIsRoot () then
+                          Expect.isTrue
+                              (IO.Directory.Exists stateRoot)
+                              "Linux root may execute a regular file when any execute bit is present"
+                          Expect.isEmpty
+                              (IO.Directory.GetFileSystemEntries stateRoot)
+                              "the successful root readiness probe is removed"
+                      else
+                          Expect.isFalse
+                              (IO.Directory.Exists stateRoot)
+                              "a run host inaccessible to the unprivileged identity cannot create durable state"
+                  finally
+                      if IO.Directory.Exists stateRoot then
+                          IO.Directory.Delete(stateRoot, true)
+              }
+
+              test "state root write access follows the effective identity without changing existing contents" {
+                  let stateRoot =
+                      IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-readonly-state-{Guid.NewGuid():N}")
+
+                  let sentinel = IO.Path.Combine(stateRoot, "operator-data")
+
+                  try
+                      IO.Directory.CreateDirectory stateRoot |> ignore
+                      IO.File.WriteAllText(sentinel, "preserve me")
+
+                      IO.File.SetUnixFileMode(
+                          stateRoot,
+                          IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserExecute)
+
+                      withConfig stateRoot (fun _ _ _ -> ()) (fun result ->
+                          if effectiveIdentityIsRoot () then
+                              match result with
+                              | Ok _ -> ()
+                              | Error error ->
+                                  failtestf "root's effective write access was refused: %s" error
+                          else
+                              Expect.equal
+                                  result
+                                  (Error "FOGELL_STATE_ROOT cannot be created and written by the service identity")
+                                  "an unprivileged identity is refused when the real create/write probe fails")
+
+                      Expect.sequenceEqual
+                          (IO.Directory.GetFileSystemEntries stateRoot)
+                          [| sentinel |]
+                          "neither the failed unprivileged probe nor the successful root probe leaves an artifact"
+                      Expect.equal
+                          (IO.File.ReadAllText sentinel)
+                          "preserve me"
+                          "the failed probe does not modify existing data"
+                  finally
+                      if IO.Directory.Exists stateRoot then
+                          IO.File.SetUnixFileMode(
+                              stateRoot,
+                              IO.UnixFileMode.UserRead
+                              ||| IO.UnixFileMode.UserWrite
+                              ||| IO.UnixFileMode.UserExecute)
+                          IO.Directory.Delete(stateRoot, true)
+              }
+
+              test "an absolute state root is accepted and normalized without changing other settings" {
+                  let stateFixtureRoot =
+                      IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-state-{Guid.NewGuid():N}")
+
+                  let fixture =
+                      IO.Path.Combine(
+                          stateFixtureRoot,
+                          "parent",
+                          "..",
+                          "state")
+
+                  let expected = IO.Path.GetFullPath fixture
+
+                  try
+                      withConfig fixture (fun _ _ _ -> ()) (function
+                          | Error error -> failtestf "absolute state root was refused: %s" error
+                          | Ok config ->
+                              Expect.equal config.StateRoot expected "accepted roots retain canonical normalization"
+                              Expect.equal config.MaxPipelineBytes 1024 "pipeline limit parsing is unchanged"
+                              Expect.equal config.MaxLogChunks 100 "log limit parsing is unchanged"
+                              Expect.equal config.PollMilliseconds 1000 "poll parsing is unchanged"
+                              Expect.equal config.LeaseSeconds 10 "lease parsing is unchanged"
+                              Expect.isTrue (IO.Directory.Exists expected) "the accepted state directory is created"
+                              Expect.isEmpty
+                                  (IO.Directory.GetFileSystemEntries expected)
+                                  "a successful readiness probe is removed before startup continues")
+                  finally
+                      if IO.Directory.Exists stateFixtureRoot then
+                          IO.Directory.Delete(stateFixtureRoot, true)
+              } ])
+
+let controllerProcessGroupExtinction =
+    let delivered _ = ProcessSignalResult.Delivered
+    let noPause () = ()
+
+    testList
+        "FG-224 controller process-group extinction"
+        [ test "Linux probe errno distinguishes absence, presence, and uncertainty" {
+              Expect.equal
+                  (ProcessGroup.classifyProbe -1 3)
+                  ProcessPresence.Absent
+                  "ESRCH is the only absent process-group result"
+              Expect.equal
+                  (ProcessGroup.classifyProbe -1 1)
+                  ProcessPresence.Present
+                  "EPERM proves a target exists even though it cannot be signalled"
+              Expect.equal
+                  (ProcessGroup.classifyProbe -1 22)
+                  ProcessPresence.Uncertain
+                  "unexpected errno cannot authorize a handoff"
+          }
+
+          test "an already absent leader and group need no signals" {
+              let mutable signals = 0
+              let signal _ = signals <- signals + 1; ProcessSignalResult.Delivered
+
+              let result =
+                  ProcessGroup.ensureExtinguished
+                      1
+                      1
+                      (fun () -> ProcessPresence.Absent)
+                      (fun () -> ProcessPresence.Absent)
+                      signal
+                      signal
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.Extinguished "absence is verified directly"
+              Expect.equal signals 0 "a dead process group is never signalled"
+          }
+
+          test "outer cleanup is executed exactly once" {
+              let mutable cleanups = 0
+              let cleanup =
+                  ProcessGroup.once (fun () ->
+                      cleanups <- cleanups + 1
+                      ProcessGroupStopResult.Extinguished)
+
+              Expect.equal (cleanup ()) ProcessGroupStopResult.Extinguished "first caller performs cleanup"
+              Expect.equal (cleanup ()) ProcessGroupStopResult.Extinguished "finally receives the cached result"
+              Expect.equal cleanups 1 "a reused numeric process-group id is never signalled twice"
+          }
+
+          test "the pre-setsid race terminates the leader even before its group exists" {
+              let mutable identity = RecordedProcessState.SameIdentity 17
+              let mutable leaderSignals = []
+
+              let signalLeader signal =
+                  leaderSignals <- leaderSignals @ [ signal ]
+                  identity <- RecordedProcessState.Absent
+                  ProcessSignalResult.Delivered
+
+              let result =
+                  ProcessGroup.ensureIdentityBoundExtinguished
+                      1
+                      1
+                      4242
+                      (fun () -> identity)
+                      (fun () -> ProcessPresence.Absent)
+                      (fun _ -> ProcessSignalResult.TargetAbsent)
+                      signalLeader
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.Extinguished "leader and not-yet-created group are both absent"
+              Expect.equal leaderSignals [ 15 ] "TERM reaches the launcher directly"
+          }
+
+          test "a reused outer PID cannot authorize TERM or KILL of the replacement group" {
+              let mutable groupSignals = []
+              let mutable leaderSignals = []
+
+              let result =
+                  ProcessGroup.ensureIdentityBoundExtinguished
+                      0
+                      0
+                      4242
+                      (fun () -> RecordedProcessState.Changed)
+                      (fun () -> ProcessPresence.Present)
+                      (fun signal ->
+                          groupSignals <- groupSignals @ [ signal ]
+                          ProcessSignalResult.Delivered)
+                      (fun signal ->
+                          leaderSignals <- leaderSignals @ [ signal ]
+                          ProcessSignalResult.Delivered)
+                      noPause
+
+              Expect.equal
+                  result
+                  ProcessGroupStopResult.StatusUncertain
+                  "a populated numeric PGID after identity reuse fails closed"
+              Expect.isEmpty groupSignals "the replacement process group receives no signal"
+              Expect.isEmpty leaderSignals "the replacement process receives no signal"
+          }
+
+          test "a descendant surviving its leader is killed before extinction succeeds" {
+              let mutable group = ProcessPresence.Present
+              let mutable groupSignals = []
+
+              let signalGroup signal =
+                  groupSignals <- groupSignals @ [ signal ]
+
+                  if signal = 9 then
+                      group <- ProcessPresence.Absent
+
+                  ProcessSignalResult.Delivered
+
+              let result =
+                  ProcessGroup.ensureExtinguished
+                      1
+                      1
+                      (fun () -> ProcessPresence.Absent)
+                      (fun () -> group)
+                      signalGroup
+                      delivered
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.Extinguished "KILL is followed by a verified absent probe"
+              Expect.equal groupSignals [ 15; 9 ] "the whole group receives TERM then KILL"
+          }
+
+          test "a persistent group fails closed" {
+              let result =
+                  ProcessGroup.ensureExtinguished
+                      0
+                      0
+                      (fun () -> ProcessPresence.Absent)
+                      (fun () -> ProcessPresence.Present)
+                      delivered
+                      delivered
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.Persisted "persistence cannot authorize handoff"
+          }
+
+          test "an ambiguous final probe fails closed" {
+              let result =
+                  ProcessGroup.ensureExtinguished
+                      0
+                      0
+                      (fun () -> ProcessPresence.Absent)
+                      (fun () -> ProcessPresence.Uncertain)
+                      delivered
+                      delivered
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.StatusUncertain "unknown status cannot authorize handoff"
+          }
+
+          test "outer extinction permits only natural terminal publication" {
+              Expect.equal
+                  (ProcessGroup.handoff ChildExitKind.Natural ProcessGroupStopResult.Extinguished)
+                  ChildHandoff.NaturalTerminalAllowed
+                  "a naturally completed Run.Host may publish its journal terminal"
+              Expect.equal
+                  (ProcessGroup.handoff ChildExitKind.Forced ProcessGroupStopResult.Extinguished)
+                  ChildHandoff.ReconciliationRequired
+                  "outer extinction cannot prove nested step sessions ended after a forced stop"
+          }
+
+          test "natural exit still fails closed when outer cleanup is not certain" {
+              Expect.equal
+                  (ProcessGroup.handoff ChildExitKind.Natural ProcessGroupStopResult.Persisted)
+                  ChildHandoff.ReconciliationRequired
+                  "a persistent outer group blocks terminal publication"
+              Expect.equal
+                  (ProcessGroup.handoff ChildExitKind.Natural ProcessGroupStopResult.StatusUncertain)
+                  ChildHandoff.ReconciliationRequired
+                  "an uncertain outer probe blocks terminal publication"
+          } ]
 
 /// FG-002f. The acceptance this ticket actually demanded: emit each look-alike FROM A
 /// BUILD and assert it survives normalisation.
@@ -223,6 +1488,7 @@ let stringModel =
             (positional |> List.mapi (fun i _ -> $"#{i}"))
             @ (named |> List.map fst)
           Block = []
+          HasBlock = false
           LiteralNamedArgs = Set.ofList literalNamed
           LiteralPositionalArgs = Set.ofList literalPos
           ExpressionArgs = Set.ofList exprArgs
@@ -282,16 +1548,25 @@ let stringModel =
               for (why, st, key, raw, expected) in cases do
                   Expect.equal (GString.render env st key raw) expected why
 
-              // An INHERITED process variable participates in expressions exactly as
-              // it does in the simple-name fallback — measured: declarative resolves a
-              // bare `${PATH}` from the agent environment and succeeds, so an
-              // expression on the same name must not raise.
-              Environment.SetEnvironmentVariable("FOGELL_OSVAR_PROBE", "osval")
+              // FG-222. Approved metadata is supplied explicitly through the same
+              // map as declarations. Expression and simple paths agree without a
+              // process-global probe that races other tests.
+              let withPath = Map.add "PATH" "/fg222/bin:/usr/bin:/bin" env
 
               Expect.equal
-                  (GString.render env (step [ "m", "${FOGELL_OSVAR_PROBE.toUpperCase()}" ] [] [] [] [] []) "m" "${FOGELL_OSVAR_PROBE.toUpperCase()}")
-                  "OSVAL"
-                  "inherited environment reaches expression evaluation"
+                  (GString.render withPath (step [ "m", "${PATH.toUpperCase()}" ] [] [] [] [] []) "m" "${PATH.toUpperCase()}")
+                  "/FG222/BIN:/USR/BIN:/BIN"
+                  "explicit PATH reaches expression evaluation"
+
+              for name in [ "FOGELL_CREDENTIALS"; "DATABASE_URL"; "CONTROLLER_API_TOKEN"; "SSH_AUTH_SOCK" ] do
+                  let envLookup = $"${{env.{name}}}"
+                  let complex = $"${{env.{name} == null ? 'absent' : 'present'}}"
+                  let bare = $"${{{name}}}"
+                  Expect.equal (GString.render env (step [ "m", envLookup ] [] [] [] [] []) "m" envLookup) "null" $"{name} env lookup is absent"
+                  Expect.equal (GString.render env (step [ "m", complex ] [] [] [] [] []) "m" complex) "absent" $"{name} expression is absent"
+                  Expect.throws
+                      (fun () -> GString.render env (step [ "m", bare ] [] [] [] [] []) "m" bare |> ignore)
+                      $"{name} bare lookup cannot fall through to the controller"
 
               // LAZY branches do not raise: Groovy never evaluates the untaken arm,
               // so a missing name there must not fail a build Jenkins accepts.
@@ -586,7 +1861,8 @@ let stringModel =
 /// tests are what let it be replaced by evidence rather than a timestamp.
 let sealBindsCaseSource =
     let mkTrace output =
-        { Result = "success"
+        { Disposition = ExecutedOrRuntime
+          Result = "success"
           Output = output
           WorkspaceHash = "abc123"
           WorkspaceFiles = []
@@ -656,7 +1932,8 @@ let concurrentSealIsOrderStable =
     // BLOCKED FG-161: a seal verifier would have flagged those two as tampered on every
     // single run, and a check that cries wolf twice per run is worse than no check.
     let mkTrace concurrent output =
-        { Result = "success"
+        { Disposition = ExecutedOrRuntime
+          Result = "success"
           Output = output
           WorkspaceHash = "ws-hash"
           WorkspaceFiles = []
@@ -811,6 +2088,90 @@ let concurrentSealIsOrderStable =
               Expect.equal a.OutputComparisonNotes b.OutputComparisonNotes "the same folds, listed in the same order"
               Expect.equal a.Seal b.Seal "so the seal does not move either"
           }
+
+          test "a deciding HOME fold stores a stable receipt without hiding equal literals" {
+              let make concurrent fogellHome jenkinsOutput fogellOutput =
+                  let env = [ "/var/jenkins_home", "${HOME}"; fogellHome, "${HOME}" ]
+
+                  Compare.receiptWithStableEnvironment
+                      env
+                      "home.Jenkinsfile"
+                      (Text.Encoding.UTF8.GetBytes "pipeline { }")
+                      "2.568.1"
+                      env
+                      (Result.Ok(mkTrace concurrent jenkinsOutput))
+                      (Result.Ok(mkTrace concurrent fogellOutput))
+
+              let first =
+                  make false "/tmp/fogell-diff-first/_agent_home" [ "/var/jenkins_home" ] [ "/tmp/fogell-diff-first/_agent_home" ]
+
+              let second =
+                  make false "/tmp/fogell-diff-second/_agent_home" [ "/var/jenkins_home" ] [ "/tmp/fogell-diff-second/_agent_home" ]
+
+              Expect.equal first.Seal second.Seal "a fresh secure run root does not reseal the evidence"
+              Expect.equal first.Jenkins.Value.Output [ "${HOME}" ] "the Jenkins fold side is canonical"
+              Expect.equal first.Fogell.Value.Output [ "${HOME}" ] "the Fogell fold side is canonical"
+
+              let literal =
+                  make false "/tmp/fogell-diff-literal/_agent_home" [ "/var/jenkins_home" ] [ "/var/jenkins_home" ]
+
+              Expect.isEmpty literal.OutputComparisonNotes "byte-equal literals need no fold"
+              Expect.equal
+                  literal.Jenkins.Value.Output
+                  [ "/var/jenkins_home" ]
+                  "a value not named by a deciding fold stays literal"
+
+              for concurrent in [ false; true ] do
+                  let fogellHome = "/tmp/fogell-diff-mixed/_agent_home"
+                  let equalLiteral = "literal=/var/jenkins_home"
+                  let mixed =
+                      make
+                          concurrent
+                          fogellHome
+                          [ "/var/jenkins_home"; equalLiteral ]
+                          [ fogellHome; equalLiteral ]
+
+                  Expect.isNonEmpty mixed.OutputComparisonNotes "the mixed control uses a HOME fold"
+                  Expect.contains mixed.Jenkins.Value.Output "${HOME}" "the deciding occurrence is stable"
+                  Expect.contains
+                      mixed.Jenkins.Value.Output
+                      equalLiteral
+                      "a separate byte-equal literal remains literal"
+                  Expect.contains
+                      mixed.Fogell.Value.Output
+                      equalLiteral
+                      "the byte-equal literal stays literal on both sides"
+
+              for concurrent in [ false; true ] do
+                  let environment =
+                      [ "JPATH", "${PATH}"
+                        "FPATH", "${PATH}"
+                        "JHOME", "${HOME}"
+                        "FHOME", "${HOME}" ]
+
+                  let pathOnly =
+                      Compare.receiptWithStableEnvironment
+                          [ "JHOME", "${HOME}"; "FHOME", "${HOME}" ]
+                          "path-only.Jenkinsfile"
+                          (Text.Encoding.UTF8.GetBytes "pipeline { }")
+                          "2.568.1"
+                          environment
+                          (Result.Ok(mkTrace concurrent [ "JPATH:JHOME"; "JHOME" ]))
+                          (Result.Ok(mkTrace concurrent [ "FPATH:JHOME"; "JHOME" ]))
+
+                  Expect.isNonEmpty pathOnly.OutputComparisonNotes "PATH decides the mixed fold"
+                  Expect.contains
+                      pathOnly.Jenkins.Value.Output
+                      "JPATH:JHOME"
+                      "HOME text in a PATH-decided pair remains literal"
+                  Expect.contains
+                      pathOnly.Jenkins.Value.Output
+                      "JHOME"
+                      "a separate byte-equal HOME literal remains literal"
+                  Expect.isFalse
+                      ((String.concat "\n" pathOnly.ComparisonContract).Contains "RECEIPT STABILITY")
+                      "no artifact value is claimed stable when HOME did not decide the pair"
+          }
         ]
 
 let silenceIsPerEngine =
@@ -820,7 +2181,8 @@ let silenceIsPerEngine =
     // a Fogell defect. Measured with a `script { sh ... }` probe: fogell=failure, zero
     // output, no DiagnosticSilence in the receipt.
     let trace result reported output =
-        { Result = result
+        { Disposition = ExecutedOrRuntime
+          Result = result
           Output = output
           WorkspaceHash = "ws"
           WorkspaceFiles = []
@@ -950,7 +2312,8 @@ let caseSnapshotIsOneRead =
 
 let concurrentFoldAccounting =
     let mkTrace output =
-        { Result = "success"
+        { Disposition = ExecutedOrRuntime
+          Result = "success"
           Output = output
           WorkspaceHash = "not-collected"
           WorkspaceFiles = []
@@ -1045,7 +2408,8 @@ let concurrentFoldAccounting =
 
 let continuationResolution =
     let mkTrace output =
-        { Result = "success"
+        { Disposition = ExecutedOrRuntime
+          Result = "success"
           Output = output
           WorkspaceHash = "not-collected"
           WorkspaceFiles = []
@@ -1184,6 +2548,245 @@ let timestampPrefixIsConditional =
                   (Trace.normaliseLineWhen true indented)
                   (Some trimmed)
                   "an engine's prefix is at column zero; a build's is not"
+          } ]
+
+/// FG-118. Timestamp coverage belongs to the lines that survive the complete
+/// contextual normaliser, not to the raw console. Keeping the prefix bit beside
+/// its own line is load-bearing: filtering first and zipping by index recreates
+/// the same false `all` as counting raw prefixes independently.
+let timestampCoverageUsesComparedSurvivors =
+    let timestamp = "[2026-08-03T03:54:07.729Z] "
+    let stamped line = timestamp + line
+
+    let normalise declaresTimestamps lines =
+        Trace.normaliseOutputShapedWithTimestampCoverage
+            declaresTimestamps
+            false
+            []
+            []
+            lines
+
+    let trace counts =
+        { Disposition = ExecutedOrRuntime
+          Result = "success"
+          Output = [ "visible" ]
+          WorkspaceHash = "workspace"
+          WorkspaceFiles = []
+          Timestamps = counts
+          Concurrent = false
+          EngineNotes = []
+          ReportedFailureReason = false }
+
+    let receipt file jenkinsCounts fogellCounts =
+        Compare.receipt
+            file
+            (Text.Encoding.UTF8.GetBytes "pipeline { }")
+            "2.568.1"
+            []
+            (Result.Ok(trace jenkinsCounts))
+            (Result.Ok(trace fogellCounts))
+
+    testList
+        "FG-118 timestamp coverage uses the exact compared survivors"
+        [ test "A1 stamped graph narration cannot offset an unstamped survivor" {
+              let raw =
+                  [ stamped "[Pipeline] Start of Pipeline"
+                    stamped "[Pipeline] echo"
+                    "visible"
+                    stamped "[Pipeline] End of Pipeline" ]
+
+              let output, counts = normalise true raw
+
+              Expect.equal output [ "visible" ] "only the build output survives"
+              Expect.equal
+                  (Trace.normaliseOutputShaped true false [] [] raw)
+                  output
+                  "the existing text-only API projects the same survivor list"
+              Expect.equal counts (0, 1) "the suppressed prefixes are not evidence"
+              Expect.equal (Trace.timestampCoverage counts) "none" "the unstamped survivor decides coverage"
+          }
+
+          test "A2 mixed stamped and unstamped survivors are partial" {
+              let output, counts =
+                  normalise
+                      true
+                      [ stamped "[Pipeline] Start of Pipeline"
+                        stamped "[Pipeline] echo"
+                        stamped "+ echo stamped"
+                        "unstamped"
+                        stamped "[Pipeline] End of Pipeline" ]
+
+              Expect.equal output [ "+ echo stamped"; "unstamped" ] "both build lines survive"
+              Expect.equal counts (1, 2) "only the stamped survivor is counted"
+              Expect.equal (Trace.timestampCoverage counts) "partial" "one of two is partial"
+          }
+
+          test "A3 unstamped suppressed narration does not dilute all survivors" {
+              let output, counts =
+                  normalise
+                      true
+                      [ "[Pipeline] Start of Pipeline"
+                        "[Pipeline] echo"
+                        stamped "+ echo stamped"
+                        "[Pipeline] End of Pipeline" ]
+
+              Expect.equal output [ "+ echo stamped" ] "the stamped build line survives"
+              Expect.equal counts (1, 1) "the denominator excludes raw narration"
+              Expect.equal (Trace.timestampCoverage counts) "all" "every survivor is stamped"
+          }
+
+          test "A4 a stamped line suppressed as a diagnostic yields empty coverage" {
+              let output, counts = normalise true [ stamped "ERROR: refused before output" ]
+              Expect.isEmpty output "diagnostics are compared through the reason bit, not output"
+              Expect.equal counts (0, 0) "a suppressed prefix is not a compared prefix"
+              Expect.equal (Trace.timestampCoverage counts) "none" "an empty survivor set is none"
+          }
+
+          test "A5 without a declaration a timestamp-shaped user line stays literal" {
+              let literal = stamped "printed by the build"
+              let output, counts = normalise false [ literal ]
+              Expect.equal output [ literal ] "shape alone never makes decoration"
+              Expect.equal counts (0, 1) "an undeclared literal contributes no coverage"
+              Expect.equal (Trace.timestampCoverage counts) "none" "the option is absent"
+          }
+
+          test "A6 ANSI before a real timestamp retains prefix provenance" {
+              let decorated = "\u001b[32m" + stamped "+ echo colour" + "\u001b[0m"
+              let mutable enumerations = 0
+
+              let oneShot =
+                  seq {
+                      enumerations <- enumerations + 1
+
+                      if enumerations > 1 then
+                          failwith "timestamp normalisation enumerated its input twice"
+
+                      yield decorated
+                  }
+
+              let output, counts = normalise true oneShot
+              Expect.equal output [ "+ echo colour" ] "both engine decorations are stripped"
+              Expect.equal counts (1, 1) "ANSI does not hide timestamp provenance"
+              Expect.equal (Trace.timestampCoverage counts) "all" "the only survivor was stamped"
+              Expect.equal enumerations 1 "output and coverage are derived in one input pass"
+          }
+
+          test "A7 cross-line warning suppression keeps flags attached to their source lines" {
+              let output, counts =
+                  normalise
+                      true
+                      [ stamped
+                            "Warning: A secret was passed to \"echo\" using Groovy String interpolation, which is insecure."
+                        stamped "Affected argument(s) used the following variable(s): [TOKEN]"
+                        "visible-after-warning" ]
+
+              Expect.equal output [ "visible-after-warning" ] "the warning sequence is contextual narration"
+              Expect.equal counts (0, 1) "deleted leading rows do not shift their flags onto the survivor"
+              Expect.equal (Trace.timestampCoverage counts) "none" "the survivor itself was unstamped"
+          }
+
+          test "A8 only exact positive equality classifies all" {
+              Expect.equal (Trace.timestampCoverage (0, 0)) "none" "empty evidence is none"
+              Expect.equal (Trace.timestampCoverage (1, 0)) "invalid" "a positive zero-denominator pair is invalid"
+              Expect.equal (Trace.timestampCoverage (2, 1)) "invalid" "an over-count is invalid"
+              Expect.equal (Trace.timestampCoverage (-1, 1)) "invalid" "a negative stamped count is invalid"
+              Expect.equal (Trace.timestampCoverage (0, -1)) "invalid" "a negative total is invalid"
+              Expect.equal (Trace.timestampCoverage (1, 1)) "all" "exact positive equality is all"
+              Expect.equal (Trace.timestampCoverage (1, 2)) "partial" "strictly interior coverage is partial"
+
+              let contract = String.concat "\n" Trace.comparisonContract
+              Expect.stringContains contract "both counts come from its final survivor set" "new receipts state the exact rule"
+              Expect.isFalse (contract.Contains "approximate") "new receipts do not claim the retired approximation"
+              Expect.isFalse (contract.Contains "stamped RAW") "new receipts do not describe the retired numerator"
+          }
+
+          test "A9 an invalid side diverges by engine and never by shared classification" {
+              let verdict, _ = Compare.traces [] (trace (1, 0)) (trace (0, 0))
+
+              match verdict with
+              | Diverged [ (InvalidTimestampCounts("jenkins", 1, 0) as reason) ] ->
+                  Expect.stringContains
+                      reason.Describe
+                      "engine=jenkins stamped=1 total=0"
+                      "the diagnostic preserves the engine and impossible counts"
+              | other -> failtest $"expected the invalid Jenkins tuple alone, got {other}"
+          }
+
+          test "A10 equally invalid sides cannot cancel into Proven" {
+              let verdict, _ = Compare.traces [] (trace (0, -1)) (trace (0, -1))
+
+              match verdict with
+              | Diverged
+                  [ InvalidTimestampCounts("jenkins", 0, -1)
+                    InvalidTimestampCounts("fogell", 0, -1) ] ->
+                  ()
+              | other -> failtest $"expected one named divergence per invalid engine, got {other}"
+          }
+
+          test "A11 an invalid zero-stamped tuple renders visibly and cannot verify" {
+              let validReceipt = receipt "timestamp-counts.Jenkinsfile" (0, 0) (0, 0)
+              let invalidReceipt = receipt "timestamp-counts.Jenkinsfile" (0, -1) (0, -1)
+              let validText = Compare.render validReceipt
+              let invalidText = Compare.render invalidReceipt
+
+              Expect.isFalse (validText.Contains "timestamps():") "valid none remains quiet"
+              Expect.stringContains
+                  invalidText
+                  "timestamps(): jenkins=INVALID (0/-1) fogell=INVALID (0/-1)"
+                  "invalid tuples are never hidden by the stamped-positive render gate"
+              Expect.notEqual invalidText validText "invalid evidence cannot render like valid none"
+
+              match
+                  Compare.verifySealedText
+                      (Compare.receiptFileName invalidReceipt.File)
+                      invalidText
+              with
+              | Compare.SealUnreadable _
+              | Compare.SealRefused _ -> ()
+              | other -> failtest $"a generated invalid receipt must not verify, got {other.Describe}"
+          }
+
+          test "A12 the verifier accepts only valid timestamp count relations" {
+              let validReceipt = receipt "valid-partial.Jenkinsfile" (1, 2) (1, 2)
+              let validText = Compare.render validReceipt
+              let name = Compare.receiptFileName validReceipt.File
+
+              Expect.equal
+                  (Compare.verifySealedText name validText)
+                  Compare.SealValid
+                  "the control receipt is structurally valid before mutation"
+
+              for bad in
+                  [ "PARTIAL (-1/2)"
+                    "PARTIAL (1/-2)"
+                    "PARTIAL (1/0)"
+                    "PARTIAL (0/2)"
+                    "PARTIAL (2/1)"
+                    "PARTIAL (2/2)"
+                    "all (0)"
+                    "all (-1)"
+                    "PARTIAL (999999999999/1000000000000)"
+                    "PARTIAL (oops)" ] do
+                  let forged = validText.Replace("PARTIAL (1/2)", bad)
+
+                  match Compare.verifySealedText name forged with
+                  | Compare.SealUnreadable _
+                  | Compare.SealRefused _ -> ()
+                  | other -> failtest $"invalid coverage '{bad}' must be unreadable/refused, got {other.Describe}"
+          }
+
+          test "A13 an unrecognized lexical coverage class fails by seal mismatch" {
+              let validReceipt = receipt "valid-all.Jenkinsfile" (1, 1) (1, 1)
+              let validText = Compare.render validReceipt
+              let name = Compare.receiptFileName validReceipt.File
+              let forged = validText.Replace("jenkins=all (1)", "jenkins=alligator (1)")
+
+              Expect.notEqual forged validText "the hostile lexical class is planted nonvacuously"
+
+              match Compare.verifySealedText name forged with
+              | Compare.SealMismatch(stored, recomputed) ->
+                  Expect.notEqual recomputed stored "<unparseable> participates in seal recomputation"
+              | other -> failtest $"an unknown lexical class must fail by seal mismatch, got {other.Describe}"
           } ]
 
 /// FG-174. `WalkerRules.returnContract` is the ONE answer to "what does this call
@@ -2522,9 +4125,10 @@ let genuineNullRuntime =
 
                   withWorkspace (fun root workspace ->
                       match FogellSide.run [] root "job" (pipeline duplicate) with
-                      | Ok trace -> failtestf "%s duplicate binding unexpectedly ran: %A" key trace
-                      | Error why ->
-                          Expect.stringContains why "malformed_syntax" $"{key}: Groovy rejects the duplicate map key"
+                      | Error why -> failtestf "%s duplicate binding remained a harness error: %s" key why
+                      | Ok trace ->
+                          Expect.equal trace.Disposition RefusedBeforeExecution $"{key}: reference refusal is typed"
+                          Expect.equal trace.Result "failure" $"{key}: terminal result"
                           Expect.isFalse
                               (IO.Directory.Exists(IO.Path.Combine(workspace, "reports")))
                               $"{key}: the compile-shaped duplicate refusal happened before report setup"
@@ -2714,6 +4318,161 @@ let genuineNullRuntime =
                       "all four wrapper results reached Groovy with the measured values")
           } ]
 
+/// FG-203. Jenkins' `env` is one live object. A Groovy alias observes wrapper
+/// overlays and their restoration; replacing the VMap behind the owned `env`
+/// cell leaves every previously captured alias pointing at a stale snapshot.
+let liveEnvAliasRestoration =
+    let withWorkspace label (f: string -> string -> unit) =
+        let root =
+            IO.Path.Combine(
+                IO.Path.GetTempPath(),
+                $"fogell-fg203-{label}-{Guid.NewGuid():N}"
+            )
+
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            f root workspace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    let hostileSource =
+        "pipeline { agent any stages { stage('probe') { steps { script { "
+        + "def before = env; def inside; "
+        + "echo \"before:${before.FG203_ALIAS_SCOPE}:${before.FG203_ALIAS_INNER}:${env.FG203_ALIAS_SCOPE}\"; "
+        + "withEnv(['FG203_ALIAS_SCOPE=outer']) { inside = env; "
+        + "echo \"outer:${before.FG203_ALIAS_SCOPE}:${inside.FG203_ALIAS_SCOPE}:${env.FG203_ALIAS_INNER}\"; "
+        + "withEnv(['FG203_ALIAS_SCOPE=inner', 'FG203_ALIAS_INNER=yes']) { "
+        + "echo \"inner:${before.FG203_ALIAS_SCOPE}:${inside.FG203_ALIAS_SCOPE}:${env.FG203_ALIAS_INNER}\" }; "
+        + "echo \"restored:${before.FG203_ALIAS_SCOPE}:${inside.FG203_ALIAS_SCOPE}:${env.FG203_ALIAS_INNER}\"; "
+        + "try { withEnv(['FG203_ALIAS_SCOPE=fault', 'FG203_ALIAS_INNER=fault']) { "
+        + "echo \"during-fault:${before.FG203_ALIAS_SCOPE}:${inside.FG203_ALIAS_SCOPE}:${env.FG203_ALIAS_INNER}\"; "
+        + "def ignored = 1 / 0 } } catch (Exception caught) { }; "
+        + "echo \"after-fault:${before.FG203_ALIAS_SCOPE}:${inside.FG203_ALIAS_SCOPE}:${env.FG203_ALIAS_INNER}\" }; "
+        + "echo \"after:${before.FG203_ALIAS_SCOPE}:${inside.FG203_ALIAS_SCOPE}:${env.FG203_ALIAS_SCOPE}\"; "
+        + "if (before.FG203_ALIAS_SCOPE == null && inside.FG203_ALIAS_SCOPE == null "
+        + "&& env.FG203_ALIAS_SCOPE == null && env.FG203_ALIAS_INNER == null) { "
+        + "sh 'printf fresh > alias-result.txt' } else { sh 'printf stale > alias-result.txt' } "
+        + "} } } } }"
+
+    testList
+        "FG-203 live hosted env aliases"
+        [ test "aliases track nested overlays and normal plus fault restoration" {
+              withWorkspace "live" (fun root workspace ->
+                  match FogellSide.run [] root "job" hostileSource with
+                  | Error why -> failtestf "live env alias pipeline was refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the caught body fault does not fail the build"
+                      Expect.equal
+                          trace.Output
+                          [ "before:null:null:null"
+                            "outer:outer:outer:null"
+                            "inner:inner:inner:yes"
+                            "restored:outer:outer:null"
+                            "during-fault:fault:fault:fault"
+                            "after-fault:outer:outer:null"
+                            "after:null:null:null"
+                            "+ printf fresh" ]
+                          "aliases captured before and inside the wrapper remain one live environment view"
+                      Expect.equal
+                          (IO.File.ReadAllText(IO.Path.Combine(workspace, "alias-result.txt")))
+                          "fresh"
+                          "the fresh branch ran, so null restoration was observed rather than inferred")
+          }
+
+          test "an Env.empty host reuses one escaped map across later wrappers and finally" {
+              let overlay: (string * string) list ref = ref []
+              let log = ResizeArray<string>()
+
+              let host: PerformStep =
+                  { Perform =
+                      fun _ name positional _ runBody ->
+                          match name, positional with
+                          | "withEnv", [ VList entries ] ->
+                              let bindings =
+                                  entries.Value
+                                  |> List.choose (function
+                                      | VStr entry ->
+                                          match entry.Split([| '=' |], 2) with
+                                          | [| key; value |] -> Some(key, value)
+                                          | _ -> None
+                                      | _ -> None)
+
+                              let saved = overlay.Value
+                              overlay.Value <- bindings @ saved
+
+                              try
+                                  runBody |> Option.iter (fun run -> run ())
+                              finally
+                                  overlay.Value <- saved
+                          | "echo", [ value ] -> log.Add(Value.toDisplay value)
+                          | _ -> runBody |> Option.iter (fun run -> run ())
+
+                          VNull
+                    CanContinue = fun () -> true
+                    SetEnv = fun _ _ -> ()
+                    CurrentEnv = fun () -> overlay.Value
+                    TakesBlock = fun name -> name = "withEnv" }
+
+              let source =
+                  "def saved; "
+                  + "withEnv(['FG203_MINTED=one']) { saved = env; echo \"one:${saved.FG203_MINTED}\" }; "
+                  + "echo \"after-one:${saved.FG203_MINTED}\"; "
+                  + "withEnv(['FG203_MINTED=two']) { echo \"two:${saved.FG203_MINTED}\" }; "
+                  + "echo \"after-two:${saved.FG203_MINTED}\"; "
+                  + "def env = saved; "
+                  + "withEnv(['FG203_MINTED=shadow']) { echo \"shadow:${saved.FG203_MINTED}:${env.FG203_MINTED}\" }; "
+                  + "try { withEnv(['FG203_MINTED=fault']) { echo \"fault:${saved.FG203_MINTED}:${env.FG203_MINTED}\"; def ignored = 1 / 0 } } catch (Exception caught) { }; "
+                  + "echo \"after-fault:${saved.FG203_MINTED}:${env.FG203_MINTED}\""
+
+              let script =
+                  match Fogell.Groovy.Parser.Parser.parse source with
+                  | Ok parsed -> parsed
+                  | Error error -> failtestf "direct hosted alias probe did not parse: %O" error
+
+              let outcome =
+                  Interpreter.runHosted
+                      host
+                      Budget.defaults
+                      (set [ "echo"; "withEnv" ])
+                      Env.empty
+                      script
+
+              Expect.isNone outcome.Fault "the direct hosted seam completed"
+              Expect.equal
+                  (List.ofSeq log)
+                  [ "one:one"
+                    "after-one:null"
+                    "two:two"
+                    "after-two:null"
+                    "shadow:shadow:shadow"
+                    "fault:fault:fault"
+                    "after-fault:null:null" ]
+                  "a minted alias stays live after its cell scope ends, through shadowing and fault exit"
+          }
+
+          test "a script-owned env map remains local across a nested wrapper" {
+              let source =
+                  "pipeline { agent any stages { stage('probe') { steps { script { "
+                  + "withEnv(['FG203_ALIAS_SCOPE=outer']) { "
+                  + "def env = [FG203_ALIAS_SCOPE: 'local']; def saved = env; "
+                  + "withEnv(['FG203_ALIAS_SCOPE=inner']) { "
+                  + "echo \"local-inner:${env.FG203_ALIAS_SCOPE}:${saved.FG203_ALIAS_SCOPE}\" }; "
+                  + "echo \"local-after:${env.FG203_ALIAS_SCOPE}:${saved.FG203_ALIAS_SCOPE}\" } "
+                  + "} } } } }"
+
+              withWorkspace "local" (fun root _ ->
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "script-owned env control was refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the ordinary map stays usable"
+                      Expect.equal
+                          trace.Output
+                          [ "local-inner:local:local"; "local-after:local:local" ]
+                          "host refresh never mutates or replaces a script-owned env map")
+          } ]
+
 /// FG-177. The retained six-build oracle schedule, executed against Fogell's
 /// real Git walker for BOTH producers. The remote refs advance from pipeline
 /// post so the next retained build sees a new revision while one job, its
@@ -2787,9 +4546,9 @@ let scmReturnMapRuntime =
                     "git(url: '" + bare + "', branch: '" + branch + "')"
 
             "pipeline { agent any options { skipDefaultCheckout() } stages { stage('capture') { steps { script { "
-            + "if (env.BUILD_NUMBER == '2') { deleteDir() }; def value = "
+            + "if (env.BUILD_NUMBER == '2') { deleteDir() }; def value = dir('nested-scm') { "
             + producerCall
-            + "; echo \"FG177-RUNTIME:${env.BUILD_NUMBER}:${value.keySet().join(',')}:${value.GIT_COMMIT}:${value.GIT_PREVIOUS_COMMIT}:${value.GIT_PREVIOUS_SUCCESSFUL_COMMIT}\"; "
+            + " }; echo \"FG177-RUNTIME:${env.BUILD_NUMBER}:${value.keySet().join(',')}:${value.GIT_COMMIT}:${value.GIT_PREVIOUS_COMMIT}:${value.GIT_PREVIOUS_SUCCESSFUL_COMMIT}\"; "
             + "if (env.BUILD_NUMBER == '2') { sh 'exit 7' }"
             + " } } } } "
             + advancePost
@@ -2915,6 +4674,9 @@ let scmReturnMapRuntime =
             Expect.isFalse
                 (firstFailureTraces.[1].Output |> List.exists (fun line -> line = "Selected Git installation does not exist. Using Default"))
                 "partial history refuses before the first Git narration"
+            Expect.isEmpty
+                firstFailureTraces.[1].WorkspaceFiles
+                "partial history refuses before nested SCM workspace materialization"
 
             resetRefs ()
             let unstableScript =
@@ -2931,6 +4693,9 @@ let scmReturnMapRuntime =
             Expect.isFalse
                 (unstable.[1].Output |> List.exists (fun line -> line = "Selected Git installation does not exist. Using Default"))
                 "unstable predecessor refuses before the first Git narration"
+            Expect.isEmpty
+                unstable.[1].WorkspaceFiles
+                "unstable history refuses before nested SCM workspace materialization"
 
             // A provisional or damaged controller-side record is evidence of
             // interrupted/corrupt history, never permission to fall back to an
@@ -2941,8 +4706,8 @@ let scmReturnMapRuntime =
                 resetRefs ()
                 let damaged =
                     (pipeline "git" "main").Replace(
-                        "if (env.BUILD_NUMBER == '2') { deleteDir() }; def value = ",
-                        $"if (env.BUILD_NUMBER == '2') {{ sh '{damage}'; deleteDir() }}; def value = "
+                        "if (env.BUILD_NUMBER == '2') { deleteDir() }; def value = dir('nested-scm') { ",
+                        $"if (env.BUILD_NUMBER == '2') {{ sh '{damage}'; deleteDir() }}; def value = dir('nested-scm') {{ "
                     )
 
                 let traces =
@@ -2953,6 +4718,9 @@ let scmReturnMapRuntime =
                 Expect.isFalse
                     (traces.[1].Output |> List.exists (fun line -> line = "Selected Git installation does not exist. Using Default"))
                     $"{label}: refusal precedes the first Git narration"
+                Expect.isEmpty
+                    traces.[1].WorkspaceFiles
+                    $"{label}: refusal precedes nested SCM workspace materialization"
 
             let scmHistoryDir jobName =
                 IO.Path.Combine(workspaceRoot, "_artifacts", "_scm", jobName)
@@ -3169,10 +4937,10 @@ let unsupportedDeclarativeAgents =
               for label, source in duplicates do
                   withWorkspace (fun root workspace ->
                       match FogellSide.run [] root "job" source with
-                      | Ok trace -> failtestf "%s duplicate agent unexpectedly executed: %A" label trace
-                      | Error why -> Expect.stringContains why "malformed_syntax" $"{label}: admission refusal"
+                      | Error why -> failtestf "%s duplicate agent remained a harness error: %s" label why
+                      | Ok trace -> Expect.equal trace.Disposition RefusedBeforeExecution $"{label}: admission refusal"
 
-                      Expect.isTrue (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt"))) "workspace retained"
+                      Expect.isFalse (IO.Directory.Exists workspace) "fresh workspace was reset before refusal"
                       Expect.isFalse (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt"))) "no effect")
           }
 
@@ -3292,13 +5060,10 @@ let unsupportedDeclarativeTools =
                     "nested parallel stage", duplicateNestedParallel ] do
                   withWorkspace (fun root workspace ->
                       match FogellSide.run [] root "job" source with
-                      | Ok trace -> failtestf "%s duplicate tools unexpectedly executed: %A" label trace
-                      | Error why ->
-                          Expect.stringContains why "malformed_syntax" $"{label}: Jenkins-matched admission refusal"
+                      | Error why -> failtestf "%s duplicate tools remained a harness error: %s" label why
+                      | Ok trace -> Expect.equal trace.Disposition RefusedBeforeExecution $"{label}: admission refusal"
 
-                      Expect.isTrue
-                          (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
-                          $"{label}: fresh-run wipe was not reached"
+                      Expect.isFalse (IO.Directory.Exists workspace) $"{label}: fresh workspace reset"
 
                       Expect.isFalse
                           (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt")))
@@ -3313,13 +5078,10 @@ let unsupportedDeclarativeTools =
               for label, source in duplicateStructuralSections do
                   withWorkspace (fun root workspace ->
                       match FogellSide.run [] root "job" source with
-                      | Ok trace -> failtestf "%s duplicate structural section unexpectedly executed: %A" label trace
-                      | Error why ->
-                          Expect.stringContains why "malformed_syntax" $"{label}: Jenkins-matched admission refusal"
+                      | Error why -> failtestf "%s duplicate structural section remained a harness error: %s" label why
+                      | Ok trace -> Expect.equal trace.Disposition RefusedBeforeExecution $"{label}: admission refusal"
 
-                      Expect.isTrue
-                          (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
-                          $"{label}: fresh-run wipe was not reached"
+                      Expect.isFalse (IO.Directory.Exists workspace) $"{label}: fresh workspace reset"
 
                       Expect.isFalse
                           (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt")))
@@ -3334,13 +5096,10 @@ let unsupportedDeclarativeTools =
               for label, source in competingStageBodies do
                   withWorkspace (fun root workspace ->
                       match FogellSide.run [] root "job" source with
-                      | Ok trace -> failtestf "%s competing bodies unexpectedly executed: %A" label trace
-                      | Error why ->
-                          Expect.stringContains why "malformed_syntax" $"{label}: Jenkins-matched admission refusal"
+                      | Error why -> failtestf "%s competing bodies remained a harness error: %s" label why
+                      | Ok trace -> Expect.equal trace.Disposition RefusedBeforeExecution $"{label}: admission refusal"
 
-                      Expect.isTrue
-                          (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
-                          $"{label}: fresh-run wipe was not reached"
+                      Expect.isFalse (IO.Directory.Exists workspace) $"{label}: fresh workspace reset"
 
                       for file in [ "ran.txt"; "parallel.txt"; "matrix.txt" ] do
                           Expect.isFalse
@@ -3814,6 +5573,81 @@ let spreadAssignmentPreflight =
                   (pipelineWithBody "holder.foo { rows*.name = 'x' }.bar = 1")
           } ]
 
+let controllerApprovalPreflight =
+    let pipeline body =
+        "pipeline { agent any " + body + " }"
+
+    let accepted label source =
+        match FogellSide.preflightControllerExecution source with
+        | Ok _ -> ()
+        | Error why -> failtestf "%s unexpectedly failed controller preflight: %s" label why
+
+    let refused label source =
+        match FogellSide.preflightControllerExecution source with
+        | Ok _ -> failtestf "%s unexpectedly passed controller preflight" label
+        | Error why ->
+            Expect.stringStarts why "unsupported_input_approval:" $"{label}: stable reason code"
+            Expect.stringContains why "unbounded input at" $"{label}: source location named"
+            Expect.stringContains why "authenticated approval broker" $"{label}: capability gap named"
+
+    testList
+        "FG-224 controller approval admission boundary"
+        [ test "bare input and ordinary wrappers are refused" {
+              for label, steps in
+                  [ "bare", "input message: 'Deploy?'"
+                    "dir", "dir('release') { input message: 'Deploy?' }"
+                    "retry", "retry(1) { input message: 'Deploy?' }" ] do
+                  refused
+                      label
+                      (pipeline $"stages {{ stage('gate') {{ steps {{ {steps} }} }} }}")
+          }
+
+          test "a timeout bounds only its own descendants" {
+              accepted
+                  "explicit timeout body"
+                  (pipeline
+                      "stages { stage('gate') { steps { timeout(time: 1, unit: 'SECONDS') { input message: 'Deploy?' } } } }")
+
+              refused
+                  "timeout sibling"
+                  (pipeline
+                      "stages { stage('gate') { steps { timeout(time: 1, unit: 'SECONDS') { echo 'bounded' }; input message: 'Deploy?' } } }")
+
+              refused
+                  "unusable timeout"
+                  (pipeline
+                      "stages { stage('gate') { steps { timeout(time: 1, unit: 'NOPE') { input message: 'Deploy?' } } } }")
+          }
+
+          test "stage timeout bounds its body and nested stages but not its own post" {
+              accepted
+                  "stage body and nested post"
+                  (pipeline
+                      "stages { stage('outer') { options { timeout(time: 1, unit: 'SECONDS') } stages { stage('inner') { steps { input message: 'Body?' } post { always { input message: 'Nested post?' } } } } } }")
+
+              refused
+                  "stage post"
+                  (pipeline
+                      "stages { stage('gate') { options { timeout(time: 1, unit: 'SECONDS') } steps { echo 'body' } post { always { input message: 'Post?' } } } }")
+
+              refused
+                  "unbounded nested stage"
+                  (pipeline
+                      "stages { stage('outer') { stages { stage('inner') { steps { input message: 'Nested?' } } } } }")
+          }
+
+          test "pipeline timeout bounds stages and pipeline post" {
+              accepted
+                  "whole pipeline"
+                  (pipeline
+                      "options { timeout(time: 1, unit: 'SECONDS') } stages { stage('gate') { steps { input message: 'Body?' } post { always { input message: 'Stage post?' } } } } post { always { input message: 'Pipeline post?' } }")
+
+              refused
+                  "unbounded pipeline post"
+                  (pipeline
+                      "stages { stage('ordinary') { steps { echo 'body' } } } post { always { input message: 'Pipeline post?' } }")
+          } ]
+
 let jenkinsBuildDataAttestation =
     testList
         "FG-177 Jenkins BuildData attestation"
@@ -3867,6 +5701,28 @@ script says Checking out Revision {laterCheckout} (spoof)
                   Expect.equal revision definitionRevision "later checkout and script text cannot replace the definition identity"
           }
 
+          test "a classified compile refusal attests the definition before the compiler boundary" {
+              let definitionRevision = String.replicate 40 "a"
+              let laterSpoof = String.replicate 40 "b"
+              let console =
+                  $"""Started by user harness
+Checking out Revision {definitionRevision} (refs/remotes/origin/pin)
+org.codehaus.groovy.control.MultipleCompilationErrorsException: startup failed:
+WorkflowScript: 6: unexpected char: '\\' @ line 6, column 30.
+1 error
+script says Checking out Revision {laterSpoof} (spoof)
+"""
+
+              match Jenkins.parseScmDefinitionRevisionFor RefusedBeforeExecution console with
+              | Error why -> failtest why
+              | Ok revision ->
+                  Expect.equal revision definitionRevision "post-boundary text cannot replace definition identity"
+
+              match Jenkins.parseScmDefinitionRevisionFor ExecutedOrRuntime console with
+              | Ok revision -> failtestf "executed disposition accepted a compiler-only boundary: %s" revision
+              | Error why -> Expect.stringContains why "no Pipeline start" "the alternate boundary is refusal-only"
+          }
+
           test "missing or conflicting pre-Pipeline definition revisions fail closed" {
               let a = String.replicate 40 "a"
               let b = String.replicate 40 "b"
@@ -3881,6 +5737,421 @@ script says Checking out Revision {laterCheckout} (spoof)
               with
               | Ok revision -> failtestf "conflicting definitions unexpectedly parsed: %s" revision
               | Error why -> Expect.stringContains why "multiple pre-Pipeline" "ambiguous checkout named"
+          }
+
+          test "controller SCM fetch dynamically receives only its opaque launch profile" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg222-scm-launch-" + Guid.NewGuid().ToString("N"))
+
+              IO.Directory.CreateDirectory root |> ignore
+              let fakeGit = IO.Path.Combine(root, "git")
+              let log = IO.Path.Combine(root, "launch.env")
+
+              try
+                  IO.File.WriteAllText(
+                      fakeGit,
+                      """#!/bin/sh
+printf '%s\n' __CALL__ >> "$FG222_LOG"
+/usr/bin/env >> "$FG222_LOG"
+if [ "$1" = rev-parse ]; then
+  case "$2" in
+    *commit*) printf '%040d\n' 0 ;;
+    *tree*) printf '%040d\n' 1 ;;
+    *Jenkinsfile*) printf '%040d\n' 2 ;;
+  esac
+elif [ "$1" = show ]; then
+  printf '%s\n' 'pipeline { agent any stages { stage('\''S'\'') { steps { echo '\''ok'\'' } } } }'
+fi
+"""
+                  )
+
+                  IO.File.SetUnixFileMode(
+                      fakeGit,
+                      IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
+                  )
+
+                  let scmSentinel = "fg222-controller-scm-only"
+                  let profile =
+                      LaunchEnvironment.controllerScmFrom
+                          [ "PATH", root
+                            "HOME", IO.Path.Combine(root, "controller-home")
+                            "SSH_AUTH_SOCK", scmSentinel
+                            "FG222_LOG", log ]
+
+                  match WalkerGit.readRemoteJenkinsfileWithEnvironment profile "ignored://fixture" "main" with
+                  | Error why -> failtestf "fake controller fetch failed: %s" why
+                  | Ok remote ->
+                      Expect.stringContains remote.Script "pipeline" "the definition bytes came through the real launcher"
+                      Expect.equal remote.Revision (String.replicate 40 "0") "commit identity came through"
+
+                  let launched = IO.File.ReadAllText log
+                  Expect.equal (launched.Split("__CALL__").Length - 1) 6 "all six Git processes used the profile"
+                  Expect.stringContains launched $"SSH_AUTH_SOCK={scmSentinel}" "controller SCM authority reached controller Git"
+                  for name in [ "FOGELL_CREDENTIALS"; "FOGELL_CREDENTIALS_FILE"; "DATABASE_URL"; "CONTROLLER_API_TOKEN" ] do
+                      Expect.isFalse (launched.Contains($"{name}=")) $"unselected controller control {name} is absent"
+
+                  match WalkerGit.readRemoteJenkinsfileWithEnvironment profile "https://user:secret@example.test/repo.git" "main" with
+                  | Ok _ -> failtest "inline SCM credentials were accepted"
+                  | Error why -> Expect.stringContains why "unsafe" "the credential channel is named"
+
+                  Expect.equal
+                      ((IO.File.ReadAllText log).Split("__CALL__").Length - 1)
+                      6
+                      "unsafe URL refusal happens before a Git process starts"
+
+                  match WalkerGit.readRemoteJenkinsfileWithEnvironment profile "ssh://git@example.test/repo.git" "main" with
+                  | Error why -> failtestf "username-only SSH URL was refused: %s" why
+                  | Ok _ -> ()
+
+                  Expect.equal
+                      ((IO.File.ReadAllText log).Split("__CALL__").Length - 1)
+                      12
+                      "username-only SSH uses controller Git without being mistaken for a password"
+
+                  match WalkerGit.readRemoteJenkinsfileWithEnvironment profile "https://example.test/repo.git%3Baccess_token=secret" "main" with
+                  | Ok _ -> failtest "encoded path-parameter credential channel was accepted"
+                  | Error why -> Expect.stringContains why "unsafe" "the encoded channel is named"
+
+                  Expect.equal
+                      ((IO.File.ReadAllText log).Split("__CALL__").Length - 1)
+                      12
+                      "encoded unsafe URL refusal happens before Git starts"
+              finally
+                  try IO.Directory.Delete(root, true) with _ -> ()
+          }
+
+          test "controller SCM authority is absent from the subsequent explicit checkout" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg222-scm-boundary-" + Guid.NewGuid().ToString("N"))
+
+              let source = IO.Path.Combine(root, "source")
+              let bare = IO.Path.Combine(root, "fixture.git")
+              let controllerFakeBin = IO.Path.Combine(root, "controller-fakebin")
+              let buildFakeBin = IO.Path.Combine(root, "build-fakebin")
+              let workspaceRoot = IO.Path.Combine(root, "workspaces")
+              let controllerLog = IO.Path.Combine(root, "controller-git.env")
+              let buildLog = IO.Path.Combine(root, "build-git.env")
+
+              let runGit cwd args =
+                  let start = Diagnostics.ProcessStartInfo()
+                  start.FileName <- "/usr/bin/git"
+                  start.WorkingDirectory <- cwd
+                  start.UseShellExecute <- false
+                  start.RedirectStandardError <- true
+                  start.Environment["GIT_AUTHOR_NAME"] <- "Fogell Test"
+                  start.Environment["GIT_AUTHOR_EMAIL"] <- "fogell@example.invalid"
+                  start.Environment["GIT_COMMITTER_NAME"] <- "Fogell Test"
+                  start.Environment["GIT_COMMITTER_EMAIL"] <- "fogell@example.invalid"
+
+                  for arg in args do
+                      start.ArgumentList.Add arg
+
+                  use child = Diagnostics.Process.Start start
+                  let stderr = child.StandardError.ReadToEnd()
+                  child.WaitForExit()
+
+                  if child.ExitCode <> 0 then
+                      let command = String.concat " " args
+                      failwith $"git {command} failed ({child.ExitCode}): {stderr}"
+
+              let script =
+                  "pipeline { agent any options { skipDefaultCheckout() } environment { PATH = '"
+                  + buildFakeBin
+                  + ":${PATH}'\nFG222_BUILD_LOG = '"
+                  + buildLog
+                  + "' } stages { stage('probe') { steps { checkout(scm); sh '/usr/bin/env | /usr/bin/sort > build.env' } } } }"
+
+              try
+                  for path in [ root; source; controllerFakeBin; buildFakeBin; workspaceRoot ] do
+                      IO.Directory.CreateDirectory path |> ignore
+
+                  runGit root [ "init"; "--bare"; bare ]
+                  runGit source [ "init"; "-b"; "main" ]
+                  IO.File.WriteAllText(IO.Path.Combine(source, "Jenkinsfile"), script + "\n")
+                  IO.File.WriteAllText(IO.Path.Combine(source, "payload.txt"), "controller/build boundary\n")
+                  runGit source [ "add"; "Jenkinsfile"; "payload.txt" ]
+                  runGit source [ "commit"; "-m"; "fixture" ]
+                  runGit source [ "remote"; "add"; "origin"; bare ]
+                  runGit source [ "push"; "origin"; "main" ]
+
+                  let sentinel = "fg222-controller-transport-only"
+                  let fakeGit = IO.Path.Combine(controllerFakeBin, "git")
+                  IO.File.WriteAllText(
+                      fakeGit,
+                      "#!/bin/sh\n[ \"$SSH_AUTH_SOCK\" = '"
+                      + sentinel
+                      + "' ] || exit 91\nprintf '%s\\n' __CALL__ >> \"$FG222_LOG\"\n/usr/bin/env >> \"$FG222_LOG\"\nexec /usr/bin/git \"$@\"\n"
+                  )
+                  IO.File.SetUnixFileMode(
+                      fakeGit,
+                      IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
+                  )
+
+                  let buildGit = IO.Path.Combine(buildFakeBin, "git")
+                  IO.File.WriteAllText(
+                      buildGit,
+                      "#!/bin/sh\nprintf '%s\\n' __CALL__ >> \"$FG222_BUILD_LOG\"\n/usr/bin/env >> \"$FG222_BUILD_LOG\"\nexec /usr/bin/git \"$@\"\n"
+                  )
+                  IO.File.SetUnixFileMode(
+                      buildGit,
+                      IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
+                  )
+
+                  let controllerEnvironment =
+                      LaunchEnvironment.controllerScmFrom
+                          [ "PATH", controllerFakeBin + ":/usr/bin:/bin"
+                            "HOME", IO.Path.Combine(root, "controller-home")
+                            "SSH_AUTH_SOCK", sentinel
+                            "GIT_ASKPASS", sentinel
+                            "FG222_LOG", controllerLog ]
+
+                  let scm = { Url = bare; Branch = "main" }
+                  match
+                      FogellSide.runScmWithControllerEnvironment
+                          controllerEnvironment
+                          []
+                          workspaceRoot
+                          "job"
+                          scm
+                          script
+                  with
+                  | Error why -> failtestf "SCM-defined boundary run failed: %s" why
+                  | Ok trace -> Expect.equal trace.Result "success" "the SCM-defined build completed"
+
+                  let workspace = IO.Path.Combine(workspaceRoot, "job")
+                  let buildHome = FogellSide.agentHome workspaceRoot "job" 1
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "payload.txt")))
+                      "controller/build boundary\n"
+                      "explicit checkout obtained the committed workspace"
+
+                  Expect.equal
+                      (IO.File.GetUnixFileMode buildHome)
+                      (IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute)
+                      "the run-scoped build HOME is private"
+
+                  let buildEnvironment = IO.File.ReadAllText(IO.Path.Combine(workspace, "build.env"))
+                  Expect.stringContains
+                      buildEnvironment
+                      $"HOME={buildHome}"
+                      "the build sees only its run-scoped HOME"
+                  for name in [ "SSH_AUTH_SOCK"; "GIT_ASKPASS"; "FG222_LOG" ] do
+                      Expect.isFalse
+                          (buildEnvironment.Contains($"{name}="))
+                          $"controller-only {name} is absent from the build"
+
+                  let buildLaunches = IO.File.ReadAllText buildLog
+                  Expect.isGreaterThan
+                      (buildLaunches.Split("__CALL__").Length - 1)
+                      0
+                      "explicit checkout traverses the build-side Git launcher"
+                  Expect.isFalse (buildLaunches.Contains sentinel) "controller authority value is absent from build Git"
+                  Expect.isFalse
+                      (buildLaunches.Contains(IO.Path.Combine(root, "controller-home")))
+                      "controller HOME is absent from build Git"
+                  Expect.isFalse
+                      (buildLaunches.Contains controllerFakeBin)
+                      "controller PATH entries are absent from build Git"
+                  for name in [ "SSH_AUTH_SOCK"; "GIT_ASKPASS"; "FG222_LOG" ] do
+                      Expect.isFalse
+                          (buildLaunches.Contains($"{name}="))
+                          $"build Git has no controller-only {name}"
+
+                  let controllerLaunches = IO.File.ReadAllText controllerLog
+                  Expect.equal
+                      (controllerLaunches.Split("__CALL__").Length - 1)
+                      6
+                      "only the six definition-fetch calls traverse controller Git"
+                  Expect.equal
+                      (controllerLaunches.Split($"SSH_AUTH_SOCK={sentinel}").Length - 1)
+                      6
+                      "every definition-fetch call receives controller transport authority"
+                  Expect.isFalse
+                      (controllerLaunches.Contains("FG222_BUILD_LOG="))
+                      "the controller fetch has no build-only launch control"
+              finally
+                  try IO.Directory.Delete(root, true) with _ -> ()
+          }
+
+          test "build-scoped HOME refuses a pre-existing symlink" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg222-home-link-" + Guid.NewGuid().ToString("N"))
+
+              let target = IO.Path.Combine(root, "controller-home")
+              IO.Directory.CreateDirectory target |> ignore
+              let buildHome = FogellSide.agentHome root "job" 1
+              IO.Directory.CreateDirectory(IO.Path.GetDirectoryName buildHome) |> ignore
+              IO.Directory.CreateSymbolicLink(buildHome, target) |> ignore
+
+              try
+                  let source = "pipeline { agent any stages { stage('S') { steps { echo 'unreachable' } } } }"
+                  match FogellSide.run [] root "job" source with
+                  | Ok _ -> failtest "symlinked build HOME was accepted"
+                  | Error why -> Expect.stringContains why "symlinked private directory" "the unsafe HOME is named"
+              finally
+                  try IO.Directory.Delete(root, true) with _ -> ()
+          }
+
+          test "build-scoped HOME refuses a symlinked identity root" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg224-home-root-link-" + Guid.NewGuid().ToString("N"))
+
+              let target = IO.Path.Combine(root, "controller-home")
+              IO.Directory.CreateDirectory target |> ignore
+              IO.Directory.CreateSymbolicLink(IO.Path.Combine(root, "_agent_home"), target) |> ignore
+
+              try
+                  let source = "pipeline { agent any stages { stage('S') { steps { echo 'unreachable' } } } }"
+                  match FogellSide.run [] root "job" source with
+                  | Ok _ -> failtest "symlinked build HOME identity root was accepted"
+                  | Error why -> Expect.stringContains why "symlinked private directory" "the unsafe HOME root is named"
+              finally
+                  try IO.Directory.Delete(root, true) with _ -> ()
+          }
+
+          test "retained builds receive isolated stable HOME identities" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg224-home-isolation-" + Guid.NewGuid().ToString("N"))
+
+              let first =
+                  "pipeline { agent any stages { stage('S') { steps { sh 'printf first > \"$HOME/fogell-state\"' } } } }"
+
+              let second =
+                  "pipeline { agent any stages { stage('S') { steps { sh 'test ! -e \"$HOME/fogell-state\" && printf clean > home-check.txt' } } } }"
+
+              try
+                  match FogellSide.runMany [] root "job" [ first; second ] with
+                  | [ Ok firstTrace; Ok secondTrace ] ->
+                      Expect.equal firstTrace.Result "success" "the first retained build completed"
+                      Expect.equal secondTrace.Result "success" "the second retained build saw an isolated HOME"
+                  | results -> failtestf "retained HOME isolation run failed: %A" results
+
+                  let firstHome = FogellSide.agentHome root "job" 1
+                  let secondHome = FogellSide.agentHome root "job" 2
+                  Expect.notEqual firstHome secondHome "different build identities cannot share HOME"
+                  Expect.equal
+                      (FogellSide.agentHome root "job" 1)
+                      firstHome
+                      "the same job/build identity is restart-stable"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(firstHome, "fogell-state")))
+                      "the first build wrote only its own HOME"
+                  Expect.isFalse
+                      (IO.File.Exists(IO.Path.Combine(secondHome, "fogell-state")))
+                      "the second build did not inherit the first build's state"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(root, "job", "home-check.txt")))
+                      "clean"
+                      "the second build proved isolation through the real shell environment"
+              finally
+                  try IO.Directory.Delete(root, true) with _ -> ()
+          }
+
+          test "build-scoped HOME folds ordinary output into a stable receipt" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg224-home-receipt-" + Guid.NewGuid().ToString("N"))
+
+              let job = "home-output"
+              let scripts =
+                  [ "pipeline { agent any stages { stage('S') { steps { sh 'printenv HOME' } } } }"
+                    "pipeline { agent any stages { stage('S') { steps { sh 'printenv HOME' } } } }" ]
+
+              let jenkinsHome = "/var/jenkins_home"
+              Expect.isEmpty
+                  (FogellSide.coordinatedAgentHomeReplacement [] root job 1)
+                  "without a coordinated Jenkins HOME fold no one-sided Fogell mapping is introduced"
+
+              let coordinated = [ jenkinsHome, "${HOME}" ]
+
+              try
+                  let runs = FogellSide.runMany coordinated root job scripts
+
+                  runs
+                  |> List.iteri (fun index run ->
+                      let fogell =
+                          match run with
+                          | Ok trace -> trace
+                          | Error why -> failtestf "HOME output build %d failed: %s" (index + 1) why
+
+                      let buildHome = FogellSide.agentHome root job (index + 1)
+                      let firstHome = FogellSide.agentHome root job 1
+                      let replacements =
+                          coordinated
+                          @ FogellSide.coordinatedAgentHomeReplacement
+                              coordinated
+                              root
+                              job
+                              (index + 1)
+
+                      let jenkins =
+                          { fogell with
+                              Output = fogell.Output |> List.map (fun line -> line.Replace(buildHome, jenkinsHome)) }
+
+                      let receipt =
+                          Compare.receiptWithStableEnvironment
+                              replacements
+                              $"home-output.b{index + 1}.Jenkinsfile"
+                              (Text.Encoding.UTF8.GetBytes(List.item index scripts))
+                              "2.568.1"
+                              replacements
+                              (Ok jenkins)
+                              (Ok fogell)
+
+                      Expect.equal receipt.Verdict Proven "ordinary HOME output compares canonically"
+                      Expect.isFalse
+                          (receipt.Fogell.Value.Output |> List.exists (fun line -> line.Contains buildHome))
+                          "the build-specific hash does not churn the stored receipt"
+                      Expect.contains receipt.Fogell.Value.Output "${HOME}" "the deciding output is sealed canonically"
+
+                      if index = 1 then
+                          let staleFogell =
+                              { fogell with
+                                  Output = fogell.Output |> List.map (fun line -> line.Replace(buildHome, firstHome)) }
+
+                          let staleReceipt =
+                              Compare.receiptWithStableEnvironment
+                                  replacements
+                                  "home-output-stale.b2.Jenkinsfile"
+                                  (Text.Encoding.UTF8.GetBytes(List.item index scripts))
+                                  "2.568.1"
+                                  replacements
+                                  (Ok jenkins)
+                                  (Ok staleFogell)
+
+                          Expect.notEqual
+                              staleReceipt.Verdict
+                              Proven
+                              "build two cannot hide a leaked build-one HOME behind canonicalization")
+              finally
+                  try IO.Directory.Delete(root, true) with _ -> ()
+          }
+
+          test "a pre-existing execution root keeps its caller-owned mode" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg222-root-mode-" + Guid.NewGuid().ToString("N"))
+
+              let callerMode =
+                  IO.UnixFileMode.UserRead
+                  ||| IO.UnixFileMode.UserWrite
+                  ||| IO.UnixFileMode.UserExecute
+                  ||| IO.UnixFileMode.GroupRead
+                  ||| IO.UnixFileMode.GroupExecute
+
+              IO.Directory.CreateDirectory root |> ignore
+              IO.File.SetUnixFileMode(root, callerMode)
+
+              try
+                  let source = "pipeline { agent any stages { stage('S') { steps { echo 'ok' } } } }"
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "ordinary run failed: %s" why
+                  | Ok trace -> Expect.equal trace.Result "success" "the control build ran"
+
+                  Expect.equal
+                      (IO.File.GetUnixFileMode root)
+                      callerMode
+                      "Fogell does not chmod the caller-owned execution root"
+              finally
+                  try IO.Directory.Delete(root, true) with _ -> ()
           }
 
           test "SCM attestation URLs encode safe spaces and make unsafe components opaque" {
@@ -3926,6 +6197,1746 @@ script says Checking out Revision {laterCheckout} (spoof)
               Expect.isFalse (opaque.Contains "git@example") "opaque spelling is absent"
           } ]
 
+/// FG-123a. Pipeline `options { ansiColor(...) }` is a Declarative directive,
+/// not the block-taking scripted step with the same name. Jenkins refuses a
+/// trailing closure while compiling the model, before checkout or build effects.
+let ansiColorTrailingBlocks =
+    let duplicateError =
+        "ERROR: pipeline declares an unusable ansiColor option: the ansiColor option is declared more than once"
+
+    let blockError =
+        "ERROR: pipeline declares an unusable ansiColor option: the ansiColor(<colorMapName>) option does not accept a trailing block"
+
+    let arityError =
+        "ERROR: pipeline declares an unusable ansiColor option: the ansiColor(<colorMapName>) option takes exactly one argument, positional or named colorMapName"
+
+    let option hasBlock positional named =
+        { Name = "ansiColor"
+          Positional = positional
+          Named = named
+          ArgumentOrder =
+            (positional |> List.mapi (fun i _ -> $"#{i}"))
+            @ (named |> List.map fst)
+          Block = []
+          HasBlock = hasBlock
+          LiteralNamedArgs = Set.empty
+          LiteralPositionalArgs = Set.empty
+          ExpressionArgs = Set.empty
+          InterpolationSource = []
+          RawArgs = ""
+          ScriptBody = None
+          Position = Position.zero }
+
+    let reject options =
+        let emitted = ResizeArray<string>()
+        let rejected = FogellSide.rejectInvalidAnsiColor emitted.Add options
+        rejected, emitted |> Seq.toList
+
+    let rejectSource source =
+        match Fogell.Pipeline.Parser.Parser.parse source with
+        | Error why -> failtestf "expected an ansiColor model, got %A" why
+        | Ok pipeline -> reject pipeline.Options
+
+    let withWorkspace label (f: string -> string -> unit) =
+        let root =
+            IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg123a-{label}-{Guid.NewGuid():N}")
+
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            f root workspace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    let invalidPipeline optionBody =
+        "pipeline { agent any options { "
+        + optionBody
+        + " } stages { stage('must-not-run') { steps { sh 'touch stage-marker.txt' } } } "
+        + "post { always { sh 'touch post-marker.txt' } } }"
+
+    let assertCompileRefusal label source root workspace =
+        match FogellSide.run [] root "job" source with
+        | Error why -> failtestf "%s did not reach the compile-shaped refusal: %s" label why
+        | Ok trace ->
+            Expect.equal trace.Result "failure" $"{label}: terminal result"
+            Expect.isTrue trace.ReportedFailureReason $"{label}: the refusal is explained"
+            Expect.isEmpty trace.Output $"{label}: the diagnostic is normalized as engine narration"
+            Expect.isEmpty trace.EngineNotes $"{label}: no unrelated note substitutes for the refusal"
+            Expect.isEmpty trace.WorkspaceFiles $"{label}: semantic workspace is empty"
+            Expect.equal
+                trace.WorkspaceHash
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                $"{label}: exact empty-workspace digest"
+
+            Expect.isTrue (IO.Directory.Exists workspace) $"{label}: workspace setup completed"
+            Expect.isEmpty
+                (IO.Directory.EnumerateFileSystemEntries(workspace, "*", IO.SearchOption.AllDirectories)
+                 |> Seq.toList)
+                $"{label}: no stage, option-body, post or scaffolding effect"
+
+    let runGit cwd args =
+        let start = Diagnostics.ProcessStartInfo()
+        start.FileName <- "git"
+        start.WorkingDirectory <- cwd
+        start.UseShellExecute <- false
+        start.RedirectStandardOutput <- true
+        start.RedirectStandardError <- true
+        start.Environment["GIT_AUTHOR_NAME"] <- "Fogell Test"
+        start.Environment["GIT_AUTHOR_EMAIL"] <- "fogell@example.invalid"
+        start.Environment["GIT_COMMITTER_NAME"] <- "Fogell Test"
+        start.Environment["GIT_COMMITTER_EMAIL"] <- "fogell@example.invalid"
+
+        for arg in args do
+            start.ArgumentList.Add arg
+
+        use child = Diagnostics.Process.Start start
+        let stdout = child.StandardOutput.ReadToEnd()
+        let stderr = child.StandardError.ReadToEnd()
+        child.WaitForExit()
+
+        if child.ExitCode <> 0 then
+            failtestf "git %s failed (%d): %s" (String.concat " " args) child.ExitCode stderr
+
+        stdout.Trim()
+
+    testList
+        "FG-123a ansiColor trailing closure"
+        [ test "the production-owned diagnostic preserves duplicate, block, then arity precedence" {
+              let valid = option false [ "'xterm'" ] []
+              let closure = option true [ "'xterm'" ] []
+              let badArity = option false [ "'xterm'"; "'vga'" ] []
+
+              Expect.equal (reject []) (false, []) "absence emits nothing"
+              Expect.equal (reject [ valid ]) (false, []) "ordinary positional form remains valid"
+              Expect.equal
+                  (reject [ option false [] [ "colorMapName", "'xterm'" ] ])
+                  (false, [])
+                  "ordinary named form remains valid"
+              Expect.equal (reject [ closure ]) (true, [ blockError ]) "an empty parsed block is still a closure"
+              Expect.equal (reject [ badArity ]) (true, [ arityError ]) "arity remains the final single-option check"
+              Expect.equal
+                  (reject [ option true [ "'xterm'"; "'vga'" ] [] ])
+                  (true, [ blockError ])
+                  "block ownership precedes bad arity"
+
+              for declarations in [ [ valid; closure ]; [ closure; valid ]; [ badArity; closure ] ] do
+                  Expect.equal
+                      (reject declarations)
+                      (true, [ duplicateError ])
+                      "duplicate cardinality owns the exact single diagnostic before shape"
+          }
+
+          test "duplicates across source orders and option sections retain the duplicate owner" {
+              let oneSection first second =
+                  $"pipeline {{ agent any options {{ {first}; {second} }} stages {{ stage('S') {{ steps {{ sh 'true' }} }} }} }}"
+
+              let twoSections first second =
+                  $"pipeline {{ agent any options {{ {first} }} options {{ {second} }} stages {{ stage('S') {{ steps {{ sh 'true' }} }} }} }}"
+
+              for source in
+                  [ oneSection "ansiColor('xterm')" "ansiColor('xterm') {}"
+                    oneSection "ansiColor('xterm') {}" "ansiColor('xterm')"
+                    twoSections "ansiColor('xterm')" "ansiColor('xterm') {}"
+                    twoSections "ansiColor('xterm') {}" "ansiColor('xterm')" ] do
+                  Expect.equal (rejectSource source) (true, [ duplicateError ]) "duplicate precedence survives parsing"
+
+              let mixedInvalid =
+                  "pipeline { agent any options { ansiColor('xterm', 'vga') {} } "
+                  + "stages { stage('S') { steps { sh 'true' } } } }"
+
+              Expect.equal
+                  (rejectSource mixedInvalid)
+                  (true, [ blockError ])
+                  "a parsed closure owns the diagnostic before its bad arity"
+          }
+
+          test "empty, trivia, separator and nonempty closures refuse before every effect" {
+              for label, optionBody in
+                  [ "empty", "ansiColor('xterm') {}"
+                    "comment", "ansiColor('xterm') { /* trivia only */ }"
+                    "line-comment", "ansiColor('xterm') { // trivia only\n }"
+                    "semicolon", "ansiColor('xterm') { ; }"
+                    "nonempty", "ansiColor('xterm') { sh 'touch option-body-marker.txt' }" ] do
+                  withWorkspace label (fun root workspace ->
+                      assertCompileRefusal label (invalidPipeline optionBody) root workspace)
+          }
+
+          test "hosted synthetic calls retain their trailing-body presence" {
+              withWorkspace "hosted-presence" (fun root workspace ->
+                  let source =
+                      "pipeline { agent any stages { stage('hosted') { steps { script { "
+                      + "dir('nested') { sh 'printf hosted > marker.txt' }"
+                      + " } } } } }"
+
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "hosted body presence control refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the hosted wrapper body runs"
+                      Expect.equal
+                          (IO.File.ReadAllText(IO.Path.Combine(workspace, "nested", "marker.txt")))
+                          "hosted"
+                          "the synthetic Step carried runBody presence into dispatch")
+          }
+
+          test "valid positional, named and brace-text controls make TERM observable" {
+              for label, optionBody, expected in
+                  [ "positional", "ansiColor('xterm')", "xterm"
+                    "named", "ansiColor(colorMapName: 'vga')", "vga"
+                    "argument-brace", "ansiColor('x{term}')", "x{term}" ] do
+                  withWorkspace label (fun root workspace ->
+                      let source =
+                          "pipeline { agent any options { "
+                          + optionBody
+                          + " } stages { stage('term') { steps { sh 'printf %s \"$TERM\" > term.txt' } } } }"
+
+                      match FogellSide.run [] root "job" source with
+                      | Error why -> failtestf "%s valid control refused: %s" label why
+                      | Ok trace ->
+                          Expect.equal trace.Result "success" $"{label}: build succeeds"
+                          Expect.equal
+                              (IO.File.ReadAllText(IO.Path.Combine(workspace, "term.txt")))
+                              expected
+                              $"{label}: ansiColor's TERM behavior remains load-bearing")
+          }
+
+          test "a locally attested matching SCM definition is refused before checkout" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg123a-scm-{Guid.NewGuid():N}")
+              let sourceRepo = IO.Path.Combine(root, "source")
+              let bareRepo = IO.Path.Combine(root, "remote.git")
+              let workspaceRoot = IO.Path.Combine(root, "workspace")
+              let workspace = IO.Path.Combine(workspaceRoot, "job")
+              let script = invalidPipeline "ansiColor('xterm') {}"
+
+              try
+                  IO.Directory.CreateDirectory(sourceRepo) |> ignore
+                  IO.Directory.CreateDirectory(workspaceRoot) |> ignore
+                  runGit sourceRepo [ "init"; "-b"; "main" ] |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(sourceRepo, "Jenkinsfile"), script)
+                  runGit sourceRepo [ "add"; "Jenkinsfile" ] |> ignore
+                  runGit sourceRepo [ "commit"; "-m"; "attested FG-123a definition" ] |> ignore
+                  Expect.equal
+                      (runGit sourceRepo [ "show"; "HEAD:Jenkinsfile" ])
+                      script
+                      "the supplied model exactly matches the committed SCM Jenkinsfile"
+
+                  runGit root [ "init"; "--bare"; bareRepo ] |> ignore
+                  runGit sourceRepo [ "push"; bareRepo; "main:main" ] |> ignore
+                  let scm = { Url = bareRepo; Branch = "main" }
+
+                  match FogellSide.runScm [] workspaceRoot "job" scm script with
+                  | Error why -> failtestf "matching local SCM did not reach ansiColor refusal: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "failure" "compile refusal controls SCM result"
+                      Expect.isTrue trace.ReportedFailureReason "SCM refusal remains explained"
+                      Expect.isEmpty trace.Output "no checkout or stage narration survives"
+                      Expect.isEmpty trace.WorkspaceFiles "checkout produced no semantic files"
+                      Expect.isTrue (IO.Directory.Exists workspace) "workspace setup completed"
+                      Expect.isEmpty
+                          (IO.Directory.EnumerateFileSystemEntries(workspace, "*", IO.SearchOption.AllDirectories)
+                           |> Seq.toList)
+                          "no .git, checkout, stage, option-body or post effect"
+              finally
+                  if IO.Directory.Exists root then
+                      IO.Directory.Delete(root, true)
+          } ]
+
+/// FG-130a. Jenkins refuses an argument-bearing `parallelsAlwaysFailFast`
+/// while compiling the Declarative model. The refusal must therefore happen
+/// before every stage and pipeline-post effect; merely treating `(false)` as
+/// "option disabled" would still run a Jenkinsfile Jenkins never starts.
+let parallelsAlwaysFailFastArguments =
+    let option name positional named =
+        { Name = name
+          Positional = positional
+          Named = named
+          ArgumentOrder =
+            (positional |> List.mapi (fun i _ -> $"#{i}"))
+            @ (named |> List.map fst)
+          Block = []
+          HasBlock = false
+          LiteralNamedArgs = Set.empty
+          LiteralPositionalArgs = Set.empty
+          ExpressionArgs = Set.empty
+          InterpolationSource = []
+          RawArgs = ""
+          ScriptBody = None
+          Position = Position.zero }
+
+    let expectedError =
+        "ERROR: pipeline declares an unusable parallelsAlwaysFailFast option: the parallelsAlwaysFailFast() option takes no arguments"
+
+    let reject options =
+        let emitted = ResizeArray<string>()
+        let rejected = FogellSide.rejectParallelsAlwaysFailFast emitted.Add options
+        rejected, emitted |> Seq.toList
+
+    let withWorkspace label (f: string -> string -> unit) =
+        let root =
+            IO.Path.Combine(
+                IO.Path.GetTempPath(),
+                $"fogell-fg130a-{label}-{Guid.NewGuid():N}"
+            )
+
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            f root workspace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    let pipeline optionBody quickName peerName peerDelay postName =
+        let options =
+            if optionBody = "" then "" else "options { " + optionBody + " } "
+
+        "pipeline { agent any "
+        + options
+        + "stages { stage('fanout') { parallel { "
+        + "stage('quick') { steps { sh 'while [ ! -f "
+        + peerName
+        + ".txt ]; do sleep 0.05; done; touch "
+        + quickName
+        + ".txt; exit 7' } } "
+        + "stage('peer') { steps { sh 'touch "
+        + peerName
+        + ".txt; sleep "
+        + peerDelay
+        + "; touch "
+        + peerName
+        + "-late.txt' } } "
+        + "} } } post { failure { sh 'touch "
+        + postName
+        + ".txt' } } }"
+
+    let workspaceFiles (trace: Trace) =
+        trace.WorkspaceFiles |> List.map fst |> List.sort
+
+    testList
+        "FG-130a parallelsAlwaysFailFast argument shape"
+        [ test "the zero-argument signature inspects every declaration and owns the exact diagnostic" {
+              let valid = option "parallelsAlwaysFailFast" [] []
+              let positional = option "parallelsAlwaysFailFast" [ "false" ] []
+              let named = option "parallelsAlwaysFailFast" [] [ "enabled", "false" ]
+              let unrelated = option "quietPeriod" [ "5" ] []
+
+              Expect.equal
+                  (reject [])
+                  (false, [])
+                  "absence neither rejects nor emits"
+              Expect.equal
+                  (reject [ unrelated; valid ])
+                  (false, [])
+                  "an unrelated option and the exact zero-argument form neither reject nor emit"
+              Expect.equal
+                  (reject [ positional ])
+                  (true, [ expectedError ])
+                  "the measured positional false spelling emits the one exact refusal"
+              Expect.equal
+                  (reject [ named ])
+                  (true, [ expectedError ])
+                  "a named map argument emits the same one exact refusal"
+              Expect.equal
+                  (reject [ valid; positional ])
+                  (true, [ expectedError ])
+                  "a valid first declaration cannot hide the later exact refusal"
+              Expect.equal
+                  (reject [ named; valid ])
+                  (true, [ expectedError ])
+                  "a valid last declaration cannot hide the earlier exact refusal"
+          }
+
+          test "positional, named and both mixed orders refuse before stage and post effects" {
+              for label, optionBody in
+                  [ "positional", "parallelsAlwaysFailFast(false)"
+                    "named", "parallelsAlwaysFailFast(enabled: false)"
+                    "valid-then-invalid",
+                    "parallelsAlwaysFailFast(); parallelsAlwaysFailFast(false)"
+                    "invalid-then-valid",
+                    "parallelsAlwaysFailFast(false); parallelsAlwaysFailFast()" ] do
+                  withWorkspace label (fun root workspace ->
+                      let source =
+                          "pipeline { agent any options { "
+                          + optionBody
+                          + " } stages { stage('must-not-run') { steps { sh 'touch stage-marker.txt' } } } "
+                          + "post { always { sh 'touch post-marker.txt' } } }"
+
+                      match FogellSide.run [] root "job" source with
+                      | Error why -> failtestf "%s did not reach the named compile-shaped refusal: %s" label why
+                      | Ok trace ->
+                          Expect.equal trace.Result "failure" $"{label}: refusal controls the terminal result"
+                          Expect.isTrue trace.ReportedFailureReason $"{label}: the refusal is not silent"
+                          Expect.isEmpty trace.Output $"{label}: no stage-skip or post narration escapes compile refusal"
+                          Expect.isEmpty trace.EngineNotes $"{label}: no unrelated engine note substitutes for the refusal"
+                          Expect.isEmpty trace.WorkspaceFiles $"{label}: semantic workspace inventory is empty"
+                          Expect.equal
+                              trace.WorkspaceHash
+                              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                              $"{label}: exact empty-workspace hash"
+
+                          Expect.isTrue (IO.Directory.Exists workspace) $"{label}: workspace setup completed"
+                          Expect.isEmpty
+                              (IO.Directory.EnumerateFileSystemEntries(workspace, "*", IO.SearchOption.AllDirectories)
+                               |> Seq.toList)
+                              $"{label}: no hidden stage, post or scaffolding effect remains")
+          }
+
+          test "the valid zero-argument option still interrupts a running sibling" {
+              withWorkspace "valid" (fun root _ ->
+                  let source =
+                      pipeline
+                          "parallelsAlwaysFailFast()"
+                          "failfast-quick"
+                          "failfast-peer"
+                          "5"
+                          "failfast-post"
+
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "valid zero-argument option was refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "failure" "the quick sibling still fails the build"
+                      Expect.equal
+                          (workspaceFiles trace)
+                          [ "failfast-peer.txt"; "failfast-post.txt"; "failfast-quick.txt" ]
+                          "the peer started, was interrupted before its late effect, and failure post ran")
+          }
+
+          test "without the option an ordinary parallel waits for the failing branch's peer" {
+              withWorkspace "ordinary" (fun root _ ->
+                  let source =
+                      pipeline "" "ordinary-quick" "ordinary-peer" "0.2" "ordinary-post"
+
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "ordinary parallel control was refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "failure" "the quick branch still controls the result"
+                      Expect.equal
+                          (workspaceFiles trace)
+                          [ "ordinary-peer-late.txt"
+                            "ordinary-peer.txt"
+                            "ordinary-post.txt"
+                            "ordinary-quick.txt" ]
+                          "without failFast the peer completes before failure post runs")
+          } ]
+
+let workspaceManifestV2 =
+    let sha256Hex (bytes: byte[]) =
+        use hash = Security.Cryptography.SHA256.Create()
+        hash.ComputeHash bytes |> Convert.ToHexString |> fun value -> value.ToLowerInvariant()
+
+    let sha256Text (text: string) = text |> Text.Encoding.UTF8.GetBytes |> sha256Hex
+    let b64 (text: string) = text |> Text.Encoding.UTF8.GetBytes |> Convert.ToBase64String
+
+    let protocol (records: string list) =
+        String.concat "\n" ([ "FOGELL-WORKSPACE-MANIFEST\t2" ] @ records @ [ $"END\t{records.Length}"; "" ])
+
+    let collectText exitCode (text: string) =
+        let path = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-v2-{Guid.NewGuid():N}")
+
+        try
+            IO.File.WriteAllText(path, text)
+            Trace.collectRemote $"cat {path}; exit {exitCode}"
+        finally
+            IO.File.Delete path
+
+    let refused label exitCode text =
+        Expect.equal (collectText exitCode text) ("not-collected", []) label
+
+    testList
+        "FG-173 versioned file and empty-leaf workspace manifest"
+        [ test "file-only canonical bytes remain exactly v1" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-local-{Guid.NewGuid():N}")
+
+              try
+                  IO.Directory.CreateDirectory root |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(root, "payload.txt"), "payload\n")
+                  IO.File.WriteAllText(IO.Path.Combine(root, "Alpha.txt"), "alpha\n")
+                  let alphaHash = sha256Text "alpha\n"
+                  let payloadHash = sha256Text "payload\n"
+                  let expectedManifest = $"Alpha.txt\t{alphaHash}\npayload.txt\t{payloadHash}"
+                  let actualHash, entries = Trace.hashWorkspace root
+                  Expect.equal actualHash (sha256Text expectedManifest) "v1 file record bytes are unchanged"
+                  Expect.equal
+                      entries
+                      [ "Alpha.txt", alphaHash; "payload.txt", payloadHash ]
+                      "v1 ordinal file order is unchanged"
+              finally
+                  IO.Directory.Delete(root, true)
+          }
+
+          test "only physical empty leaf directories are visible and deterministic" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-dirs-{Guid.NewGuid():N}")
+
+              try
+                  IO.Directory.CreateDirectory(IO.Path.Combine(root, "z-empty")) |> ignore
+                  IO.Directory.CreateDirectory(IO.Path.Combine(root, "a", "inner-empty")) |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(root, "payload.txt"), "payload\n")
+                  let firstHash, first = Trace.hashWorkspace root
+                  let secondHash, second = Trace.hashWorkspace root
+                  Expect.equal secondHash firstHash "enumeration order does not affect the hash"
+                  Expect.equal second first "enumeration order does not affect the inventory"
+                  Expect.contains (first |> List.map fst) "a/inner-empty/" "nested empty leaf is recorded"
+                  Expect.contains (first |> List.map fst) "z-empty/" "top-level empty leaf is recorded"
+                  Expect.isFalse (first |> List.map fst |> List.contains "a/") "non-leaf parent is not recorded"
+
+                  IO.Directory.Delete(IO.Path.Combine(root, "z-empty"))
+                  IO.Directory.Delete(IO.Path.Combine(root, "a"), true)
+                  let fileOnlyHash, _ = Trace.hashWorkspace root
+                  Expect.notEqual firstHash fileOnlyHash "empty-directory state changes the workspace hash"
+
+                  let controlPath = IO.Path.Combine(root, "bad\nname")
+                  IO.File.WriteAllText(controlPath, "bad")
+                  Expect.throws (fun () -> Trace.hashWorkspace root |> ignore) "ambiguous control paths fail closed"
+                  IO.File.Delete controlPath
+              finally
+                  IO.Directory.Delete(root, true)
+          }
+
+          test "directory and file symlinks are neither recorded nor followed" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-links-{Guid.NewGuid():N}")
+              let outside = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-outside-{Guid.NewGuid():N}")
+              let rootLink = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-root-link-{Guid.NewGuid():N}")
+
+              try
+                  let physical = IO.Directory.CreateDirectory(IO.Path.Combine(root, "physical-empty"))
+                  let holder = IO.Directory.CreateDirectory(IO.Path.Combine(root, "holder"))
+                  IO.Directory.CreateDirectory outside |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(outside, "outside.txt"), "outside")
+                  IO.Directory.CreateSymbolicLink(IO.Path.Combine(root, "dir-link"), outside) |> ignore
+                  IO.Directory.CreateSymbolicLink(IO.Path.Combine(holder.FullName, "empty-link"), physical.FullName) |> ignore
+                  IO.File.CreateSymbolicLink(IO.Path.Combine(root, "file-link"), IO.Path.Combine(outside, "outside.txt")) |> ignore
+                  let _, entries = Trace.hashWorkspace root
+                  let paths = entries |> List.map fst
+                  Expect.equal paths [ "physical-empty/" ] "only the physical empty leaf is observable"
+                  IO.Directory.CreateSymbolicLink(rootLink, outside) |> ignore
+                  Expect.equal
+                      (Trace.hashWorkspace rootLink)
+                      ("not-collected", [])
+                      "a symlink root is not followed or mistaken for an empty workspace"
+              finally
+                  if IO.Directory.Exists rootLink then IO.Directory.Delete rootLink
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+                  if IO.Directory.Exists outside then IO.Directory.Delete(outside, true)
+          }
+
+          test "scaffolding subtrees do not manufacture empty-directory state" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-scaffold-{Guid.NewGuid():N}")
+
+              try
+                  IO.Directory.CreateDirectory(IO.Path.Combine(root, ".git", "empty")) |> ignore
+                  IO.Directory.CreateDirectory(IO.Path.Combine(root, "job@tmp", "empty")) |> ignore
+                  IO.Directory.CreateDirectory(IO.Path.Combine(root, "kept")) |> ignore
+                  let _, entries = Trace.hashWorkspace root
+                  Expect.equal (entries |> List.map fst) [ "kept/" ] "only semantic empty leaves remain"
+                  let remoteScaffolding = b64 "job@tmp"
+                  Expect.equal
+                      (collectText 0 (protocol [ $"D\t{remoteScaffolding}" ]))
+                      (sha256Text "", [])
+                      "remote directory scaffolding uses the same exclusion"
+              finally
+                  IO.Directory.Delete(root, true)
+          }
+
+          test "strict remote v2 produces the same canonical hash as local collection" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-parity-{Guid.NewGuid():N}")
+
+              try
+                  IO.Directory.CreateDirectory(IO.Path.Combine(root, "z empty")) |> ignore
+                  IO.Directory.CreateDirectory(IO.Path.Combine(root, "nested")) |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(root, "a.txt"), "a\n")
+                  IO.File.WriteAllText(IO.Path.Combine(root, "nested", "file.txt"), "nested\n")
+                  let fileHash = sha256Text "a\n"
+                  let nestedHash = sha256Text "nested\n"
+                  let filePath = b64 "a.txt"
+                  let nestedPath = b64 "nested/file.txt"
+                  let directoryPath = b64 "z empty"
+                  let wire =
+                      protocol
+                          [ $"F\t{fileHash}\t{filePath}"
+                            $"F\t{nestedHash}\t{nestedPath}"
+                            $"D\t{directoryPath}" ]
+
+                  Expect.equal (collectText 0 wire) (Trace.hashWorkspace root) "local and remote reduce identically"
+
+                  let lexicalA = b64 "a"
+                  let lexicalAb = b64 "ab"
+                  let lexicalWire = protocol [ $"D\t{lexicalA}"; $"D\t{lexicalAb}" ]
+                  let lexicalHash, lexicalEntries = collectText 0 lexicalWire
+                  Expect.notEqual lexicalHash "not-collected" "a lexical prefix is not a path ancestor"
+                  Expect.equal
+                      (lexicalEntries |> List.map fst)
+                      [ "a/"; "ab/" ]
+                      "sibling leaf spellings remain valid"
+
+                  let bmp = "\uE000"
+                  let supplementary = "\U00010000"
+                  let unicodeWire = protocol [ $"D\t{b64 bmp}"; $"D\t{b64 supplementary}" ]
+                  let unicodeHash, unicodeEntries = collectText 0 unicodeWire
+                  Expect.notEqual unicodeHash "not-collected" "C-locale UTF-8 wire order is accepted"
+                  Expect.equal
+                      (unicodeEntries |> List.map fst)
+                      [ supplementary + "/"; bmp + "/" ]
+                      "canonical inventory retains historical .NET ordinal order"
+              finally
+                  IO.Directory.Delete(root, true)
+          }
+
+          test "remote framing, tags, encodings, paths, order, uniqueness and status fail closed" {
+              let hash = String.replicate 64 "a"
+              let file path = $"F\t{hash}\t{b64 path}"
+              let dir path = $"D\t{b64 path}"
+              let good = protocol [ file "a" ]
+              let encodedA = b64 "a"
+              let uppercaseHash = hash.ToUpperInvariant()
+
+              [ "unknown version", 0, good.Replace("\t2\n", "\t3\n")
+                "unknown tag", 0, protocol [ $"X\t{encodedA}" ]
+                "malformed base64", 0, protocol [ "D\t***=" ]
+                "noncanonical base64", 0, protocol [ "D\tYQ===" ]
+                "absolute path", 0, protocol [ dir "/a" ]
+                "dot segment", 0, protocol [ dir "a/../b" ]
+                "control path", 0, protocol [ dir "a\nb" ]
+                "uppercase hash", 0, protocol [ $"F\t{uppercaseHash}\t{encodedA}" ]
+                "duplicate", 0, protocol [ file "a"; file "a" ]
+                "file-directory conflict", 0, protocol [ file "a"; dir "a" ]
+                "file ancestor of directory", 0, protocol [ file "a"; dir "a/b" ]
+                "directory ancestor of file", 0, protocol [ dir "a"; file "a/b" ]
+                "directory ancestor of directory", 0, protocol [ dir "a"; dir "a/b" ]
+                "interposed file hides ancestor", 0, protocol [ file "a"; file "a-foo"; dir "a/b" ]
+                "unsorted", 0, protocol [ dir "z"; file "a" ]
+                "missing trailer", 0, "FOGELL-WORKSPACE-MANIFEST\t2\n"
+                "extra trailer", 0, good + "END\t1\n"
+                "wrong count", 0, good.Replace("END\t1", "END\t2")
+                "noncanonical count", 0, good.Replace("END\t1", "END\t01")
+                "missing terminal LF", 0, good.TrimEnd '\n'
+                "extra blank row", 0, good + "\n"
+                "nonzero status", 9, good ]
+              |> List.iter (fun (label, exitCode, wire) -> refused label exitCode wire)
+          }
+
+          test "zero-record v2 is valid and remains the historical empty hash" {
+              Expect.equal
+                  (collectText 0 (protocol []))
+                  (sha256Text "", [])
+                  "framing metadata is validated, not folded into canonical bytes"
+          }
+
+          test "an explicit empty root is observable while a missing root still refuses" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-workspace-setup-{Guid.NewGuid():N}")
+              let command = $"cd {root} && printf 'FOGELL-WORKSPACE-MANIFEST\\t2\\nEND\\t0\\n'"
+
+              try
+                  IO.Directory.CreateDirectory root |> ignore
+                  Expect.equal
+                      (Trace.collectRemote command)
+                      (sha256Text "", [])
+                      "the reset's mkdir establishes a physical empty tree"
+
+                  IO.Directory.Delete root
+                  Expect.equal
+                      (Trace.collectRemote command)
+                      ("not-collected", [])
+                      "the same strict collector refuses an actually missing or wrong root"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          } ]
+
+let compileRefusalDisposition =
+    let emptyHash, _ = Trace.hashWorkspace (IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-missing-{Guid.NewGuid():N}"))
+
+    let runGit cwd args =
+        let start = Diagnostics.ProcessStartInfo()
+        start.FileName <- "git"
+        start.WorkingDirectory <- cwd
+        start.UseShellExecute <- false
+        start.RedirectStandardOutput <- true
+        start.RedirectStandardError <- true
+        start.Environment["GIT_AUTHOR_NAME"] <- "Fogell Test"
+        start.Environment["GIT_AUTHOR_EMAIL"] <- "fogell@example.invalid"
+        start.Environment["GIT_COMMITTER_NAME"] <- "Fogell Test"
+        start.Environment["GIT_COMMITTER_EMAIL"] <- "fogell@example.invalid"
+
+        for arg in args do
+            start.ArgumentList.Add arg
+
+        use child = Diagnostics.Process.Start start
+        let stdout = child.StandardOutput.ReadToEnd()
+        let stderr = child.StandardError.ReadToEnd()
+        child.WaitForExit()
+
+        if child.ExitCode <> 0 then
+            let command = String.concat " " args
+            failwith $"git {command} failed ({child.ExitCode}): {stderr}"
+
+        stdout.Trim()
+
+    let trace disposition result workspace output timestamps reported =
+        { Disposition = disposition
+          Result = result
+          Output = output
+          WorkspaceHash = workspace
+          WorkspaceFiles = []
+          Timestamps = timestamps
+          Concurrent = false
+          EngineNotes = []
+          ReportedFailureReason = reported }
+
+    let refused workspace output timestamps reported =
+        trace RefusedBeforeExecution "failure" workspace output timestamps reported
+
+    let executed result workspace output reported =
+        trace ExecutedOrRuntime result workspace output (0, List.length output) reported
+
+    let compilerEnvelope =
+        [| "Started by user unknown or anonymous"
+           "org.codehaus.groovy.control.MultipleCompilationErrorsException: startup failed:"
+           "WorkflowScript: 6: unexpected char: '\\' @ line 6, column 30."
+           "                   sh 'printf \"[\\8]\\n\"'"
+           "                                ^"
+           ""
+           "1 error"
+           "Finished: FAILURE" |]
+
+    let invalidEight =
+        """pipeline {
+    agent any
+    stages {
+        stage('invalid-eight') {
+            steps { sh 'printf "[\8]\n"' }
+        }
+    }
+}
+"""
+
+    let badOption =
+        """pipeline {
+    agent any
+    options { parallelsAlwaysFailFast(false) }
+    stages { stage('must-not-run') { steps { sh 'touch must-not-run.txt' } } }
+}
+"""
+
+    let validBuild body =
+        "pipeline { agent any stages { stage('one') { steps { " + body + " } } } }"
+
+    let receipt j f =
+        Compare.receipt
+            "refusal.Jenkinsfile"
+            (Text.Encoding.UTF8.GetBytes invalidEight)
+            "2.568.1"
+            []
+            (Ok j)
+            (Ok f)
+
+    testList
+        "FG-129 compile refusals are comparable without becoming execution"
+        [ test "Jenkins classifier requires failure, zero annotations and an ordered exact envelope" {
+              Expect.equal
+                  (Jenkins.classifyExecutionDisposition "failure" compilerEnvelope)
+                  RefusedBeforeExecution
+                  "the measured invalid escape is a pre-execution refusal"
+
+              let optionEnvelope =
+                  Array.copy compilerEnvelope
+
+              optionEnvelope[2] <-
+                  "WorkflowScript: 4: \"parallelsAlwaysFailFast\" should have 0 arguments but has 1 arguments instead. @ line 4, column 9."
+
+              Expect.equal
+                  (Jenkins.classifyExecutionDisposition "failure" optionEnvelope)
+                  RefusedBeforeExecution
+                  "the measured Declarative model refusal has the same disposition"
+
+              let runtime =
+                  [| "Started by user unknown or anonymous"
+                     "[Pipeline] Start of Pipeline"
+                     "[Pipeline] error"
+                     "ERROR: runtime boom"
+                     "Finished: FAILURE" |]
+
+              Expect.equal
+                  (Jenkins.classifyExecutionDisposition "failure" runtime)
+                  ExecutedOrRuntime
+                  "a genuine runtime failure executed Pipeline code"
+
+              let spoof =
+                  [| "[Pipeline] Start of Pipeline"
+                     "[Pipeline] echo"
+                     compilerEnvelope[1]
+                     "[Pipeline] echo"
+                     compilerEnvelope[2]
+                     "[Pipeline] echo"
+                     compilerEnvelope[6]
+                     "Finished: FAILURE" |]
+
+              Expect.equal
+                  (Jenkins.classifyExecutionDisposition "failure" spoof)
+                  ExecutedOrRuntime
+                  "compiler-shaped build output cannot spoof a refusal"
+
+              Expect.equal
+                  (Jenkins.classifyExecutionDisposition "success" compilerEnvelope)
+                  ExecutedOrRuntime
+                  "the terminal failure guard is mandatory"
+          }
+
+          test "Jenkins classifier fails closed on malformed or reordered envelopes" {
+              let mutations =
+                  [ "summary before diagnostic", [| compilerEnvelope[0]; compilerEnvelope[1]; compilerEnvelope[6]; compilerEnvelope[2] |]
+                    "unanchored compiler head", [| "prefix " + compilerEnvelope[1]; compilerEnvelope[2]; compilerEnvelope[6] |]
+                    "unanchored workflow line", [| compilerEnvelope[1]; "prefix " + compilerEnvelope[2]; compilerEnvelope[6] |]
+                    "zero workflow line", [| compilerEnvelope[1]; "WorkflowScript: 0: bad @ line 0, column 1."; compilerEnvelope[6] |]
+                    "zero errors", [| compilerEnvelope[1]; compilerEnvelope[2]; "0 errors" |]
+                    "missing class head", [| compilerEnvelope[2]; compilerEnvelope[6] |] ]
+
+              for label, lines in mutations do
+                  Expect.equal
+                      (Jenkins.classifyExecutionDisposition "failure" lines)
+                      ExecutedOrRuntime
+                      label
+          }
+
+          test "refused SCM attestation requires an exact compiler boundary" {
+              let revision = String.replicate 40 "a"
+              let prefixed =
+                  $"Checking out Revision {revision} (origin/main)\nprefix org.codehaus.groovy.control.MultipleCompilationErrorsException: startup failed:\n"
+
+              match Jenkins.parseScmDefinitionRevisionFor RefusedBeforeExecution prefixed with
+              | Ok accepted -> failtestf "embedded compiler text became an SCM boundary: %s" accepted
+              | Error why -> Expect.stringContains why "no compiler boundary" "boundary matching is exact"
+          }
+
+          test "Fogell input rejection returns a refusal trace without touching a fresh workspace" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-fresh-{Guid.NewGuid():N}")
+              let workspace = IO.Path.Combine(root, "job")
+
+              try
+                  IO.Directory.CreateDirectory workspace |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(workspace, "stale.txt"), "must be wiped")
+
+                  match FogellSide.run [] root "job" invalidEight with
+                  | Error why -> failtestf "input rejection remained a harness error: %s" why
+                  | Ok result ->
+                      Expect.equal result.Disposition RefusedBeforeExecution "typed refusal"
+                      Expect.equal result.Result "failure" "terminal result"
+                      Expect.equal result.Output [] "compiler narration is omitted"
+                      Expect.equal result.WorkspaceHash emptyHash "missing workspace has the canonical empty hash"
+                      Expect.isTrue result.ReportedFailureReason "the refusal reports a terminal failure reason"
+                      Expect.isFalse (IO.Directory.Exists workspace) "fresh cleanup preceded the refusal and no workspace was recreated"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "Fogell compile-shaped option refusal is typed and performs no effect" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-option-{Guid.NewGuid():N}")
+
+              try
+                  IO.Directory.CreateDirectory root |> ignore
+
+                  match FogellSide.run [] root "job" badOption with
+                  | Error why -> failtestf "option refusal did not produce a trace: %s" why
+                  | Ok result ->
+                      Expect.equal result.Disposition RefusedBeforeExecution "compile-shaped rejection"
+                      Expect.equal result.Result "failure" "terminal failure"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(root, "job", "must-not-run.txt")))
+                          "the rejected model performed no shell effect"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "Fogell capability gaps remain engine-unavailable rather than reference refusals" {
+              let source =
+                  "pipeline { agent { kubernetes label: 'docker', yaml: 'apiVersion: v1' } stages { stage('one') { steps { echo 'x' } } } }"
+
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-capability-{Guid.NewGuid():N}")
+
+              try
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> Expect.stringStarts why "unsupported_agent:" "capability remains not comparable"
+                  | Ok result -> failtestf "capability gap became a reference refusal: %A" result
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "Fogell parser limits remain engine-unavailable rather than reference refusals" {
+              let source = String.replicate 262_145 "x"
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-limit-{Guid.NewGuid():N}")
+              let workspace = IO.Path.Combine(root, "job")
+
+              try
+                  IO.Directory.CreateDirectory workspace |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(workspace, "sentinel.txt"), "keep")
+
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> Expect.stringStarts why "source_too_large at" "parser capability remains not comparable"
+                  | Ok result -> failtestf "parser limit became a reference refusal: %A" result
+
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt")))
+                      "engine-unavailable preflight does not wipe the workspace"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "SCM attestation failures preserve fresh-job workspace and history before a parser refusal" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-scm-order-{Guid.NewGuid():N}")
+              let workspace = IO.Path.Combine(root, "job")
+              let history = IO.Path.Combine(root, "_artifacts", "_scm", "job")
+
+              let plantSentinels () =
+                  IO.Directory.CreateDirectory workspace |> ignore
+                  IO.Directory.CreateDirectory history |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(workspace, "workspace.sentinel"), "keep")
+                  IO.File.WriteAllText(IO.Path.Combine(history, "history.sentinel"), "keep")
+
+              let assertSentinels label =
+                  Expect.isTrue (IO.File.Exists(IO.Path.Combine(workspace, "workspace.sentinel"))) $"{label}: workspace retained"
+                  Expect.isTrue (IO.File.Exists(IO.Path.Combine(history, "history.sentinel"))) $"{label}: history retained"
+
+              try
+                  plantSentinels ()
+                  let unavailable = { Url = "file:///definitely/not/a/repository"; Branch = "main" }
+
+                  match FogellSide.runScm [] root "job" unavailable invalidEight with
+                  | Ok trace -> failtestf "unavailable SCM sealed a refusal: %A" trace
+                  | Error why -> Expect.stringContains why "verification unavailable" "attestation failure is named"
+
+                  assertSentinels "unavailable"
+
+                  let sourceRepo = IO.Path.Combine(root, "source")
+                  let bareRepo = IO.Path.Combine(root, "remote.git")
+                  IO.Directory.CreateDirectory sourceRepo |> ignore
+                  runGit sourceRepo [ "init"; "-b"; "main" ] |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(sourceRepo, "Jenkinsfile"), validBuild "echo 'remote'" )
+                  runGit sourceRepo [ "add"; "Jenkinsfile" ] |> ignore
+                  runGit sourceRepo [ "commit"; "-m"; "drifted definition" ] |> ignore
+                  runGit root [ "init"; "--bare"; bareRepo ] |> ignore
+                  runGit sourceRepo [ "push"; bareRepo; "main:main" ] |> ignore
+
+                  match FogellSide.runScm [] root "job" { Url = bareRepo; Branch = "main" } invalidEight with
+                  | Ok trace -> failtestf "drifted SCM sealed a refusal: %A" trace
+                  | Error why -> Expect.stringContains why "SCM case drift" "drift is named"
+
+                  assertSentinels "drift"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "successful SCM attestation cleans fresh-job sentinels before hashing a refusal" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-scm-success-{Guid.NewGuid():N}")
+              let sourceRepo = IO.Path.Combine(root, "source")
+              let bareRepo = IO.Path.Combine(root, "remote.git")
+              let workspace = IO.Path.Combine(root, "workspace", "job")
+              let history = IO.Path.Combine(root, "workspace", "_artifacts", "_scm", "job")
+
+              try
+                  IO.Directory.CreateDirectory sourceRepo |> ignore
+                  IO.Directory.CreateDirectory workspace |> ignore
+                  IO.Directory.CreateDirectory history |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(workspace, "workspace.sentinel"), "remove")
+                  IO.File.WriteAllText(IO.Path.Combine(history, "history.sentinel"), "remove")
+                  runGit sourceRepo [ "init"; "-b"; "main" ] |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(sourceRepo, "Jenkinsfile"), invalidEight)
+                  runGit sourceRepo [ "add"; "Jenkinsfile" ] |> ignore
+                  runGit sourceRepo [ "commit"; "-m"; "matching invalid definition" ] |> ignore
+                  runGit root [ "init"; "--bare"; bareRepo ] |> ignore
+                  runGit sourceRepo [ "push"; bareRepo; "main:main" ] |> ignore
+
+                  match FogellSide.runScm [] (IO.Path.Combine(root, "workspace")) "job" { Url = bareRepo; Branch = "main" } invalidEight with
+                  | Error why -> failtestf "matching SCM refusal failed: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Disposition RefusedBeforeExecution "attested input refused"
+                      Expect.equal trace.WorkspaceHash emptyHash "fresh workspace was cleaned before hashing"
+                      Expect.isFalse (IO.Directory.Exists workspace) "workspace was removed and not recreated"
+                      Expect.isFalse (IO.Directory.Exists history) "SCM history was reset"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "a retained refusal preserves workspace and carries failure into the next build" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-sequence-{Guid.NewGuid():N}")
+              let first = validBuild "sh 'printf retained > retained.txt'"
+              let third =
+                  "pipeline { agent any stages { stage('three') { steps { sh 'printf three > third.txt' } } } "
+                  + "post { fixed { sh 'printf fixed > fixed.txt' } } }"
+
+              try
+                  let results = FogellSide.runMany [] root "job" [ first; invalidEight; third ]
+
+                  match results with
+                  | [ Ok b1; Ok b2; Ok b3 ] ->
+                      Expect.equal b1.Result "success" "build 1 seeded the workspace"
+                      Expect.equal b2.Disposition RefusedBeforeExecution "build 2 refused"
+                      Expect.equal b2.WorkspaceHash b1.WorkspaceHash "build 2 retained build 1's workspace"
+                      Expect.equal b3.Result "success" "build 3 ran"
+                      Expect.isTrue (IO.File.Exists(IO.Path.Combine(root, "job", "fixed.txt"))) "prior refusal carried as failure"
+                  | other -> failtestf "three-build sequence did not remain aligned: %A" other
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "one refused side always diverges before ordinary axes are considered" {
+              let j = refused emptyHash [] (0, 0) true
+              let f = executed "failure" emptyHash [] true
+
+              match Compare.traces [] j f with
+              | Diverged [ DispositionDiffers(RefusedBeforeExecution, ExecutedOrRuntime) ], [] -> ()
+              | other -> failtestf "expected the single disposition divergence, got %A" other
+          }
+
+          test "two refusals compare only result and workspace" {
+              let j = refused emptyHash [ "compiler wording A" ] (99, -1) false
+              let f = refused emptyHash [ "compiler wording B" ] (-3, 0) true
+
+              Expect.equal (Compare.traces [] j f) (Proven, []) "output, timestamps and reason are omitted"
+
+              match Compare.traces [] j { f with Result = "aborted" } with
+              | Diverged [ ResultDiffers("failure", "aborted") ], [] -> ()
+              | other -> failtestf "result was not compared: %A" other
+
+              match Compare.traces [] j { f with WorkspaceHash = String.replicate 64 "f" } with
+              | Diverged [ WorkspaceDiffers _ ], [] -> ()
+              | other -> failtestf "workspace was not compared: %A" other
+          }
+
+          test "refusal disposition is conditional, sealed and parsed fail-closed" {
+              let r = receipt (refused emptyHash [ "jenkins compiler text" ] (0, 0) true) (refused emptyHash [] (0, 0) true)
+              let text = Compare.render r
+              let marker = "  disposition: refused-before-execution"
+
+              Expect.equal
+                  (text.Replace(marker, "").Length - text.Length)
+                  (-2 * marker.Length)
+                  "one exact marker per side"
+              Expect.isFalse (text.Contains "  output (") "refusal output is omitted"
+              Expect.stringContains text "same pre-execution refusal" "the verdict does not claim output equality"
+              Expect.equal (Compare.verifySealedText "refusal.receipt.txt" text) Compare.SealValid "round trip"
+
+              let hostileTimestampText =
+                  receipt
+                      (refused emptyHash [] (99, -1) true)
+                      (refused emptyHash [] (-3, 0) true)
+                  |> Compare.render
+
+              Expect.isFalse
+                  (hostileTimestampText.Contains "timestamps():")
+                  "refusal timestamps are omitted even when the raw counters are hostile"
+
+              Expect.equal
+                  (Compare.verifySealedText "refusal.receipt.txt" hostileTimestampText)
+                  Compare.SealValid
+                  "omitted refusal timestamps round trip"
+
+              let refusalSealWith timestamps output =
+                  receipt
+                      (refused emptyHash output timestamps true)
+                      (refused emptyHash [] (0, 0) false)
+                  |> fun candidate -> candidate.Seal
+
+              Expect.equal
+                  (refusalSealWith (99, -1) [ "compiler A" ])
+                  (refusalSealWith (-3, 0) [ "compiler B" ])
+                  "refusal seals omit output, timestamp coverage and failure wording"
+
+              let partial = receipt (refused "not-collected" [] (0, 0) true) (refused emptyHash [] (0, 0) true)
+              let partialText = Compare.render partial
+              Expect.stringContains partialText "same pre-execution refusal and same result; output not compared" "partial verdict is refusal-specific"
+              Expect.stringContains partialText "WORKSPACE NOT COMPARED" "partial verdict names the missing axis"
+              Expect.isFalse (partialText.Contains "same result, same output") "partial verdict never claims output equality"
+              Expect.equal (Compare.verifySealedText "refusal.receipt.txt" partialText) Compare.SealValid "partial refusal round trip"
+
+              let oneRefused =
+                  receipt
+                      { refused emptyHash [ "compiler" ] (99, -1) true with Concurrent = true }
+                      { executed "failure" emptyHash [ "executed evidence" ] true with
+                          Concurrent = true
+                          Timestamps = (-3, 0) }
+
+              let oneRefusedText = Compare.render oneRefused
+              Expect.stringContains oneRefusedText "sealed-output: omitted" "refusal short-circuit has an explicit output mode"
+              Expect.stringContains oneRefusedText "only execution disposition is compared" "one-sided contract names its sole axis"
+              Expect.stringContains oneRefusedText "rendered and sealed for audit only" "executed facts are evidence only"
+              Expect.isFalse (oneRefusedText.Contains "  output (") "all output is omitted after a refusal short-circuit"
+              Expect.isFalse (oneRefusedText.Contains "timestamps():") "one-sided refusal timestamps are omitted"
+              Expect.isFalse (oneRefusedText.Contains "PARALLEL:") "refusal concurrency cannot claim multiset comparison"
+              Expect.isFalse (oneRefusedText.Contains "compared: ordered normalised output") "generic output contract is absent"
+              Expect.isFalse (oneRefusedText.Contains "CLASSIFICATION is") "generic timestamp sealing claim is absent"
+              Expect.equal (Compare.verifySealedText "refusal.receipt.txt" oneRefusedText) Compare.SealValid "one-sided refusal round trip"
+
+              let bothConcurrent =
+                  receipt
+                      { refused emptyHash [] (0, 0) true with Concurrent = true }
+                      { refused emptyHash [] (0, 0) true with Concurrent = true }
+                  |> Compare.render
+
+              Expect.stringContains bothConcurrent "sealed-output: omitted" "dual refusal ignores concurrent flags"
+              Expect.isFalse (bothConcurrent.Contains "PARALLEL:") "dual refusal cannot claim multiset output"
+              Expect.isFalse (bothConcurrent.Contains "CLASSIFICATION is") "dual refusal omits timestamp sealing claims"
+              Expect.equal (Compare.verifySealedText "refusal.receipt.txt" bothConcurrent) Compare.SealValid "concurrent refusal round trip"
+
+              let replaceFirst (oldValue: string) (newValue: string) (source: string) =
+                  let index = source.IndexOf(oldValue, StringComparison.Ordinal)
+                  if index < 0 then failtestf "fixture has no '%s'" oldValue
+                  source.Substring(0, index) + newValue + source.Substring(index + oldValue.Length)
+
+              let hostile =
+                  [ "deleted", replaceFirst (marker + Environment.NewLine) "" text
+                    "explicit executed", text.Replace(marker, "  disposition: executed-or-runtime")
+                    "unknown", text.Replace(marker, "  disposition: unknown")
+                    "trailing junk", text.Replace(marker, marker + " junk")
+                    "duplicate", replaceFirst marker (marker + Environment.NewLine + marker) text
+                    "misplaced", replaceFirst (marker + Environment.NewLine) "" text |> replaceFirst "  workspace-hash:" (marker + Environment.NewLine + "  workspace-hash:")
+                    "top-level", replaceFirst "sealed-output: omitted" ("sealed-output: omitted" + Environment.NewLine + marker) text ]
+
+              for label, forged in hostile do
+                  match Compare.verifySealedText "refusal.receipt.txt" forged with
+                  | Compare.SealValid -> failtestf "%s disposition forgery verified" label
+                  | _ -> ()
+          }
+
+          test "ordinary receipts retain the legacy wire shape" {
+              let ordinary = receipt (executed "success" emptyHash [ "hello" ] false) (executed "success" emptyHash [ "hello" ] false)
+              let text = Compare.render ordinary
+              Expect.isFalse (text.Contains "disposition:") "executed disposition is represented by absence"
+              Expect.stringContains text "  output (1 lines):" "legacy side shape remains"
+              Expect.equal (Compare.verifySealedText "refusal.receipt.txt" text) Compare.SealValid "legacy grammar remains valid"
+          } ]
+
+/// The production credential loader remains environment-backed, but its wire decoder
+/// is pure so these contracts do not require process-global fixture state.
+let credentialStoreDecoding =
+    let encodeBytes (value: byte[]) = Convert.ToBase64String value
+    let encodeText (value: string) = value |> Text.Encoding.UTF8.GetBytes |> encodeBytes
+
+    testList
+        "FG-044 credential store wire decoding"
+        [ test "text, binary file and username/password values decode byte-exactly" {
+              let fileBytes = [| 0uy; 1uy; 127uy; 128uy; 255uy |]
+              let encodedText = encodeText "https://example.test/a:b;c"
+              let encodedUserpass = encodeText "measured-user\nmeasured-pass"
+
+              let spec =
+                  String.concat
+                      "\r\n"
+                      [ "# fixture comment"
+                        $"live-text\ttext\t{encodedText}"
+                        $"live-file\tfile\t{encodeBytes fileBytes}"
+                        $"live-user\tuserpass\t{encodedUserpass}" ]
+
+              let decoded = FogellSide.credentialStoreFromSpec spec
+              Expect.equal decoded.Count 3 "comments do not become credentials"
+              Expect.equal decoded["live-text"] (SecretText "https://example.test/a:b;c") "text is exact"
+
+              match decoded["live-file"] with
+              | SecretFile(fileName, bytes) ->
+                  Expect.equal fileName "secret.dat" "the stable materialized filename is retained"
+                  Expect.sequenceEqual bytes fileBytes "file bytes survive without a UTF-8 round trip"
+              | other -> failtestf "file credential decoded as %A" other
+
+              Expect.equal
+                  decoded["live-user"]
+                  (UsernamePassword("measured-user", "measured-pass"))
+                  "the first newline separates username from password"
+          }
+
+          test "empty and malformed entries fail closed" {
+              Expect.isEmpty (FogellSide.credentialStoreFromSpec null) "a missing source is an empty store"
+              Expect.isEmpty (FogellSide.credentialStoreFromSpec "") "an empty source is an empty store"
+              let encodedUserOnly = encodeText "only-a-username"
+              let encodedValue = encodeText "value"
+
+              let spec =
+                  String.concat
+                      "\n"
+                      [ "bad-base64\ttext\t%%%"
+                        $"bad-userpass\tuserpass\t{encodedUserOnly}"
+                        $"bad-kind\tcertificate\t{encodedValue}"
+                        "bad-shape\ttext" ]
+
+              Expect.isEmpty
+                  (FogellSide.credentialStoreFromSpec spec)
+                  "malformed base64, arity, kinds and user/password payloads never create empty credentials"
+          } ]
+
+/// FG-044b(c). A suffix-shaped nested credential key is an unsupported request,
+/// and one unsupported sibling refuses the entire wrapper before any binding effect.
+let credentialKeyBoundaryRefusal =
+    let credentials =
+        Map.ofList
+            [ "live-text", SecretText "text-secret"
+              "live-file", SecretFile("secret.dat", Text.Encoding.UTF8.GetBytes "file-secret")
+              "live-user", UsernamePassword("measured-user", "measured-pass") ]
+
+    let pipeline bindings body successor =
+        "pipeline { agent any stages { stage('credentials') { steps { "
+        + "sh 'touch before-wrapper.txt'; "
+        + $"withCredentials([{bindings}]) {{ sh '{body}' }}; "
+        + $"sh '{successor}' "
+        + "} } } }"
+
+    let run source check =
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-credential-key-" + Guid.NewGuid().ToString("N"))
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            match FogellSide.runWithCredentials credentials [] root "job" source with
+            | Error why -> failtestf "credential boundary pipeline refused outside execution: %s" why
+            | Ok trace -> check root workspace trace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    testList
+        "FG-044b(c) credential key boundary refuses atomically"
+        [ test "mixed valid and prefixed-key requests refuse atomically in either sibling order" {
+            let cases =
+                [ "string",
+                  "string(credentialsId: 'live-text', variable: 'GOOD')",
+                  "string(XcredentialsId: 'live-text', variable: 'BAD')"
+                  "file",
+                  "file(credentialsId: 'live-file', variable: 'GOOD')",
+                  "file(credentialsId: 'live-file', $variable: 'BAD')"
+                  "usernamePassword",
+                  "usernamePassword(credentialsId: 'live-user', usernameVariable: 'GOOD_USER', passwordVariable: 'GOOD_PASS')",
+                  "usernamePassword(credentialsId: 'live-user', usernameVariable: 'BAD_USER', \u200CpasswordVariable: 'BAD_PASS')" ]
+
+            for label, valid, invalid in cases do
+                for order, bindings in
+                    [ "invalid-first", invalid + ", " + valid
+                      "valid-first", valid + ", " + invalid ] do
+                    let body = $"touch {label}-{order}-body.txt"
+                    let successor = $"touch {label}-{order}-successor.txt"
+
+                    run (pipeline bindings body successor) (fun root workspace trace ->
+                        Expect.equal trace.Result "failure" $"{label}/{order}: wrapper refuses"
+
+                        Expect.isTrue
+                            trace.ReportedFailureReason
+                            $"{label}/{order}: the runtime refusal remains observably explained"
+
+                        Expect.isFalse
+                            (trace.Output
+                             |> List.exists (fun line -> line.StartsWith("Masking supported pattern matches", StringComparison.Ordinal)))
+                            $"{label}/{order}: credential binding narration was never reached"
+
+                        Expect.isTrue
+                            (IO.File.Exists(IO.Path.Combine(workspace, "before-wrapper.txt")))
+                            $"{label}/{order}: this is a runtime refusal after prior ordinary effects"
+
+                        Expect.isFalse
+                            (IO.Directory.Exists(IO.Path.Combine(root, "_secrets")))
+                            $"{label}/{order}: no credential file or value binding was created"
+
+                        Expect.isFalse
+                            (IO.File.Exists(IO.Path.Combine(workspace, $"{label}-{order}-body.txt")))
+                            $"{label}/{order}: wrapper body did not run"
+
+                        Expect.isFalse
+                            (IO.File.Exists(IO.Path.Combine(workspace, $"{label}-{order}-successor.txt")))
+                            $"{label}/{order}: later effects did not run")
+
+            let validBindings =
+                String.concat
+                    ", "
+                    [ "string(credentialsId: 'live-text', variable: 'TOKEN')"
+                      "file(credentialsId: 'live-file', variable: 'CERT')"
+                      "usernamePassword(credentialsId: 'live-user', usernameVariable: 'USER', passwordVariable: 'PASS')" ]
+
+            let validBody =
+                "test -n \"$TOKEN\" && test -f \"$CERT\" && test -n \"$USER\" && test -n \"$PASS\" && touch valid-body.txt"
+
+            run (pipeline validBindings validBody "touch valid-successor.txt") (fun _ workspace trace ->
+                Expect.equal trace.Result "success" "exact controls still bind all three credential kinds"
+                Expect.isTrue (IO.File.Exists(IO.Path.Combine(workspace, "valid-body.txt"))) "the bound body ran"
+                Expect.isTrue
+                    (IO.File.Exists(IO.Path.Combine(workspace, "valid-successor.txt")))
+                    "the ordinary successor ran")
+          } ]
+
+/// FG-044b(b). A generated `_FILE` companion is a Fogell convenience, not a
+/// lexical binding. It may fill an unused name but must never replace an effective
+/// pipeline/stage/withEnv/outer-credential value.
+let credentialCompanionPreservation =
+    let credentials = Map.ofList [ "live-text", SecretText "text-secret" ]
+
+    let run label source check =
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-credential-companion-" + Guid.NewGuid().ToString("N"))
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            match FogellSide.runWithCredentials credentials [] root "job" source with
+            | Error why -> failtestf "%s pipeline refused outside execution: %s" label why
+            | Ok trace -> check root workspace trace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    let expectSuccess label root workspace markers trace =
+        Expect.equal trace.Result "success" $"{label}: wrapper and successors succeed"
+        Expect.isFalse
+            (trace.Output |> List.exists (fun line -> line.Contains "text-secret"))
+            $"{label}: the credential value never reaches captured output"
+
+        for marker in markers do
+            Expect.isTrue (IO.File.Exists(IO.Path.Combine(workspace, marker))) $"{label}: {marker} proves its arm ran"
+
+        let secretRoot = IO.Path.Combine(root, "_secrets")
+
+        let leftovers =
+            if IO.Directory.Exists secretRoot then
+                IO.Directory.GetFiles(secretRoot, "*", IO.SearchOption.AllDirectories)
+            else
+                [||]
+
+        Expect.isEmpty leftovers $"{label}: every generated secret file is revoked"
+
+    testList
+        "FG-044b(b) credential companions preserve outer bindings"
+        [ test "an inner companion preserves and then restores an outer credential value" {
+              let source =
+                  """pipeline {
+  agent any
+  stages {
+    stage('nested') {
+      steps {
+        withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN_FILE')]) {
+          sh 'test -n "$TOKEN_FILE" && touch outer-before.txt'
+          withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN')]) {
+            sh 'test "$TOKEN_FILE" = "$TOKEN" && touch nested.txt'
+          }
+          sh 'test -n "$TOKEN_FILE" && touch outer-after.txt'
+        }
+        sh 'test -z "${TOKEN_FILE+x}" && touch successor.txt'
+      }
+    }
+  }
+}"""
+
+              run "nested" source (fun root workspace trace ->
+                  expectSuccess
+                      "nested"
+                      root
+                      workspace
+                      [ "outer-before.txt"; "nested.txt"; "outer-after.txt"; "successor.txt" ]
+                      trace)
+          }
+
+          test "stage names are protected while unused and case-distinct companions remain" {
+              let source =
+                  """pipeline {
+  agent any
+  environment {
+    PIPE_FILE = 'pipeline-owned'
+  }
+  stages {
+    stage('stage-env') {
+      environment {
+        TOKEN_FILE = 'stage-owned'
+        case_file = 'lower-owned'
+      }
+      steps {
+        withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN'), string(credentialsId: 'live-text', variable: 'PIPE'), string(credentialsId: 'live-text', variable: 'OTHER'), string(credentialsId: 'live-text', variable: 'CASE')]) {
+          sh 'test "$PIPE_FILE" = pipeline-owned && test "$TOKEN_FILE" = stage-owned && test "$case_file" = lower-owned && test -r "$OTHER_FILE" && test -r "$CASE_FILE" && test "$TOKEN" = "$OTHER" && touch stage-protected.txt'
+        }
+        sh 'test "$PIPE_FILE" = pipeline-owned && test "$TOKEN_FILE" = stage-owned && touch stage-restored.txt'
+      }
+    }
+  }
+}"""
+
+              run "stage" source (fun root workspace trace ->
+                  expectSuccess
+                      "stage"
+                      root
+                      workspace
+                      [ "stage-protected.txt"; "stage-restored.txt" ]
+                      trace)
+          }
+
+          test "an explicit current value shadows withEnv and the outer value returns" {
+              let source =
+                  """pipeline {
+  agent any
+  stages {
+    stage('withenv') {
+      steps {
+        withEnv(['TOKEN_FILE=outer-env']) {
+          withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN')]) {
+            sh 'test "$TOKEN_FILE" = outer-env && test -n "$TOKEN" && touch withenv-protected.txt'
+          }
+          withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN_FILE'), string(credentialsId: 'live-text', variable: 'EXPECTED')]) {
+            sh 'test "$TOKEN_FILE" = "$EXPECTED" && touch explicit-shadow.txt'
+          }
+          sh 'test "$TOKEN_FILE" = outer-env && touch withenv-restored.txt'
+        }
+        sh 'test -z "${TOKEN_FILE+x}" && touch withenv-successor.txt'
+      }
+    }
+  }
+}"""
+
+              run "withEnv" source (fun root workspace trace ->
+                  expectSuccess
+                      "withEnv"
+                      root
+                      workspace
+                      [ "withenv-protected.txt"
+                        "explicit-shadow.txt"
+                        "withenv-restored.txt"
+                        "withenv-successor.txt" ]
+                      trace)
+          } ]
+
+/// FG-044b(d). The public stash flag is interpreted by the walker, while the
+/// actual Ant selection remains owned by Fogell.Execution.Stash. These runtime
+/// controls make omission, both booleans, restore, user excludes and the
+/// all-filtered failure boundary observable through the real dispatcher.
+let stashDefaultExcludes =
+    let stashDirectory (root: string) (name: string) =
+        let slug =
+            String(name |> Seq.map (fun c -> if Char.IsLetterOrDigit c then c else '-') |> Seq.toArray)
+            |> fun value -> value.Trim '-'
+            |> fun value -> if value = "" then "stash" else value.Substring(0, min 40 value.Length)
+
+        use sha = Security.Cryptography.SHA256.Create()
+        let digest = sha.ComputeHash(Text.Encoding.UTF8.GetBytes name) |> Convert.ToHexString
+        let safeName = slug + "-" + digest.Substring(0, 12).ToLowerInvariant()
+
+        IO.Path.Combine(
+            root,
+            "_artifacts",
+            "_stash",
+            "job#build-1",
+            "stashes",
+            safeName
+        )
+
+    let withRun label source assertions =
+        let root =
+            IO.Path.Combine(
+                IO.Path.GetTempPath(),
+                $"fogell-fg044bd-{label}-{Guid.NewGuid():N}"
+            )
+
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            match FogellSide.run [] root "job" source with
+            | Error why -> failtestf "%s stash pipeline was refused before execution: %s" label why
+            | Ok trace -> assertions root workspace trace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    let pipeline flag assertion =
+        "pipeline { agent any stages { stage('stash') { steps { "
+        + "sh 'mkdir -p .git && printf hidden > .git/config && printf visible > visible.txt && printf drop > drop.txt'; "
+        + "stash name: 'bundle', includes: '**', excludes: 'drop.txt'"
+        + flag
+        + "; deleteDir(); unstash 'bundle'; "
+        + "sh 'test -f visible.txt && test ! -e drop.txt && "
+        + assertion
+        + " && printf restored > restored.txt' "
+        + "} } } }"
+
+    testList
+        "FG-044b(d) stash default excludes runtime"
+        [ test "omitted and true exclude SCM metadata while false restores it" {
+              for label, flag, hiddenAssertion, hiddenPresent in
+                  [ "omitted", "", "test ! -e .git/config", false
+                    "true", ", useDefaultExcludes: true", "test ! -e .git/config", false
+                    "false", ", useDefaultExcludes: false", "test -f .git/config", true ] do
+                  withRun label (pipeline flag hiddenAssertion) (fun _ workspace trace ->
+                      Expect.equal trace.Result "success" $"{label}: stash, wipe and restore complete"
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "visible.txt")))
+                          $"{label}: ordinary included content restores"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "drop.txt")))
+                          $"{label}: caller excludes remain authoritative"
+                      Expect.equal
+                          (IO.File.Exists(IO.Path.Combine(workspace, ".git", "config")))
+                          hiddenPresent
+                          $"{label}: exact useDefaultExcludes behavior reaches restore"
+                      Expect.equal
+                          (IO.File.ReadAllText(IO.Path.Combine(workspace, "restored.txt")))
+                          "restored"
+                          $"{label}: the successor ran only after a usable restore")
+          }
+
+          test "an all-default-excluded stash follows allowEmpty without running a failed successor" {
+              let source allowEmpty successor =
+                  "pipeline { agent any stages { stage('stash') { steps { "
+                  + "sh 'mkdir -p .git && printf hidden > .git/config'; "
+                  + "stash name: 'hidden-only', includes: '.git/config'"
+                  + allowEmpty
+                  + "; "
+                  + successor
+                  + " } } } post { always { sh 'touch post-marker.txt' } } }"
+
+              withRun "required" (source "" "sh 'touch successor.txt'") (fun _ workspace trace ->
+                  Expect.equal trace.Result "failure" "the default allowEmpty:false fails after filtering"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, ".git", "config")))
+                      "selection never deletes the source"
+                  Expect.isFalse
+                      (IO.File.Exists(IO.Path.Combine(workspace, "successor.txt")))
+                      "the failed stash stops its stage successor"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "post-marker.txt")))
+                      "the established pipeline post path is unchanged")
+
+              let allowedSuccessor =
+                  "deleteDir(); unstash 'hidden-only'; sh 'test ! -e .git/config && touch allowed.txt'"
+
+              withRun
+                  "allowed"
+                  (source ", allowEmpty: true" allowedSuccessor)
+                  (fun _ workspace trace ->
+                      Expect.equal trace.Result "success" "allowEmpty:true permits the filtered-empty stash"
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "allowed.txt")))
+                          "an empty stash restores and its successor runs"
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "post-marker.txt")))
+                          "post remains available after success")
+          }
+
+          test "strict malformed booleans create no fresh stash directory or later effects" {
+              for label, argument in
+                  [ "other word", "'yes'"
+                    "wrong case", "'True'"
+                    "padded", "' true '" ] do
+                  let source =
+                      "pipeline { agent any stages { stage('stash') { steps { "
+                      + "sh 'printf visible > visible.txt'; "
+                      + $"stash name: 'bundle', includes: '**', useDefaultExcludes: {argument}; "
+                      + "sh 'touch successor.txt' } } } }"
+
+                  withRun $"malformed-{label.Replace(' ', '-')}" source (fun root workspace trace ->
+                      Expect.equal trace.Result "failure" $"{label}: an unrecognised boolean is fail-closed"
+                      Expect.isTrue trace.ReportedFailureReason $"{label}: the refusal remains explained"
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "visible.txt")))
+                          $"{label}: the preceding effect establishes that execution reached stash"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "successor.txt")))
+                          $"{label}: the malformed flag stops the successor"
+
+                      let target = stashDirectory root "bundle"
+                      Expect.isFalse
+                          (IO.Directory.Exists target)
+                          $"{label}: the exact controller-side stash target was never created"
+                      Expect.isFalse
+                          (IO.Directory.Exists(IO.Path.Combine(root, "_artifacts", "_stash")))
+                          $"{label}: even the stash-store root stays absent on a fresh malformed call")
+          }
+
+          test "a malformed same-name replacement preserves seeded inventory and bytes" {
+              let source =
+                  "pipeline { agent any stages { stage('stash') { steps { "
+                  + "sh 'mkdir -p nested && printf seed-one > seed.txt && printf seed-two > nested/data.txt'; "
+                  + "stash name: 'bundle', includes: 'seed.txt,nested/**', useDefaultExcludes: false; "
+                  + "sh 'printf replacement > replacement.txt'; "
+                  + "stash name: 'bundle', includes: 'replacement.txt', useDefaultExcludes: 'yes'; "
+                  + "sh 'touch successor.txt' } } } }"
+
+              withRun "malformed-replace" source (fun root workspace trace ->
+                  Expect.equal trace.Result "failure" "the malformed replacement is fail-closed"
+                  Expect.isTrue trace.ReportedFailureReason "the replacement refusal remains explained"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "replacement.txt")))
+                      "the pre-replacement marker establishes exact execution order"
+                  Expect.isFalse
+                      (IO.File.Exists(IO.Path.Combine(workspace, "successor.txt")))
+                      "the malformed replacement stops its successor"
+
+                  let target = stashDirectory root "bundle"
+                  Expect.isTrue (IO.Directory.Exists target) "the exact seeded stash directory survives"
+
+                  let inventory =
+                      IO.Directory.EnumerateFiles(target, "*", IO.SearchOption.AllDirectories)
+                      |> Seq.map (fun path -> IO.Path.GetRelativePath(target, path).Replace('\\', '/'))
+                      |> Seq.sort
+                      |> Seq.toList
+
+                  Expect.equal
+                      inventory
+                      [ "nested/data.txt"; "seed.txt" ]
+                      "the malformed call neither deletes nor adds to the seeded inventory"
+
+                  let directories =
+                      IO.Directory.EnumerateDirectories(target, "*", IO.SearchOption.AllDirectories)
+                      |> Seq.map (fun path -> IO.Path.GetRelativePath(target, path).Replace('\\', '/'))
+                      |> Seq.sort
+                      |> Seq.toList
+
+                  Expect.equal directories [ "nested" ] "the seeded directory inventory is byte-layout stable"
+                  Expect.sequenceEqual
+                      (IO.File.ReadAllBytes(IO.Path.Combine(target, "seed.txt")))
+                      (Text.Encoding.UTF8.GetBytes "seed-one")
+                      "the first seeded payload remains byte-exact"
+                  Expect.sequenceEqual
+                      (IO.File.ReadAllBytes(IO.Path.Combine(target, "nested", "data.txt")))
+                      (Text.Encoding.UTF8.GetBytes "seed-two")
+                      "the nested seeded payload remains byte-exact"
+                  Expect.isFalse
+                      (IO.File.Exists(IO.Path.Combine(target, "replacement.txt")))
+                      "no replacement payload reached controller storage")
+          } ]
+
+let dirWorkspaceLifecycle =
+    let withRun label source assertions =
+        let root =
+            IO.Path.Combine(
+                IO.Path.GetTempPath(),
+                $"fogell-dir-lifecycle-{label}-{Guid.NewGuid():N}"
+            )
+
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            match FogellSide.run [] root "job" source with
+            | Error why -> failtestf "%s pipeline was refused before execution: %s" label why
+            | Ok trace -> assertions workspace trace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    let pipeline steps =
+        "pipeline { agent any stages { stage('lifecycle') { steps { "
+        + steps
+        + " } } } }"
+
+    testList
+        "dir workspace lifecycle parity"
+        [ test "a logical-only dir body does not materialize a directory" {
+              withRun
+                  "logical-only"
+                  (pipeline "dir('logical-only') { echo 'ok' }")
+                  (fun workspace trace ->
+                      Expect.equal trace.Result "success" "the logical body completes"
+                      Expect.isFalse
+                          (IO.Directory.Exists(IO.Path.Combine(workspace, "logical-only")))
+                          "dir alone only changes the body context"
+                      Expect.isEmpty trace.WorkspaceFiles "no physical workspace entry is reported")
+          }
+
+          test "nested and hosted logical-only bodies leave no parent scaffolding" {
+              withRun
+                  "nested-hosted"
+                  (pipeline
+                      "script { dir('outer') { dir('inner') { echo 'ok' } }; dir('hosted') { echo 'also-ok' } }")
+                  (fun workspace trace ->
+                      Expect.equal trace.Result "success" "both hosted bodies complete"
+                      Expect.isFalse
+                          (IO.Directory.Exists(IO.Path.Combine(workspace, "outer")))
+                          "an absent nested leaf does not manufacture its parent"
+                      Expect.isFalse
+                          (IO.Directory.Exists(IO.Path.Combine(workspace, "hosted")))
+                          "hosted dir follows the same logical rule")
+          }
+
+          test "a durable shell launch materializes and retains its empty dir" {
+              withRun
+                  "durable-empty"
+                  (pipeline "dir('shell-empty') { sh 'touch transient.txt; rm transient.txt' }")
+                  (fun workspace trace ->
+                      let target = IO.Path.Combine(workspace, "shell-empty")
+                      Expect.equal trace.Result "success" "the durable task completes"
+                      Expect.isTrue (IO.Directory.Exists target) "durable-task materializes its cwd"
+                      Expect.isEmpty
+                          (IO.Directory.EnumerateFileSystemEntries(target) |> Seq.toList)
+                          "the empty physical cwd is retained after the task"
+                      Expect.contains
+                          (trace.WorkspaceFiles |> List.map fst)
+                          "shell-empty/"
+                          "Trace v2 records the retained empty cwd")
+          }
+
+          test "nested durable materialization retains only the physical leaf" {
+              withRun
+                  "nested-durable"
+                  (pipeline "dir('outer') { dir('inner') { sh 'true' } }")
+                  (fun workspace trace ->
+                      let outer = IO.Path.Combine(workspace, "outer")
+                      let inner = IO.Path.Combine(outer, "inner")
+                      Expect.equal trace.Result "success" "the nested durable task completes"
+                      Expect.isTrue (IO.Directory.Exists inner) "the nested cwd is materialized"
+                      Expect.contains
+                          (trace.WorkspaceFiles |> List.map fst)
+                          "outer/inner/"
+                          "Trace v2 records the empty nested leaf"
+                      Expect.isFalse
+                          (trace.WorkspaceFiles |> List.map fst |> List.contains "outer/")
+                          "the non-empty parent is not an empty-leaf record")
+          }
+
+          test "a failed shell still retains the cwd it materialized" {
+              withRun
+                  "failed-shell"
+                  (pipeline "dir('failed') { sh 'exit 7' }")
+                  (fun workspace trace ->
+                      Expect.equal trace.Result "failure" "the shell exit fails the build"
+                      Expect.isTrue
+                          (IO.Directory.Exists(IO.Path.Combine(workspace, "failed")))
+                          "launch-time materialization survives failure"
+                      Expect.contains
+                          (trace.WorkspaceFiles |> List.map fst)
+                          "failed/"
+                          "the failed task's empty cwd remains observable")
+          }
+
+          test "deleteDir empties a materialized cwd without deleting that cwd" {
+              withRun
+                  "delete-materialized"
+                  (pipeline "dir('cleaned') { sh 'touch payload.txt'; deleteDir() }")
+                  (fun workspace trace ->
+                      let target = IO.Path.Combine(workspace, "cleaned")
+                      Expect.equal trace.Result "success" "the cleanup completes"
+                      Expect.isTrue (IO.Directory.Exists target) "deleteDir preserves its current directory"
+                      Expect.isEmpty
+                          (IO.Directory.EnumerateFileSystemEntries(target) |> Seq.toList)
+                          "deleteDir removes the payload"
+                      Expect.contains
+                          (trace.WorkspaceFiles |> List.map fst)
+                          "cleaned/"
+                          "Trace v2 records the preserved empty cwd")
+          }
+
+          test "a rejected shell call does not materialize its logical dir" {
+              withRun
+                  "rejected-shell"
+                  (pipeline
+                      "dir('rejected') { sh script: 'touch must-not-run.txt', returnStatus: 'true' }")
+                  (fun workspace trace ->
+                      Expect.equal trace.Result "failure" "the malformed typed flag is refused"
+                      Expect.isTrue trace.ReportedFailureReason "the refusal is explained"
+                      Expect.isFalse
+                          (IO.Directory.Exists(IO.Path.Combine(workspace, "rejected")))
+                          "argument refusal precedes durable workspace materialization")
+          }
+
+          test "pre-existing dirs survive logical bodies while deleteDir does not create absent ones" {
+              withRun
+                  "existing-and-delete"
+                  (pipeline
+                      "sh 'mkdir -p existing'; dir('existing') { echo 'kept' }; dir('absent') { deleteDir() }")
+                  (fun workspace trace ->
+                      Expect.equal trace.Result "success" "both logical bodies complete"
+                      Expect.isTrue
+                          (IO.Directory.Exists(IO.Path.Combine(workspace, "existing")))
+                          "an existing empty directory is preserved"
+                      Expect.contains
+                          (trace.WorkspaceFiles |> List.map fst)
+                          "existing/"
+                          "Trace v2 records the pre-existing empty directory"
+                      Expect.isFalse
+                          (IO.Directory.Exists(IO.Path.Combine(workspace, "absent")))
+                          "deleteDir on a logical absent cwd is a no-op, not mkdir")
+          } ]
+
 [<EntryPoint>]
 let main argv =
 
@@ -3934,14 +7945,23 @@ let main argv =
         argv
         (testList
             "Fogell.Differential"
-            [ hostedSignatures
+            [ progressiveOutputPublication
+              controllerEventDrainBudgets
+              controllerWorkerScheduling
+              controllerWorkerTiming
+              controllerStateRoot
+              controllerProcessGroupExtinction
+              hostedSignatures
               stepDescriptorValidation
               genuineNullRuntime
+              liveEnvAliasRestoration
               scmReturnMapRuntime
+              workspaceManifestV2
               jenkinsBuildDataAttestation
               unsupportedNamedCollections
               unsupportedDeclarativeAgents
               unsupportedDeclarativeTools
+              controllerApprovalPreflight
               spreadAssignmentPreflight
               userOutputSurvives
               stringModel
@@ -3952,4 +7972,13 @@ let main argv =
               concurrentFoldAccounting
               continuationResolution
               returnFlagContract
-              timestampPrefixIsConditional ])
+              timestampPrefixIsConditional
+              timestampCoverageUsesComparedSurvivors
+              compileRefusalDisposition
+              credentialStoreDecoding
+              credentialKeyBoundaryRefusal
+              credentialCompanionPreservation
+              stashDefaultExcludes
+              dirWorkspaceLifecycle
+              parallelsAlwaysFailFastArguments
+              ansiColorTrailingBlocks ])

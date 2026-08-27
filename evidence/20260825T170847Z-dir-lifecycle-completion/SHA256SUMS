@@ -1,0 +1,10 @@
+abc972066ed889dff2801fe44960dfa2ce1b4ccbb70cee3f75108322fd7ef4b7  ./CANDIDATE.patch.gz
+9973cb2d8096875af71fecc5e7961153719032134528fd5b5ae3def9879df19a  ./README.md
+ef08cba269212aa873bbf56a0a938219baae69ce4853f1984846b1088cac5d7d  ./gate/full-gate.log
+077615f6c097cc10c27a061f5b956bfa8c23b66866d8cefa70a1df27c47bdc2c  ./oracle/full-282-receipts.tar.gz
+787ae120bea46b198cb2e36960167a432f4d31c1ce323dd28cee28f509f52ef3  ./oracle/full-282.log
+ed25b67ea5a021b22031f2f929dc7d80e893141f69edbb59128a251078d2b528  ./oracle/residuals/fg177-wrapper-body-result.receipt.txt
+cba67e8495b127213b15d01d38c36fc85386d8c9a3323b93a3965b25111ae77e  ./oracle/residuals/post-exit-env-read-fault.receipt.txt
+ddb7a01cd5318b71a29a44178dd9f8828361fb6dfee9ca0110d90deb8f53d31a  ./oracle/residuals/post-exit-env-read.receipt.txt
+f853bd5c461edc2501f13a51de89296c048b065a744c4ef239ca37a4e019ba41  ./oracle/residuals/script-closure-mutates-enclosing.receipt.txt
+93ba695c5e3a508f93762b9f226e89f269d75edffbba98f172fb07f17638c394  ./oracle/residuals/script-return-is-closure-local.receipt.txt

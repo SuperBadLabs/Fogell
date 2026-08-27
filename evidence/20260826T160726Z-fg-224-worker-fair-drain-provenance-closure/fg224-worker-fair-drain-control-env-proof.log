@@ -1,0 +1,13 @@
+  live shell/GString/build-Git boundary: PASS
+  checker rejected planted ordinary-status state
+  checker rejected planted timeout-status state
+  checker rejected planted signal-status state
+  checker rejected planted simple-gstring state
+  checker rejected planted complex-gstring state
+  checker rejected planted shell-env state
+  checker rejected planted build-git-env state
+  checker rejected planted controller-home state
+  checker rejected planted declared-env state
+  checker rejected planted credential-binding state
+  checker rejected planted credential-mask state
+FG-222 controller environment proof: PASS

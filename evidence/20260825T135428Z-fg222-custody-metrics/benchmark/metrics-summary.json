@@ -1,0 +1,93 @@
+{
+  "fg222_proof": {
+    "n": 15,
+    "failures": 0,
+    "elapsed_s": {
+      "median_harness": 0.53,
+      "mean": 0.54,
+      "stdev_sample": 0.026992062325273108,
+      "cv_percent": 4.998530060235761,
+      "p95_harness": 0.61,
+      "min": 0.52,
+      "max": 0.61
+    },
+    "maxrss_kb": {
+      "median_harness": 57868,
+      "min": 56652,
+      "max": 58772
+    }
+  },
+  "durable_echo_e2e": {
+    "n": 15,
+    "failures": 0,
+    "elapsed_s": {
+      "median_harness": 0.16,
+      "mean": 0.17,
+      "stdev_sample": 0.02104417123236605,
+      "cv_percent": 12.37892425433297,
+      "p95_harness": 0.23,
+      "min": 0.16,
+      "max": 0.23
+    },
+    "maxrss_kb": {
+      "median_harness": 50620,
+      "min": 49708,
+      "max": 51028
+    }
+  },
+  "durable_echo_base": {
+    "n": 8,
+    "failures": 0,
+    "elapsed_s": {
+      "median_harness": 0.16,
+      "mean": 0.17375000000000002,
+      "stdev_sample": 0.031139088893910448,
+      "cv_percent": 17.92177778066788,
+      "p95_harness": 0.25,
+      "min": 0.16,
+      "max": 0.25
+    },
+    "maxrss_kb": {
+      "median_harness": 50568,
+      "min": 50072,
+      "max": 51820
+    }
+  },
+  "durable_sh200": {
+    "n": 8,
+    "failures": 0,
+    "elapsed_s": {
+      "median_harness": 0.76,
+      "mean": 0.745,
+      "stdev_sample": 0.049856938190329006,
+      "cv_percent": 6.692206468500538,
+      "p95_harness": 0.8,
+      "min": 0.64,
+      "max": 0.8
+    },
+    "maxrss_kb": {
+      "median_harness": 94396,
+      "min": 93312,
+      "max": 95580
+    },
+    "marginal_ms_per_step_from_medians": 3.0
+  },
+  "durable_parallel_8x10": {
+    "n": 15,
+    "failures": 0,
+    "elapsed_s": {
+      "median_harness": 0.31,
+      "mean": 0.36133333333333334,
+      "stdev_sample": 0.1422204861005146,
+      "cv_percent": 39.35991312744869,
+      "p95_harness": 0.72,
+      "min": 0.27,
+      "max": 0.72
+    },
+    "maxrss_kb": {
+      "median_harness": 69244,
+      "min": 67896,
+      "max": 71356
+    }
+  }
+}

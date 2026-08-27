@@ -1,0 +1,6 @@
+M  docs/EXECUTION_BOARD.md
+A  docs/tickets/FG-027b.md
+M  src/Fogell.Store/Store.fs
+A  src/Fogell.Store/migrations/0011_retry_reopens_lineage.sql
+M  tests/Fogell.Store.Tests/Tests.fs
+?? evidence/.20260826T195203Z-fg-027b-review31-closure.partial.1rJCrX/

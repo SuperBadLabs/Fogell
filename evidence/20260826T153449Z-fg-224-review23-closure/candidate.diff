@@ -1,0 +1,756 @@
+diff --git a/docs/EXECUTION_BOARD.md b/docs/EXECUTION_BOARD.md
+index eb0f3c6..6a1863e 100644
+--- a/docs/EXECUTION_BOARD.md
++++ b/docs/EXECUTION_BOARD.md
+@@ -740,7 +740,7 @@ before their no-effect validation refusal. Compatibility counts are unchanged.
+ | FG-062 | P1 | TODO | `Fogell.Agent.Protocol` + `Runtime` (`adr/0008`): mTLS, versioned, agent-local durable log, offset recovery | **network partition ≥ 45 s costs zero log lines** — the Jenkins parity bar |
+ | FG-063 | P1 | TODO | Agent death handling: announce reconnect grace with a budget, then ABORTED with a named cause | matches Jenkins' behavior, which is exemplary here |
+ | FG-064 | P1 | **DONE** | Progressive console over the API (`adr/0005` match) | `GET …/logs?from=N` returns chunks plus a `next_sequence` cursor, so a client tails a running build rather than waiting for completion |
+-| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Local exact-tree acceptance closes the prior review findings: engine-created inner step groups are registered before release and reaped across Run.Host death; progressive publication is FIFO-serialized outside the output lock; invalid definitions are durably quarantined before later FIFO work; and ambiguous post-launch exits enter reconciliation with a stable reason event and outbox while retaining the event fence until terminal publication. The fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth, plus graceful-shutdown reconciliation and byte-exact recovery evidence. A replacement exact-head hosted gate, Copilot/Codex review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
++| FG-224 | P0 | **PARTIAL** | Runnable, restart-discovered single-node controller | Local exact-tree acceptance closes the review findings: outer Run.Host cleanup binds every leader/group signal to the launcher's captured Linux birth identity and fails closed on PID/PGID reuse; durable raw-byte idempotency is resolved before decoding or parsing, so an exact malformed legacy replay remains 200 while changed malformed bytes remain the bound key's 409 conflict. Engine-created inner step groups are registered before release and reaped across Run.Host death; progressive publication is FIFO-serialized outside the output lock; invalid definitions are durably quarantined before later FIFO work; and ambiguous post-launch exits enter reconciliation with a stable reason event and outbox while retaining the event fence until terminal publication. The fresh-database proof uses a real `NOSUPERUSER NOBYPASSRLS` role and crosses HTTP admission → immutable definition → restarted discovery → supervised whole-pipeline execution → fenced progressive logs → atomic attempt/node/build/event/outbox terminal truth, plus graceful-shutdown reconciliation and byte-exact recovery evidence. A replacement exact-head hosted gate, Copilot/Codex review coverage, publication, and merge remain — [→ detail](tickets/FG-224.md) |
+ | FG-065 | P2 | TODO | Jenkins-shaped REST compatibility shim, **off by default**, explicitly bounded | enabled only via env var; limitations documented |
+ | FG-066 | P2 | TODO | `Fogell.Cli`: validate / plan / run / build / resume / list / history | each subcommand has a golden-output test |
+ | FG-067 | P3 | TODO | `Fogell.Web` read-only build UI | renders a build's stages and log |
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index 5dc7f5a..a46506d 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -22,16 +22,19 @@ and a versioned fingerprint binding source plus controller-owned placement.
+ Concurrent replays of one idempotency key converge on that immutable definition;
+ source or placement substitution is refused.
+ 
+-Before durable admission, the HTTP boundary runs the same deterministic
+-persisted-execution preflight as `Fogell.Run.Host`. In addition to the generic
+-execution boundary, it rejects duplicate flattened stage names and stage names
+-containing journal record delimiters before allocating a build number or binding
+-an idempotency key. A pipeline that parses but exceeds
++Before decoding, parsing, or applying the current release's execution rules, the
++HTTP boundary probes an existing immutable admission using the raw source bytes
++and controller-owned placement. An exact replay of even legacy malformed bytes
++therefore preserves the original 200 response, while changed malformed bytes for
++the bound key return the durable 409 conflict rather than a parser classification.
++A probe miss creates nothing and leaves `AdmitBuild` as the one-key race arbiter.
++Only a fresh request then runs strict UTF-8 decoding, parsing, and the same
++deterministic persisted-execution preflight as `Fogell.Run.Host`. In addition to
++the generic execution boundary, the preflight rejects duplicate flattened stage
++names and stage names containing journal record delimiters before allocating a
++build number or binding an idempotency key. A pipeline that parses but exceeds
+ Fogell's execution capability returns a stable 422 refusal without allocating a
+-build number or binding the caller's idempotency key. An exact replay of a legacy
+-admission is resolved from its immutable source and placement fingerprint before
+-the current release's stricter preflight, preserving the original 200 response;
+-changed bytes still return 409 and a fresh unsafe source still returns 422.
++build number or binding the caller's idempotency key.
+ 
+ The local worker discovers organization UUID roots after restart, claims one
+ whole-pipeline execution unit, materializes the exact durable source, and starts
+@@ -49,10 +52,14 @@ asks the Linux kernel whether the effective service identity may execute the
+ configured file, rather than accepting an execute bit from an inapplicable owner,
+ group, or other permission class. Every engine-created
+ inner `setsid` step group is identity-bound by Linux pid plus process start ticks
+-and registered before user code is released. A Run.Host-liveness EOF watchdog
+-and the controller's combined outer/registered-inner cleanup reap descendants,
+-including after the inner leader exits, without authorizing a signal to a reused
+-pid. The controller renews its fenced lease and polls cancellation. After an
++and registered before user code is released. The controller also captures the
++outer Run.Host launcher's birth identity immediately after start. Leader and
++process-group signals require that identity still to match and the observed group
++to belong to it; if the identity is absent or changed while the numeric group is
++populated, cleanup fails closed instead of signalling a possible PID/PGID reuse.
++A Run.Host-liveness EOF watchdog and the controller's combined
++outer/registered-inner cleanup reap descendants, including after the inner leader
++exits. The controller renews its fenced lease and polls cancellation. After an
+ unforced natural child exit it atomically rolls attempt, node, build, terminal
+ event, and outbox to one result. Starting
+ execution refreshes the lease in the same transaction;
+@@ -108,6 +115,21 @@ whose restore epoch is stale is rejected by PostgreSQL before insertion. Both
+ sides of the insert/restore race are deterministic—an insert that commits first
+ is reconciled by restore; an insert that waits is born in the new epoch.
+ 
++## Review 23 closure
++
++- Codex finding `3866556745` is closed by identity-binding outer Run.Host cleanup
++  to the captured Linux process start time and by a regression proving that a
++  reused PID/PGID receives neither TERM nor KILL; ambiguous group presence returns
++  `StatusUncertain`.
++- Codex finding `3866556752` is closed by resolving the durable raw-byte
++  idempotency binding before UTF-8 decoding and parsing. Exact malformed legacy
++  bytes replay as 200, changed malformed or invalid bytes conflict as 409, fresh
++  invalid input retains its 400/422 classification, and a concurrent mixed-source
++  race still creates exactly one build.
++
++These are local exact-tree closure claims only. Exact-head hosted gates and
++review coverage, publication, and merge remain outstanding.
++
+ ## Acceptance
+ 
+ `scripts/prove-runnable-controller.sh` uses a fresh PostgreSQL database and a real
+@@ -130,13 +152,13 @@ PostgreSQL service.
+ Exact-tree HeMan acceptance on fresh databases:
+ 
+ - Store: 87/87 passed;
+-- Controller API: 30/30 passed;
+-- Differential: 265/265 passed;
++- Controller API: 31/31 passed;
++- Differential: 266/266 passed;
+ - Execution: 100/100 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-locked repository gate also passes all 891 main-suite tests and every blocking
++locked repository gate also passes all 893 main-suite tests and every blocking
+ proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
+ recorded at publication rather than predicted here.
+ 
+diff --git a/src/Fogell.Controller.Api/Router.fs b/src/Fogell.Controller.Api/Router.fs
+index cf63576..c2283bb 100644
+--- a/src/Fogell.Controller.Api/Router.fs
++++ b/src/Fogell.Controller.Api/Router.fs
+@@ -123,62 +123,71 @@ module Router =
+                                     fail ctx 413 "pipeline_too_large"
+                                         $"pipeline source must be at most {state.MaxPipelineBytes} bytes" None
+                             | Ok sourceBytes ->
+-                                let sourceResult =
+-                                    try
+-                                        Ok(UTF8Encoding(false, true).GetString sourceBytes)
+-                                    with :? DecoderFallbackException ->
+-                                        Error "pipeline source must be valid UTF-8"
++                                let probe: AdmissionProbe =
++                                    { OrganizationId = OrganizationId org
++                                      ProjectId = ProjectId project
++                                      IdempotencyKey = key
++                                      PipelineSource = sourceBytes
++                                      RequiredTrustPool = state.TrustPool
++                                      RequiredCapabilities = [ "linux" ] }
+ 
+-                                match sourceResult with
+-                                | Error message -> return! fail ctx 400 "invalid_utf8" message None
+-                                | Ok source ->
+-                                    match Fogell.Pipeline.Parser.Parser.parse source with
+-                                    | Result.Error e ->
+-                                        return!
+-                                            fail ctx 422
+-                                                (Fogell.Admission.ErrorCode.toWireString e.Code)
+-                                                (Fogell.Admission.AdmissionError.render source e)
+-                                                (Some(string e.Position))
+-                                    | Result.Ok pipeline ->
+-                                        let stages =
+-                                            Fogell.Ir.Pipeline.flattenStages pipeline.Stages
+-                                            |> List.map (fun stage -> stage.Name)
++                                let respond (admission: Fogell.Store.Admission) =
++                                    let payload: AdmissionResponse =
++                                        { BuildId = string admission.BuildId.Value
++                                          NodeId = string admission.NodeId.Value
++                                          AttemptId = string admission.AttemptId.Value
++                                          Number = admission.Number
++                                          WasExisting = admission.WasExisting }
+ 
+-                                        let input =
+-                                            { OrganizationId = OrganizationId org
+-                                              ProjectId = ProjectId project
+-                                              IdempotencyKey = key
+-                                              PipelineSource = sourceBytes
+-                                              StageNames = stages
+-                                              RequiredTrustPool = state.TrustPool
+-                                              RequiredCapabilities = [ "linux" ] }
++                                    json ctx (if admission.WasExisting then 200 else 201) payload
+ 
+-                                        let respond (admission: Fogell.Store.Admission) =
+-                                            let payload: AdmissionResponse =
+-                                                { BuildId = string admission.BuildId.Value
+-                                                  NodeId = string admission.NodeId.Value
+-                                                  AttemptId = string admission.AttemptId.Value
+-                                                  Number = admission.Number
+-                                                  WasExisting = admission.WasExisting }
++                                // Resolve an already-bound raw request before decoding, parsing, or
++                                // applying today's execution rules. Once a key is durable, every
++                                // different byte sequence or placement fingerprint is the same 409
++                                // conflict regardless of whether the replacement happens to parse.
++                                // A miss creates nothing and takes no authority: AdmitBuild remains
++                                // the race arbiter after fresh-source preflight.
++                                match state.Store.TryReplayAdmission probe with
++                                | Result.Error e when
++                                    e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
++                                    ->
++                                    return! fail ctx 409 "idempotency_conflict" e None
++                                | Result.Error _ ->
++                                    return!
++                                        fail ctx 503 "admission_unavailable"
++                                            "build admission is temporarily unavailable" None
++                                | Result.Ok(Some admission) -> return! respond admission
++                                | Result.Ok None ->
++                                    let sourceResult =
++                                        try
++                                            Ok(UTF8Encoding(false, true).GetString sourceBytes)
++                                        with :? DecoderFallbackException ->
++                                            Error "pipeline source must be valid UTF-8"
+ 
+-                                            json ctx (if admission.WasExisting then 200 else 201) payload
+-
+-                                        // A release may tighten persisted execution preflight after a
+-                                        // build was durably admitted. Preserve the immutable response
+-                                        // for an exact legacy replay before applying today's rules.
+-                                        // A miss creates nothing and takes no authority: AdmitBuild
+-                                        // remains the race arbiter after fresh-source preflight.
+-                                        match state.Store.TryReplayAdmission input with
+-                                        | Result.Error e when
+-                                            e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
+-                                            ->
+-                                            return! fail ctx 409 "idempotency_conflict" e None
+-                                        | Result.Error _ ->
++                                    match sourceResult with
++                                    | Error message -> return! fail ctx 400 "invalid_utf8" message None
++                                    | Ok source ->
++                                        match Fogell.Pipeline.Parser.Parser.parse source with
++                                        | Result.Error e ->
+                                             return!
+-                                                fail ctx 503 "admission_unavailable"
+-                                                    "build admission is temporarily unavailable" None
+-                                        | Result.Ok(Some admission) -> return! respond admission
+-                                        | Result.Ok None ->
++                                                fail ctx 422
++                                                    (Fogell.Admission.ErrorCode.toWireString e.Code)
++                                                    (Fogell.Admission.AdmissionError.render source e)
++                                                    (Some(string e.Position))
++                                        | Result.Ok pipeline ->
++                                            let stages =
++                                                Fogell.Ir.Pipeline.flattenStages pipeline.Stages
++                                                |> List.map (fun stage -> stage.Name)
++
++                                            let input: NewBuild =
++                                                { OrganizationId = probe.OrganizationId
++                                                  ProjectId = probe.ProjectId
++                                                  IdempotencyKey = probe.IdempotencyKey
++                                                  PipelineSource = probe.PipelineSource
++                                                  StageNames = stages
++                                                  RequiredTrustPool = probe.RequiredTrustPool
++                                                  RequiredCapabilities = probe.RequiredCapabilities }
++
+                                             // Parse success is deliberately broader than execution
+                                             // capability. Only a fresh key must satisfy the same
+                                             // fail-closed persisted preflight as Run.Host before
+diff --git a/src/Fogell.Controller.Host/ProcessGroup.fs b/src/Fogell.Controller.Host/ProcessGroup.fs
+index aad0643..74b28bc 100644
+--- a/src/Fogell.Controller.Host/ProcessGroup.fs
++++ b/src/Fogell.Controller.Host/ProcessGroup.fs
+@@ -31,6 +31,17 @@ type internal ChildHandoff =
+     | NaturalTerminalAllowed
+     | ReconciliationRequired
+ 
++type internal ProcessIdentity =
++    { ProcessId: int
++      StartTime: string }
++
++[<RequireQualifiedAccess>]
++type internal RecordedProcessState =
++    | SameIdentity of processGroupId: int
++    | Absent
++    | Changed
++    | Uncertain
++
+ module internal ProcessGroup =
+ 
+     [<Literal>]
+@@ -107,6 +118,50 @@ module internal ProcessGroup =
+             let result = kill(processId, signal)
+             classifySignal result (Marshal.GetLastWin32Error())
+ 
++    let private readProcessStat pid =
++        let value = IO.File.ReadAllText($"/proc/{pid}/stat")
++        let close = value.LastIndexOf ')'
++
++        if close < 0 || close + 2 >= value.Length then
++            None
++        else
++            let fields =
++                value.Substring(close + 2).Split(' ', StringSplitOptions.RemoveEmptyEntries)
++
++            if fields.Length <= 19 then None else Some fields
++
++    /// Capture the Linux process birth identity immediately after Start. The
++    /// launcher may not have called setsid yet, so PGID is deliberately not
++    /// part of the capture; every later observation returns its current PGID.
++    let tryCaptureIdentity pid =
++        if not (OperatingSystem.IsLinux()) || pid <= 1 then
++            None
++        else
++            try
++                readProcessStat pid
++                |> Option.map (fun fields ->
++                    { ProcessId = pid
++                      StartTime = fields[19] })
++            with _ ->
++                None
++
++    let private observeIdentity (identity: ProcessIdentity) =
++        try
++            match readProcessStat identity.ProcessId with
++            | None -> RecordedProcessState.Uncertain
++            | Some fields when fields[19] <> identity.StartTime ->
++                // The numeric PID was reused. It proves the recorded process is
++                // gone but grants no authority over the replacement.
++                RecordedProcessState.Changed
++            | Some fields ->
++                match Int32.TryParse fields[2] with
++                | true, processGroup -> RecordedProcessState.SameIdentity processGroup
++                | _ -> RecordedProcessState.Uncertain
++        with
++        | :? IO.FileNotFoundException
++        | :? IO.DirectoryNotFoundException -> RecordedProcessState.Absent
++        | _ -> RecordedProcessState.Uncertain
++
+     /// Extinction means both the original setsid launcher and every member of
+     /// its eventual process group are absent. Checking both closes the startup
+     /// race where the launcher has not established its group yet.
+@@ -158,36 +213,96 @@ module internal ProcessGroup =
+                 else
+                     classifyFinal ()
+ 
++    /// Apply the extinction state machine without ever probing or signalling a
++    /// numeric outer PGID as authority by itself. A matching birth identity may
++    /// signal its launcher before setsid, and may signal the group only after it
++    /// actually leads that group. Once the identity is absent or changed, group
++    /// absence can prove extinction but group presence is ambiguous with reuse.
++    let internal ensureIdentityBoundExtinguished
++        termChecks
++        killChecks
++        processId
++        (observe: unit -> RecordedProcessState)
++        (probeProcessGroup: unit -> ProcessPresence)
++        (sendProcessGroupSignal: int -> ProcessSignalResult)
++        (sendProcessSignal: int -> ProcessSignalResult)
++        (pause: unit -> unit)
++        =
++        let probeLeader () =
++            match observe () with
++            | RecordedProcessState.SameIdentity _ -> ProcessPresence.Present
++            | RecordedProcessState.Absent
++            | RecordedProcessState.Changed -> ProcessPresence.Absent
++            | RecordedProcessState.Uncertain -> ProcessPresence.Uncertain
++
++        let probeBoundGroup () =
++            match observe () with
++            | RecordedProcessState.SameIdentity processGroup when processGroup = processId ->
++                probeProcessGroup ()
++            | RecordedProcessState.SameIdentity _ -> ProcessPresence.Absent
++            | RecordedProcessState.Absent
++            | RecordedProcessState.Changed ->
++                match probeProcessGroup () with
++                | ProcessPresence.Absent -> ProcessPresence.Absent
++                | _ -> ProcessPresence.Uncertain
++            | RecordedProcessState.Uncertain -> ProcessPresence.Uncertain
++
++        let signalBoundGroup signal =
++            match observe () with
++            | RecordedProcessState.SameIdentity processGroup when processGroup = processId ->
++                sendProcessGroupSignal signal
++            | RecordedProcessState.SameIdentity _ -> ProcessSignalResult.TargetAbsent
++            | RecordedProcessState.Absent
++            | RecordedProcessState.Changed ->
++                match probeProcessGroup () with
++                | ProcessPresence.Absent -> ProcessSignalResult.TargetAbsent
++                | _ -> ProcessSignalResult.Uncertain
++            | RecordedProcessState.Uncertain -> ProcessSignalResult.Uncertain
++
++        let signalBoundLeader signal =
++            match observe () with
++            | RecordedProcessState.SameIdentity _ -> sendProcessSignal signal
++            | RecordedProcessState.Absent -> ProcessSignalResult.TargetAbsent
++            | RecordedProcessState.Changed
++            | RecordedProcessState.Uncertain -> ProcessSignalResult.Uncertain
++
++        ensureExtinguished
++            termChecks
++            killChecks
++            probeLeader
++            probeBoundGroup
++            signalBoundGroup
++            signalBoundLeader
++            pause
++
++    let stopIdentityBoundGroup termChecks killChecks identity pause =
++        ensureIdentityBoundExtinguished
++            termChecks
++            killChecks
++            identity.ProcessId
++            (fun () -> observeIdentity identity)
++            (fun () -> probeGroup identity.ProcessId)
++            (signalGroup identity.ProcessId)
++            (signalLeader identity.ProcessId)
++            pause
++
+     type private RecordedIdentity =
+         | IdentityMatches
+         | IdentityAbsent
+         | IdentityUncertain
+ 
+     let private recordedIdentity pid expectedStartTime expectedProcessGroup =
+-        try
+-            let value = IO.File.ReadAllText($"/proc/{pid}/stat")
+-            let close = value.LastIndexOf ')'
+-
+-            if close < 0 || close + 2 >= value.Length then
+-                IdentityUncertain
+-            else
+-                let fields =
+-                    value.Substring(close + 2).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+-
+-                if fields.Length <= 19 then
+-                    IdentityUncertain
+-                elif
+-                    fields[19] = expectedStartTime
+-                    && fields[2] = string expectedProcessGroup
+-                then
+-                    IdentityMatches
+-                else
+-                    // The numeric pid has been reused. Never signal the new owner.
+-                    IdentityUncertain
++        match
++            observeIdentity
++                { ProcessId = pid
++                  StartTime = expectedStartTime }
+         with
+-        | :? IO.FileNotFoundException
+-        | :? IO.DirectoryNotFoundException -> IdentityAbsent
+-        | _ -> IdentityUncertain
++        | RecordedProcessState.SameIdentity processGroup when processGroup = expectedProcessGroup ->
++            IdentityMatches
++        | RecordedProcessState.Absent -> IdentityAbsent
++        | RecordedProcessState.SameIdentity _
++        | RecordedProcessState.Changed
++        | RecordedProcessState.Uncertain -> IdentityUncertain
+ 
+     /// Stop every inner setsid group durably registered before its user code was
+     /// released. Records include Linux process start time, so a stale record can
+diff --git a/src/Fogell.Controller.Host/Worker.fs b/src/Fogell.Controller.Host/Worker.fs
+index efbbf19..d8669f8 100644
+--- a/src/Fogell.Controller.Host/Worker.fs
++++ b/src/Fogell.Controller.Host/Worker.fs
+@@ -44,27 +44,12 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+             File.WriteAllBytes(temporary, bytes)
+             File.Move(temporary, path)
+ 
+-    let stopGroup (child: Process) =
+-        let probeLeader () =
+-            try
+-                if child.HasExited then ProcessPresence.Absent else ProcessPresence.Present
+-            with _ ->
+-                ProcessPresence.Uncertain
+-
+-        let signalLeader signal =
+-            match probeLeader () with
+-            | ProcessPresence.Absent -> ProcessSignalResult.TargetAbsent
+-            | ProcessPresence.Present -> ProcessGroup.signalLeader child.Id signal
+-            | ProcessPresence.Uncertain -> ProcessSignalResult.Uncertain
+-
++    let stopGroup identity =
+         try
+-            ProcessGroup.ensureExtinguished
++            ProcessGroup.stopIdentityBoundGroup
+                 processGroupTermChecks
+                 processGroupKillChecks
+-                probeLeader
+-                (fun () -> ProcessGroup.probeGroup child.Id)
+-                (ProcessGroup.signalGroup child.Id)
+-                signalLeader
++                identity
+                 (fun () -> Thread.Sleep processGroupProbeMilliseconds)
+         with _ ->
+             ProcessGroupStopResult.StatusUncertain
+@@ -386,6 +371,29 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+ 
+                         false
+ 
++                let outerIdentity =
++                    if launched then
++                        let captured =
++                            try
++                                let identity = ProcessGroup.tryCaptureIdentity child.Id
++
++                                // An extremely short-lived launcher can exit before
++                                // /proc is read and let its numeric PID be reused. The
++                                // Process object still knows that original child exited;
++                                // never bind a replacement observed in that window.
++                                if child.HasExited then None else identity
++                            with _ ->
++                                None
++
++                        if Option.isNone captured then
++                            logger.LogError(
++                                "FG-224 could not bind outer process {ProcessId} to its Linux birth identity; cleanup will fail closed",
++                                child.Id)
++
++                        captured
++                    else
++                        None
++
+                 if launched then
+                     let mutable dispositionRecorded = false
+ 
+@@ -397,7 +405,10 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
+                             // finish every identity-bound registry entry. Memoize
+                             // the entire pass: signalling numeric ids again from
+                             // finally could target later pid reuse.
+-                            let outer = stopGroup child
++                            let outer =
++                                match outerIdentity with
++                                | Some identity -> stopGroup identity
++                                | None -> ProcessGroupStopResult.StatusUncertain
+                             let inner =
+                                 ProcessGroup.stopRegisteredGroups
+                                     processGroupTermChecks
+diff --git a/src/Fogell.Store/Store.fs b/src/Fogell.Store/Store.fs
+index fade597..c45caac 100644
+--- a/src/Fogell.Store/Store.fs
++++ b/src/Fogell.Store/Store.fs
+@@ -44,6 +44,17 @@ type NewBuild =
+       RequiredTrustPool: string
+       RequiredCapabilities: string list }
+ 
++/// The immutable request identity needed to resolve a durable admission before
++/// parsing. Parsed stage metadata is intentionally absent: exact source bytes
++/// and controller-owned placement policy are the complete idempotency binding.
++type AdmissionProbe =
++    { OrganizationId: OrganizationId
++      ProjectId: ProjectId
++      IdempotencyKey: string
++      PipelineSource: byte array
++      RequiredTrustPool: string
++      RequiredCapabilities: string list }
++
+ /// One whole-pipeline execution owned by the local controller.  Nodes retain
+ /// stage metadata, but the persisted runner executes the accepted definition
+ /// exactly once per build rather than once per stage.
+@@ -1177,10 +1188,10 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
+     /// asking the current release to admit the source again. A miss is only a
+     /// hint: the caller must still use AdmitBuild after preflight, because its
+     /// transaction and unique constraint remain the create/race arbiter.
+-    member _.TryReplayAdmission(input: NewBuild) : Result<Admission option, string> =
++    member _.TryReplayAdmission(input: AdmissionProbe) : Result<Admission option, string> =
+         if String.IsNullOrWhiteSpace input.IdempotencyKey then
+             Error "idempotency key is required"
+-        elif isNull input.PipelineSource || input.PipelineSource.Length = 0 then
++        elif isNull input.PipelineSource then
+             Error "pipeline source is required"
+         elif String.IsNullOrWhiteSpace input.RequiredTrustPool then
+             Error "a trust pool is required"
+diff --git a/tests/Fogell.Controller.Api.Tests/Tests.fs b/tests/Fogell.Controller.Api.Tests/Tests.fs
+index ed1721c..dbc5188 100644
+--- a/tests/Fogell.Controller.Api.Tests/Tests.fs
++++ b/tests/Fogell.Controller.Api.Tests/Tests.fs
+@@ -102,6 +102,15 @@ let private send (method: HttpMethod) (url: string) (bearer: string option) (ide
+     let text = r.Content.ReadAsStringAsync().Result
+     int r.StatusCode, text
+ 
++let private sendBytes (url: string) (idem: string) (body: byte array) =
++    use req = new HttpRequestMessage(HttpMethod.Post, url)
++    req.Headers.TryAddWithoutValidation("authorization", $"Bearer {token}") |> ignore
++    req.Headers.TryAddWithoutValidation("idempotency-key", idem) |> ignore
++    req.Content <- new ByteArrayContent(body)
++    req.Content.Headers.TryAddWithoutValidation("content-type", "application/x-jenkinsfile") |> ignore
++    use response = client.Send req
++    int response.StatusCode, response.Content.ReadAsStringAsync().Result
++
+ let private sendChunked (url: string) (idem: string) (body: byte array) =
+     use req = new HttpRequestMessage(HttpMethod.Post, url)
+     req.Headers.TryAddWithoutValidation("authorization", $"Bearer {token}") |> ignore
+@@ -462,14 +471,45 @@ let endpoints =
+               Expect.stringContains changedBody "idempotency_conflict" "conflict keeps its stable API code"
+               Expect.equal (countBuilds legacyOrg legacyProject) 1 "conflict creates no build"
+ 
+-              let freshOrg, freshProject = freshProject ()
++              let freshOrg, freshProjectId = freshProject ()
+               let freshUrl =
+-                  $"{baseUrl}/api/v1/organizations/{freshOrg.Value}/projects/{freshProject.Value}/builds"
++                  $"{baseUrl}/api/v1/organizations/{freshOrg.Value}/projects/{freshProjectId.Value}/builds"
+               let freshCode, freshBody =
+                   send HttpMethod.Post freshUrl (Some token) (Some "fresh-unsafe") (Some unsafeSource)
+               Expect.equal freshCode 422 "the compatibility probe does not admit fresh unsafe source"
+               Expect.stringContains freshBody "execution_unsupported" "fresh refusal keeps its stable API code"
+-              Expect.equal (countBuilds freshOrg freshProject) 0 "fresh unsafe source creates no build"
++              Expect.equal (countBuilds freshOrg freshProjectId) 0 "fresh unsafe source creates no build"
++
++              let malformedOrg, malformedProject = freshProject ()
++              let malformedKey = "legacy-malformed-replay"
++              let malformedBytes = [| 0xffuy; 0xfeuy |]
++              let malformedInput: NewBuild =
++                  { OrganizationId = malformedOrg
++                    ProjectId = malformedProject
++                    IdempotencyKey = malformedKey
++                    PipelineSource = malformedBytes
++                    StageNames = [ "legacy-stage" ]
++                    RequiredTrustPool = "trusted-linux"
++                    RequiredCapabilities = [ "linux" ] }
++
++              let malformedSeeded =
++                  match store.AdmitBuild malformedInput with
++                  | Ok admission -> admission
++                  | Error why -> failtestf "malformed legacy direct seed failed: %s" why
++
++              let malformedUrl =
++                  $"{baseUrl}/api/v1/organizations/{malformedOrg.Value}/projects/{malformedProject.Value}/builds"
++              let malformedReplayCode, malformedReplayBody =
++                  sendBytes malformedUrl malformedKey malformedBytes
++              Expect.equal malformedReplayCode 200 "exact malformed legacy bytes replay before UTF-8 decoding"
++              Expect.stringContains malformedReplayBody (string malformedSeeded.BuildId.Value) "malformed replay returns its durable build"
++              Expect.stringContains malformedReplayBody "\"was_existing\":true" "malformed replay is idempotent"
++
++              let malformedConflictCode, malformedConflictBody =
++                  sendBytes malformedUrl malformedKey [| 0xffuy; 0xfduy |]
++              Expect.equal malformedConflictCode 409 "changed malformed bytes conflict before UTF-8 decoding"
++              Expect.stringContains malformedConflictBody "idempotency_conflict" "malformed conflict has the stable code"
++              Expect.equal (countBuilds malformedOrg malformedProject) 1 "malformed conflict creates no build"
+           }
+ 
+           test "one idempotency key cannot substitute different Jenkinsfile bytes" {
+@@ -482,6 +522,87 @@ let endpoints =
+                   send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some changed)
+               Expect.equal conflictCode 409 "substitution conflicts"
+               Expect.stringContains conflict "idempotency_conflict" "stable conflict code"
++
++              let malformedCode, malformedBody =
++                  send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some "pipeline {")
++              Expect.equal malformedCode 409 "a bound key conflicts before parser classification"
++              Expect.stringContains malformedBody "idempotency_conflict" "malformed replacement has the stable conflict code"
++
++              let emptyCode, emptyBody =
++                  send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some "")
++              Expect.equal emptyCode 409 "a bound key conflicts before empty-source classification"
++              Expect.stringContains emptyBody "idempotency_conflict" "empty replacement has the stable conflict code"
++
++              let invalidUtf8Code, invalidUtf8Body =
++                  sendBytes url "api-source-bound" [| 0xffuy; 0xfeuy |]
++              Expect.equal invalidUtf8Code 409 "a bound key conflicts before UTF-8 decoding"
++              Expect.stringContains invalidUtf8Body "idempotency_conflict" "invalid-byte replacement has the stable conflict code"
++
++              let freshMalformedCode, freshMalformedBody =
++                  send HttpMethod.Post url (Some token) (Some "fresh-malformed") (Some "pipeline {")
++              Expect.equal freshMalformedCode 422 "a fresh malformed request still reaches the parser"
++              Expect.stringContains freshMalformedBody "malformed_syntax" "fresh malformed request keeps its parser code"
++
++              let freshEmptyCode, freshEmptyBody =
++                  send HttpMethod.Post url (Some token) (Some "fresh-empty") (Some "")
++              Expect.equal freshEmptyCode 422 "a fresh empty request still reaches the parser"
++              Expect.stringContains freshEmptyBody "empty_source" "fresh empty request keeps its parser code"
++
++              let freshInvalidUtf8Code, freshInvalidUtf8Body =
++                  sendBytes url "fresh-invalid-utf8" [| 0xffuy; 0xfeuy |]
++              Expect.equal freshInvalidUtf8Code 400 "fresh invalid bytes still reach strict UTF-8 decoding"
++              Expect.stringContains freshInvalidUtf8Body "invalid_utf8" "fresh invalid bytes keep their decoding code"
++          }
++
++          test "concurrent mixed API submissions leave AdmitBuild as the one-key arbiter" {
++              let org, project = freshProject ()
++              let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
++              let key = "api-mixed-race"
++              let sourceA = pipeline
++              let sourceB = pipeline.Replace("echo 'hi'", "echo 'other'")
++              use gate = new Threading.ManualResetEventSlim(false)
++
++              let requests =
++                  [| 0..7 |]
++                  |> Array.map (fun index ->
++                      Threading.Tasks.Task.Run(fun () ->
++                          gate.Wait()
++                          let source = if index % 2 = 0 then sourceA else sourceB
++                          source, send HttpMethod.Post url (Some token) (Some key) (Some source)))
++
++              gate.Set()
++              requests
++              |> Array.map (fun request -> request :> Threading.Tasks.Task)
++              |> Threading.Tasks.Task.WaitAll
++
++              let results = requests |> Array.map (fun request -> request.Result)
++              let accepted =
++                  results
++                  |> Array.choose (fun (source, (code, body)) ->
++                      if code = 200 || code = 201 then Some(source, code, body) else None)
++              let conflicts = results |> Array.filter (fun (_, (code, _)) -> code = 409)
++
++              Expect.equal accepted.Length 4 "all requests matching the winning bytes are admitted or replayed"
++              Expect.equal conflicts.Length 4 "all requests carrying the losing bytes conflict"
++              Expect.equal (accepted |> Array.filter (fun (_, code, _) -> code = 201) |> Array.length) 1 "one request creates"
++              Expect.equal (accepted |> Array.filter (fun (_, code, _) -> code = 200) |> Array.length) 3 "three exact requests replay"
++              Expect.equal (accepted |> Array.map (fun (source, _, _) -> source) |> Array.distinct |> Array.length) 1 "only one source wins"
++
++              let buildIds =
++                  accepted
++                  |> Array.map (fun (_, _, body) ->
++                      Text.RegularExpressions.Regex.Match(body, "\"build_id\":\"([^\"]+)\"").Groups[1].Value)
++                  |> Array.distinct
++              Expect.equal buildIds.Length 1 "all successful responses return the same durable build"
++
++              use connection = new Npgsql.NpgsqlConnection(connectionString)
++              connection.Open()
++              use count = connection.CreateCommand()
++              count.CommandText <-
++                  "SELECT count(*) FROM builds WHERE organization_id=@organization AND project_id=@project"
++              count.Parameters.AddWithValue("organization", org.Value) |> ignore
++              count.Parameters.AddWithValue("project", project.Value) |> ignore
++              Expect.equal (Convert.ToInt32(count.ExecuteScalar())) 1 "the mixed race creates exactly one build"
+           }
+ 
+           test "request placement override and oversized source both fail before admission" {
+diff --git a/tests/Fogell.Differential.Tests/Tests.fs b/tests/Fogell.Differential.Tests/Tests.fs
+index 4a491ec..85b89a2 100644
+--- a/tests/Fogell.Differential.Tests/Tests.fs
++++ b/tests/Fogell.Differential.Tests/Tests.fs
+@@ -815,19 +815,20 @@ let controllerProcessGroupExtinction =
+           }
+ 
+           test "the pre-setsid race terminates the leader even before its group exists" {
+-              let mutable leader = ProcessPresence.Present
++              let mutable identity = RecordedProcessState.SameIdentity 17
+               let mutable leaderSignals = []
+ 
+               let signalLeader signal =
+                   leaderSignals <- leaderSignals @ [ signal ]
+-                  leader <- ProcessPresence.Absent
++                  identity <- RecordedProcessState.Absent
+                   ProcessSignalResult.Delivered
+ 
+               let result =
+-                  ProcessGroup.ensureExtinguished
++                  ProcessGroup.ensureIdentityBoundExtinguished
+                       1
+                       1
+-                      (fun () -> leader)
++                      4242
++                      (fun () -> identity)
+                       (fun () -> ProcessPresence.Absent)
+                       (fun _ -> ProcessSignalResult.TargetAbsent)
+                       signalLeader
+@@ -837,6 +838,33 @@ let controllerProcessGroupExtinction =
+               Expect.equal leaderSignals [ 15 ] "TERM reaches the launcher directly"
+           }
+ 
++          test "a reused outer PID cannot authorize TERM or KILL of the replacement group" {
++              let mutable groupSignals = []
++              let mutable leaderSignals = []
++
++              let result =
++                  ProcessGroup.ensureIdentityBoundExtinguished
++                      0
++                      0
++                      4242
++                      (fun () -> RecordedProcessState.Changed)
++                      (fun () -> ProcessPresence.Present)
++                      (fun signal ->
++                          groupSignals <- groupSignals @ [ signal ]
++                          ProcessSignalResult.Delivered)
++                      (fun signal ->
++                          leaderSignals <- leaderSignals @ [ signal ]
++                          ProcessSignalResult.Delivered)
++                      noPause
++
++              Expect.equal
++                  result
++                  ProcessGroupStopResult.StatusUncertain
++                  "a populated numeric PGID after identity reuse fails closed"
++              Expect.isEmpty groupSignals "the replacement process group receives no signal"
++              Expect.isEmpty leaderSignals "the replacement process receives no signal"
++          }
++
+           test "a descendant surviving its leader is killed before extinction succeeds" {
+               let mutable group = ProcessPresence.Present
+               let mutable groupSignals = []

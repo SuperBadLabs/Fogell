@@ -28,6 +28,10 @@ type Step =
       Positional: string list
       Named: (string * string) list
       Block: Step list
+      /// True when the call carried a trailing block in source, including an
+      /// empty or trivia-only block. `Block.IsEmpty` cannot distinguish those
+      /// forms from a call with no block at all.
+      HasBlock: bool
       /// Named arguments whose value was SINGLE-quoted, and so is literal.
       ///
       /// FG-046. Groovy interpolates a double-quoted GString and leaves a

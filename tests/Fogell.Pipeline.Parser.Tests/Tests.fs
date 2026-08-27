@@ -1,5 +1,8 @@
 module Fogell.Pipeline.Parser.Tests
 
+open System
+open System.Security.Cryptography
+open System.Text
 open Expecto
 open Fogell.Ir
 open Fogell.Admission
@@ -23,6 +26,24 @@ let private expectDuplicateWhen key body =
     Expect.equal e.Code MalformedSyntax "a named admission refusal"
     Expect.stringContains e.Message $"duplicate named argument `{key}`" "the duplicated key is preserved across parser backtracking"
     Expect.isGreaterThan e.Position.Line 0L "the refusal has a source position"
+
+type private FuzzXorShift64(initialState: uint64) =
+    let mutable state = initialState
+
+    member _.NextUInt64() =
+        state <- state ^^^ (state <<< 13)
+        state <- state ^^^ (state >>> 7)
+        state <- state ^^^ (state <<< 17)
+        state
+
+    member this.NextInt(exclusiveMaximum: int) =
+        int (this.NextUInt64() % uint64 exclusiveMaximum)
+
+type private MalformedFuzzCase =
+    { Label: string
+      Family: string
+      Source: string
+      Expected: ErrorCode * int64 * int64 }
 
 /// FG-004: bounds are applied BEFORE the recursive grammar, so hostile input
 /// can never reach it. Each limit has a named code and a position.
@@ -65,6 +86,573 @@ let admissionLimits =
               for c in
                   [ SourceTooLarge; TooManyNodes; NestingTooDeep; ScalarTooLong; TooManyCollectionItems ] do
                   Expect.isFalse (ErrorCode.isInputDefect c) "a limit is a Fogell bound, not a user defect"
+          } ]
+
+let private expectedWireName =
+    function
+    | SourceTooLarge -> "source_too_large"
+    | TooManyNodes -> "too_many_nodes"
+    | NestingTooDeep -> "nesting_too_deep"
+    | ScalarTooLong -> "scalar_too_long"
+    | TooManyCollectionItems -> "too_many_collection_items"
+    | EmptySource -> "empty_source"
+    | NoPipelineBlock -> "no_pipeline_block"
+    | NoStages -> "no_stages"
+    | ExpectedStage -> "expected_stage"
+    | ExpectedSteps -> "expected_steps"
+    | DuplicateSection -> "duplicate_section"
+    | UnknownSection -> "unknown_section"
+    | MalformedSyntax -> "malformed_syntax"
+    | UnsupportedConstruct -> "unsupported_construct"
+
+/// FG-016b. A rejection is useful to a human only when its stable code and
+/// position lead back to the exact source line. These goldens deliberately
+/// enumerate the union independently from ErrorCode.toWireString: a new code
+/// without a rendering decision is a compile-time failure under FS0025.
+let sourceExcerpts =
+    let allCodes =
+        [ SourceTooLarge
+          TooManyNodes
+          NestingTooDeep
+          ScalarTooLong
+          TooManyCollectionItems
+          EmptySource
+          NoPipelineBlock
+          NoStages
+          ExpectedStage
+          ExpectedSteps
+          DuplicateSection
+          UnknownSection
+          MalformedSyntax
+          UnsupportedConstruct ]
+
+    let diagnostic code line column message source =
+        AdmissionError.render source (AdmissionError.at code line column message)
+
+    testList
+        "FG-016b source excerpts"
+        [ for code in allCodes do
+              let wire = expectedWireName code
+
+              test $"{wire} has an exact source diagnostic" {
+                  let actual = diagnostic code 1L 3L "sample rejection" "  broken"
+
+                  Expect.equal
+                      actual
+                      $"{wire} at 1:3: sample rejection\n  broken\n  ^"
+                      "code, position, physical line and caret are stable"
+              }
+
+          test "the source-free ToString contract is unchanged" {
+              let e = AdmissionError.at MalformedSyntax 7L 9L "bad token"
+              Expect.equal (string e) "malformed_syntax at 7:9: bad token" "legacy diagnostic bytes"
+          }
+
+          test "LF, CRLF and lone CR select the same tabbed physical line" {
+              let expected = "malformed_syntax at 2:2: bad token\n\tbad\n\t^"
+
+              for source in [ "first\n\tbad\nlast"; "first\r\n\tbad\r\nlast"; "first\r\tbad\rlast" ] do
+                  Expect.equal (diagnostic MalformedSyntax 2L 2L "bad token" source) expected "newline form"
+          }
+
+          test "trailing space and tab remain exact before CRLF" {
+              Expect.equal
+                  (diagnostic MalformedSyntax 1L 7L "trailing whitespace" "\tbad \t\r\nnext")
+                  "malformed_syntax at 1:7: trailing whitespace\n\tbad \t\n\t    \t^"
+                  "the physical line and EOF caret preserve both trailing bytes"
+          }
+
+          test "empty source and an empty final line retain a visible caret" {
+              Expect.equal
+                  (diagnostic EmptySource 1L 1L "source is empty" "")
+                  "empty_source at 1:1: source is empty\n\n^"
+                  "the empty first line is real"
+
+              Expect.equal
+                  (diagnostic MalformedSyntax 2L 1L "at eof" "a\n")
+                  "malformed_syntax at 2:1: at eof\n\n^"
+                  "a trailing newline creates an empty EOF line"
+          }
+
+          test "invalid line and column positions are total and explicit" {
+              Expect.equal
+                  (diagnostic MalformedSyntax 1L 0L "bad column" "abc")
+                  "malformed_syntax at 1:0: bad column\nabc\n^"
+                  "a non-positive column clamps to the start of a real line"
+
+              Expect.equal
+                  (diagnostic MalformedSyntax 0L 0L "bad position" "abc")
+                  "malformed_syntax at 0:0: bad position\n<source line unavailable>\n^"
+                  "a non-positive line is not silently redirected"
+
+              Expect.equal
+                  (diagnostic MalformedSyntax 99L Int64.MaxValue "bad position" "abc")
+                  "malformed_syntax at 99:9223372036854775807: bad position\n<source line unavailable>\n^"
+                  "an absent line cannot throw"
+
+              Expect.equal
+                  (AdmissionError.render null (AdmissionError.at MalformedSyntax 1L 1L "missing source"))
+                  "malformed_syntax at 1:1: missing source\n<source line unavailable>\n^"
+                  "a defensive null source cannot throw"
+          }
+
+          test "columns at and beyond EOF clamp to the physical line end" {
+              let expected = "malformed_syntax at 1:4: at eof\nabc\n   ^"
+              Expect.equal (diagnostic MalformedSyntax 1L 4L "at eof" "abc") expected "exact EOF"
+
+              Expect.equal
+                  (diagnostic MalformedSyntax 1L Int64.MaxValue "at eof" "abc")
+                  "malformed_syntax at 1:9223372036854775807: at eof\nabc\n   ^"
+                  "a hostile column is bounded"
+          }
+
+          test "a long line is clipped around a middle caret" {
+              let line = String.replicate 400 "x"
+              let expectedLine = "…" + String.replicate 158 "x" + "…"
+              let expectedCaret = String.replicate 80 " " + "^"
+
+              Expect.equal
+                  (diagnostic MalformedSyntax 1L 201L "middle" line)
+                  $"malformed_syntax at 1:201: middle\n{expectedLine}\n{expectedCaret}"
+                  "both ellipses and the caret stay in the bounded window"
+          }
+
+          test "a SourceTooLarge-sized line allocates only its displayed window" {
+              let line = String.replicate 300_000 "x"
+              let source = "prefix\n" + line + "\nsuffix"
+              let error = AdmissionError.at SourceTooLarge 2L 150_001L "source is too large"
+              let expectedLine = "…" + String.replicate 158 "x" + "…"
+              let expectedCaret = String.replicate 80 " " + "^"
+
+              // Warm the clipping path so this measures the renderer rather
+              // than first-use JIT/type initialization. Per-thread allocation
+              // excludes other concurrently running Expecto tests.
+              AdmissionError.render ("prefix\n" + String.replicate 400 "x" + "\nsuffix") error |> ignore
+              let before = GC.GetAllocatedBytesForCurrentThread()
+              let actual = AdmissionError.render source error
+              let allocated = GC.GetAllocatedBytesForCurrentThread() - before
+
+              Expect.equal
+                  actual
+                  $"source_too_large at 2:150001: source is too large\n{expectedLine}\n{expectedCaret}"
+                  "the hostile physical line still produces the exact bounded diagnostic"
+
+              Expect.isLessThan
+                  allocated
+                  (64L * 1024L)
+                  $"rendering must not copy the 300,000-character source line; allocated {allocated} bytes"
+          }
+
+          test "a line exactly at the bound is not clipped" {
+              let line = String.replicate 160 "x"
+              let caret = String.replicate 159 " " + "^"
+
+              Expect.equal
+                  (diagnostic MalformedSyntax 1L 160L "boundary" line)
+                  $"malformed_syntax at 1:160: boundary\n{line}\n{caret}"
+                  "the 160-character boundary remains literal"
+          }
+
+          test "long-line edge carets remain visible without false ellipses" {
+              let line = String.replicate 400 "x"
+              let clipped = String.replicate 158 "x"
+              let rightCaret = String.replicate 159 " " + "^"
+
+              Expect.equal
+                  (diagnostic MalformedSyntax 1L 1L "left" line)
+                  $"malformed_syntax at 1:1: left\n{clipped}…\n^"
+                  "the left edge has no leading ellipsis"
+
+              Expect.equal
+                  (diagnostic MalformedSyntax 1L 401L "right" line)
+                  $"malformed_syntax at 1:401: right\n…{clipped}\n{rightCaret}"
+                  "the EOF edge has no trailing ellipsis"
+          } ]
+
+/// FG-004b. The fixed-seed generator is intentionally length-delimited and
+/// every generated source is malformed by construction. This is a bounded
+/// robustness sweep, not a grammar fuzzer claiming arbitrary coverage.
+let malformedInputSweep =
+    let seed = 0x46472D30303462UL
+    let inputCount = 10_000
+
+    let exact label family source code line column =
+        { Label = label
+          Family = family
+          Source = source
+          Expected = code, line, column }
+
+    let depthSource prefix opener = prefix + String.replicate 65 opener
+
+    let boundaries =
+        let missingRootClose =
+            "pipeline { agent any stages { stage('x') { steps { echo 'x' } } }"
+
+        let escapedQuoteScalar =
+            "'a\\'" + String.replicate Limits.defaults.MaxScalarBytes "b" + "'"
+
+        [ exact "empty" "empty-or-trivia" "" EmptySource 1L 1L
+          exact "trivia" "empty-or-trivia" " \t\r\n" EmptySource 1L 1L
+          exact "no-pipeline" "no-pipeline" "node { echo 'x' }" NoPipelineBlock 1L 1L
+          exact
+              "source-limit-exact"
+              "source-limit"
+              (String.replicate Limits.defaults.MaxSourceBytes "x")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "source-limit-plus-one"
+              "source-limit"
+              (String.replicate (Limits.defaults.MaxSourceBytes + 1) "x")
+              SourceTooLarge
+              1L
+              1L
+          exact
+              "one-contiguous-identifier"
+              "node-limit"
+              (String.replicate (Limits.defaults.MaxNodes + 1) "x")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "node-limit-exact"
+              "node-limit"
+              (String.replicate Limits.defaults.MaxNodes "x ")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "node-limit-plus-one"
+              "node-limit"
+              (String.replicate (Limits.defaults.MaxNodes + 1) "x ")
+              TooManyNodes
+              1L
+              (int64 (2 * Limits.defaults.MaxNodes + 2))
+          exact
+              "brace-depth-exact"
+              "brace-depth"
+              (String.replicate Limits.defaults.MaxDepth "{")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "brace-depth-plus-one"
+              "brace-depth"
+              (depthSource "" "{")
+              NestingTooDeep
+              1L
+              66L
+          exact
+              "bracket-depth-exact"
+              "bracket-depth"
+              (String.replicate Limits.defaults.MaxDepth "[")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "bracket-depth-plus-one"
+              "bracket-depth"
+              (depthSource "" "[")
+              NestingTooDeep
+              1L
+              66L
+          exact
+              "parenthesis-depth-exact"
+              "parenthesis-depth"
+              (String.replicate Limits.defaults.MaxDepth "(")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "parenthesis-depth-plus-one"
+              "parenthesis-depth"
+              (depthSource "" "(")
+              NestingTooDeep
+              1L
+              66L
+          exact
+              "single-scalar-content-limit-minus-one"
+              "single-scalar-limit"
+              ("'" + String.replicate (Limits.defaults.MaxScalarBytes - 1) "a" + "'")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "single-scalar-content-limit"
+              "single-scalar-limit"
+              ("'" + String.replicate Limits.defaults.MaxScalarBytes "a" + "'")
+              ScalarTooLong
+              1L
+              (int64 Limits.defaults.MaxScalarBytes + 3L)
+          exact
+              "single-scalar-limit-plus-one"
+              "single-scalar-limit"
+              ("'" + String.replicate (Limits.defaults.MaxScalarBytes + 1) "a" + "'")
+              ScalarTooLong
+              1L
+              (int64 Limits.defaults.MaxScalarBytes + 4L)
+          exact
+              "escaped-quote-keeps-scalar-open"
+              "single-scalar-limit"
+              escapedQuoteScalar
+              ScalarTooLong
+              1L
+              (int64 Limits.defaults.MaxScalarBytes + 6L)
+          exact
+              "double-scalar-limit-plus-one"
+              "double-scalar-limit"
+              ("\"" + String.replicate (Limits.defaults.MaxScalarBytes + 1) "a" + "\"")
+              ScalarTooLong
+              1L
+              (int64 Limits.defaults.MaxScalarBytes + 4L)
+          exact
+              "lf-resets-depth-position"
+              "lf-depth"
+              (depthSource "x\n" "{")
+              NestingTooDeep
+              2L
+              66L
+          exact
+              "crlf-resets-depth-position"
+              "crlf-depth"
+              (depthSource "x\r\n" "{")
+              NestingTooDeep
+              2L
+              66L
+          exact
+              "missing-pipeline-close"
+              "missing-close"
+              missingRootClose
+              MalformedSyntax
+              1L
+              (int64 missingRootClose.Length + 1L) ]
+
+    let token (rng: FuzzXorShift64) length =
+        let alphabet = "0123456789abcdef"
+        String(Array.init length (fun _ -> alphabet.[rng.NextInt alphabet.Length]))
+
+    let generatedCase (rng: FuzzXorShift64) ordinal =
+        let payload = token rng (8 + rng.NextInt 24)
+        let label suffix = $"generated-{suffix}-{ordinal:D5}-len-{payload.Length:D2}"
+
+        match ordinal % 6 with
+        | 0 ->
+            let length = ordinal / 6 + 5
+            let whitespace = " \t\r\n"
+            let source = String(Array.init length (fun _ -> whitespace.[rng.NextInt whitespace.Length]))
+            exact (label "trivia") "empty-or-trivia" source EmptySource 1L 1L
+        | 1 ->
+            exact
+                (label "no-pipeline")
+                "no-pipeline"
+                ($"node {{ echo 'x' }} // {ordinal:D5}-{payload}")
+                NoPipelineBlock
+                1L
+                1L
+        | 2 ->
+            let source =
+                "pipeline { agent any stages { stage('x') { steps { echo '"
+                + $"{ordinal:D5}-{payload}"
+                + "' } } }"
+
+            exact
+                (label "missing-close")
+                "missing-close"
+                source
+                MalformedSyntax
+                1L
+                (int64 source.Length + 1L)
+        | family ->
+            let opener, familyName =
+                match family with
+                | 3 -> "{", "brace-depth"
+                | 4 -> "[", "bracket-depth"
+                | _ -> "(", "parenthesis-depth"
+
+            let prefix = $"case_{ordinal:D5}_{payload} "
+
+            exact
+                (label familyName)
+                familyName
+                (depthSource prefix opener)
+                NestingTooDeep
+                1L
+                (int64 prefix.Length + 66L)
+
+    let cases () =
+        let rng = FuzzXorShift64(seed)
+        let generatedCount = inputCount - boundaries.Length
+
+        boundaries
+        @ [ for ordinal in 0 .. generatedCount - 1 -> generatedCase rng ordinal ]
+        |> List.toArray
+
+    let appendUInt64LittleEndian (hash: IncrementalHash) value =
+        let bytes = Array.init 8 (fun shift -> byte (value >>> (8 * shift)))
+        hash.AppendData bytes
+
+    let appendInt32LittleEndian (hash: IncrementalHash) value =
+        let unsigned = uint32 value
+        let bytes = Array.init 4 (fun shift -> byte (unsigned >>> (8 * shift)))
+        hash.AppendData bytes
+
+    let appendLengthDelimitedUtf16 (hash: IncrementalHash) (value: string) =
+        let bytes = Encoding.Unicode.GetBytes value
+        appendInt32LittleEndian hash bytes.Length
+        hash.AppendData bytes
+
+    let corpusDigest (inputs: MalformedFuzzCase array) =
+        use hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
+        appendUInt64LittleEndian hash seed
+        appendInt32LittleEndian hash inputs.Length
+
+        for input in inputs do
+            appendLengthDelimitedUtf16 hash input.Label
+            appendLengthDelimitedUtf16 hash input.Source
+
+        Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant()
+
+    let requiredFamilies =
+        set
+            [ "empty-or-trivia"
+              "no-pipeline"
+              "missing-close"
+              "brace-depth"
+              "bracket-depth"
+              "parenthesis-depth"
+              "source-limit"
+              "node-limit"
+              "single-scalar-limit"
+              "double-scalar-limit"
+              "lf-depth"
+              "crlf-depth" ]
+
+    testList
+        "FG-004b deterministic malformed-input sweep"
+        [ test "the fixed-seed length-delimited corpus is exact and replayable" {
+              let first = cases ()
+              let replay = cases ()
+              let firstDigest = corpusDigest first
+              let replayDigest = corpusDigest replay
+
+              Expect.equal first.Length inputCount "exactly 10,000 malformed inputs are generated"
+              Expect.equal replay.Length inputCount "the replay has the same exact size"
+
+              for index in 0 .. inputCount - 1 do
+                  Expect.equal replay.[index].Label first.[index].Label $"label replay at index {index}"
+
+                  Expect.isTrue
+                      (String.Equals(replay.[index].Source, first.[index].Source, StringComparison.Ordinal))
+                      $"source code units replay at index {index}"
+
+              Expect.equal replayDigest firstDigest "the complete length-delimited corpus replays byte-for-byte"
+              Expect.equal
+                  firstDigest
+                  "774ac3ced0365dff265edef6cd1977a91ddd3654af584421beba0d8e706634ae"
+                  "the fixed seed and recipe corpus are pinned"
+
+              Expect.equal
+                  (first |> Array.map (fun input -> input.Label) |> Set.ofArray |> Set.count)
+                  inputCount
+                  "every generated case label is unique"
+
+              Expect.equal
+                  (first |> Array.map (fun input -> input.Source) |> Set.ofArray |> Set.count)
+                  inputCount
+                  "every malformed source is unique"
+
+              let observedFamilies = first |> Array.map (fun input -> input.Family) |> Set.ofArray
+              Expect.equal observedFamilies requiredFamilies "every named malformed family is present"
+
+              for family in requiredFamilies do
+                  Expect.isGreaterThan
+                      (first |> Array.filter (fun input -> input.Family = family) |> Array.length)
+                      0
+                      $"the {family} recipe is non-vacuous"
+
+              printfn "FG004B_GENERATED=%d FG004B_CORPUS_SHA256=%s FG004B_FAMILIES=%d" first.Length firstDigest observedFamilies.Count
+          }
+
+          test "all 10,000 inputs return typed positioned refusals" {
+              let inputs = cases ()
+              let mutable refused = 0
+              let mutable exactBoundaries = 0
+              let mutable observedCodes = Set.empty
+
+              for index in 0 .. inputs.Length - 1 do
+                  let input = inputs.[index]
+                  let result =
+                      try
+                          Parser.parse input.Source
+                      with ex ->
+                          let exceptionType = ex.GetType()
+                          let typeName =
+                              if String.IsNullOrWhiteSpace exceptionType.FullName then
+                                  exceptionType.Name
+                              else
+                                  exceptionType.FullName
+
+                          failtestf
+                              "unhandled parser exception; seed=0x%016X; index=%d; label=%s; exception-type=%s"
+                              seed
+                              index
+                              input.Label
+                              typeName
+
+                  match result with
+                  | Ok _ ->
+                      failtestf
+                          "guaranteed-malformed input was accepted; seed=0x%016X; index=%d; label=%s"
+                          seed
+                          index
+                          input.Label
+                  | Error error ->
+                      refused <- refused + 1
+                      let wire = expectedWireName error.Code
+                      observedCodes <- Set.add wire observedCodes
+
+                      Expect.equal
+                          (ErrorCode.toWireString error.Code)
+                          wire
+                          $"stable exhaustive wire code at index {index} ({input.Label})"
+
+                      Expect.isFalse
+                          (String.IsNullOrWhiteSpace error.Message)
+                          $"nonblank refusal message at index {index} ({input.Label})"
+
+                      Expect.isGreaterThanOrEqual
+                          error.Position.Line
+                          1L
+                          $"positive refusal line at index {index} ({input.Label})"
+
+                      Expect.isGreaterThanOrEqual
+                          error.Position.Column
+                          1L
+                          $"positive refusal column at index {index} ({input.Label})"
+
+                      let code, line, column = input.Expected
+                      exactBoundaries <- exactBoundaries + 1
+                      Expect.equal error.Code code $"exact boundary code at index {index} ({input.Label})"
+                      Expect.equal error.Position.Line line $"exact boundary line at index {index} ({input.Label})"
+                      Expect.equal error.Position.Column column $"exact boundary column at index {index} ({input.Label})"
+
+              Expect.equal refused inputCount "all 10,000 inputs were refused"
+              Expect.equal exactBoundaries inputCount "every refusal code and position is pinned"
+
+              Expect.equal
+                  observedCodes
+                  (set
+                      [ "empty_source"
+                        "no_pipeline_block"
+                        "malformed_syntax"
+                        "source_too_large"
+                        "too_many_nodes"
+                        "nesting_too_deep"
+                        "scalar_too_long" ])
+                  "the sweep exercises every claimed admission/parser refusal class"
+
+              printfn "FG004B_REFUSED=%d FG004B_EXACT_BOUNDARIES=%d FG004B_CODES=%d" refused exactBoundaries observedCodes.Count
           } ]
 
 let declarativeDetection =
@@ -967,11 +1555,159 @@ let structure =
               Expect.equal (err src).Code MalformedSyntax "and `parse` still agrees"
           } ]
 
+/// FG-126a. Jenkins 2.568.1 refuses the measured `\8` spelling at Groovy
+/// compilation while Fogell used to drop the backslash and run the command.
+/// This tranche is intentionally narrow: it pins directly decoded Declarative
+/// literals only and makes no claim about `\9`, arbitrary invalid letters,
+/// provenance sentinels, dollar-slashy strings, opaque raw expressions or a
+/// purely Scripted Jenkinsfile.
+let invalidEightEscape =
+    let diagnostic = "invalid Groovy escape `\\8`: `8` is not an octal digit"
+
+    let directStep literal =
+        mk $"    stage('S') {{ steps {{ sh {literal} }} }}"
+
+    let expectRefusal label source =
+        let assertError route result =
+            match result with
+            | Ok _ -> failtestf "%s/%s admitted the measured-invalid escape" label route
+            | Error e ->
+                Expect.equal e.Code MalformedSyntax $"{label}/{route}: named admission code"
+                Expect.equal e.Message diagnostic $"{label}/{route}: exact diagnostic"
+                Expect.isGreaterThan e.Position.Line 0L $"{label}/{route}: positive line"
+                Expect.isGreaterThan e.Position.Column 0L $"{label}/{route}: positive column"
+
+        let custom =
+            { Limits.defaults with
+                MaxSourceBytes = 100_000 }
+
+        assertError "parse" (Parser.parse source)
+        assertError "parseWithLimits" (Parser.parseWithLimits custom source)
+
+    let onlyPositional source =
+        let pipeline = ok source
+        match pipeline.Stages with
+        | [ stage ] ->
+            match stage.Steps with
+            | [ step ] -> step.Positional
+            | other -> failtestf "expected one step, got %A" other
+        | other -> failtestf "expected one stage, got %A" other
+
+    testList
+        "FG-126a measured invalid-eight refusal"
+        [ test "all four decoded quote consumers refuse through both public entry points" {
+              for label, literal in
+                  [ "single", "'prefix\\8suffix'"
+                    "triple-single", "'''prefix\\8suffix'''"
+                    "double", "\"prefix\\8suffix\""
+                    "triple-double", "\"\"\"prefix\\8suffix\"\"\"" ] do
+                  expectRefusal label (directStep literal)
+          }
+
+          test "positional, named and environment fallbacks cannot swallow the refusal" {
+              expectRefusal "positional" (directStep "'prefix\\8suffix'")
+
+              expectRefusal
+                  "named"
+                  (mk "    stage('S') { steps { sh(script: 'prefix\\8suffix') } }")
+
+              expectRefusal
+                  "environment"
+                  "pipeline { agent any environment { BAD = 'prefix\\8suffix' } stages { stage('S') { steps { sh 'true' } } } }"
+          }
+
+          test "an escaped backslash and slashy text retain backslash-eight exactly" {
+              Expect.equal
+                  (onlyPositional (directStep "'prefix\\\\8suffix'"))
+                  [ "prefix\\8suffix" ]
+                  "escaped backslash is data, so the following 8 is ordinary text"
+
+              Expect.equal
+                  (onlyPositional (directStep "/prefix\\8suffix/"))
+                  [ "prefix\\8suffix" ]
+                  "slashy strings keep non-delimiter escapes literal"
+          }
+
+          test "valid octal and ordinary quoted values keep their exact decoding" {
+              Expect.equal
+                  (onlyPositional (directStep "'\\7\\77\\377'"))
+                  [ "\u0007?\u00ff" ]
+                  "one-, two- and valid three-digit octal remain admitted"
+
+              Expect.equal
+                  (onlyPositional (directStep "'ordinary'"))
+                  [ "ordinary" ]
+                  "the historical catch-all still serves ordinary quoted text"
+          } ]
+
 /// FG-141. Slashy versus division, decided by POSITION: a `/` after something
 /// that can end an expression is division; with no left operand it can only
 /// open a slashy. The over-broad fix (every `/` opens a span) was an approval
 /// bypass — `input message: 10 / 2` lost its prompt — and the narrow one here
 /// must hold both directions at both scanner sites.
+/// FG-123a. `Block` carries parsed children, so it deliberately collapses an
+/// absent trailing block and an empty one to the same list. Option validation
+/// needs source PRESENCE, including trivia-only bodies Jenkins still sees as a
+/// closure. Keep that fact in the IR rather than trying to reconstruct it from
+/// raw arguments or braces that may be ordinary string content.
+let stepBlockPresence =
+    let pipeline optionBody =
+        $"pipeline {{ agent any options {{ {optionBody} }} stages {{ stage('S') {{ steps {{ sh 'true' }} }} }} }}"
+
+    let ansi optionBody =
+        let parsed = ok (pipeline optionBody)
+        parsed.Options |> List.find (fun option -> option.Name = "ansiColor")
+
+    testList
+        "FG-123a trailing-block presence"
+        [ test "absent, empty, comment, separator and nonempty blocks remain distinct" {
+              let absent = ansi "ansiColor('xterm')"
+              Expect.isFalse absent.HasBlock "an ordinary option has no trailing block"
+              Expect.isEmpty absent.Block "absence still has no parsed children"
+
+              for label, source in
+                  [ "empty", "ansiColor('xterm') {}"
+                    "line-comment", "ansiColor('xterm') { // trivia only\n }"
+                    "block-comment", "ansiColor('xterm') { /* trivia only */ }"
+                    "semicolon", "ansiColor('xterm') { ; }" ] do
+                  let option = ansi source
+                  Expect.isTrue option.HasBlock $"{label}: source presence survives"
+                  Expect.isEmpty option.Block $"{label}: trivia invents no child step"
+
+              let nonempty = ansi "ansiColor('xterm') { sh 'inside' }"
+              Expect.isTrue nonempty.HasBlock "a populated trailing block is present"
+              Expect.equal (nonempty.Block |> List.map (fun step -> step.Name)) [ "sh" ] "its child still parses"
+          }
+
+          test "braces inside arguments are not mistaken for a trailing block" {
+              for source in
+                  [ "ansiColor('x{term}')"
+                    "ansiColor(colorMapName: 'x}term')" ] do
+                  let option = ansi source
+                  Expect.isFalse option.HasBlock $"argument content is not a block: {source}"
+                  Expect.isEmpty option.Block "argument braces create no children"
+          }
+
+          test "script bodies carry the same source-presence bit" {
+              let withoutBody = ok (mk "    stage('S') { steps { script() } }")
+              let absent = withoutBody.Stages.[0].Steps.[0]
+              Expect.isFalse absent.HasBlock "bodyless script is absent"
+              Expect.isNone absent.ScriptBody "bodyless script has no source"
+
+              let withBody = ok (mk "    stage('S') { steps { script { /* empty */ } } }")
+              let present = withBody.Stages.[0].Steps.[0]
+              Expect.isTrue present.HasBlock "opaque script body is present"
+              Expect.isSome present.ScriptBody "opaque source is retained"
+              Expect.isEmpty present.Block "script source is never reparsed as declarative children"
+          }
+
+          test "an unterminated trailing block remains a named syntax rejection" {
+              let malformed =
+                  "pipeline { agent any options { ansiColor('xterm') { sh 'inside' } stages { stage('S') { steps { sh 'true' } } } }"
+
+              Expect.equal (err malformed).Code MalformedSyntax "the missing option-block brace cannot downgrade to absence"
+          } ]
+
 let slashyPosition =
     let steps body =
         mk $"    stage(\"S\") {{\n      steps {{\n{body}\n      }}\n    }}"
@@ -1031,4 +1767,13 @@ let main argv =
     runTestsWithCLIArgs
         []
         argv
-        (testList "Fogell.Pipeline.Parser" [ admissionLimits; declarativeDetection; structure; slashyPosition ])
+        (testList
+            "Fogell.Pipeline.Parser"
+            [ admissionLimits
+              sourceExcerpts
+              malformedInputSweep
+              declarativeDetection
+              structure
+              invalidEightEscape
+              stepBlockPresence
+              slashyPosition ])

@@ -38,7 +38,15 @@ type InputAnswer =
 /// re-selection story (the arms select against a status resume must
 /// reconstruct); it is FG-046b/FG-082 territory, not silently claimed here.
 type PersistenceHooks =
-    { /// True when this attempt RESUMES an interrupted journal — what
+    { /// A masked and leak-screened build-console line. It is assigned its
+      /// monotonic publication order at the same point it enters the run's
+      /// ordered output buffer, then delivered by one serialized publisher
+      /// outside the output-state lock. Persisted hosts use this to publish
+      /// progressive console without waiting for the terminal Trace snapshot.
+      /// Throwing is an infrastructure failure: it is surfaced as
+      /// OutputPublicationException and must not become build semantics.
+      OnOutput: string -> unit
+      /// True when this attempt RESUMES an interrupted journal — what
       /// `when { isRestartedRun() }` evaluates to.
       IsRestartedRun: bool
       /// stage -> stepIndex -> run it? False = durably finished in a prior
@@ -66,15 +74,12 @@ type PersistenceHooks =
       /// BEFORE OnStepFinished so a durably finished step can never lose the
       /// warning that its enclosing stage must replay after restart.
       OnStepStageWarning: string -> int -> BuildStatus -> unit
-      /// stage -> stepIndex -> the step's worst sunk status.
-      OnStepFinished: string -> int -> BuildStatus -> unit
+      /// stage -> stepIndex -> the step's worst sunk status and, only for a
+      /// failed/aborted disposition, its captured diagnostic. One callback makes
+      /// the ordering and shared durability unit a type-level contract.
+      OnStepFinished: string -> int -> BuildStatus -> string option -> unit
       /// The stage boundary — the journal's group-commit point.
       OnStageCommitted: string -> unit
-      /// FG-114. stage -> stepIndex -> the ERROR-shaped diagnostic a FAILED (or
-      /// aborted) step emitted — the REASON, made durable beside the status,
-      /// because `failure` alone sent every reader to a console that no longer
-      /// says why. Called after OnStepFinished, only when a reason was captured.
-      OnStepReason: string -> int -> string -> unit
       /// FG-135. stage -> retry attempt N (>= 2) is starting. Journaled (and made
       /// durable) BEFORE the attempt's first step, so a resume can tell a failed
       /// prior attempt's records from the live attempt's. Implementations also
@@ -217,6 +222,11 @@ module WalkerOrchestration =
         let credentialStore = deps.Credentials
         let previousBuild = deps.PreviousBuild
         let persistence = deps.Persistence
+
+        let materializeScmCwd (cwd: string) () =
+            Workspace.materializeUnder workspaceRoot cwd
+            |> Result.mapError (fun e -> e.Describe)
+
         // Jenkins scopes a stash to the BUILD that saved it — receipt
         // `stash-not-carried`: build 2's unstash of build 1's stash FAILS.
         let stashKey = $"{deps.JobName}#build-{deps.BuildNumber}"
@@ -1196,10 +1206,10 @@ module WalkerOrchestration =
                     |> List.tryLast
                     |> Option.map snd
                     |> Option.orElse outerPath
-                    |> Option.defaultWith (fun () ->
-                        match Environment.GetEnvironmentVariable "PATH" with
-                        | null -> ""
-                        | p -> p)
+                    // FG-222: every production environment begins with the
+                    // admission snapshot. A synthetic caller that supplies no
+                    // PATH gets no second ambient read here.
+                    |> Option.defaultValue ""
 
                 let bindings =
                     if List.isEmpty pathAdditions then
@@ -1371,8 +1381,21 @@ module WalkerOrchestration =
                     let names = bindings |> List.map (fun b -> "$" + b.ValueVariable)
                     emit $"""Masking supported pattern matches of {String.concat " or " names}"""
 
+                    // FG-044b(b). Explicit variables requested by THIS wrapper are
+                    // lexical and may shadow outer values. Generated `_FILE` companions
+                    // are Fogell-only conveniences: they may fill an unused name, never
+                    // overwrite a pipeline, stage, withEnv or outer-credential binding.
+                    let currentPlain = List.ofSeq plainEnv
+
+                    let preservedNames =
+                        envForWith (ctx.EnvOverlay @ currentPlain) stage
+                        |> List.map fst
+                        |> Set.ofList
+
                     let overlay =
-                        ctx.EnvOverlay @ List.ofSeq plainEnv @ Secrets.environmentFor bindings
+                        ctx.EnvOverlay
+                        @ currentPlain
+                        @ Secrets.environmentForPreserving preservedNames bindings
                     let inner = { ctx with EnvOverlay = overlay; Secrets = ctx.Secrets @ bindings }
 
                     for st in step.Block do
@@ -1757,6 +1780,7 @@ module WalkerOrchestration =
                             runCtx
                             ctx
                             cwd
+                            (materializeScmCwd cwd)
                             deadline
                             (envForWith ctx.EnvOverlay stage)
                             artifactRoot
@@ -1820,6 +1844,7 @@ module WalkerOrchestration =
                             runCtx
                             ctx
                             cwd
+                            (materializeScmCwd cwd)
                             deadline
                             (envForWith ctx.EnvOverlay stage)
                             artifactRoot
@@ -1879,22 +1904,43 @@ module WalkerOrchestration =
                         |> Option.map (fun v -> v.Split ',' |> Array.toList |> List.map (fun s -> s.Trim()))
                         |> Option.defaultValue []
 
-                    let saved, aborted = Stash.save store stashKey cwd n includes excludes abort
+                    // StashStep.useDefaultExcludes is a boolean with a true default.
+                    // It used to be admitted by WalkerRules but ignored here, which
+                    // both leaked .git metadata by default and made an explicit false
+                    // ineffective. Refuse an unrecognised rendered value before
+                    // Stash.save deletes/recreates controller-side storage.
+                    let useDefaultExcludes =
+                        step.Named
+                        |> List.tryPick (fun (k, v) -> if k = "useDefaultExcludes" then Some v else None)
+                        |> Option.map (function
+                            | "true" -> Ok true
+                            | "false" -> Ok false
+                            | invalid -> Error invalid)
+                        |> Option.defaultValue (Ok true)
 
-                    if aborted then
-                        applyCancellation ctx "stash" deadline (cancellationOf ctx deadline)
-                    elif List.isEmpty saved && not allowEmpty then
-                        // MEASURED: Jenkins FAILS the build here (default
-                        // allowEmpty: false) — the pipeline stops and later steps do
-                        // not run. Reporting success would let the build continue
-                        // having silently lost the inputs it asked for, and a later
-                        // `unstash` would succeed with nothing.
-                        // Receipt: `stash-empty-fails`.
-                        emit $"ERROR: No files included in stash ‘{n}’"
+                    match useDefaultExcludes with
+                    | Error invalid ->
+                        emit $"ERROR: stash useDefaultExcludes must be true or false, got ‘{invalid}’"
                         ctx.Failed.Value <- true
                         ctx.Sink BuildStatus.Failure
-                    else
-                        emit $"Stashed {saved.Length} file(s)"
+                    | Ok useDefaults ->
+                        let saved, aborted =
+                            Stash.save store stashKey cwd n includes excludes useDefaults abort
+
+                        if aborted then
+                            applyCancellation ctx "stash" deadline (cancellationOf ctx deadline)
+                        elif List.isEmpty saved && not allowEmpty then
+                            // MEASURED: Jenkins FAILS the build here (default
+                            // allowEmpty: false) — the pipeline stops and later steps do
+                            // not run. Reporting success would let the build continue
+                            // having silently lost the inputs it asked for, and a later
+                            // `unstash` would succeed with nothing.
+                            // Receipt: `stash-empty-fails`.
+                            emit $"ERROR: No files included in stash ‘{n}’"
+                            ctx.Failed.Value <- true
+                            ctx.Sink BuildStatus.Failure
+                        else
+                            emit $"Stashed {saved.Length} file(s)"
 
             | "unstash", _ ->
                 let step = renderStepArgs ctx stage step
@@ -1936,7 +1982,14 @@ module WalkerOrchestration =
                     | Result.Ok _ -> ()
 
             | "dir", (sub :: _) ->
-                // `dir('x') { … }` — nested cwd, auto-created
+                // `dir('x') { … }` — establish a nested LOGICAL cwd. Jenkins'
+                // PushdStep only replaces the FilePath in the body context; it does
+                // not create that path. A durable shell task materialises its FilePath
+                // later, when it launches. This distinction is observable in the v2
+                // workspace manifest: `dir('x') { echo 'ok' }` leaves no `x/`, while
+                // `dir('x') { sh 'true' }` leaves an empty `x/` behind. Eager creation
+                // here made four live-oracle cases retain directories Jenkins never
+                // created. See WalkerStep for the shell-side materialisation boundary.
                 let sub = (renderStepArgs ctx stage step).Positional |> List.head
 
                 match Workspace.resolveUnder cwd sub with
@@ -1944,21 +1997,15 @@ module WalkerOrchestration =
                     emit $"dir refused: {e.Describe}"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
-                // BEFORE the directory is created. Jenkins rejects a body-less `dir`
-                // before establishing any context, and creating `child/` and THEN failing
-                // leaves a side effect behind on a build that should not have touched the
-                // workspace. Ordering matters here in a way the receipt cannot see: the
-                // manifest hashes FILES, so an extra EMPTY directory is invisible to it —
-                // which is also why the case below no longer claims to prove agreement on
-                // side effects. Raised by the pre-push verifier, which was careful to note
-                // this is a side-effect blind spot rather than another false success.
+                // BEFORE a body context is established. Jenkins rejects a body-less
+                // `dir` without touching the workspace. Trace v2 records empty physical
+                // leaf directories, so this ordering is held by the same receipt rather
+                // than hidden behind a file-only manifest.
                 | Result.Ok _ when Option.isNone ctx.HostedBody && List.isEmpty step.Block ->
                     emit "ERROR: dir step must be called with a body"
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
                 | Result.Ok target ->
-                    Directory.CreateDirectory target |> ignore
-
                     // `target`, NOT `cwd`. Restructuring the dispatcher for the
                     // nested-wrapper fix reintroduced `cwd` here, and the body
                     // wrote to the stage root instead of the subdirectory. Both
@@ -1967,11 +2014,11 @@ module WalkerOrchestration =
                     // manifest is (path, hash) pairs and not a content digest.
                     // FG-172. A HOSTED body is Groovy, not a `Step list`, so it is run
                     // through the runner the script host supplied — and it is handed
-                    // `target`, the directory this arm just established, for the same
+                    // `target`, the logical directory this arm established, for the same
                     // reason the loop below takes `target` rather than `cwd`. That
                     // distinction cost a defect once already: the body wrote to the stage
                     // root and only the workspace manifest's PATHS caught it.
-                    // The body-less case is refused ABOVE, before the directory exists,
+                    // The body-less case is refused ABOVE before any context is changed,
                     // so only the two real shapes reach here.
                     match ctx.HostedBody with
                     | Some runBody -> runBody { ctx with HostedBody = None } target
@@ -2353,6 +2400,7 @@ module WalkerOrchestration =
                                                   Positional = positional |> List.map Value.toDisplay
                                                   Named = named |> List.map (fun (k, v) -> k, Value.toDisplay v)
                                                   Block = []
+                                                  HasBlock = runBody.IsSome
                                                   // ALREADY EVALUATED by the interpreter, so no
                                                   // further interpolation: see the literal marking
                                                   // that fixed the re-rendered approval prompt.
@@ -2369,8 +2417,14 @@ module WalkerOrchestration =
                                                   Position = step.Position }
 
                                             let dispatchCtx =
-                                                match runBody with
-                                                | Some thunk ->
+                                                // A synthetic call obeys the same IR contract as a
+                                                // parsed one: source/body presence is explicit and
+                                                // cannot be recovered from the empty Declarative
+                                                // Block. Matching both values makes a constructor
+                                                // that drops HasBlock fail instead of silently
+                                                // dropping a hosted wrapper body.
+                                                match called.HasBlock, runBody with
+                                                | true, Some thunk ->
                                                     { atCtx with
                                                         HostedBody = Some(runBodyIn thunk)
                                                         HostedArgs = Some(positional, named) }
@@ -2378,10 +2432,13 @@ module WalkerOrchestration =
                                                 // stale runner inherited from an enclosing wrapper
                                                 // would let a body-less call run some other call's
                                                 // block.
-                                                | None ->
+                                                | false, None ->
                                                     { atCtx with
                                                         HostedBody = None
                                                         HostedArgs = Some(positional, named) }
+                                                | _ ->
+                                                    Interpreter.raiseHostedCallRefused
+                                                        $"script block: hosted step `{name}` has inconsistent trailing-block presence"
 
                                             // The deadline a hosted `timeout` established wins over
                                             // the one captured when the script started; without this
@@ -2640,14 +2697,20 @@ module WalkerOrchestration =
                                 if observedStageWarning.Value <> BuildStatus.Success then
                                     hooks.OnStepStageWarning stage.Name i observedStageWarning.Value
 
-                                hooks.OnStepFinished stage.Name i observed.Value
-
                                 // FG-114: the reason travels only beside a failed
                                 // or aborted finish — a green step's diagnostics
-                                // are narration, not explanation
-                                if observed.Value = BuildStatus.Failure || observed.Value = BuildStatus.Aborted then
-                                    observing.LastDiagnostic.Value
-                                    |> Option.iter (fun r -> hooks.OnStepReason stage.Name i r))
+                                // are narration, not explanation. Passing both
+                                // through one callback lets the journal force the
+                                // Finish/Reason group once without pending shared
+                                // state between parallel branch callbacks.
+                                let reason =
+                                    if observed.Value = BuildStatus.Failure
+                                       || observed.Value = BuildStatus.Aborted then
+                                        observing.LastDiagnostic.Value
+                                    else
+                                        None
+
+                                hooks.OnStepFinished stage.Name i observed.Value reason)
 
 
 

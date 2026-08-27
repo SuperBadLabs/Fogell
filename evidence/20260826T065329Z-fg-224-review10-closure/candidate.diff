@@ -1,0 +1,556 @@
+diff --git a/docs/runbooks/controller-host.md b/docs/runbooks/controller-host.md
+index 211f3d3..21f4fe5 100644
+--- a/docs/runbooks/controller-host.md
++++ b/docs/runbooks/controller-host.md
+@@ -49,7 +49,10 @@ for the configured lease.
+ Keep the token file and both database strings out of command arguments and logs.
+ The runtime state root holds immutable definitions, journals, event frames,
+ identity-bound inner process-group registry records, workspaces, a neutral child
+-home, and temporary files. Put it on storage whose loss/recovery policy matches
++home, private job/build-scoped agent homes, and temporary files. The configured
++root is validated as absolute before normalization; relative input is refused
++rather than resolved against the controller's current directory. Put it on
++storage whose loss/recovery policy matches
+ the PostgreSQL database; an incomplete journal is a reconciliation event, not
+ permission to guess success.
+ 
+diff --git a/docs/tickets/FG-224.md b/docs/tickets/FG-224.md
+index 68c9091..d5da04d 100644
+--- a/docs/tickets/FG-224.md
++++ b/docs/tickets/FG-224.md
+@@ -26,7 +26,12 @@ The local worker discovers organization UUID roots after restart, claims one
+ whole-pipeline execution unit, materializes the exact durable source, and starts
+ `Fogell.Run.Host` in its own process group with a cleared environment. The child
+ sets a Linux parent-death signal, writes machine log frames outside the workspace,
+-and retains its existing journal as terminal authority. Every engine-created
++and retains its existing journal as terminal authority. Build processes receive
++a private HOME derived from stable job/build identity, so restart converges on
++the same directory while distinct builds cannot share mutable HOME state. The
++raw configured state root must be fully qualified before it is normalized, so a
++relative path cannot silently bind durability to the controller's current
++directory. Every engine-created
+ inner `setsid` step group is identity-bound by Linux pid plus process start ticks
+ and registered before user code is released. A Run.Host-liveness EOF watchdog
+ and the controller's combined outer/registered-inner cleanup reap descendants,
+@@ -78,12 +83,12 @@ Exact-tree HeMan acceptance on fresh databases:
+ 
+ - Store: 73/73 passed;
+ - Controller API: 22/22 passed;
+-- Differential: 251/251 passed;
++- Differential: 257/257 passed;
+ - Execution: 94/94 passed; and
+ - runnable-controller proof: PASS.
+ 
+ The operator contract is in `docs/runbooks/controller-host.md`. The authoritative
+-locked repository gate also passes all 849 main-suite tests and every blocking
++locked repository gate also passes all 855 main-suite tests and every blocking
+ proof. Exact-head hosted gates, reviews, coverage, and signed commit identity are
+ recorded at publication rather than predicted here.
+ 
+diff --git a/scripts/prove-control-env-isolation.sh b/scripts/prove-control-env-isolation.sh
+index c5ca3aa..fc8d008 100755
+--- a/scripts/prove-control-env-isolation.sh
++++ b/scripts/prove-control-env-isolation.sh
+@@ -116,10 +116,16 @@ judge() {
+     /fg222/withenv:"$LIVE"/fakebin:*) ;;
+     *) echo "  FAIL: PATH overlay order is wrong"; failures=$((failures + 1)) ;;
+   esac
+-  [ "$(cat "$ws/home.txt" 2>/dev/null || true)" = "$state/ws/_agent_home" ] \
++  local build_home
++  build_home=$(cat "$ws/home.txt" 2>/dev/null || true)
++  case "$build_home" in
++    "$state"/ws/_agent_home/*) ;;
++    *) echo "  FAIL: HOME is not beneath the build identity root"; failures=$((failures + 1)) ;;
++  esac
++  [ "$build_home" != "$state/ws/_agent_home" ] \
+     || { echo "  FAIL: HOME is not the neutral build path"; failures=$((failures + 1)); }
+-  [ -d "$state/ws/_agent_home" ] \
+-    || { echo "  FAIL: neutral build HOME was not materialized"; failures=$((failures + 1)); }
++  [ -d "$build_home" ] \
++    || { echo "  FAIL: build-scoped neutral HOME was not materialized"; failures=$((failures + 1)); }
+   [ "$(cat "$ws/credential.txt" 2>/dev/null || true)" = "$CREDENTIAL_SECRET" ] \
+     || { echo "  FAIL: explicit credential binding was lost"; failures=$((failures + 1)); }
+   [ -s "$ws/child.env" ] || { echo "  FAIL: shell env capture missing"; failures=$((failures + 1)); }
+diff --git a/src/Fogell.Controller.Host/Config.fs b/src/Fogell.Controller.Host/Config.fs
+index bc8dc86..3449050 100644
+--- a/src/Fogell.Controller.Host/Config.fs
++++ b/src/Fogell.Controller.Host/Config.fs
+@@ -18,6 +18,15 @@ type ControllerConfig =
+ 
+ module ControllerConfig =
+ 
++    let internal validateStateRoot (raw: string) =
++        // Validate the operator-supplied value before normalization. GetFullPath
++        // makes every relative path absolute by resolving it against the current
++        // working directory, which would otherwise defeat the durability guard.
++        if Path.IsPathFullyQualified raw then
++            Ok(Path.GetFullPath raw)
++        else
++            Error "FOGELL_STATE_ROOT must be absolute"
++
+     let internal validateWorkerTiming pollMilliseconds leaseSeconds =
+         // Renewal is targeted at one third of the lease. A control check can
+         // occur immediately before that target and then sleep for one complete
+@@ -64,7 +73,7 @@ module ControllerConfig =
+         let maintenance = required "FOGELL_MAINTENANCE_DATABASE_URL"
+         let tokenFile = required "FOGELL_API_TOKEN_FILE"
+         let listen = required "FOGELL_LISTEN_URL"
+-        let stateRoot = required "FOGELL_STATE_ROOT"
++        let stateRoot = required "FOGELL_STATE_ROOT" |> Result.bind validateStateRoot
+         let runHost = required "FOGELL_RUN_HOST_PATH"
+         let trustPool = required "FOGELL_LOCAL_TRUST_POOL"
+         let maxPipeline = positiveInt "FOGELL_MAX_PIPELINE_BYTES" 1024 (16 * 1024 * 1024)
+@@ -91,7 +100,7 @@ module ControllerConfig =
+             let maintenanceValue = value maintenance
+             let tokenPath = value tokenFile |> Path.GetFullPath
+             let listenValue = value listen
+-            let stateRootValue = value stateRoot |> Path.GetFullPath
++            let stateRootValue = value stateRoot
+             let runHostValue = value runHost |> Path.GetFullPath
+ 
+             let uriResult =
+@@ -102,8 +111,6 @@ module ControllerConfig =
+ 
+             if runtimeValue = maintenanceValue then
+                 Error "runtime and maintenance database URLs must be distinct capabilities"
+-            elif not (Path.IsPathFullyQualified stateRootValue) then
+-                Error "FOGELL_STATE_ROOT must be absolute"
+             elif not (File.Exists runHostValue) then
+                 Error "FOGELL_RUN_HOST_PATH does not name a file"
+             elif not (File.Exists tokenPath) then
+diff --git a/src/Fogell.Differential/Fogell.fs b/src/Fogell.Differential/Fogell.fs
+index 756cc00..b95b98e 100644
+--- a/src/Fogell.Differential/Fogell.fs
++++ b/src/Fogell.Differential/Fogell.fs
+@@ -11,10 +11,26 @@ open Fogell.Ir
+ /// step, and reduces the run to a [Trace] in the same canonical form.
+ module FogellSide =
+ 
+-    /// A run-scoped agent HOME owned by Fogell rather than by the controller
+-    /// account.  Its root is an explicit execution input, never controller
+-    /// TMPDIR; the differential harness canonicalises this exact value.
+-    let agentHome workspaceRoot = Path.Combine(workspaceRoot, "_agent_home")
++    /// A build-scoped agent HOME owned by Fogell rather than by the controller
++    /// account. Its root is an explicit execution input, never controller
++    /// TMPDIR. Stable job/build identity makes a restarted build converge on
++    /// the same HOME without sharing mutable state with another build.
++    let agentHome (workspaceRoot: string) (jobName: string) (buildNumber: int) =
++        let identity =
++            jobName
++            + "\u0000"
++            + buildNumber.ToString(Globalization.CultureInfo.InvariantCulture)
++            |> Text.Encoding.UTF8.GetBytes
++            |> Security.Cryptography.SHA256.HashData
++            |> Convert.ToHexString
++
++        Path.Combine(workspaceRoot, "_agent_home", identity.ToLowerInvariant())
++
++    let coordinatedAgentHomeReplacement coordinated workspaceRoot jobName buildNumber =
++        if coordinated |> List.exists (fun (_, token) -> token = "${HOME}") then
++            [ agentHome workspaceRoot jobName buildNumber, "${HOME}" ]
++        else
++            []
+ 
+     let private privateDirectoryMode =
+         UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute
+@@ -510,7 +526,9 @@ module FogellSide =
+         | Ready pipeline ->
+             let scmPreflightNotes = verifyScmDefinition ()
+             prepareFreshJob ()
+-            let buildHome = agentHome workspaceRoot
++            let buildHomeRoot = Path.Combine(workspaceRoot, "_agent_home")
++            ensurePrivateDirectory buildHomeRoot
++            let buildHome = agentHome workspaceRoot jobName buildNumber
+             ensurePrivateDirectory buildHome
+             // FG-105: the run-scoped mutable state lives in WalkerCtx — one record,
+             // one stated contract (see WalkerCtx.fs for its two-lock discipline).
+@@ -1223,11 +1241,21 @@ module FogellSide =
+                     |> Seq.map (fun i -> $"@tmp/durable-{i}/script.sh", "@tmp/durable-<id>/script.sh")
+                     |> List.ofSeq
+ 
++                // The CLI enables a HOME fold only for a case that actually
++                // references HOME. Supply this build's exact stable identity
++                // to that existing fold without teaching the CLI one shared
++                // cross-build path.
++                let buildEnvReplacements =
++                    if envReplacements |> List.exists (fun (_, token) -> token = "${HOME}") then
++                        (buildHome, "${HOME}") :: envReplacements
++                    else
++                        envReplacements
++
+                 Trace.normaliseOutputShapedWithTimestampCoverage
+                     declaresTimestamps
+                     false
+                     ((workspace, "${WORKSPACE}") :: idReplacements)
+-                    envReplacements
++                    buildEnvReplacements
+                     (runCtx.Output())
+ 
+             let terminalStatus = runCtx.Status()
+diff --git a/tests/Fogell.Differential.Tests/Tests.fs b/tests/Fogell.Differential.Tests/Tests.fs
+index 5729141..66860b9 100644
+--- a/tests/Fogell.Differential.Tests/Tests.fs
++++ b/tests/Fogell.Differential.Tests/Tests.fs
+@@ -395,6 +395,111 @@ let controllerWorkerTiming =
+                   "the configured poll maximum remains usable with a sufficient lease"
+           } ]
+ 
++let controllerStateRoot =
++    let variables =
++        [ "FOGELL_DATABASE_URL"
++          "FOGELL_MAINTENANCE_DATABASE_URL"
++          "FOGELL_API_TOKEN_FILE"
++          "FOGELL_LISTEN_URL"
++          "FOGELL_STATE_ROOT"
++          "FOGELL_RUN_HOST_PATH"
++          "FOGELL_LOCAL_TRUST_POOL"
++          "FOGELL_MAX_PIPELINE_BYTES"
++          "FOGELL_MAX_LOG_CHUNKS"
++          "FOGELL_WORKER_POLL_MS"
++          "FOGELL_WORKER_LEASE_SECONDS" ]
++
++    let withConfig stateRoot assertion =
++        let previous =
++            variables
++            |> List.map (fun name -> name, Environment.GetEnvironmentVariable name)
++
++        let fixtureRoot =
++            IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-config-{Guid.NewGuid():N}")
++
++        let tokenPath = IO.Path.Combine(fixtureRoot, "api-token")
++        let runHostPath = IO.Path.Combine(fixtureRoot, "Fogell.Run.Host")
++
++        try
++            IO.Directory.CreateDirectory fixtureRoot |> ignore
++            IO.File.WriteAllText(tokenPath, String('t', 32))
++            IO.File.WriteAllText(runHostPath, "test host placeholder")
++            Environment.SetEnvironmentVariable("FOGELL_DATABASE_URL", "postgres://runtime")
++            Environment.SetEnvironmentVariable("FOGELL_MAINTENANCE_DATABASE_URL", "postgres://maintenance")
++            Environment.SetEnvironmentVariable("FOGELL_API_TOKEN_FILE", tokenPath)
++            Environment.SetEnvironmentVariable("FOGELL_LISTEN_URL", "http://127.0.0.1:8080")
++            Environment.SetEnvironmentVariable("FOGELL_STATE_ROOT", stateRoot)
++            Environment.SetEnvironmentVariable("FOGELL_RUN_HOST_PATH", runHostPath)
++            Environment.SetEnvironmentVariable("FOGELL_LOCAL_TRUST_POOL", "local")
++            Environment.SetEnvironmentVariable("FOGELL_MAX_PIPELINE_BYTES", "1024")
++            Environment.SetEnvironmentVariable("FOGELL_MAX_LOG_CHUNKS", "100")
++            Environment.SetEnvironmentVariable("FOGELL_WORKER_POLL_MS", "1000")
++            Environment.SetEnvironmentVariable("FOGELL_WORKER_LEASE_SECONDS", "10")
++            assertion (ControllerConfig.load ())
++        finally
++            for name, value in previous do
++                Environment.SetEnvironmentVariable(name, value)
++
++            if IO.Directory.Exists fixtureRoot then
++                IO.Directory.Delete(fixtureRoot, true)
++
++    testSequenced
++        (testList
++            "FG-224 controller state root"
++            [ test "a missing state root remains required rather than defaulting to the cwd" {
++                  withConfig null (fun result ->
++                      Expect.equal
++                          result
++                          (Error "FOGELL_STATE_ROOT is required")
++                          "startup remains fail-closed when no durable root is configured")
++              }
++
++              test "a relative state root is refused before normalization" {
++                  let relative = $".fogell-relative-state-{Guid.NewGuid():N}"
++                  let accidentallyNormalized = IO.Path.GetFullPath relative
++
++                  try
++                      withConfig relative (fun result ->
++                          Expect.equal
++                              result
++                              (Error "FOGELL_STATE_ROOT must be absolute")
++                              "the configured relative path is rejected rather than bound to the process cwd")
++                      Expect.isFalse
++                          (IO.Directory.Exists accidentallyNormalized)
++                          "validation does not create the normalized relative directory"
++                  finally
++                      if IO.Directory.Exists accidentallyNormalized then
++                          IO.Directory.Delete(accidentallyNormalized, true)
++              }
++
++              test "an absolute state root is accepted and normalized without changing other settings" {
++                  let stateFixtureRoot =
++                      IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-state-{Guid.NewGuid():N}")
++
++                  let fixture =
++                      IO.Path.Combine(
++                          stateFixtureRoot,
++                          "parent",
++                          "..",
++                          "state")
++
++                  let expected = IO.Path.GetFullPath fixture
++
++                  try
++                      withConfig fixture (function
++                          | Error error -> failtestf "absolute state root was refused: %s" error
++                          | Ok config ->
++                              Expect.equal config.StateRoot expected "accepted roots retain canonical normalization"
++                              Expect.equal config.MaxPipelineBytes 1024 "pipeline limit parsing is unchanged"
++                              Expect.equal config.MaxLogChunks 100 "log limit parsing is unchanged"
++                              Expect.equal config.PollMilliseconds 1000 "poll parsing is unchanged"
++                              Expect.equal config.LeaseSeconds 10 "lease parsing is unchanged"
++                              Expect.isTrue (IO.Directory.Exists expected) "the accepted state directory is created")
++                  finally
++                      if IO.Directory.Exists stateFixtureRoot then
++                          IO.Directory.Delete(stateFixtureRoot, true)
++              } ])
++
+ let controllerProcessGroupExtinction =
+     let delivered _ = ProcessSignalResult.Delivered
+     let noPause () = ()
+@@ -5119,20 +5224,21 @@ fi
+                   | Ok trace -> Expect.equal trace.Result "success" "the SCM-defined build completed"
+ 
+                   let workspace = IO.Path.Combine(workspaceRoot, "job")
++                  let buildHome = FogellSide.agentHome workspaceRoot "job" 1
+                   Expect.equal
+                       (IO.File.ReadAllText(IO.Path.Combine(workspace, "payload.txt")))
+                       "controller/build boundary\n"
+                       "explicit checkout obtained the committed workspace"
+ 
+                   Expect.equal
+-                      (IO.File.GetUnixFileMode(FogellSide.agentHome workspaceRoot))
++                      (IO.File.GetUnixFileMode buildHome)
+                       (IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute)
+                       "the run-scoped build HOME is private"
+ 
+                   let buildEnvironment = IO.File.ReadAllText(IO.Path.Combine(workspace, "build.env"))
+                   Expect.stringContains
+                       buildEnvironment
+-                      $"HOME={FogellSide.agentHome workspaceRoot}"
++                      $"HOME={buildHome}"
+                       "the build sees only its run-scoped HOME"
+                   for name in [ "SSH_AUTH_SOCK"; "GIT_ASKPASS"; "FG222_LOG" ] do
+                       Expect.isFalse
+@@ -5172,13 +5278,15 @@ fi
+                   try IO.Directory.Delete(root, true) with _ -> ()
+           }
+ 
+-          test "run-scoped build HOME refuses a pre-existing symlink" {
++          test "build-scoped HOME refuses a pre-existing symlink" {
+               let root =
+                   IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg222-home-link-" + Guid.NewGuid().ToString("N"))
+ 
+               let target = IO.Path.Combine(root, "controller-home")
+               IO.Directory.CreateDirectory target |> ignore
+-              IO.Directory.CreateSymbolicLink(FogellSide.agentHome root, target) |> ignore
++              let buildHome = FogellSide.agentHome root "job" 1
++              IO.Directory.CreateDirectory(IO.Path.GetDirectoryName buildHome) |> ignore
++              IO.Directory.CreateSymbolicLink(buildHome, target) |> ignore
+ 
+               try
+                   let source = "pipeline { agent any stages { stage('S') { steps { echo 'unreachable' } } } }"
+@@ -5189,6 +5297,140 @@ fi
+                   try IO.Directory.Delete(root, true) with _ -> ()
+           }
+ 
++          test "build-scoped HOME refuses a symlinked identity root" {
++              let root =
++                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg224-home-root-link-" + Guid.NewGuid().ToString("N"))
++
++              let target = IO.Path.Combine(root, "controller-home")
++              IO.Directory.CreateDirectory target |> ignore
++              IO.Directory.CreateSymbolicLink(IO.Path.Combine(root, "_agent_home"), target) |> ignore
++
++              try
++                  let source = "pipeline { agent any stages { stage('S') { steps { echo 'unreachable' } } } }"
++                  match FogellSide.run [] root "job" source with
++                  | Ok _ -> failtest "symlinked build HOME identity root was accepted"
++                  | Error why -> Expect.stringContains why "symlinked private directory" "the unsafe HOME root is named"
++              finally
++                  try IO.Directory.Delete(root, true) with _ -> ()
++          }
++
++          test "retained builds receive isolated stable HOME identities" {
++              let root =
++                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg224-home-isolation-" + Guid.NewGuid().ToString("N"))
++
++              let first =
++                  "pipeline { agent any stages { stage('S') { steps { sh 'printf first > \"$HOME/fogell-state\"' } } } }"
++
++              let second =
++                  "pipeline { agent any stages { stage('S') { steps { sh 'test ! -e \"$HOME/fogell-state\" && printf clean > home-check.txt' } } } }"
++
++              try
++                  match FogellSide.runMany [] root "job" [ first; second ] with
++                  | [ Ok firstTrace; Ok secondTrace ] ->
++                      Expect.equal firstTrace.Result "success" "the first retained build completed"
++                      Expect.equal secondTrace.Result "success" "the second retained build saw an isolated HOME"
++                  | results -> failtestf "retained HOME isolation run failed: %A" results
++
++                  let firstHome = FogellSide.agentHome root "job" 1
++                  let secondHome = FogellSide.agentHome root "job" 2
++                  Expect.notEqual firstHome secondHome "different build identities cannot share HOME"
++                  Expect.equal
++                      (FogellSide.agentHome root "job" 1)
++                      firstHome
++                      "the same job/build identity is restart-stable"
++                  Expect.isTrue
++                      (IO.File.Exists(IO.Path.Combine(firstHome, "fogell-state")))
++                      "the first build wrote only its own HOME"
++                  Expect.isFalse
++                      (IO.File.Exists(IO.Path.Combine(secondHome, "fogell-state")))
++                      "the second build did not inherit the first build's state"
++                  Expect.equal
++                      (IO.File.ReadAllText(IO.Path.Combine(root, "job", "home-check.txt")))
++                      "clean"
++                      "the second build proved isolation through the real shell environment"
++              finally
++                  try IO.Directory.Delete(root, true) with _ -> ()
++          }
++
++          test "build-scoped HOME folds ordinary output into a stable receipt" {
++              let root =
++                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg224-home-receipt-" + Guid.NewGuid().ToString("N"))
++
++              let job = "home-output"
++              let scripts =
++                  [ "pipeline { agent any stages { stage('S') { steps { sh 'printenv HOME' } } } }"
++                    "pipeline { agent any stages { stage('S') { steps { sh 'printenv HOME' } } } }" ]
++
++              let jenkinsHome = "/var/jenkins_home"
++              Expect.isEmpty
++                  (FogellSide.coordinatedAgentHomeReplacement [] root job 1)
++                  "without a coordinated Jenkins HOME fold no one-sided Fogell mapping is introduced"
++
++              let coordinated = [ jenkinsHome, "${HOME}" ]
++
++              try
++                  let runs = FogellSide.runMany coordinated root job scripts
++
++                  runs
++                  |> List.iteri (fun index run ->
++                      let fogell =
++                          match run with
++                          | Ok trace -> trace
++                          | Error why -> failtestf "HOME output build %d failed: %s" (index + 1) why
++
++                      let buildHome = FogellSide.agentHome root job (index + 1)
++                      let firstHome = FogellSide.agentHome root job 1
++                      let replacements =
++                          coordinated
++                          @ FogellSide.coordinatedAgentHomeReplacement
++                              coordinated
++                              root
++                              job
++                              (index + 1)
++
++                      let jenkins =
++                          { fogell with
++                              Output = fogell.Output |> List.map (fun line -> line.Replace(buildHome, jenkinsHome)) }
++
++                      let receipt =
++                          Compare.receiptWithStableEnvironment
++                              replacements
++                              $"home-output.b{index + 1}.Jenkinsfile"
++                              (Text.Encoding.UTF8.GetBytes(List.item index scripts))
++                              "2.568.1"
++                              replacements
++                              (Ok jenkins)
++                              (Ok fogell)
++
++                      Expect.equal receipt.Verdict Proven "ordinary HOME output compares canonically"
++                      Expect.isFalse
++                          (receipt.Fogell.Value.Output |> List.exists (fun line -> line.Contains buildHome))
++                          "the build-specific hash does not churn the stored receipt"
++                      Expect.contains receipt.Fogell.Value.Output "${HOME}" "the deciding output is sealed canonically"
++
++                      if index = 1 then
++                          let staleFogell =
++                              { fogell with
++                                  Output = fogell.Output |> List.map (fun line -> line.Replace(buildHome, firstHome)) }
++
++                          let staleReceipt =
++                              Compare.receiptWithStableEnvironment
++                                  replacements
++                                  "home-output-stale.b2.Jenkinsfile"
++                                  (Text.Encoding.UTF8.GetBytes(List.item index scripts))
++                                  "2.568.1"
++                                  replacements
++                                  (Ok jenkins)
++                                  (Ok staleFogell)
++
++                          Expect.notEqual
++                              staleReceipt.Verdict
++                              Proven
++                              "build two cannot hide a leaked build-one HOME behind canonicalization")
++              finally
++                  try IO.Directory.Delete(root, true) with _ -> ()
++          }
++
+           test "a pre-existing execution root keeps its caller-owned mode" {
+               let root =
+                   IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg222-root-mode-" + Guid.NewGuid().ToString("N"))
+@@ -7011,6 +7253,7 @@ let main argv =
+             [ progressiveOutputPublication
+               controllerEventDrainBudgets
+               controllerWorkerTiming
++              controllerStateRoot
+               controllerProcessGroupExtinction
+               hostedSignatures
+               stepDescriptorValidation
+diff --git a/tools/Fogell.Differential.Cli/Program.fs b/tools/Fogell.Differential.Cli/Program.fs
+index e13f79a..24dadee 100644
+--- a/tools/Fogell.Differential.Cli/Program.fs
++++ b/tools/Fogell.Differential.Cli/Program.fs
+@@ -153,7 +153,11 @@ let main argv =
+         )
+         |> ignore
+ 
+-        let fogellBuildBaseline = LaunchEnvironment.buildBaseline (FogellSide.agentHome fogellRoot)
++        // HOME is build-scoped and injected into the enabled HOME fold by the
++        // Fogell runner once job/build identity is known. PATH remains static.
++        let fogellBuildBaseline =
++            LaunchEnvironment.buildBaseline ""
++            |> List.filter (fun (name, _) -> name <> "HOME")
+ 
+         let envReplacements =
+             if not envCanonicalisationEnabled then
+@@ -175,10 +179,6 @@ let main argv =
+                     | [ _ ] -> Some pairs.Head
+                     | _ -> None)
+ 
+-        let stableReceiptEnvironment =
+-            envReplacements
+-            |> List.filter (fun (_, token) -> token = "${HOME}")
+-
+         // FG-111. The `git` step echoes each engine's OWN `git --version` — an
+         // environment-of-necessity pair exactly like HOME. Both versions fold to
+         // ${GITVERSION} through the same two-sided compare rule (and the fold is
+@@ -516,12 +516,30 @@ let main argv =
+ 
+                     List.zip jenkinsRuns fogellRuns
+                     |> List.mapi (fun bi (jenkins, fogell) ->
++                        let receiptEnvReplacements =
++                            envReplacementsAll
++                            @ FogellSide.coordinatedAgentHomeReplacement
++                                envReplacementsAll
++                                fogellRoot
++                                job
++                                (bi + 1)
++                            |> List.distinct
++                            |> List.groupBy fst
++                            |> List.choose (fun (_, pairs) ->
++                                match pairs |> List.map snd |> List.distinct with
++                                | [ _ ] -> Some pairs.Head
++                                | _ -> None)
++
++                        let stableReceiptEnvironment =
++                            receiptEnvReplacements
++                            |> List.filter (fun (_, token) -> token = "${HOME}")
++
+                         Compare.receiptWithStableEnvironment
+                             stableReceiptEnvironment
+                             (caseNameFor bi)
+                             caseBytes
+                             core
+-                            envReplacementsAll
++                            receiptEnvReplacements
+                             jenkins
+                             fogell)
+ 

@@ -1,0 +1,12 @@
+ docs/runbooks/controller-host.md                   |  8 +-
+ docs/tickets/FG-224.md                             |  6 +-
+ src/Fogell.Controller.Host/Config.fs               | 28 ++++++-
+ .../Fogell.Controller.Host.fsproj                  |  1 +
+ src/Fogell.Controller.Host/Program.fs              |  9 ++-
+ src/Fogell.Controller.Host/Worker.fs               | 92 ++++++++++++++++------
+ src/Fogell.Controller.Host/WorkerLaunch.fs         | 17 ++++
+ src/Fogell.Execution/ProcessGroup.fs               | 10 ++-
+ .../Fogell.Controller.Api.Tests.fsproj             |  2 +
+ tests/Fogell.Controller.Api.Tests/Tests.fs         | 92 +++++++++++++++++++++-
+ tests/Fogell.Execution.Tests/Tests.fs              | 85 ++++++++++++++++++++
+ 11 files changed, 313 insertions(+), 37 deletions(-)

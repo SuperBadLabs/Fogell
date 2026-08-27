@@ -1,0 +1,166 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "Expecto": {
+        "type": "Direct",
+        "requested": "[10.2.3, )",
+        "resolved": "10.2.3",
+        "contentHash": "mwGOvtkKfMwakKeONwWYy5RgnO7Ijx/THt50GHh8mkSPySVOW/BsOppHzNwby45uaO6X0IKpqS76BrlYgOqcIg==",
+        "dependencies": {
+          "FSharp.Core": "7.0.200",
+          "Mono.Cecil": "[0.11.4, 1.0.0)"
+        }
+      },
+      "FSharp.Core": {
+        "type": "Direct",
+        "requested": "[10.1.301, )",
+        "resolved": "10.1.301",
+        "contentHash": "FwQFuqOA1+qQnFl6Vqg6piS83ZRuKJqXJQxOM52M5tNarT2XQ/pMvw8fOOlnhcOYvdZyje2PJ8rK/J64ZI729Q=="
+      },
+      "Microsoft.AspNetCore.Mvc.Testing": {
+        "type": "Direct",
+        "requested": "[10.0.0, )",
+        "resolved": "10.0.0",
+        "contentHash": "Gdtv34h2qvynOEu+B2+6apBiiPhEs39namGax02UgaQMRetlxQ88p2/jK1eIdz3m1NRgYszNBN/jBdXkucZhvw==",
+        "dependencies": {
+          "Microsoft.AspNetCore.TestHost": "10.0.0",
+          "Microsoft.Extensions.DependencyModel": "10.0.0"
+        }
+      },
+      "FParsec": {
+        "type": "Transitive",
+        "resolved": "1.1.1",
+        "contentHash": "Wdjf/gCNLEwd+0nUCDh9jAIIcKGwfhRramySTnTcVVgNC6i4Vp5aJklUJJfvFkEZMYNZEDGcI8pCa36/TmwmSg==",
+        "dependencies": {
+          "FSharp.Core": "4.3.4"
+        }
+      },
+      "Microsoft.AspNetCore.TestHost": {
+        "type": "Transitive",
+        "resolved": "10.0.0",
+        "contentHash": "Q3ia+k+wYM3Iv/Qq5IETOdpz/R0xizs3WNAXz699vEQx5TMVAfG715fBSq9Thzopvx8dYZkxQ/mumTn6AJ/vGQ=="
+      },
+      "Microsoft.Extensions.DependencyModel": {
+        "type": "Transitive",
+        "resolved": "10.0.0",
+        "contentHash": "RFYJR7APio/BiqdQunRq6DB+nDB6nc2qhHr77mlvZ0q0BT8PubMXN7XicmfzCbrDE/dzhBnUKBRXLTcqUiZDGg=="
+      },
+      "Mono.Cecil": {
+        "type": "Transitive",
+        "resolved": "0.11.4",
+        "contentHash": "IC1h5g0NeJGHIUgzM1P82ld57knhP0IcQfrYITDPXlNpMYGUrsG5TxuaWTjaeqDNQMBDNZkB8L0rBnwsY6JHuQ=="
+      },
+      "Npgsql": {
+        "type": "Transitive",
+        "resolved": "8.0.5",
+        "contentHash": "zRG5V8cyeZLpzJlKzFKjEwkRMYIYnHWJvEor2lWXeccS2E1G2nIWYYhnukB51iz5XsWSVEtqg3AxTWM0QJ6vfg=="
+      },
+      "fogell.admission": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Ir": "[1.0.0, )"
+        }
+      },
+      "fogell.controller.api": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Differential": "[1.0.0, )",
+          "Fogell.Pipeline.Parser": "[1.0.0, )",
+          "Fogell.Store": "[1.0.0, )"
+        }
+      },
+      "fogell.controller.host": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Controller.Api": "[1.0.0, )",
+          "Fogell.Journal": "[1.0.0, )",
+          "Fogell.Store": "[1.0.0, )"
+        }
+      },
+      "fogell.differential": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Execution": "[1.0.0, )",
+          "Fogell.Groovy.Interpreter": "[1.0.0, )",
+          "Fogell.Groovy.Parser": "[1.0.0, )",
+          "Fogell.Pipeline.Parser": "[1.0.0, )"
+        }
+      },
+      "fogell.domain": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )"
+        }
+      },
+      "fogell.execution": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Admission": "[1.0.0, )",
+          "Fogell.Domain": "[1.0.0, )"
+        }
+      },
+      "fogell.groovy": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Ir": "[1.0.0, )"
+        }
+      },
+      "fogell.groovy.interpreter": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Admission": "[1.0.0, )",
+          "Fogell.Groovy": "[1.0.0, )"
+        }
+      },
+      "fogell.groovy.parser": {
+        "type": "Project",
+        "dependencies": {
+          "FParsec": "[1.1.1, )",
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Admission": "[1.0.0, )",
+          "Fogell.Groovy": "[1.0.0, )"
+        }
+      },
+      "fogell.ir": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Domain": "[1.0.0, )"
+        }
+      },
+      "fogell.journal": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Domain": "[1.0.0, )"
+        }
+      },
+      "fogell.pipeline.parser": {
+        "type": "Project",
+        "dependencies": {
+          "FParsec": "[1.1.1, )",
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Admission": "[1.0.0, )",
+          "Fogell.Groovy.Parser": "[1.0.0, )",
+          "Fogell.Ir": "[1.0.0, )"
+        }
+      },
+      "fogell.store": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[10.1.301, )",
+          "Fogell.Domain": "[1.0.0, )",
+          "Npgsql": "[8.0.5, )"
+        }
+      }
+    }
+  }
+}
