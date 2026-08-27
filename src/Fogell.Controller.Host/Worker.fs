@@ -86,6 +86,24 @@ module internal WorkerControl =
         else
             fallback
 
+    [<RequireQualifiedAccess>]
+    type NaturalExitFinalAction =
+        | PublishTerminal
+        | RequireReconciliation
+
+    let naturalExitFinalAction (cancelled: bool) interrupted leaseLost =
+        // This decision is reached only after a natural leader exit, verified
+        // process extinction, and a complete terminal event drain. A cancellation
+        // first observed by the final refresh is therefore not ambiguous process
+        // state: PublishTerminal owns the build-row arbitration and will publish
+        // Aborted when that cancellation committed first. Shutdown and lost lease
+        // authority still make terminal publication unsafe.
+        if interrupted || leaseLost then
+            NaturalExitFinalAction.RequireReconciliation
+        else
+            let _ = cancelled
+            NaturalExitFinalAction.PublishTerminal
+
 type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWorker>) =
     inherit BackgroundService()
 
@@ -700,11 +718,15 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             // Close the drain-to-terminal race with a fresh lease.
                             refreshControl true
 
-                            if cancelled || interrupted || leaseLost then
-                                // A control change after natural leader exit is
-                                // still ambiguous with nested step sessions.
+                            match
+                                WorkerControl.naturalExitFinalAction
+                                    cancelled
+                                    interrupted
+                                    leaseLost
+                            with
+                            | WorkerControl.NaturalExitFinalAction.RequireReconciliation ->
                                 requireReconciliation (currentReconciliationReason ())
-                            else
+                            | WorkerControl.NaturalExitFinalAction.PublishTerminal ->
                                 Journal.repairTail journalPath
                                 let plan = journalPath |> Journal.read |> Resume.plan
 

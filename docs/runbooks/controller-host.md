@@ -130,6 +130,14 @@ build to `queued` without a reconciliation event or outbox row. Once
 ambiguous and retains reasoned `launcher_failed` reconciliation; the worker does
 not convert an attempted launch into the safe setup-only requeue path.
 
+After a natural leader exit, verified process extinction, and a complete
+terminal event drain, the final control refresh may observe a cancellation that
+raced with completion. The worker delegates that race to `PublishTerminal`: if
+the cancellation committed first, the Store atomically publishes `aborted`; if
+terminal publication committed first, the later cancellation reports the
+existing terminal result. Shutdown, lease loss, or an incomplete terminal drain
+remain reconciliation conditions and never enter this natural-exit arbitration.
+
 ## Acceptance and recovery checks
 
 From HeMan, with the PostgreSQL container and host port selected:

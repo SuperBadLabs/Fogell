@@ -2244,6 +2244,10 @@ let fencing =
                   (store.BuildSnapshot(org, project, admitted.BuildId))
                   (Some("aborted", false))
                   "build agrees with attempt truth"
+              Expect.equal
+                  (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
+                  0
+                  "late cancellation is terminal arbitration, not manual reconciliation"
 
               use conn = new Npgsql.NpgsqlConnection(connectionString)
               conn.Open()
@@ -2262,6 +2266,20 @@ let fencing =
               Expect.isTrue (truth.Read()) "terminal projections exist"
               Expect.equal (truth.GetString 0) "aborted" "event records effective result"
               Expect.equal (truth.GetString 1) "aborted" "outbox records effective result"
+              truth.Close()
+
+              use noReconciliationOutbox = conn.CreateCommand()
+              noReconciliationOutbox.CommandText <-
+                  "SELECT count(*) FROM outbox
+                    WHERE organization_id = @o
+                      AND topic = 'build.reconciliation_required'
+                      AND body->>'build' = @build"
+              noReconciliationOutbox.Parameters.AddWithValue("o", org.Value) |> ignore
+              noReconciliationOutbox.Parameters.AddWithValue("build", admitted.BuildId.Value.ToString()) |> ignore
+              Expect.equal
+                  (noReconciliationOutbox.ExecuteScalar() :?> int64)
+                  0L
+                  "late cancellation emits no reconciliation outbox"
           }
 
           test "publication linearized before cancellation remains terminal" {

@@ -541,6 +541,30 @@ let controllerWorkerTiming =
                   "the non-throwing wake reaches the reason persisted by RequireReconciliation"
           }
 
+          test "late cancellation delegates natural terminal arbitration to the Store" {
+              let decide cancelled interrupted leaseLost =
+                  WorkerControl.naturalExitFinalAction cancelled interrupted leaseLost
+
+              Expect.equal
+                  (decide false false false)
+                  WorkerControl.NaturalExitFinalAction.PublishTerminal
+                  "an unchanged final refresh publishes the drained terminal journal"
+              Expect.equal
+                  (decide true false false)
+                  WorkerControl.NaturalExitFinalAction.PublishTerminal
+                  "cancellation first observed after natural exit and complete drain is Store-arbitrated"
+
+              for cancelled, interrupted, leaseLost, cause in
+                  [ false, true, false, "shutdown"
+                    true, true, false, "shutdown concurrent with cancellation"
+                    false, false, true, "lease loss"
+                    true, false, true, "lease loss concurrent with cancellation" ] do
+                  Expect.equal
+                      (decide cancelled interrupted leaseLost)
+                      WorkerControl.NaturalExitFinalAction.RequireReconciliation
+                      $"{cause} preserves the conservative reconciliation boundary"
+          }
+
           test "idle state-root readiness is probed at most once per second" {
               let mutable now = 0L
               let mutable probes = 0
