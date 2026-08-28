@@ -9,6 +9,11 @@
     <Compile Include="Router.fs" />
   </ItemGroup>
   <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Fogell.Controller.Api.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../Fogell.Store/Fogell.Store.fsproj" />
     <ProjectReference Include="../Fogell.Differential/Fogell.Differential.fsproj" />
     <ProjectReference Include="../Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />

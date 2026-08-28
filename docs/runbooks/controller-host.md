@@ -114,7 +114,8 @@ PY
 
 The runtime state root holds immutable definitions, journals, event frames,
 identity-bound inner process-group registry records, workspaces, a neutral child
-home, private job/build-scoped agent homes, and temporary files. The configured
+home, private job/build-scoped agent homes, archived build artifacts, and temporary
+files. The configured
 root is validated as absolute before normalization; relative input is refused
 rather than resolved against the controller's current directory. Before startup
 continues, the controller creates a uniquely named probe without replacement,
@@ -296,6 +297,8 @@ pipeline {
     stage('hello') {
       steps {
         echo 'hello from Fogell'
+        sh 'mkdir -p dist; printf "hello artifact\\n" > dist/output.bin'
+        archiveArtifacts artifacts: 'dist/output.bin'
       }
     }
   }
@@ -340,6 +343,13 @@ done
 curl "${curl_common[@]}" --header "@$FOGELL_AUTH_HEADER" \
   "$FOGELL_BUILDS_URL/$FOGELL_BUILD_ID/logs?from=0" \
   | jq -r '.chunks[].body'
+
+# For a path published by archiveArtifacts, preserve the path segments exactly.
+# The response is application/octet-stream and is not a directory-listing API.
+FOGELL_ARTIFACT_PATH=dist/output.bin
+curl "${curl_common[@]}" --header "@$FOGELL_AUTH_HEADER" \
+  --output "$FOGELL_QUICKSTART_DIR/output.bin" \
+  "$FOGELL_BUILDS_URL/$FOGELL_BUILD_ID/artifacts/$FOGELL_ARTIFACT_PATH"
 
 cleanup_fogell_quickstart
 trap - EXIT HUP INT TERM
