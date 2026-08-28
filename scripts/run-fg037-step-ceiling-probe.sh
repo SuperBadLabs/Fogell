@@ -51,7 +51,11 @@ cleanup() {
   for snapshot in "$collector_snapshot" "$identity_checker_snapshot" \
     "$manifest_checker_snapshot" "$source_bundle_checker_snapshot" \
     "$allowed_signers_snapshot" "$dotnet_wrapper_snapshot"; do
-    [ -z "$snapshot" ] || rm -f -- "$snapshot"
+    if [ -n "$snapshot" ] \
+      && { [ -z "$source_workspace" ] \
+        || [[ $snapshot != "$source_workspace/"* ]]; }; then
+      rm -f -- "$snapshot"
+    fi
   done
   if [ -n "$source_workspace" ]; then
     if [[ $source_workspace == /var/tmp/fogell-fg037-source.* ]] \
@@ -392,8 +396,9 @@ source_bundle_ref=HEAD
 # Build and execute only bytes exported from the recorded HEAD. The physical
 # checkout remains under bookend audit, but it is never the compiler's source:
 # a concurrent edit-and-restore there cannot influence the measured executable.
-# Only project-local bin/obj directories are writable; every governed source
-# file and each parent namespace the compiler resolves stays read-only.
+# Compilation runs as a distinct unprivileged identity inside the private
+# workspace. Its outputs are frozen root-owned before the ordinary probe
+# identity executes them, so neither identity can rewrite the measured binary.
 var_tmp_mode=$(/usr/bin/stat -Lc %a -- /var/tmp 2>/dev/null || true)
 if [ ! -d /var/tmp ] || [ -L /var/tmp ] \
   || [ "$(/usr/bin/realpath -- /var/tmp 2>/dev/null)" != /var/tmp ] \
@@ -405,6 +410,14 @@ if [ ! -d /var/tmp ] || [ -L /var/tmp ] \
 fi
 if [ ! -x /usr/bin/sudo ] || ! /usr/bin/sudo -n /bin/true; then
   echo "REFUSED: FG-037 requires noninteractive root workspace setup" >&2
+  exit 2
+fi
+build_identity=nobody
+build_uid=$(/usr/bin/id -u "$build_identity" 2>/dev/null || true)
+build_gid=$(/usr/bin/id -g "$build_identity" 2>/dev/null || true)
+if [[ ! $build_uid =~ ^[0-9]+$ ]] || [[ ! $build_gid =~ ^[0-9]+$ ]] \
+  || [ "$build_uid" -eq 0 ] || [ "$build_uid" -eq "$(/usr/bin/id -u)" ]; then
+  echo "REFUSED: FG-037 requires a distinct unprivileged build identity" >&2
   exit 2
 fi
 source_workspace=$(/usr/bin/sudo -n /usr/bin/mktemp -d \
@@ -441,8 +454,7 @@ while IFS= read -r -d '' project; do
     echo "REFUSED: exported HEAD contains a pre-existing project bin/obj path" >&2
     exit 2
   fi
-  /usr/bin/sudo -n /usr/bin/install -d -o "$(/usr/bin/id -u)" \
-    -g "$(/usr/bin/id -g)" \
+  /usr/bin/sudo -n /usr/bin/install -d -o "$build_uid" -g "$build_gid" \
     -m 0700 "$project_dir/bin" "$project_dir/obj"
   build_output_dirs+=("$project_dir/bin" "$project_dir/obj")
 done < <(/usr/bin/find "$source_snapshot/src" "$source_snapshot/tools" \
@@ -462,8 +474,7 @@ workspace_writable_dirs=(
   "$source_workspace/dotnet-bundle-cache"
   "$source_workspace/dotnet-cwd"
 )
-/usr/bin/sudo -n /usr/bin/install -d -o "$(/usr/bin/id -u)" \
-  -g "$(/usr/bin/id -g)" \
+/usr/bin/sudo -n /usr/bin/install -d -o "$build_uid" -g "$build_gid" \
   -m 0700 -- "${workspace_writable_dirs[@]}"
 for writable_dir in "${workspace_writable_dirs[@]}"; do
   if [ ! -d "$writable_dir" ] || [ -L "$writable_dir" ] \
@@ -473,24 +484,18 @@ for writable_dir in "${workspace_writable_dirs[@]}"; do
     exit 2
   fi
 done
-chmod u+rwx -- "${build_output_dirs[@]}" "${workspace_writable_dirs[@]}"
 # The root-owned workspace and its sticky root-owned /var/tmp parent prevent a
-# process running as the probe UID from replacing either the workspace or its
-# source entry. Only the pre-created output/cache children are probe-writable.
+# process running as the probe UID from replacing the workspace or source entry.
+# Outputs/caches belong only to a distinct unprivileged build identity until
+# they are frozen root-owned immediately after the compiler exits.
 /usr/bin/sudo -n /bin/chmod 0755 -- "$source_workspace"
 
-collector_snapshot=$(mktemp)
-identity_checker_snapshot=$(mktemp)
-manifest_checker_snapshot=$(mktemp)
-source_bundle_checker_snapshot=$(mktemp)
-allowed_signers_snapshot=$(mktemp)
-dotnet_wrapper_snapshot=$(mktemp)
-clean_git show HEAD:scripts/jenkins-workspace-v2.sh >"$collector_snapshot"
-clean_git show HEAD:scripts/check-fg037-jenkins-identity.sh >"$identity_checker_snapshot"
-clean_git show HEAD:scripts/check-fg037-manifest.py >"$manifest_checker_snapshot"
-clean_git show HEAD:scripts/check-fg037-source-bundle.sh >"$source_bundle_checker_snapshot"
-clean_git show "HEAD:$source_signers_input" >"$allowed_signers_snapshot"
-clean_git show HEAD:scripts/fg037-controlled-dotnet.sh >"$dotnet_wrapper_snapshot"
+collector_snapshot=$source_snapshot/scripts/jenkins-workspace-v2.sh
+identity_checker_snapshot=$source_snapshot/scripts/check-fg037-jenkins-identity.sh
+manifest_checker_snapshot=$source_snapshot/scripts/check-fg037-manifest.py
+source_bundle_checker_snapshot=$source_snapshot/scripts/check-fg037-source-bundle.sh
+allowed_signers_snapshot=$source_snapshot/$source_signers_input
+dotnet_wrapper_snapshot=$source_snapshot/scripts/fg037-controlled-dotnet.sh
 if ! cmp -s "$collector_snapshot" scripts/jenkins-workspace-v2.sh \
   || ! cmp -s "$identity_checker_snapshot" scripts/check-fg037-jenkins-identity.sh \
   || ! cmp -s "$manifest_checker_snapshot" scripts/check-fg037-manifest.py \
@@ -528,9 +533,15 @@ controlled_dotnet() {
       entry_env+=("SSH_AUTH_SOCK=$SSH_AUTH_SOCK")
     fi
   fi
-  /usr/bin/env -i "${entry_env[@]}" \
-    /bin/bash --noprofile --norc "$dotnet_wrapper_snapshot" \
-    "$mode" "$source_workspace" "$@"
+  if [ "$mode" = build ]; then
+    /usr/bin/sudo -n -u "#$build_uid" /usr/bin/env -i "${entry_env[@]}" \
+      /bin/bash --noprofile --norc "$dotnet_wrapper_snapshot" \
+      "$mode" "$source_workspace" "$@"
+  else
+    /usr/bin/env -i "${entry_env[@]}" \
+      /bin/bash --noprofile --norc "$dotnet_wrapper_snapshot" \
+      "$mode" "$source_workspace" "$@"
+  fi
 }
 
 require_stable_inputs() {
@@ -662,12 +673,46 @@ controlled_dotnet build \
   build "$cli_project" -c Release --nologo --no-incremental \
   -m:1 \
   >"$output/build.log" 2>&1
+/usr/bin/sudo -n /bin/chown -R root:root -- \
+  "${build_output_dirs[@]}" "${workspace_writable_dirs[@]}"
+/usr/bin/sudo -n /bin/chmod -R a-w,u+rwX,go+rX -- \
+  "${build_output_dirs[@]}" "${workspace_writable_dirs[@]}"
 if [ ! -f "$cli_assembly" ] || [ -L "$cli_assembly" ]; then
   echo "REFUSED: controlled build did not produce the expected real CLI assembly" >&2
   exit 2
 fi
+output_violation=$(/usr/bin/find "${build_output_dirs[@]}" -xdev \
+  \( ! -user root -o -type l -o \( ! -type d ! -type f \) \
+    -o -perm /022 \) -print -quit)
+if [ -n "$output_violation" ]; then
+  echo "REFUSED: controlled build output is not root-owned and read-only to the probe UID: $output_violation" >&2
+  exit 2
+fi
+frozen_output_digest() {
+  /usr/bin/find "${build_output_dirs[@]}" -xdev -type f -print0 \
+    | /usr/bin/sort -z \
+    | /usr/bin/xargs -0 -r /usr/bin/sha256sum --zero \
+    | /usr/bin/sha256sum \
+    | /usr/bin/awk '{print $1}'
+}
+frozen_output_sha=$(frozen_output_digest)
+require_frozen_outputs() {
+  local violation
+  violation=$(/usr/bin/find "${build_output_dirs[@]}" -xdev \
+    \( ! -user root -o -type l -o \( ! -type d ! -type f \) \
+      -o -perm /022 \) -print -quit)
+  if [ -n "$violation" ] \
+    || [ "$(frozen_output_digest)" != "$frozen_output_sha" ]; then
+    echo "REFUSED: frozen controlled build output changed after attestation" >&2
+    return 2
+  fi
+}
+runtime_tmp=$source_workspace/runtime-tmp
+/usr/bin/sudo -n /usr/bin/install -d -o "$(/usr/bin/id -u)" \
+  -g "$(/usr/bin/id -g)" -m 0700 -- "$runtime_tmp"
 
 set +e
+require_frozen_outputs || exit $?
 controlled_dotnet exec "$cli_assembly" \
   "$FOGELL_JENKINS_URL" "$FOGELL_JENKINS_CORE" "$output/receipts" \
   "$output/cases/fg037-250-steps.Jenkinsfile" \
@@ -711,8 +756,10 @@ python3 "$source_snapshot/scripts/check-fg037-step-ceiling.py" \
   --cases "$output/cases" --receipts "$output/receipts" \
   --jenkins-core "$FOGELL_JENKINS_CORE" | tee "$output/semantic-check.log"
 
+require_frozen_outputs || exit $?
 controlled_dotnet exec "$cli_assembly" \
   --verify-seals "$output/receipts" >"$output/seal-verification.log" 2>&1
+require_frozen_outputs || exit $?
 
 FG037_PUBLICATION_REPO_ROOT="$physical_repo_root" \
   FG037_SOURCE_BUNDLE_CHECKER="$source_bundle_checker_snapshot" \

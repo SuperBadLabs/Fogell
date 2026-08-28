@@ -79,6 +79,7 @@ nuget_packages=$workspace/nuget-packages
 nuget_cache=$workspace/nuget-http-cache
 bundle_cache=$workspace/dotnet-bundle-cache
 build_cwd=$workspace/dotnet-cwd
+runtime_tmp=$workspace/runtime-tmp
 /usr/bin/mkdir -p "$build_home" "$build_tmp" "$nuget_packages" \
   "$nuget_cache" "$bundle_cache" "$build_cwd"
 for writable_dir in "$build_home" "$build_tmp" "$nuget_packages" \
@@ -140,12 +141,17 @@ case "$mode" in
       echo "REFUSED: controlled dotnet exec mode requires an assembly" >&2
       exit 2
     fi
+    if [ ! -d "$runtime_tmp" ] || [ -L "$runtime_tmp" ] \
+      || [[ $(/usr/bin/realpath -- "$runtime_tmp") != "$workspace/"* ]]; then
+      echo "REFUSED: controlled dotnet runtime directory is not one real directory" >&2
+      exit 2
+    fi
     # This launches a built assembly directly, so no MSBuild evaluation occurs.
     # Preserve only the runtime inputs consumed by the focused differential CLI.
     runtime_env=(
       "PATH=$controlled_path"
       "HOME=${HOME:?}"
-      TMPDIR="$build_tmp"
+      TMPDIR="$runtime_tmp"
       LANG=C.UTF-8
       LC_ALL=C.UTF-8
       "FOGELL_JENKINS_WORKSPACE_CMD=${FOGELL_JENKINS_WORKSPACE_CMD:-}"

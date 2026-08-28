@@ -344,6 +344,14 @@ if ! /usr/bin/sudo -n /bin/true; then
   echo "FAIL: FG-037 root-workspace proof requires noninteractive sudo" >&2
   exit 1
 fi
+build_identity=nobody
+build_uid=$(/usr/bin/id -u "$build_identity" 2>/dev/null || true)
+build_gid=$(/usr/bin/id -g "$build_identity" 2>/dev/null || true)
+if [[ ! $build_uid =~ ^[0-9]+$ ]] || [[ ! $build_gid =~ ^[0-9]+$ ]] \
+  || [ "$build_uid" -eq 0 ] || [ "$build_uid" -eq "$(/usr/bin/id -u)" ]; then
+  echo "FAIL: root-workspace proof requires a distinct unprivileged build identity" >&2
+  exit 1
+fi
 msbuild_workspace=$(/usr/bin/sudo -n /usr/bin/mktemp -d \
   /var/tmp/fogell-fg037-source.XXXXXXXXXX)
 if [[ $msbuild_workspace != /var/tmp/fogell-fg037-source.* ]] \
@@ -375,7 +383,9 @@ build_ancestor_marker=$msbuild_case/ancestor-build-target-ran
 packages_ancestor_marker=$msbuild_case/ancestor-packages-props-ran
 build_ancestor_file=$msbuild_workspace/Directory.Build.targets
 packages_ancestor_file=$msbuild_workspace/Directory.Packages.props
-safe_project_marker=$msbuild_case/private-workspace-project-ran
+protected_dotnet_wrapper=$msbuild_workspace/source/fg037-controlled-dotnet.sh
+cp "$dotnet_wrapper" "$protected_dotnet_wrapper"
+safe_project_marker=$msbuild_workspace/source/bin/protected-build-output.dll
 cat >"$msbuild_workspace/source/project.proj" <<'PROJECT'
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
@@ -383,8 +393,9 @@ cat >"$msbuild_workspace/source/project.proj" <<'PROJECT'
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <Target Name="Probe">
-    <WriteLinesToFile Condition="'$(FG037SafeProjectMarker)' != ''"
-      File="$(FG037SafeProjectMarker)" Lines="safe" />
+    <WriteLinesToFile
+      File="$(MSBuildProjectDirectory)/bin/protected-build-output.dll"
+      Lines="safe" />
   </Target>
 </Project>
 PROJECT
@@ -441,7 +452,6 @@ cp "$script_source_root/Directory.Build.targets" \
   "$msbuild_workspace/source/Directory.Build.targets"
 cp "$script_source_root/Directory.Packages.props" \
   "$msbuild_workspace/source/Directory.Packages.props"
-
 controlled_writable_dirs=(
   "$msbuild_workspace/dotnet-home"
   "$msbuild_workspace/tmp"
@@ -450,7 +460,8 @@ controlled_writable_dirs=(
   "$msbuild_workspace/dotnet-bundle-cache"
   "$msbuild_workspace/dotnet-cwd"
 )
-mkdir -p -- "${controlled_writable_dirs[@]}"
+/usr/bin/sudo -n /usr/bin/install -d -o "$build_uid" -g "$build_gid" -m 0700 \
+  "${controlled_writable_dirs[@]}"
 set +e
 /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin \
   /bin/bash --noprofile --norc "$dotnet_wrapper" version \
@@ -466,7 +477,12 @@ if [ "$writable_workspace_rc" -ne 2 ] \
 fi
 /usr/bin/sudo -n /bin/chown -R root:root "$msbuild_workspace/source"
 /usr/bin/sudo -n /bin/chmod -R a-w,u+rwX,go+rX "$msbuild_workspace/source"
-chmod u+rwx -- "${controlled_writable_dirs[@]}"
+/usr/bin/sudo -n /usr/bin/install -d -o "$build_uid" -g "$build_gid" -m 0700 \
+  "$msbuild_workspace/source/bin" "$msbuild_workspace/source/obj"
+/usr/bin/sudo -n /bin/chown -R "$build_uid:$build_gid" \
+  "$msbuild_workspace/source/bin" "$msbuild_workspace/source/obj"
+/usr/bin/sudo -n /bin/chmod -R u+rwX,go-rwx \
+  "$msbuild_workspace/source/bin" "$msbuild_workspace/source/obj"
 /usr/bin/sudo -n /bin/chmod 0755 "$msbuild_workspace"
 source_identity=$(stat -Lc '%d:%i' "$msbuild_workspace/source")
 set +e
@@ -507,21 +523,33 @@ if (cd "$msbuild_case/ambient-cwd" && /usr/bin/dotnet --version >/dev/null 2>&1)
   exit 1
 fi
 
+controlled_build_log=$msbuild_case/controlled-build.log
+set +e
 (
   cd "$msbuild_case/ambient-cwd"
+  # The parent shell intentionally owns the diagnostic redirection.
+  # shellcheck disable=SC2024
   DirectoryBuildTargetsPath=$msbuild_case/hostile.targets \
     BASH_ENV=$msbuild_case/bash-env \
     PATH=$msbuild_case/fake-bin:/usr/local/bin:/usr/bin:/bin \
-    /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin \
-    /bin/bash --noprofile --norc "$dotnet_wrapper" build \
+    /usr/bin/sudo -n -u "#$build_uid" /usr/bin/env -i \
+    PATH=/usr/local/bin:/usr/bin:/bin \
+    /bin/bash --noprofile --norc "$protected_dotnet_wrapper" build \
     "$msbuild_workspace" msbuild \
     "$msbuild_workspace/source/project.proj" \
     "-p:DirectoryBuildPropsPath=$msbuild_case/hostile.targets" \
     "-p:DirectoryBuildTargetsPath=$msbuild_case/hostile.targets" \
     "-p:DirectoryPackagesPropsPath=$packages_ancestor_file" \
-    "-p:FG037SafeProjectMarker=$safe_project_marker" \
-    -t:Probe -nologo >/dev/null 2>&1
+    -t:Probe -nologo \
+    >"$controlled_build_log" 2>&1
 )
+controlled_build_rc=$?
+set -e
+if [ "$controlled_build_rc" -ne 0 ]; then
+  echo "FAIL: controlled isolated-identity build exited $controlled_build_rc" >&2
+  sed -n '1,160p' "$controlled_build_log" >&2
+  exit 1
+fi
 for inherited_input in \
   "MSBuild property:$msbuild_marker" \
   "ancestor Directory.Build.targets:$build_ancestor_marker" \
@@ -535,8 +563,49 @@ for inherited_input in \
     exit 1
   fi
 done
+proof_output_dirs=(
+  "$msbuild_workspace/source/bin"
+  "$msbuild_workspace/source/obj"
+)
+/usr/bin/sudo -n /bin/chown -R root:root -- \
+  "${proof_output_dirs[@]}" "${controlled_writable_dirs[@]}"
+/usr/bin/sudo -n /bin/chmod -R a-w,u+rwX,go+rX -- \
+  "${proof_output_dirs[@]}" "${controlled_writable_dirs[@]}"
+proof_assembly=$safe_project_marker
+proof_output_violation=$(/usr/bin/find "${proof_output_dirs[@]}" -xdev \
+  \( ! -user root -o -type l -o -perm /022 \) -print -quit)
 if [ ! -f "$safe_project_marker" ]; then
   echo "FAIL: controlled dotnet did not remain in its private workspace" >&2
+  sed -n '1,160p' "$controlled_build_log" >&2
+  exit 1
+fi
+if [ ! -f "$proof_assembly" ] || [ -L "$proof_assembly" ] \
+  || [ -n "$proof_output_violation" ]; then
+  echo "FAIL: controlled build did not freeze one real root-owned output tree" >&2
+  exit 1
+fi
+proof_output_dir=${proof_output_dirs[0]}
+proof_output_identity=$(stat -Lc '%d:%i' "$proof_output_dir")
+proof_assembly_identity=$(stat -Lc '%d:%i' "$proof_assembly")
+proof_assembly_sha=$(sha256sum "$proof_assembly" | awk '{print $1}')
+set +e
+chmod u+w "$proof_output_dir" 2>/dev/null
+proof_output_chmod_rc=$?
+mv "$proof_output_dir" "$proof_output_dir-swapped" 2>/dev/null
+proof_output_swap_rc=$?
+(printf hostile >"$proof_assembly") 2>/dev/null
+proof_assembly_write_rc=$?
+rm "$proof_assembly" 2>/dev/null
+proof_assembly_unlink_rc=$?
+set -e
+if [ "$proof_output_chmod_rc" -eq 0 ] \
+  || [ "$proof_output_swap_rc" -eq 0 ] \
+  || [ "$proof_assembly_write_rc" -eq 0 ] \
+  || [ "$proof_assembly_unlink_rc" -eq 0 ] \
+  || [ "$(stat -Lc '%d:%i' "$proof_output_dir")" != "$proof_output_identity" ] \
+  || [ "$(stat -Lc '%d:%i' "$proof_assembly")" != "$proof_assembly_identity" ] \
+  || [ "$(sha256sum "$proof_assembly" | awk '{print $1}')" != "$proof_assembly_sha" ]; then
+  echo "FAIL: probe UID could mutate or replace controlled build output" >&2
   exit 1
 fi
 /usr/bin/sudo -n /bin/chmod -R u+w -- "$msbuild_workspace"
