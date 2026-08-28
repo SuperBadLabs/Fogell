@@ -15,6 +15,7 @@ open Fogell.Domain
 open Fogell.Store
 open Fogell.Controller.Api
 open Fogell.Controller.Host
+open Fogell.Execution
 
 [<DllImport("libc")>]
 extern uint32 private geteuid()
@@ -39,6 +40,10 @@ let private token = String.replicate 32 "k"
 
 let private store = Store(connectionString)
 let private maxPipelineBytes = 1024
+let private stateRoot =
+    IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-api-{Guid.NewGuid():N}")
+
+do IO.Directory.CreateDirectory stateRoot |> ignore
 
 let private startServer maxLogChunks =
     let auth =
@@ -58,6 +63,7 @@ let private startServer maxLogChunks =
         { Store = store
           Auth = auth
           TrustPool = "trusted-linux"
+          StateRoot = stateRoot
           MaxPipelineBytes = maxPipelineBytes
           MaxLogChunks = maxLogChunks }
         app
@@ -126,6 +132,22 @@ let private sendChunked (url: string) (idem: string) (body: byte array) =
     req.Content.Headers.TryAddWithoutValidation("content-type", "application/x-jenkinsfile") |> ignore
     use response = client.Send req
     int response.StatusCode, response.Content.ReadAsStringAsync().Result
+
+let private getArtifact (url: string) bearer =
+    use request = new HttpRequestMessage(HttpMethod.Get, url)
+    bearer
+    |> Option.iter (fun value ->
+        request.Headers.TryAddWithoutValidation("authorization", $"Bearer {value}") |> ignore)
+    use response = client.Send request
+    let body = response.Content.ReadAsByteArrayAsync().Result
+    let contentType = response.Content.Headers.ContentType |> Option.ofObj |> Option.map string
+    let contentLength = response.Content.Headers.ContentLength |> Option.ofNullable
+    let disposition = response.Content.Headers.ContentDisposition |> Option.ofObj |> Option.map string
+    let noSniff =
+        match response.Headers.TryGetValues "X-Content-Type-Options" with
+        | true, values -> values |> Seq.toList
+        | _ -> []
+    int response.StatusCode, body, contentType, contentLength, disposition, noSniff
 
 let private stateRootReadiness =
     let status databaseReady capabilitiesReady launchersReady stateRootReady =
@@ -615,6 +637,7 @@ let endpoints =
                   [ HttpMethod.Post, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds"
                     HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}"
                     HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}/logs"
+                    HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}/attempts/{Guid.NewGuid()}/artifacts/output.bin"
                     HttpMethod.Post, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}/cancel"
                     HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/scheduler/explain" ]
 
@@ -1137,6 +1160,166 @@ let endpoints =
               Expect.stringContains response "invalid_log_cursor" "stable cursor code"
           }
 
+          test "archived binary bytes are retrievable at a stable authenticated build URL" {
+              let org, project = freshProject ()
+              let buildsUrl = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              let _, admission =
+                  send HttpMethod.Post buildsUrl (Some token) (Some "artifact-api") (Some pipeline)
+              let build =
+                  Text.RegularExpressions.Regex.Match(admission, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
+                  |> Guid.Parse
+              let attempt =
+                  Text.RegularExpressions.Regex.Match(admission, "\"attempt_id\":\"([^\"]+)\"").Groups[1].Value
+                  |> Guid.Parse
+                  |> AttemptId
+              let buildKey = build.ToString "N"
+              let workspace = IO.Path.Combine(stateRoot, "artifact-source", buildKey)
+              let relative = "dist/result #1.bin"
+              let source = IO.Path.Combine(workspace, relative)
+              let payload = [| 0uy; 255uy; byte 'A'; 13uy; 10uy; byte 'B' |]
+              IO.Directory.CreateDirectory(IO.Path.GetDirectoryName source) |> ignore
+              IO.File.WriteAllBytes(source, payload)
+
+              let artifactRoot =
+                  IO.Path.Combine(
+                      stateRoot,
+                      "workspaces",
+                      org.Value.ToString "N",
+                      "_artifacts")
+
+              Expect.sequenceEqual
+                  (Publish.archive (ArtifactStore.under artifactRoot) buildKey workspace [ relative ])
+                  [ relative ]
+                  "the production archiver publishes the requested relative path"
+
+              let workspaceRoot = IO.Path.Combine(stateRoot, "workspaces", org.Value.ToString "N")
+              let snapshot =
+                  match WorkerPaths.finalizeArtifactSnapshot workspaceRoot buildKey attempt with
+                  | Ok value -> value
+                  | Error error -> failtestf "artifact snapshot failed: %s" error
+              Expect.equal
+                  (WorkerPaths.finalizeArtifactSnapshot workspaceRoot buildKey attempt)
+                  (Ok snapshot)
+                  "snapshot publication replays after a crash between rename and terminal truth"
+
+              let encodedName = Uri.EscapeDataString "result #1.bin"
+              let artifactUrl = $"{buildsUrl}/{build}/attempts/{attempt.Value}/artifacts/dist/{encodedName}"
+
+              let pendingCode, pendingBody, _, _, _, _ = getArtifact artifactUrl (Some token)
+              Expect.equal pendingCode 409 "mutable output is unavailable before terminal publication"
+              Expect.isFalse (pendingBody = payload) "a queued build cannot disclose archived bytes"
+              Expect.stringContains
+                  (Text.Encoding.UTF8.GetString pendingBody)
+                  "artifact_not_ready"
+                  "the nonterminal refusal has a stable code"
+
+              let owner = "artifact-api-owner"
+              let fence =
+                  match store.OfferAttempt(org, attempt, owner, 60) with
+                  | Ok value -> value
+                  | Error error -> failtestf "offer failed: %s" error
+              Expect.isTrue (store.AcceptAttempt(org, attempt, fence, owner)) "artifact attempt accepted"
+              match store.PublishTerminal(org, attempt, fence, owner, Success) with
+              | Ok () -> ()
+              | Error error -> failtestf "terminal publication failed: %s" error
+
+              let retryAttempt = AttemptId(Guid.NewGuid())
+
+              for retrievalNumber in 1..2 do
+                  let code, downloaded, contentType, contentLength, disposition, noSniff =
+                      getArtifact artifactUrl (Some token)
+                  Expect.equal code 200 $"stable retrieval {retrievalNumber} succeeds"
+                  Expect.sequenceEqual downloaded payload $"retrieval {retrievalNumber} is byte-exact"
+                  Expect.equal contentType (Some "application/octet-stream") "binary content is never interpreted"
+                  Expect.equal contentLength (Some(int64 payload.Length)) "the transport declares the exact byte count"
+                  Expect.isTrue
+                      (disposition |> Option.exists (fun value -> value.Contains "result%20%231.bin"))
+                      "the attachment name is safely URL-encoded"
+                  Expect.contains noSniff "nosniff" "clients are told not to infer an active content type"
+
+                  if retrievalNumber = 1 then
+                      match store.DecideRetry(org, attempt, 2, retryAttempt) with
+                      | Ok _ -> ()
+                      | Error error -> failtestf "retry decision failed: %A" error
+
+                      let retryPayload = [| 6uy; 5uy; 4uy; 3uy; 2uy; 1uy |]
+                      IO.File.WriteAllBytes(source, retryPayload)
+                      Expect.sequenceEqual
+                          (Publish.archive (ArtifactStore.under artifactRoot) buildKey workspace [ relative ])
+                          [ relative ]
+                          "the retry can overwrite only its mutable build-key staging path"
+
+              let retryCode, retryBody, _, _, _, _ =
+                  getArtifact
+                      $"{buildsUrl}/{build}/attempts/{retryAttempt.Value}/artifacts/dist/{encodedName}"
+                      (Some token)
+              Expect.equal retryCode 409 "the queued retry has no published artifact snapshot"
+              Expect.isFalse (retryBody = payload) "the queued retry cannot borrow its parent's bytes"
+
+              let unauthenticated, leaked, _, _, _, _ = getArtifact artifactUrl None
+              Expect.equal unauthenticated 401 "artifact retrieval is authenticated"
+              Expect.isFalse (leaked = payload) "an unauthenticated response contains no artifact bytes"
+
+              let wrongProject = ProjectId(Guid.NewGuid())
+              store.CreateProject(org, $"org-{org.Value}", wrongProject, "artifact-wrong-project")
+              let wrongCode, wrongBody =
+                  send HttpMethod.Get
+                      $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{wrongProject.Value}/builds/{build}/attempts/{attempt.Value}/artifacts/dist/{encodedName}"
+                      (Some token) None None
+              Expect.equal wrongCode 404 "a physical artifact cannot bypass project ownership"
+              Expect.stringContains wrongBody "not_found" "the ownership refusal reveals no artifact path"
+
+              let missingCode, missingBody =
+                  send HttpMethod.Get
+                      $"{buildsUrl}/{build}/attempts/{attempt.Value}/artifacts/dist/missing.bin"
+                      (Some token) None None
+              Expect.equal missingCode 404 "an absent artifact is not an empty success"
+              Expect.stringContains missingBody "artifact_not_found" "the missing artifact has a stable code"
+
+              let outside = IO.Path.Combine(stateRoot, $"outside-{buildKey}.bin")
+              IO.File.WriteAllBytes(outside, [| 9uy; 8uy; 7uy |])
+              let escape =
+                  IO.Path.Combine(
+                      stateRoot,
+                      "workspaces",
+                      org.Value.ToString "N",
+                      "_artifact-snapshots",
+                      attempt.Value.ToString "N",
+                      "dist",
+                      "escape.bin")
+              IO.File.CreateSymbolicLink(escape, outside) |> ignore
+              let escapeCode, escapeBody =
+                  send HttpMethod.Get
+                      $"{buildsUrl}/{build}/attempts/{attempt.Value}/artifacts/dist/escape.bin"
+                      (Some token) None None
+              Expect.equal escapeCode 404 "a final symlink is not downloadable"
+              Expect.stringContains escapeBody "artifact_not_found" "the symlink target is not disclosed"
+
+              let savedSnapshot = snapshot + ".saved"
+              IO.Directory.Move(snapshot, savedSnapshot)
+              let outsideSnapshot = IO.Path.Combine(stateRoot, $"outside-snapshot-{buildKey}")
+              let outsideArtifact = IO.Path.Combine(outsideSnapshot, relative)
+              IO.Directory.CreateDirectory(IO.Path.GetDirectoryName outsideArtifact) |> ignore
+              IO.File.WriteAllBytes(outsideArtifact, payload)
+              IO.Directory.CreateSymbolicLink(snapshot, outsideSnapshot) |> ignore
+              let rootEscapeCode, rootEscapeBytes, _, _, _, _ = getArtifact artifactUrl (Some token)
+              Expect.equal rootEscapeCode 404 "a symlinked attempt snapshot root is not downloadable"
+              Expect.isFalse (rootEscapeBytes = payload) "a replaced snapshot root cannot disclose outside bytes"
+          }
+
+          test "artifact path validation rejects traversal and ambiguous segments" {
+              for invalid in [ ""; " "; "/absolute"; "../secret"; "a/../secret"; "a/./b"; "a//b"; "a\u0000b" ] do
+                  let shown = invalid.Replace("\u0000", "<NUL>")
+                  Expect.isNone
+                      (Router.artifactPathSegments invalid)
+                      $"invalid artifact path is refused: {shown}"
+
+              Expect.equal
+                  (Router.artifactPathSegments "reports/linux/output.bin")
+                  (Some [| "reports"; "linux"; "output.bin" |])
+                  "a nested relative artifact path remains admissible"
+          }
+
           test "an unknown build is 404, not 500" {
               let org, project = freshProject ()
               let code, body =
@@ -1158,7 +1341,7 @@ let endpoints =
               Expect.stringContains body "malformed_identifier" "named"
           }
 
-          test "a malformed project is 400 on status, logs and cancellation" {
+          test "a malformed project is 400 on status, logs, artifacts and cancellation" {
               let org = Guid.NewGuid()
               let build = Guid.NewGuid()
               let root = $"{baseUrl}/api/v1/organizations/{org}/projects/not-a-project/builds/{build}"
@@ -1166,6 +1349,7 @@ let endpoints =
               for method, route in
                   [ HttpMethod.Get, root
                     HttpMethod.Get, $"{root}/logs"
+                    HttpMethod.Get, $"{root}/attempts/{Guid.NewGuid()}/artifacts/output.bin"
                     HttpMethod.Post, $"{root}/cancel" ] do
                   let code, body = send method route (Some token) None None
                   Expect.equal code 400 $"{method} rejects a malformed project"
@@ -1321,7 +1505,10 @@ let endpoints =
               Expect.stringContains mismatch "linux" "names what is missing"
           }
 
-          test "teardown" { app.StopAsync() |> Async.AwaitTask |> Async.RunSynchronously }
+          test "teardown" {
+              app.StopAsync() |> Async.AwaitTask |> Async.RunSynchronously
+              if IO.Directory.Exists stateRoot then IO.Directory.Delete(stateRoot, true)
+          }
         ]
 
 [<EntryPoint>]
