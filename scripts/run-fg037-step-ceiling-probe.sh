@@ -4,7 +4,24 @@
 # 251/400 cases are supposed to diverge. Retain them as evidence, never as
 # canonical compatibility cases or receipts.
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+immutable_runner_fd=${FOGELL_FG037_IMMUTABLE_RUNNER_FD:-}
+immutable_runner_path=
+if [ -n "$immutable_runner_fd" ]; then
+  immutable_runner_path=/proc/self/fd/$immutable_runner_fd
+  if [[ ! $immutable_runner_fd =~ ^[0-9]+$ ]] \
+    || [ -z "${FOGELL_FG037_PHYSICAL_REPO_ROOT:-}" ] \
+    || [ "${BASH_SOURCE[0]}" != "$immutable_runner_path" ] \
+    || [ ! -f "$immutable_runner_path" ] \
+    || [[ $(readlink "$immutable_runner_path") != *" (deleted)" ]]; then
+    echo "REFUSED: immutable FG-037 runner handoff is malformed" >&2
+    exit 2
+  fi
+  cd "$FOGELL_FG037_PHYSICAL_REPO_ROOT"
+else
+  cd "$(dirname "${BASH_SOURCE[0]}")/.."
+fi
+unset FOGELL_FG037_IMMUTABLE_RUNNER_FD FOGELL_FG037_PHYSICAL_REPO_ROOT
 
 if [ "$#" -ne 1 ]; then
   echo "usage: $0 <new-evidence-directory>" >&2
@@ -22,7 +39,9 @@ identity_checker_snapshot=
 manifest_checker_snapshot=
 source_bundle_checker_snapshot=
 allowed_signers_snapshot=
+source_workspace=
 cleanup() {
+  set +e
   rm -f -- "$graft_file"
   local snapshot
   for snapshot in "$collector_snapshot" "$identity_checker_snapshot" \
@@ -30,6 +49,10 @@ cleanup() {
     "$allowed_signers_snapshot"; do
     [ -z "$snapshot" ] || rm -f -- "$snapshot"
   done
+  if [ -n "$source_workspace" ]; then
+    chmod -R u+w -- "$source_workspace"
+    rm -rf -- "$source_workspace"
+  fi
 }
 trap cleanup EXIT
 
@@ -179,6 +202,7 @@ clean_input_status() {
 }
 
 require_raw_tracked_inputs() {
+  local candidate_root=${1:-$physical_repo_root}
   local raw_index
   local audit_rc=0
   raw_index=$(mktemp)
@@ -186,7 +210,7 @@ require_raw_tracked_inputs() {
     "${engine_input_pathspecs[@]}" "${probe_input_pathspecs[@]}" \
     >"$raw_index" || audit_rc=$?
   if [ "$audit_rc" -eq 0 ]; then
-    python3 - "$physical_repo_root" "$raw_index" <<'PY' || audit_rc=$?
+    python3 - "$candidate_root" "$raw_index" <<'PY' || audit_rc=$?
 import hashlib
 import os
 import stat
@@ -287,6 +311,32 @@ if ! require_raw_tracked_inputs; then
   exit 2
 fi
 
+# Bash may read a script incrementally, so bookend checks cannot make this
+# physical file immutable during a long probe. Before any evidence or network
+# activity, re-exec the exact HEAD blob from a read-only temporary file. The
+# child validates that blob again and owns cleanup of both bootstrap files.
+if [ -z "$immutable_runner_fd" ]; then
+  immutable_runner_tmp=$(mktemp)
+  clean_git show HEAD:scripts/run-fg037-step-ceiling-probe.sh \
+    >"$immutable_runner_tmp"
+  chmod a-w,u+x "$immutable_runner_tmp"
+  exec 9<"$immutable_runner_tmp"
+  rm -f -- "$immutable_runner_tmp" "$graft_file"
+  exec env \
+    FOGELL_FG037_IMMUTABLE_RUNNER_FD=9 \
+    "FOGELL_FG037_PHYSICAL_REPO_ROOT=$physical_repo_root" \
+    bash /proc/self/fd/9 "$@"
+fi
+runner_head_snapshot=$(mktemp)
+clean_git show HEAD:scripts/run-fg037-step-ceiling-probe.sh \
+  >"$runner_head_snapshot"
+if ! cmp -s "$runner_head_snapshot" "$immutable_runner_path"; then
+  rm -f -- "$runner_head_snapshot"
+  echo "REFUSED: immutable FG-037 runner does not match HEAD" >&2
+  exit 2
+fi
+rm -f -- "$runner_head_snapshot"
+
 if ! clean_git show-ref --verify --quiet refs/heads/main; then
   echo "REFUSED: local main is required to anchor the thin source bundle" >&2
   exit 2
@@ -306,6 +356,41 @@ if ! clean_git merge-base --is-ancestor "$source_prerequisite" main; then
   exit 2
 fi
 source_bundle_ref=HEAD
+
+# Build and execute only bytes exported from the recorded HEAD. The physical
+# checkout remains under bookend audit, but it is never the compiler's source:
+# a concurrent edit-and-restore there cannot influence the measured executable.
+# Only project-local bin/obj directories are writable; every governed source
+# file and each parent namespace the compiler resolves stays read-only.
+source_workspace=$(mktemp -d)
+source_snapshot=$source_workspace/source
+mkdir -p "$source_snapshot"
+clean_git archive --format=tar "$source_head" | tar -xf - -C "$source_snapshot"
+if ! require_raw_tracked_inputs "$source_snapshot"; then
+  echo "REFUSED: exported HEAD source bytes or modes differ from the recorded index" >&2
+  exit 2
+fi
+build_output_dirs=()
+while IFS= read -r -d '' project; do
+  project_dir=${project%/*}
+  if [ -e "$project_dir/bin" ] || [ -L "$project_dir/bin" ] \
+    || [ -e "$project_dir/obj" ] || [ -L "$project_dir/obj" ]; then
+    echo "REFUSED: exported HEAD contains a pre-existing project bin/obj path" >&2
+    exit 2
+  fi
+  mkdir -p "$project_dir/bin" "$project_dir/obj"
+  build_output_dirs+=("$project_dir/bin" "$project_dir/obj")
+done < <(find "$source_snapshot/src" "$source_snapshot/tools" \
+  -type f -name '*.fsproj' -print0)
+for output_dir in "${build_output_dirs[@]}"; do
+  if [ ! -d "$output_dir" ] || [ -L "$output_dir" ] \
+    || [[ $(realpath "$output_dir") != "$source_snapshot"/* ]]; then
+    echo "REFUSED: project build output directory escapes the exported HEAD" >&2
+    exit 2
+  fi
+done
+chmod -R a-w "$source_snapshot"
+chmod u+rwx -- "${build_output_dirs[@]}"
 
 collector_snapshot=$(mktemp)
 identity_checker_snapshot=$(mktemp)
@@ -343,6 +428,7 @@ require_stable_inputs() {
     || [ "$current_tree" != "$source_tree" ] \
     || [ -n "$current_status" ] \
     || ! require_raw_tracked_inputs \
+    || ! require_raw_tracked_inputs "$source_snapshot" \
     || ! cmp -s "$collector_snapshot" scripts/jenkins-workspace-v2.sh \
     || ! cmp -s "$identity_checker_snapshot" scripts/check-fg037-jenkins-identity.sh \
     || ! cmp -s "$manifest_checker_snapshot" scripts/check-fg037-manifest.py \
@@ -437,13 +523,14 @@ for count in (250, 251, 400):
     (root / f"fg037-{count}-steps.Jenkinsfile").write_text(source, encoding="utf-8")
 PY
 
-python3 scripts/check-fg037-step-ceiling.py \
+python3 "$source_snapshot/scripts/check-fg037-step-ceiling.py" \
   --cases "$output/cases" --receipts "$output/receipts" >/dev/null 2>&1 && {
     echo "REFUSED: semantic checker accepted an empty receipt inventory" >&2
     exit 1
   }
 
-cli_project=tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj
+cli_project_relative=tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj
+cli_project=$source_snapshot/$cli_project_relative
 jenkins_251_console=$output/receipts/fg037-251-steps.jenkins-console.txt
 export FOGELL_JENKINS_RAW_CONSOLE_JOB=diff-fg037-251-steps
 export FOGELL_JENKINS_RAW_CONSOLE_BUILD=1
@@ -452,7 +539,8 @@ export FOGELL_JENKINS_RAW_CONSOLE_PATH=$jenkins_251_console
 # Build the exact executable used below, including its transitive engine
 # projects. A solution-default build followed by `dotnet run --no-build` left a
 # stale-binary route if the CLI were ever removed from that solution.
-dotnet build "$cli_project" -c Release --nologo --no-incremental >"$output/build.log" 2>&1
+dotnet build "$cli_project" -c Release --nologo --no-incremental \
+  >"$output/build.log" 2>&1
 
 set +e
 dotnet run --project "$cli_project" -c Release --no-build -- \
@@ -494,22 +582,23 @@ bash "$identity_checker_snapshot" \
   "$endpoint_identity" "$container_identity" "$jenkins_session" >/dev/null \
   || exit $?
 
-python3 scripts/check-fg037-step-ceiling.py \
+python3 "$source_snapshot/scripts/check-fg037-step-ceiling.py" \
   --cases "$output/cases" --receipts "$output/receipts" \
   --jenkins-core "$FOGELL_JENKINS_CORE" | tee "$output/semantic-check.log"
 
 dotnet run --project "$cli_project" -c Release --no-build -- \
   --verify-seals "$output/receipts" >"$output/seal-verification.log" 2>&1
 
-FG037_SOURCE_BUNDLE_CHECKER="$source_bundle_checker_snapshot" \
-  scripts/prove-fg037-step-ceiling.sh "$output" \
+FG037_PUBLICATION_REPO_ROOT="$physical_repo_root" \
+  FG037_SOURCE_BUNDLE_CHECKER="$source_bundle_checker_snapshot" \
+  "$source_snapshot/scripts/prove-fg037-step-ceiling.sh" "$output" \
   "$source_bundle_ref" "$source_prerequisite" "$source_head" "$source_head" "$source_tree" \
   >"$output/proof.log"
 
-# The build, semantic checker and hostile proof above intentionally use the
-# checkout. Revalidate every governed input and the exact commit/tree before
-# making any provenance statement or manifest; an initial clean check alone
-# cannot license evidence if the checkout changed during a long live run.
+# The build, semantic checker and hostile proof above use the read-only HEAD
+# export. Revalidate the physical checkout too before making any provenance
+# statement or manifest; an initial clean check alone cannot license evidence
+# if the publication checkout changed during a long live run.
 require_stable_inputs || exit $?
 
 {
@@ -530,7 +619,7 @@ require_stable_inputs || exit $?
   fogell_jenkins_podman_inspect_v2 \
     "$FOGELL_JENKINS_HOST" "$FOGELL_JENKINS_CONTAINER" '{{.Image}}'
   echo "engine-build-input-status: clean against the recorded HEAD before and after the live run"
-  echo "engine-build-project: $cli_project"
+  echo "engine-build-project: $cli_project_relative (read-only export of recorded HEAD)"
   echo "engine-build-configuration: Release"
   echo "engine-build-mode: --no-incremental (no stale output reuse)"
   echo "engine-build-pathspecs:"
@@ -540,10 +629,11 @@ require_stable_inputs || exit $?
   echo ""
   echo "implementation-sha256:"
   sha256sum \
-    tests/Fogell.Differential.Tests/Tests.fs \
-    scripts/check-fg037-step-ceiling.py \
-    scripts/prove-fg037-step-ceiling.sh \
-    scripts/run-fg037-step-ceiling-probe.sh
+    "$source_snapshot/tests/Fogell.Differential.Tests/Tests.fs" \
+    "$source_snapshot/scripts/check-fg037-step-ceiling.py" \
+    "$source_snapshot/scripts/prove-fg037-step-ceiling.sh" \
+    "$source_snapshot/scripts/run-fg037-step-ceiling-probe.sh" \
+    | sed "s#$source_snapshot/##"
   printf '%s  %s\n' "$identity_checker_sha" \
     "scripts/check-fg037-jenkins-identity.sh (executed HEAD snapshot)"
   printf '%s  %s\n' "$manifest_checker_sha" \

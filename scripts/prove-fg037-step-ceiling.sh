@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # FG-037. Mutation proof for the retained-evidence checkers.
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+script_source_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+publication_repo_root=${FG037_PUBLICATION_REPO_ROOT:-$script_source_root}
+cd "$publication_repo_root"
 
 if { [ "$#" -ne 1 ] && [ "$#" -ne 6 ]; } \
   || [ ! -d "$1/cases" ] || [ ! -d "$1/receipts" ]; then
@@ -14,7 +16,7 @@ scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
 check() {
-  python3 scripts/check-fg037-step-ceiling.py \
+  python3 "$script_source_root/scripts/check-fg037-step-ceiling.py" \
     --cases "$1/cases" --receipts "$1/receipts" --jenkins-core 2.568.1
 }
 
@@ -37,7 +39,7 @@ echo "=== FG-037 semantic checker mutation proof ==="
 check "$source_dir" >/dev/null
 echo "  accepted the unmodified retained evidence"
 
-manifest_checker=scripts/check-fg037-manifest.py
+manifest_checker=$script_source_root/scripts/check-fg037-manifest.py
 manifest_case=$scratch/manifest-case
 cp -a "$source_dir" "$manifest_case"
 rm -f "$manifest_case/manifest.sha256"
@@ -85,7 +87,7 @@ if python3 "$manifest_checker" \
 fi
 echo "  rejected a substituted payload and self-consistent manifest"
 
-source_bundle_checker=${FG037_SOURCE_BUNDLE_CHECKER:-scripts/check-fg037-source-bundle.sh}
+source_bundle_checker=${FG037_SOURCE_BUNDLE_CHECKER:-$script_source_root/scripts/check-fg037-source-bundle.sh}
 source_bundle=$source_dir/source/fg037-measured-source.bundle
 source_allowed_signers=$source_dir/source/allowed_signers
 if [ "$#" -eq 6 ]; then
@@ -148,7 +150,7 @@ if GIT_ALTERNATE_OBJECT_DIRECTORIES=$PWD/.git/objects \
 fi
 echo "  rejected an empty bundle despite a hostile ambient object alternate"
 
-identity_checker=scripts/check-fg037-jenkins-identity.sh
+identity_checker=$script_source_root/scripts/check-fg037-jenkins-identity.sh
 good_identity=$'2.568.1\tpinned-session'
 stale_identity=$'2.568.1\tstale-forward-session'
 wrong_core_identity=$'9.99.9\tpinned-session'
@@ -185,7 +187,8 @@ chmod +x "$fake_bin/base64"
 set +e
 PATH="$fake_bin:$PATH" bash -c \
   'source "$1"; fogell_configure_jenkins_workspace_v2 luigi jenkins-lab' \
-  _ scripts/jenkins-workspace-v2.sh >"$scratch/base64-failure.log" 2>&1
+  _ "$script_source_root/scripts/jenkins-workspace-v2.sh" \
+  >"$scratch/base64-failure.log" 2>&1
 base64_rc=$?
 set -e
 if [ "$base64_rc" -ne 2 ]; then
@@ -226,7 +229,8 @@ inspect_result=$(
     FG037_EXPECTED_CONTAINER="$hostile_container" \
     bash -c \
       'source "$1"; fogell_jenkins_podman_inspect_v2 "$2" "$3" "{{.Image}}"' \
-      _ scripts/jenkins-workspace-v2.sh "$hostile_host" "$hostile_container"
+      _ "$script_source_root/scripts/jenkins-workspace-v2.sh" \
+      "$hostile_host" "$hostile_container"
 ) || {
   echo "FAIL: shared collector rejected a safely quoted inspect override" >&2
   exit 1
@@ -300,7 +304,8 @@ PATH="$nested_fake_bin:$PATH" \
     /bin/sh -c "$wipe_cmd" >/dev/null
     /bin/sh -c "$env_cmd" >/dev/null
     /bin/sh -c "$git_cmd" >/dev/null
-  ' _ scripts/jenkins-workspace-v2.sh "$nested_host" "$nested_container"
+  ' _ "$script_source_root/scripts/jenkins-workspace-v2.sh" \
+  "$nested_host" "$nested_container"
 if [ "$(wc -l <"$nested_container_log")" -ne 4 ] \
   || [ -e "$nested_host_marker" ] \
   || [ -e "$nested_container_marker" ] \
@@ -383,14 +388,15 @@ probe_repo=$scratch/probe-repo
 mkdir -p "$probe_repo/scripts" "$probe_repo/tools/Fogell.Differential.Cli" \
   "$probe_repo/src" \
   "$probe_repo/evidence/20260827T185436Z-fg037-step-ceiling/source"
-cp scripts/run-fg037-step-ceiling-probe.sh \
-  scripts/check-fg037-jenkins-identity.sh \
-  scripts/check-fg037-manifest.py \
-  scripts/check-fg037-source-bundle.sh \
-  scripts/check-fg037-step-ceiling.py \
-  scripts/jenkins-workspace-v2.sh \
-  scripts/prove-fg037-step-ceiling.sh \
+cp "$script_source_root/scripts/run-fg037-step-ceiling-probe.sh" \
+  "$script_source_root/scripts/check-fg037-jenkins-identity.sh" \
+  "$script_source_root/scripts/check-fg037-manifest.py" \
+  "$script_source_root/scripts/check-fg037-source-bundle.sh" \
+  "$script_source_root/scripts/check-fg037-step-ceiling.py" \
+  "$script_source_root/scripts/jenkins-workspace-v2.sh" \
+  "$script_source_root/scripts/prove-fg037-step-ceiling.sh" \
   "$probe_repo/scripts/"
+chmod u+w "$probe_repo/scripts/"*
 cp evidence/20260827T185436Z-fg037-step-ceiling/source/allowed_signers \
   "$probe_repo/evidence/20260827T185436Z-fg037-step-ceiling/source/"
 touch "$probe_repo/Fogell.slnx" "$probe_repo/global.json" \
@@ -401,6 +407,60 @@ git -C "$probe_repo" init -q
 git -C "$probe_repo" add .
 git -C "$probe_repo" -c user.name=FG-037 -c user.email=fg037@example.invalid \
   -c commit.gpgsign=false commit -qm baseline
+
+# A caller must not be able to forge the private immutable-runner handoff and
+# turn its cleanup into deletion of the tracked runner (or skip the re-exec).
+probe_output=$probe_repo/forged-runner-handoff-evidence
+set +e
+(
+  exec 9<"$probe_repo/scripts/run-fg037-step-ceiling-probe.sh"
+  FOGELL_FG037_IMMUTABLE_RUNNER_FD=9 \
+    FOGELL_FG037_PHYSICAL_REPO_ROOT="$probe_repo" \
+    "$probe_repo/scripts/run-fg037-step-ceiling-probe.sh" "$probe_output"
+) >"$scratch/forged-runner-handoff.log" 2>&1
+probe_rc=$?
+set -e
+if [ "$probe_rc" -ne 2 ] \
+  || [ -e "$probe_output" ] \
+  || [ ! -f "$probe_repo/scripts/run-fg037-step-ceiling-probe.sh" ] \
+  || ! grep -Fq "immutable FG-037 runner handoff is malformed" \
+    "$scratch/forged-runner-handoff.log"; then
+  echo "FAIL: probe accepted or destructively cleaned a forged runner handoff" >&2
+  sed -n '1,120p' "$scratch/forged-runner-handoff.log" >&2
+  exit 1
+fi
+echo "  refused a forged immutable-runner handoff without deleting its target"
+
+# A tracked bin/obj path is part of HEAD but must never become a write route out
+# of the read-only export. Commit that shape in an independent fake repository
+# and prove the runner refuses it before any external target or evidence exists.
+output_path_repo=$scratch/output-path-repo
+cp -a "$probe_repo/." "$output_path_repo/"
+external_output_target=$scratch/external-build-output
+mkdir "$external_output_target"
+ln -s "$external_output_target" \
+  "$output_path_repo/tools/Fogell.Differential.Cli/bin"
+git -C "$output_path_repo" add -f tools/Fogell.Differential.Cli/bin
+git -C "$output_path_repo" -c user.name=FG-037 -c user.email=fg037@example.invalid \
+  -c commit.gpgsign=false commit -qm 'tracked output symlink'
+probe_output=$output_path_repo/tracked-output-symlink-evidence
+set +e
+FOGELL_JENKINS_URL=http://127.0.0.1:1 \
+  "$output_path_repo/scripts/run-fg037-step-ceiling-probe.sh" "$probe_output" \
+  >"$scratch/tracked-output-symlink.log" 2>&1
+probe_rc=$?
+set -e
+if [ "$probe_rc" -ne 2 ] \
+  || [ -e "$probe_output" ] \
+  || find "$external_output_target" -mindepth 1 -print -quit | grep -q . \
+  || ! grep -Fq "pre-existing project bin/obj path" \
+    "$scratch/tracked-output-symlink.log"; then
+  echo "FAIL: probe accepted a tracked project-output symlink" >&2
+  sed -n '1,120p' "$scratch/tracked-output-symlink.log" >&2
+  exit 1
+fi
+echo "  refused a tracked project-output symlink without writing its target"
+
 ambient_worktree=$scratch/ambient-clean-worktree
 mkdir "$ambient_worktree"
 cp -a "$probe_repo/." "$ambient_worktree/"
@@ -522,4 +582,4 @@ if [ "$probe_rc" -ne 2 ] \
 fi
 echo "  refused physical engine drift hidden by a repository-local clean filter"
 
-echo "FG-037 proof PASS (14 semantic + 3 controller-identity + 8 collector/configuration + 2 manifest + 3 source-bundle rejection arms)"
+echo "FG-037 proof PASS (14 semantic + 3 controller-identity + 10 collector/configuration + 2 manifest + 3 source-bundle rejection arms)"
