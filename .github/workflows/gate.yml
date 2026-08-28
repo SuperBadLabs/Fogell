@@ -95,16 +95,70 @@ jobs:
           # FSharp.Core reference, so the SDK and locks are one versioned unit.
           global-json-file: global.json
 
-      - name: install babashka and ripgrep
-        # Pinned release + checksum, never a mutable-branch installer piped to sudo:
-        # the gate must not execute whatever `master` holds today on every push.
+      - name: cache the fflat toolchain
+        # FG-226. `fflat` is a 199 MB nupkg that unpacks to 496 MB, downloaded on
+        # every run without this. The key pins the exact version, so a version
+        # bump is a cache miss by construction and can never serve a stale
+        # toolchain — which matters more here than the saved minutes, since the
+        # binaries this produces are what the blocking audits run.
+        #
+        # STILL UNVERIFIED: whether restoring the extracted tree actually beats
+        # re-downloading the nupkg depends on GitHub's cache throughput, which
+        # cannot be measured on HeMan. Run 33189551168 did NOT settle it — the
+        # key missed (0 s, nothing to restore) and the post step did not run,
+        # because `actions/cache` does not save when the job fails and
+        # `save-always` is not set. An earlier version of this comment asserted
+        # the opposite, that a failing job WOULD cache a half-populated install;
+        # that run disproved it.
+        #
+        # Note the cache therefore also cannot serve a broken toolchain from a
+        # failed run, which is what that earlier comment was worried about.
+        uses: actions/cache@v4
+        with:
+          path: ~/.dotnet/tools
+          key: fflat-2.1.3-${{ runner.os }}
+
+      - name: install fflat and ripgrep
+        # FG-226. The audit tools are F# scripts compiled to native binaries by
+        # fflat; `scripts/build-audits.sh` runs inside the gate itself.
+        #
+        # PINNED TO AN EXACT VERSION, for the reason the babashka install this
+        # replaced gave: the gate must not execute whatever a mutable channel
+        # holds today. bflat and fflat are one-maintainer projects sitting on the
+        # blocking path, so the version is a decision, not a default.
         run: |
-          sudo apt-get update -q && sudo apt-get install -y -q ripgrep
-          BB_VERSION=1.12.208
-          BB_SHA256=424c0be8be3932ecf16151e115c126e386931cd2ac8706afd99599f03cdb7129
-          curl -sL -o bb.tar.gz "https://github.com/babashka/babashka/releases/download/v${BB_VERSION}/babashka-${BB_VERSION}-linux-amd64-static.tar.gz"
-          echo "${BB_SHA256}  bb.tar.gz" | sha256sum -c -
-          tar -xzf bb.tar.gz && sudo mv bb /usr/local/bin/bb && bb --version
+          # libc++-dev is listed as fflat's prerequisite on debian-based
+          # systems. NOT CONFIRMED TO BE LOAD-BEARING HERE: the captured link
+          # line names no system c++ library (`-lstdc++compat` is bflat's own
+          # bundled static lib), so this is kept as documented-prerequisite
+          # cargo rather than a measured need.
+          sudo apt-get update -q && sudo apt-get install -y -q ripgrep libc++-dev libbrotli1
+          # Idempotent: on a cache hit the tool is already there, and
+          # `dotnet tool install` exits non-zero rather than no-opping.
+          # Tested by RUNNING it, not by `-x`.
+          if ! "$HOME/.dotnet/tools/fflat" --version >/dev/null 2>&1; then
+            dotnet tool install -g fflat --version 2.1.3
+          fi
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+          "$HOME/.dotnet/tools/fflat" --version
+
+          # THE LINK PREREQUISITES ARE NOT AN APT PACKAGE, and the reason
+          # lives in `scripts/build-audits.sh` beside the code that needs them
+          # rather than being restated here: bflat's lld searches only four
+          # paths inside fflat's own store, and the nupkg ships no linux brotli
+          # at all, so a clean install of the pinned toolchain cannot link these
+          # tools on any Linux host.
+          #
+          # Run it HERE, right after install, because the failure it catches
+          # otherwise surfaces ~7 minutes in — the audit build sits after the
+          # full test suite. ~3 s. The same function runs again inside the gate,
+          # idempotently, which is what gives a fresh custodian machine the same
+          # remedy instead of an opaque `did not compile`.
+          # PATH is set explicitly: `GITHUB_PATH` does not affect the step
+          # that writes it, which is why the two `fflat` invocations above use
+          # an absolute path. This one would otherwise work only because the
+          # runner image happens to prepend ~/.dotnet/tools.
+          PATH="$HOME/.dotnet/tools:$PATH" ./scripts/build-audits.sh --preflight
 
       - name: gate
         env:

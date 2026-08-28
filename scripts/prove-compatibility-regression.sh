@@ -19,7 +19,9 @@ ORACLE="$OUT/oracle.tsv"
 BASELINE="$OUT/baseline.json"
 SCORECARD_MARKER="$OUT/scorecard-ran"
 FAILED=0
-mkdir -p "$REPO/scripts" "$REPO/docs" "$REPO/corpus" "$MOUNT" "$OUT"
+# `scripts/bin` too: the generator this proof substitutes now lives there, and
+# a missing directory made the stub write fail rather than the arm refuse.
+mkdir -p "$REPO/scripts/bin" "$REPO/docs" "$REPO/corpus" "$MOUNT" "$OUT"
 
 sha256() { sha256sum "$1" | awk '{print $1}'; }
 
@@ -107,8 +109,8 @@ baseline_for_corpus() {
 }
 
 cp -p "$CHECKER" "$REPO/scripts/check-compatibility-regression.py"
-printf '#!/bin/sh\nprintf "ran\\n" >> "%s"\n[ ! -e "%s" ]\n' "$SCORECARD_MARKER" "$OUT/scorecard-refuse" > "$REPO/scripts/generate-scorecard.bb"
-chmod +x "$REPO/scripts/generate-scorecard.bb"
+printf '#!/bin/sh\nprintf "ran\\n" >> "%s"\n[ ! -e "%s" ]\n' "$SCORECARD_MARKER" "$OUT/scorecard-refuse" > "$REPO/scripts/bin/generate-scorecard"
+chmod +x "$REPO/scripts/bin/generate-scorecard"
 write_ledger "$REPO/docs/COMPATIBILITY-LEDGER.tsv" 3 admitted 1 admitted
 write_manifest "$REPO/corpus/CORPUS-SHA256SUMS"
 git -C "$REPO" init -q
@@ -352,7 +354,7 @@ fi
 
 touch "$OUT/scorecard-refuse"
 printf '{broken\n' > "$BAD_BASELINE"
-expect_reject 'scorecard failure precedes malformed baseline comparison' "$REPO" "$BAD_BASELINE" "$ORACLE" 'generate-scorecard.bb --check failed before regression comparison'
+expect_reject 'scorecard failure precedes malformed baseline comparison' "$REPO" "$BAD_BASELINE" "$ORACLE" 'generate-scorecard --check failed before regression comparison'
 rm -f "$OUT/scorecard-refuse"
 
 echo '=== FG-094 direct checker mutations ==='
