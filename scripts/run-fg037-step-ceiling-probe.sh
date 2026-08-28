@@ -58,7 +58,7 @@ cleanup() {
     fi
   done
   if [ -n "$source_workspace" ]; then
-    if [[ $source_workspace == /var/tmp/fogell-fg037-source.* ]] \
+    if [[ $source_workspace == /run/fogell-fg037-source.* ]] \
       && [ -d "$source_workspace" ] && [ ! -L "$source_workspace" ] \
       && [ "$(stat -Lc %u -- "$source_workspace" 2>/dev/null)" = 0 ]; then
       /usr/bin/sudo -n /bin/chmod -R u+w -- "$source_workspace"
@@ -399,30 +399,26 @@ source_bundle_ref=HEAD
 # Compilation runs as a distinct unprivileged identity inside the private
 # workspace. Its outputs are frozen root-owned before the ordinary probe
 # identity executes them, so neither identity can rewrite the measured binary.
-var_tmp_mode=$(/usr/bin/stat -Lc %a -- /var/tmp 2>/dev/null || true)
-if [ ! -d /var/tmp ] || [ -L /var/tmp ] \
-  || [ "$(/usr/bin/realpath -- /var/tmp 2>/dev/null)" != /var/tmp ] \
-  || [ "$(/usr/bin/stat -Lc %u -- /var/tmp 2>/dev/null)" != 0 ] \
-  || [[ ! $var_tmp_mode =~ ^[0-7]+$ ]] \
-  || (( (8#$var_tmp_mode & 01000) == 0 )); then
-  echo "REFUSED: FG-037 requires canonical root-owned sticky /var/tmp" >&2
+run_mode=$(/usr/bin/stat -Lc %a -- /run 2>/dev/null || true)
+if [ ! -d /run ] || [ -L /run ] \
+  || [ "$(/usr/bin/realpath -- /run 2>/dev/null)" != /run ] \
+  || [ "$(/usr/bin/stat -Lc %u -- /run 2>/dev/null)" != 0 ] \
+  || [[ ! $run_mode =~ ^[0-7]+$ ]] \
+  || (( (8#$run_mode & 0022) != 0 )); then
+  echo "REFUSED: FG-037 requires canonical root-owned non-writable /run" >&2
   exit 2
 fi
 if [ ! -x /usr/bin/sudo ] || ! /usr/bin/sudo -n /bin/true; then
   echo "REFUSED: FG-037 requires noninteractive root workspace setup" >&2
   exit 2
 fi
-build_identity=nobody
-build_uid=$(/usr/bin/id -u "$build_identity" 2>/dev/null || true)
-build_gid=$(/usr/bin/id -g "$build_identity" 2>/dev/null || true)
-if [[ ! $build_uid =~ ^[0-9]+$ ]] || [[ ! $build_gid =~ ^[0-9]+$ ]] \
-  || [ "$build_uid" -eq 0 ] || [ "$build_uid" -eq "$(/usr/bin/id -u)" ]; then
-  echo "REFUSED: FG-037 requires a distinct unprivileged build identity" >&2
+if [ ! -x /usr/bin/systemd-run ]; then
+  echo "REFUSED: FG-037 requires systemd DynamicUser build isolation" >&2
   exit 2
 fi
 source_workspace=$(/usr/bin/sudo -n /usr/bin/mktemp -d \
-  /var/tmp/fogell-fg037-source.XXXXXXXXXX)
-if [[ $source_workspace != /var/tmp/fogell-fg037-source.* ]] \
+  /run/fogell-fg037-source.XXXXXXXXXX)
+if [[ $source_workspace != /run/fogell-fg037-source.* ]] \
   || [ ! -d "$source_workspace" ] || [ -L "$source_workspace" ] \
   || [ "$(stat -Lc %u -- "$source_workspace")" != 0 ]; then
   echo "REFUSED: FG-037 root-owned source workspace is malformed" >&2
@@ -454,7 +450,7 @@ while IFS= read -r -d '' project; do
     echo "REFUSED: exported HEAD contains a pre-existing project bin/obj path" >&2
     exit 2
   fi
-  /usr/bin/sudo -n /usr/bin/install -d -o "$build_uid" -g "$build_gid" \
+  /usr/bin/sudo -n /usr/bin/install -d -o root -g root \
     -m 0700 "$project_dir/bin" "$project_dir/obj"
   build_output_dirs+=("$project_dir/bin" "$project_dir/obj")
 done < <(/usr/bin/find "$source_snapshot/src" "$source_snapshot/tools" \
@@ -474,7 +470,7 @@ workspace_writable_dirs=(
   "$source_workspace/dotnet-bundle-cache"
   "$source_workspace/dotnet-cwd"
 )
-/usr/bin/sudo -n /usr/bin/install -d -o "$build_uid" -g "$build_gid" \
+/usr/bin/sudo -n /usr/bin/install -d -o root -g root \
   -m 0700 -- "${workspace_writable_dirs[@]}"
 for writable_dir in "${workspace_writable_dirs[@]}"; do
   if [ ! -d "$writable_dir" ] || [ -L "$writable_dir" ] \
@@ -484,10 +480,10 @@ for writable_dir in "${workspace_writable_dirs[@]}"; do
     exit 2
   fi
 done
-# The root-owned workspace and its sticky root-owned /var/tmp parent prevent a
+# The root-owned workspace and non-writable root-owned `/run` parent prevent a
 # process running as the probe UID from replacing the workspace or source entry.
-# Outputs/caches belong only to a distinct unprivileged build identity until
-# they are frozen root-owned immediately after the compiler exits.
+# systemd assigns a run-exclusive dynamic UID for compilation and freezes the
+# output/cache trees root-owned in ExecStopPost before releasing that identity.
 /usr/bin/sudo -n /bin/chmod 0755 -- "$source_workspace"
 
 collector_snapshot=$source_snapshot/scripts/jenkins-workspace-v2.sh
@@ -534,7 +530,31 @@ controlled_dotnet() {
     fi
   fi
   if [ "$mode" = build ]; then
-    /usr/bin/sudo -n -u "#$build_uid" /usr/bin/env -i "${entry_env[@]}" \
+    local dynamic_paths=
+    # `$USER` must expand only inside systemd's root ExecStartPre shell, after
+    # DynamicUser has allocated the run-exclusive account.
+    # shellcheck disable=SC2016
+    local dynamic_prepare='/usr/bin/chown -R "$USER:$USER"'
+    local dynamic_path
+    for dynamic_path in "${build_output_dirs[@]}" \
+      "${workspace_writable_dirs[@]}"; do
+      if [[ ! $dynamic_path =~ ^/run/fogell-fg037-source\.[A-Za-z0-9]+/[A-Za-z0-9._/-]+$ ]]; then
+        echo "REFUSED: dynamic build path has an unsafe shape" >&2
+        return 2
+      fi
+      dynamic_paths+="${dynamic_paths:+ }$dynamic_path"
+      dynamic_prepare+=" $dynamic_path"
+    done
+    /usr/bin/sudo -n /usr/bin/systemd-run --pipe --wait --collect --quiet \
+      -p DynamicUser=yes -p PrivateTmp=yes -p NoNewPrivileges=yes \
+      -p RestrictSUIDSGID=yes -p ProtectSystem=strict -p ProtectHome=yes \
+      -p KillMode=control-group \
+      -p "ReadOnlyPaths=$source_snapshot" \
+      -p "ReadWritePaths=$dynamic_paths" \
+      -p "ExecStartPre=+/bin/sh -c '$dynamic_prepare'" \
+      -p "ExecStopPost=+/usr/bin/chown -R root:root $dynamic_paths" \
+      -p "ExecStopPost=+/usr/bin/chmod -R a-w,u+rwX,go+rX $dynamic_paths" \
+      /usr/bin/env -i "${entry_env[@]}" \
       /bin/bash --noprofile --norc "$dotnet_wrapper_snapshot" \
       "$mode" "$source_workspace" "$@"
   else
@@ -673,10 +693,6 @@ controlled_dotnet build \
   build "$cli_project" -c Release --nologo --no-incremental \
   -m:1 \
   >"$output/build.log" 2>&1
-/usr/bin/sudo -n /bin/chown -R root:root -- \
-  "${build_output_dirs[@]}" "${workspace_writable_dirs[@]}"
-/usr/bin/sudo -n /bin/chmod -R a-w,u+rwX,go+rX -- \
-  "${build_output_dirs[@]}" "${workspace_writable_dirs[@]}"
 if [ ! -f "$cli_assembly" ] || [ -L "$cli_assembly" ]; then
   echo "REFUSED: controlled build did not produce the expected real CLI assembly" >&2
   exit 2

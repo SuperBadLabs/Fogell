@@ -12,18 +12,18 @@ mode=$1
 workspace=$2
 shift 2
 
-if [[ $workspace != /var/tmp/fogell-fg037-source.* ]] \
+if [[ $workspace != /run/fogell-fg037-source.* ]] \
   || [ ! -d "$workspace" ] || [ -L "$workspace" ]; then
   echo "REFUSED: controlled dotnet workspace must be one root-owned private directory" >&2
   exit 2
 fi
 workspace=$(/usr/bin/realpath -- "$workspace")
-var_tmp_mode=$(/usr/bin/stat -Lc %a -- /var/tmp)
+run_mode=$(/usr/bin/stat -Lc %a -- /run)
 if [ "$(/usr/bin/stat -Lc %u -- "$workspace")" != 0 ] \
-  || [ "$(/usr/bin/stat -Lc %u -- /var/tmp)" != 0 ] \
-  || [ -L /var/tmp ] || [ "$(/usr/bin/realpath -- /var/tmp)" != /var/tmp ] \
-  || [[ ! $var_tmp_mode =~ ^[0-7]+$ ]] \
-  || (( (8#$var_tmp_mode & 01000) == 0 )); then
+  || [ "$(/usr/bin/stat -Lc %u -- /run)" != 0 ] \
+  || [ -L /run ] || [ "$(/usr/bin/realpath -- /run)" != /run ] \
+  || [[ ! $run_mode =~ ^[0-7]+$ ]] \
+  || (( (8#$run_mode & 0022) != 0 )); then
   echo "REFUSED: controlled dotnet workspace ancestry is not root-owned" >&2
   exit 2
 fi

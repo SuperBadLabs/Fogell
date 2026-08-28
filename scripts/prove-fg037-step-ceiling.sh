@@ -18,7 +18,7 @@ scratch=$(mktemp -d)
 msbuild_workspace=
 proof_cleanup() {
   set +e
-  if [[ $msbuild_workspace == /var/tmp/fogell-fg037-source.* ]] \
+  if [[ $msbuild_workspace == /run/fogell-fg037-source.* ]] \
     && [ -d "$msbuild_workspace" ] && [ ! -L "$msbuild_workspace" ] \
     && [ "$(stat -Lc %u -- "$msbuild_workspace" 2>/dev/null)" = 0 ]; then
     /usr/bin/sudo -n /bin/chmod -R u+w -- "$msbuild_workspace"
@@ -331,30 +331,26 @@ fi
 echo "  contained hostile overrides across nested workspace/wipe/env/git commands"
 
 msbuild_case=$scratch/msbuild-environment
-proof_var_tmp_mode=$(/usr/bin/stat -Lc %a -- /var/tmp 2>/dev/null || true)
-if [ ! -d /var/tmp ] || [ -L /var/tmp ] \
-  || [ "$(/usr/bin/realpath -- /var/tmp 2>/dev/null)" != /var/tmp ] \
-  || [ "$(/usr/bin/stat -Lc %u -- /var/tmp 2>/dev/null)" != 0 ] \
-  || [[ ! $proof_var_tmp_mode =~ ^[0-7]+$ ]] \
-  || (( (8#$proof_var_tmp_mode & 01000) == 0 )); then
-  echo "FAIL: root-workspace proof requires canonical root-owned sticky /var/tmp" >&2
+proof_run_mode=$(/usr/bin/stat -Lc %a -- /run 2>/dev/null || true)
+if [ ! -d /run ] || [ -L /run ] \
+  || [ "$(/usr/bin/realpath -- /run 2>/dev/null)" != /run ] \
+  || [ "$(/usr/bin/stat -Lc %u -- /run 2>/dev/null)" != 0 ] \
+  || [[ ! $proof_run_mode =~ ^[0-7]+$ ]] \
+  || (( (8#$proof_run_mode & 0022) != 0 )); then
+  echo "FAIL: root-workspace proof requires canonical root-owned non-writable /run" >&2
   exit 1
 fi
 if ! /usr/bin/sudo -n /bin/true; then
   echo "FAIL: FG-037 root-workspace proof requires noninteractive sudo" >&2
   exit 1
 fi
-build_identity=nobody
-build_uid=$(/usr/bin/id -u "$build_identity" 2>/dev/null || true)
-build_gid=$(/usr/bin/id -g "$build_identity" 2>/dev/null || true)
-if [[ ! $build_uid =~ ^[0-9]+$ ]] || [[ ! $build_gid =~ ^[0-9]+$ ]] \
-  || [ "$build_uid" -eq 0 ] || [ "$build_uid" -eq "$(/usr/bin/id -u)" ]; then
-  echo "FAIL: root-workspace proof requires a distinct unprivileged build identity" >&2
+if [ ! -x /usr/bin/systemd-run ]; then
+  echo "FAIL: root-workspace proof requires systemd DynamicUser isolation" >&2
   exit 1
 fi
 msbuild_workspace=$(/usr/bin/sudo -n /usr/bin/mktemp -d \
-  /var/tmp/fogell-fg037-source.XXXXXXXXXX)
-if [[ $msbuild_workspace != /var/tmp/fogell-fg037-source.* ]] \
+  /run/fogell-fg037-source.XXXXXXXXXX)
+if [[ $msbuild_workspace != /run/fogell-fg037-source.* ]] \
   || [ ! -d "$msbuild_workspace" ] || [ -L "$msbuild_workspace" ] \
   || [ "$(stat -Lc %u -- "$msbuild_workspace")" != 0 ]; then
   echo "FAIL: root-owned proof workspace is malformed" >&2
@@ -460,7 +456,7 @@ controlled_writable_dirs=(
   "$msbuild_workspace/dotnet-bundle-cache"
   "$msbuild_workspace/dotnet-cwd"
 )
-/usr/bin/sudo -n /usr/bin/install -d -o "$build_uid" -g "$build_gid" -m 0700 \
+/usr/bin/sudo -n /usr/bin/install -d -o root -g root -m 0700 \
   "${controlled_writable_dirs[@]}"
 set +e
 /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin \
@@ -477,11 +473,7 @@ if [ "$writable_workspace_rc" -ne 2 ] \
 fi
 /usr/bin/sudo -n /bin/chown -R root:root "$msbuild_workspace/source"
 /usr/bin/sudo -n /bin/chmod -R a-w,u+rwX,go+rX "$msbuild_workspace/source"
-/usr/bin/sudo -n /usr/bin/install -d -o "$build_uid" -g "$build_gid" -m 0700 \
-  "$msbuild_workspace/source/bin" "$msbuild_workspace/source/obj"
-/usr/bin/sudo -n /bin/chown -R "$build_uid:$build_gid" \
-  "$msbuild_workspace/source/bin" "$msbuild_workspace/source/obj"
-/usr/bin/sudo -n /bin/chmod -R u+rwX,go-rwx \
+/usr/bin/sudo -n /usr/bin/install -d -o root -g root -m 0700 \
   "$msbuild_workspace/source/bin" "$msbuild_workspace/source/obj"
 /usr/bin/sudo -n /bin/chmod 0755 "$msbuild_workspace"
 source_identity=$(stat -Lc '%d:%i' "$msbuild_workspace/source")
@@ -524,6 +516,20 @@ if (cd "$msbuild_case/ambient-cwd" && /usr/bin/dotnet --version >/dev/null 2>&1)
 fi
 
 controlled_build_log=$msbuild_case/controlled-build.log
+dynamic_build_paths=
+# `$USER` expands only in systemd's root ExecStartPre after DynamicUser exists.
+# shellcheck disable=SC2016
+dynamic_prepare='/usr/bin/chown -R "$USER:$USER"'
+for dynamic_build_path in \
+  "$msbuild_workspace/source/bin" "$msbuild_workspace/source/obj" \
+  "${controlled_writable_dirs[@]}"; do
+  if [[ ! $dynamic_build_path =~ ^/run/fogell-fg037-source\.[A-Za-z0-9]+/[A-Za-z0-9._/-]+$ ]]; then
+    echo "FAIL: proof dynamic build path has an unsafe shape" >&2
+    exit 1
+  fi
+  dynamic_build_paths+="${dynamic_build_paths:+ }$dynamic_build_path"
+  dynamic_prepare+=" $dynamic_build_path"
+done
 set +e
 (
   cd "$msbuild_case/ambient-cwd"
@@ -532,8 +538,16 @@ set +e
   DirectoryBuildTargetsPath=$msbuild_case/hostile.targets \
     BASH_ENV=$msbuild_case/bash-env \
     PATH=$msbuild_case/fake-bin:/usr/local/bin:/usr/bin:/bin \
-    /usr/bin/sudo -n -u "#$build_uid" /usr/bin/env -i \
-    PATH=/usr/local/bin:/usr/bin:/bin \
+    /usr/bin/sudo -n /usr/bin/systemd-run --pipe --wait --collect --quiet \
+    -p DynamicUser=yes -p PrivateTmp=yes -p NoNewPrivileges=yes \
+    -p RestrictSUIDSGID=yes -p ProtectSystem=strict -p ProtectHome=yes \
+    -p KillMode=control-group \
+    -p "ReadOnlyPaths=$msbuild_workspace/source" \
+    -p "ReadWritePaths=$dynamic_build_paths" \
+    -p "ExecStartPre=+/bin/sh -c '$dynamic_prepare'" \
+    -p "ExecStopPost=+/usr/bin/chown -R root:root $dynamic_build_paths" \
+    -p "ExecStopPost=+/usr/bin/chmod -R a-w,u+rwX,go+rX $dynamic_build_paths" \
+    /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin \
     /bin/bash --noprofile --norc "$protected_dotnet_wrapper" build \
     "$msbuild_workspace" msbuild \
     "$msbuild_workspace/source/project.proj" \
@@ -567,13 +581,10 @@ proof_output_dirs=(
   "$msbuild_workspace/source/bin"
   "$msbuild_workspace/source/obj"
 )
-/usr/bin/sudo -n /bin/chown -R root:root -- \
-  "${proof_output_dirs[@]}" "${controlled_writable_dirs[@]}"
-/usr/bin/sudo -n /bin/chmod -R a-w,u+rwX,go+rX -- \
-  "${proof_output_dirs[@]}" "${controlled_writable_dirs[@]}"
 proof_assembly=$safe_project_marker
 proof_output_violation=$(/usr/bin/find "${proof_output_dirs[@]}" -xdev \
-  \( ! -user root -o -type l -o -perm /022 \) -print -quit)
+  \( ! -user root -o -type l -o \( ! -type d ! -type f \) \
+    -o -perm /022 \) -print -quit)
 if [ ! -f "$safe_project_marker" ]; then
   echo "FAIL: controlled dotnet did not remain in its private workspace" >&2
   sed -n '1,160p' "$controlled_build_log" >&2
@@ -584,6 +595,17 @@ if [ ! -f "$proof_assembly" ] || [ -L "$proof_assembly" ] \
   echo "FAIL: controlled build did not freeze one real root-owned output tree" >&2
   exit 1
 fi
+proof_special=$msbuild_workspace/source/obj/hostile.fifo
+/usr/bin/sudo -n /usr/bin/mkfifo -- "$proof_special"
+/usr/bin/sudo -n /bin/chmod 0444 -- "$proof_special"
+proof_special_violation=$(/usr/bin/find "${proof_output_dirs[@]}" -xdev \
+  \( ! -user root -o -type l -o \( ! -type d ! -type f \) \
+    -o -perm /022 \) -print -quit)
+if [ "$proof_special_violation" != "$proof_special" ]; then
+  echo "FAIL: frozen-output proof accepted a special file" >&2
+  exit 1
+fi
+/usr/bin/sudo -n /bin/rm -- "$proof_special"
 proof_output_dir=${proof_output_dirs[0]}
 proof_output_identity=$(stat -Lc '%d:%i' "$proof_output_dir")
 proof_assembly_identity=$(stat -Lc '%d:%i' "$proof_assembly")
