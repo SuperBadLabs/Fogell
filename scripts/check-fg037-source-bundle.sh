@@ -3,17 +3,18 @@
 # source commit from a prerequisite already carried by the publication branch.
 set -euo pipefail
 
-if [ "$#" -ne 6 ]; then
-  echo "usage: $0 <bundle> <allowed-signers> <prerequisite> <bundle-head> <measured-commit> <measured-tree>" >&2
+if [ "$#" -ne 7 ]; then
+  echo "usage: $0 <bundle> <allowed-signers> <bundle-ref> <prerequisite> <bundle-head> <measured-commit> <measured-tree>" >&2
   exit 2
 fi
 
 bundle_input=$1
 allowed_signers_input=$2
-prerequisite=$3
-bundle_head=$4
-measured_commit=$5
-measured_tree=$6
+expected_ref=$3
+prerequisite=$4
+bundle_head=$5
+measured_commit=$6
+measured_tree=$7
 
 # Do not let caller-supplied repository/object environment bleed into either
 # the publication checkout or the isolated import. In particular,
@@ -27,21 +28,40 @@ clean_git_env=(
   -u GIT_DIR
   -u GIT_WORK_TREE
   -u GIT_IMPLICIT_WORK_TREE
-  -u GIT_GRAFT_FILE
   -u GIT_INDEX_FILE
-  -u GIT_NO_REPLACE_OBJECTS
+  -u GIT_LITERAL_PATHSPECS
+  -u GIT_GLOB_PATHSPECS
+  -u GIT_NOGLOB_PATHSPECS
+  -u GIT_ICASE_PATHSPECS
+  -u GIT_NAMESPACE
+  -u GIT_QUARANTINE_PATH
   -u GIT_REPLACE_REF_BASE
   -u GIT_PREFIX
   -u GIT_SHALLOW_FILE
   -u GIT_COMMON_DIR
   GIT_CONFIG_NOSYSTEM=1
   GIT_CONFIG_GLOBAL=/dev/null
+  GIT_GRAFT_FILE=/dev/null/fogell-no-grafts
+  GIT_NO_REPLACE_OBJECTS=1
 )
 clean_git() {
-  env "${clean_git_env[@]}" git "$@"
+  env "${clean_git_env[@]}" git -c advice.graftFileDeprecated=false "$@"
 }
 
-repo_root=$(clean_git rev-parse --show-toplevel)
+physical_repo_root=$(pwd -P)
+publication_git() {
+  clean_git -C "$physical_repo_root" --work-tree="$physical_repo_root" "$@"
+}
+repo_root=$(publication_git rev-parse --show-toplevel)
+if [ "$(realpath "$repo_root")" != "$physical_repo_root" ]; then
+  echo "FG-037 source bundle FAIL: checker must run from the physical publication root" >&2
+  exit 2
+fi
+
+if [ "$expected_ref" != HEAD ] && ! clean_git check-ref-format "$expected_ref"; then
+  echo "FG-037 source bundle FAIL: bundle ref is neither HEAD nor one valid ref" >&2
+  exit 2
+fi
 
 for value in "$prerequisite" "$bundle_head" "$measured_commit" "$measured_tree"; do
   if [[ ! $value =~ ^[0-9a-f]{40}$ ]]; then
@@ -58,12 +78,11 @@ fi
 bundle=$(realpath "$bundle_input")
 allowed_signers=$(realpath "$allowed_signers_input")
 
-if ! clean_git -C "$repo_root" merge-base --is-ancestor "$prerequisite" HEAD; then
+if ! publication_git merge-base --is-ancestor "$prerequisite" HEAD; then
   echo "FG-037 source bundle FAIL: prerequisite is not retained by current HEAD" >&2
   exit 1
 fi
 
-expected_ref=refs/heads/codex/fg-037-step-ceiling-publish
 if [ "$(clean_git bundle list-heads "$bundle")" != "$bundle_head $expected_ref" ]; then
   echo "FG-037 source bundle FAIL: bundle exposes an unexpected head" >&2
   exit 1

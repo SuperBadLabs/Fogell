@@ -123,7 +123,7 @@ echo "=== fail-closed evidence sealer proof (FG-223, blocking) ==="
 
 # FG-037. The live 250/251/400 comparison stays off CI because it needs the
 # pinned Jenkins lab. Its fail-closed evidence boundaries are pure: fourteen semantic
-# mutations, three controller-identity substitutions, four collector/configuration
+# mutations, three controller-identity substitutions, seven collector/configuration
 # attacks, two manifest attacks and three measured-source bundle attacks must all
 # be rejected before publication.
 echo "=== step-ceiling evidence-boundary proof (FG-037, blocking) ==="
@@ -133,6 +133,7 @@ echo "=== step-ceiling evidence-boundary proof (FG-037, blocking) ==="
 bash scripts/check-fg037-source-bundle.sh \
   evidence/20260827T185436Z-fg037-step-ceiling/source/fg037-measured-source.bundle \
   evidence/20260827T185436Z-fg037-step-ceiling/source/allowed_signers \
+  refs/heads/codex/fg-037-step-ceiling-publish \
   804bf7967cf3708eb3bb44387d59a24310c89607 \
   488b662000dea32859ae507f92f4dc045f6e8fcd \
   65674f9a4af80e358f645ad3409765a8738c68b4 \

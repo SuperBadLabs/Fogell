@@ -3,8 +3,9 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-if [ "$#" -ne 1 ] || [ ! -d "$1/cases" ] || [ ! -d "$1/receipts" ]; then
-  echo "usage: $0 <fg037-evidence-directory>" >&2
+if { [ "$#" -ne 1 ] && [ "$#" -ne 6 ]; } \
+  || [ ! -d "$1/cases" ] || [ ! -d "$1/receipts" ]; then
+  echo "usage: $0 <fg037-evidence-directory> [bundle-ref prerequisite bundle-head measured-commit measured-tree]" >&2
   exit 2
 fi
 
@@ -84,15 +85,24 @@ if python3 "$manifest_checker" \
 fi
 echo "  rejected a substituted payload and self-consistent manifest"
 
-source_bundle_checker=scripts/check-fg037-source-bundle.sh
+source_bundle_checker=${FG037_SOURCE_BUNDLE_CHECKER:-scripts/check-fg037-source-bundle.sh}
 source_bundle=$source_dir/source/fg037-measured-source.bundle
 source_allowed_signers=$source_dir/source/allowed_signers
-source_prerequisite=804bf7967cf3708eb3bb44387d59a24310c89607
-source_bundle_head=488b662000dea32859ae507f92f4dc045f6e8fcd
-measured_commit=65674f9a4af80e358f645ad3409765a8738c68b4
-measured_tree=7e09d220260b9117890cf4275fc240d989101f7c
+if [ "$#" -eq 6 ]; then
+  source_bundle_ref=$2
+  source_prerequisite=$3
+  source_bundle_head=$4
+  measured_commit=$5
+  measured_tree=$6
+else
+  source_bundle_ref=refs/heads/codex/fg-037-step-ceiling-publish
+  source_prerequisite=804bf7967cf3708eb3bb44387d59a24310c89607
+  source_bundle_head=488b662000dea32859ae507f92f4dc045f6e8fcd
+  measured_commit=65674f9a4af80e358f645ad3409765a8738c68b4
+  measured_tree=7e09d220260b9117890cf4275fc240d989101f7c
+fi
 
-bash "$source_bundle_checker" "$source_bundle" "$source_allowed_signers" \
+bash "$source_bundle_checker" "$source_bundle" "$source_allowed_signers" "$source_bundle_ref" \
   "$source_prerequisite" "$source_bundle_head" \
   "$measured_commit" "$measured_tree" >/dev/null
 echo "  reconstructed the signed measured source commit from the retained bundle"
@@ -100,7 +110,7 @@ echo "  reconstructed the signed measured source commit from the retained bundle
 clean_home=$scratch/clean-home
 mkdir "$clean_home"
 HOME="$clean_home" GIT_CONFIG_NOSYSTEM=1 \
-  bash "$source_bundle_checker" "$source_bundle" "$source_allowed_signers" \
+  bash "$source_bundle_checker" "$source_bundle" "$source_allowed_signers" "$source_bundle_ref" \
   "$source_prerequisite" "$source_bundle_head" \
   "$measured_commit" "$measured_tree" >/dev/null
 echo "  verified the pinned signer without custodian Git configuration"
@@ -108,7 +118,7 @@ echo "  verified the pinned signer without custodian Git configuration"
 corrupt_bundle=$scratch/corrupt-source.bundle
 cp "$source_bundle" "$corrupt_bundle"
 truncate -s -1 "$corrupt_bundle"
-if bash "$source_bundle_checker" "$corrupt_bundle" "$source_allowed_signers" \
+if bash "$source_bundle_checker" "$corrupt_bundle" "$source_allowed_signers" "$source_bundle_ref" \
   "$source_prerequisite" "$source_bundle_head" \
   "$measured_commit" "$measured_tree" >/dev/null 2>&1; then
   echo "FAIL: source-bundle checker accepted a truncated bundle" >&2
@@ -116,7 +126,7 @@ if bash "$source_bundle_checker" "$corrupt_bundle" "$source_allowed_signers" \
 fi
 echo "  rejected a truncated source bundle"
 
-if bash "$source_bundle_checker" "$source_bundle" "$source_allowed_signers" \
+if bash "$source_bundle_checker" "$source_bundle" "$source_allowed_signers" "$source_bundle_ref" \
   "$source_prerequisite" "$source_bundle_head" \
   0000000000000000000000000000000000000000 "$measured_tree" >/dev/null 2>&1; then
   echo "FAIL: source-bundle checker accepted a missing measured commit" >&2
@@ -127,10 +137,10 @@ echo "  rejected a missing measured commit identity"
 empty_bundle=$scratch/empty-source.bundle
 printf '# v2 git bundle\n-%s prerequisite\n%s %s\n\n' \
   "$source_prerequisite" "$source_bundle_head" \
-  refs/heads/codex/fg-037-step-ceiling-publish >"$empty_bundle"
+  "$source_bundle_ref" >"$empty_bundle"
 printf '' | git pack-objects --stdout >>"$empty_bundle"
 if GIT_ALTERNATE_OBJECT_DIRECTORIES=$PWD/.git/objects \
-  bash "$source_bundle_checker" "$empty_bundle" "$source_allowed_signers" \
+  bash "$source_bundle_checker" "$empty_bundle" "$source_allowed_signers" "$source_bundle_ref" \
   "$source_prerequisite" "$source_bundle_head" \
   "$measured_commit" "$measured_tree" >/dev/null 2>&1; then
   echo "FAIL: source-bundle checker borrowed descendants from an ambient object store" >&2
@@ -371,25 +381,34 @@ expect_reject "a missing boundary receipt"
 
 probe_repo=$scratch/probe-repo
 mkdir -p "$probe_repo/scripts" "$probe_repo/tools/Fogell.Differential.Cli" \
-  "$probe_repo/src"
+  "$probe_repo/src" \
+  "$probe_repo/evidence/20260827T185436Z-fg037-step-ceiling/source"
 cp scripts/run-fg037-step-ceiling-probe.sh \
   scripts/check-fg037-jenkins-identity.sh \
   scripts/check-fg037-manifest.py \
+  scripts/check-fg037-source-bundle.sh \
   scripts/check-fg037-step-ceiling.py \
   scripts/jenkins-workspace-v2.sh \
   scripts/prove-fg037-step-ceiling.sh \
   "$probe_repo/scripts/"
+cp evidence/20260827T185436Z-fg037-step-ceiling/source/allowed_signers \
+  "$probe_repo/evidence/20260827T185436Z-fg037-step-ceiling/source/"
 touch "$probe_repo/Fogell.slnx" "$probe_repo/global.json" \
   "$probe_repo/Directory.Build.props" \
-  "$probe_repo/tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj"
+  "$probe_repo/tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj" \
+  "$probe_repo/src/Engine.fs"
 git -C "$probe_repo" init -q
 git -C "$probe_repo" add .
 git -C "$probe_repo" -c user.name=FG-037 -c user.email=fg037@example.invalid \
   -c commit.gpgsign=false commit -qm baseline
+ambient_worktree=$scratch/ambient-clean-worktree
+mkdir "$ambient_worktree"
+cp -a "$probe_repo/." "$ambient_worktree/"
 printf '\n# planted collector drift\n' >>"$probe_repo/scripts/jenkins-workspace-v2.sh"
 probe_output=$probe_repo/collector-drift-evidence
 set +e
-FOGELL_JENKINS_URL=http://127.0.0.1:1 \
+GIT_DIR="$probe_repo/.git" GIT_WORK_TREE="$ambient_worktree" \
+  FOGELL_JENKINS_URL=http://127.0.0.1:1 \
   "$probe_repo/scripts/run-fg037-step-ceiling-probe.sh" "$probe_output" \
   >"$scratch/collector-drift.log" 2>&1
 probe_rc=$?
@@ -401,6 +420,76 @@ if [ "$probe_rc" -ne 2 ] \
   sed -n '1,120p' "$scratch/collector-drift.log" >&2
   exit 1
 fi
-echo "  refused a dirty shared workspace collector before evidence creation"
+echo "  refused a dirty shared workspace collector despite hostile Git repository selectors"
 
-echo "FG-037 proof PASS (14 semantic + 3 controller-identity + 4 collector/configuration + 2 manifest + 3 source-bundle rejection arms)"
+# The source-bundle verifier is as load-bearing as the collector: allowing its
+# worktree copy to drift would let a fresh run attest with code other than the
+# recorded HEAD snapshot. Restore the first mutation, plant this one, and prove
+# the runner refuses it before allocating an evidence directory.
+git -C "$probe_repo" show HEAD:scripts/jenkins-workspace-v2.sh \
+  >"$probe_repo/scripts/jenkins-workspace-v2.sh"
+printf '\n# planted source-bundle checker drift\n' \
+  >>"$probe_repo/scripts/check-fg037-source-bundle.sh"
+probe_output=$probe_repo/source-bundle-checker-drift-evidence
+set +e
+FOGELL_JENKINS_URL=http://127.0.0.1:1 \
+  "$probe_repo/scripts/run-fg037-step-ceiling-probe.sh" "$probe_output" \
+  >"$scratch/source-bundle-checker-drift.log" 2>&1
+probe_rc=$?
+set -e
+if [ "$probe_rc" -ne 2 ] \
+  || [ -e "$probe_output" ] \
+  || ! grep -Fq "scripts/check-fg037-source-bundle.sh" \
+    "$scratch/source-bundle-checker-drift.log"; then
+  echo "FAIL: probe did not refuse a dirty source-bundle checker before evidence creation" >&2
+  sed -n '1,120p' "$scratch/source-bundle-checker-drift.log" >&2
+  exit 1
+fi
+echo "  refused a dirty source-bundle checker before evidence creation"
+
+# A committed build-policy ignore must not let a caller-selected literal
+# pathspec mode or repository-local exclude hide a new root MSBuild import.
+git -C "$probe_repo" show HEAD:scripts/check-fg037-source-bundle.sh \
+  >"$probe_repo/scripts/check-fg037-source-bundle.sh"
+printf '<Project />\n' >"$probe_repo/Directory.Build.hostile.props"
+printf '/Directory.Build.hostile.props\n' >>"$probe_repo/.git/info/exclude"
+probe_output=$probe_repo/hostile-build-policy-evidence
+set +e
+GIT_LITERAL_PATHSPECS=1 FOGELL_JENKINS_URL=http://127.0.0.1:1 \
+  "$probe_repo/scripts/run-fg037-step-ceiling-probe.sh" "$probe_output" \
+  >"$scratch/hostile-build-policy.log" 2>&1
+probe_rc=$?
+set -e
+if [ "$probe_rc" -ne 2 ] \
+  || [ -e "$probe_output" ] \
+  || ! grep -Fq "Directory.Build.hostile.props" \
+    "$scratch/hostile-build-policy.log"; then
+  echo "FAIL: probe did not refuse a hidden build-policy input under hostile pathspec mode" >&2
+  sed -n '1,120p' "$scratch/hostile-build-policy.log" >&2
+  exit 1
+fi
+echo "  refused a hidden build-policy input under hostile Git pathspec mode"
+
+# Local core.worktree is another repository selector. It must not redirect Git
+# to the clean copy while the physical checkout supplies dirty engine bytes to
+# dotnet and the differential CLI.
+rm "$probe_repo/Directory.Build.hostile.props"
+git -C "$probe_repo" config core.worktree "$ambient_worktree"
+printf '\n// planted physical engine drift\n' >>"$probe_repo/src/Engine.fs"
+probe_output=$probe_repo/core-worktree-drift-evidence
+set +e
+FOGELL_JENKINS_URL=http://127.0.0.1:1 \
+  "$probe_repo/scripts/run-fg037-step-ceiling-probe.sh" "$probe_output" \
+  >"$scratch/core-worktree-drift.log" 2>&1
+probe_rc=$?
+set -e
+if [ "$probe_rc" -ne 2 ] \
+  || [ -e "$probe_output" ] \
+  || ! grep -Fq "src/Engine.fs" "$scratch/core-worktree-drift.log"; then
+  echo "FAIL: probe did not bind cleanliness to the physical checkout" >&2
+  sed -n '1,120p' "$scratch/core-worktree-drift.log" >&2
+  exit 1
+fi
+echo "  refused physical engine drift despite hostile core.worktree"
+
+echo "FG-037 proof PASS (14 semantic + 3 controller-identity + 7 collector/configuration + 2 manifest + 3 source-bundle rejection arms)"

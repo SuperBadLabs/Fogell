@@ -11,6 +11,8 @@ if [ "$#" -ne 1 ]; then
   exit 2
 fi
 
+physical_repo_root=$(pwd -P)
+
 case "$1" in
   /*) output=$1 ;;
   *) output=$PWD/$1 ;;
@@ -25,6 +27,41 @@ fi
 : "${FOGELL_JENKINS_CORE:=2.568.1}"
 : "${FOGELL_JENKINS_HOST:=luigi}"
 : "${FOGELL_JENKINS_CONTAINER:=jenkins-lab}"
+source_signers_input=evidence/20260827T185436Z-fg037-step-ceiling/source/allowed_signers
+
+# Every source-provenance operation must resolve this checkout, index and object
+# store rather than a caller-selected repository, alternate, graft, replace ref
+# or quarantine. Keep this denylist aligned with the isolated bundle checker.
+clean_git_env=(
+  -u GIT_ALTERNATE_OBJECT_DIRECTORIES
+  -u GIT_CONFIG
+  -u GIT_CONFIG_PARAMETERS
+  -u GIT_CONFIG_COUNT
+  -u GIT_OBJECT_DIRECTORY
+  -u GIT_DIR
+  -u GIT_WORK_TREE
+  -u GIT_IMPLICIT_WORK_TREE
+  -u GIT_INDEX_FILE
+  -u GIT_LITERAL_PATHSPECS
+  -u GIT_GLOB_PATHSPECS
+  -u GIT_NOGLOB_PATHSPECS
+  -u GIT_ICASE_PATHSPECS
+  -u GIT_NAMESPACE
+  -u GIT_QUARANTINE_PATH
+  -u GIT_REPLACE_REF_BASE
+  -u GIT_PREFIX
+  -u GIT_SHALLOW_FILE
+  -u GIT_COMMON_DIR
+  GIT_CONFIG_NOSYSTEM=1
+  GIT_CONFIG_GLOBAL=/dev/null
+  GIT_GRAFT_FILE=/dev/null/fogell-no-grafts
+  GIT_NO_REPLACE_OBJECTS=1
+)
+clean_git() {
+  env "${clean_git_env[@]}" git \
+    -C "$physical_repo_root" --work-tree="$physical_repo_root" \
+    -c advice.graftFileDeprecated=false "$@"
+}
 
 if [ "$FOGELL_JENKINS_CORE" != "2.568.1" ]; then
   echo "REFUSED: FG-037 evidence is specified against Jenkins 2.568.1" >&2
@@ -43,6 +80,8 @@ for required in \
   tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj \
   scripts/check-fg037-jenkins-identity.sh \
   scripts/check-fg037-manifest.py \
+  scripts/check-fg037-source-bundle.sh \
+  "$source_signers_input" \
   scripts/jenkins-workspace-v2.sh; do
   if [ ! -f "$required" ]; then
     echo "REFUSED: required FG-037 engine/build input is absent: $required" >&2
@@ -50,12 +89,17 @@ for required in \
   fi
 done
 
+policy_input_pathspecs=(
+  ':(top,glob)Directory.Build.*'
+  ':(top,glob)Directory.Packages.*'
+  ':(top,icase)nuget.config'
+)
+
 engine_input_pathspecs=(
+  .gitignore
   Fogell.slnx
   global.json
-  ':(glob)Directory.Build.*'
-  ':(glob)Directory.Packages.*'
-  ':(icase)nuget.config'
+  "${policy_input_pathspecs[@]}"
   src
   tools
 )
@@ -63,54 +107,132 @@ engine_input_pathspecs=(
 probe_input_pathspecs=(
   scripts/check-fg037-jenkins-identity.sh
   scripts/check-fg037-manifest.py
+  scripts/check-fg037-source-bundle.sh
   scripts/check-fg037-step-ceiling.py
   scripts/jenkins-workspace-v2.sh
   scripts/prove-fg037-step-ceiling.sh
   scripts/run-fg037-step-ceiling-probe.sh
+  "$source_signers_input"
 )
 
-source_head=$(git rev-parse HEAD)
-source_tree=$(git rev-parse 'HEAD^{tree}')
-input_status=$(git status --porcelain=v1 --untracked-files=all -- \
-  "${engine_input_pathspecs[@]}" "${probe_input_pathspecs[@]}")
+clean_input_status() {
+  local tracked_status
+  local untracked_status
+  local hidden_index_flags
+  local policy_filesystem_status=
+  local candidate
+  local tracked_candidate
+
+  # Do not trust a repository-local/global exclude file or fsmonitor response to
+  # hide an input. Only committed .gitignore rules may suppress generated files;
+  # .gitignore itself and any nested copy under src/tools are governed inputs.
+  tracked_status=$(clean_git \
+    -c core.fsmonitor=false -c core.untrackedCache=false \
+    -c core.fileMode=true -c core.symlinks=true \
+    status --porcelain=v1 --untracked-files=no -- \
+    "${engine_input_pathspecs[@]}" "${probe_input_pathspecs[@]}")
+  untracked_status=$(clean_git ls-files --others \
+    --exclude-per-directory=.gitignore -- \
+    "${engine_input_pathspecs[@]}" "${probe_input_pathspecs[@]}")
+  hidden_index_flags=$(clean_git ls-files -v -- \
+    "${engine_input_pathspecs[@]}" "${probe_input_pathspecs[@]}" \
+    | LC_ALL=C awk '$1 ~ /^[a-zS]/ { print "INDEX-FLAG " $0 }')
+
+  # MSBuild/NuGet discover these root names from the physical filesystem. Walk
+  # that namespace directly so even a committed .gitignore cannot hide a local
+  # input that the build would consume but the source bundle would omit.
+  for candidate in Directory.Build.* Directory.Packages.* \
+    [Nn][Uu][Gg][Ee][Tt].[Cc][Oo][Nn][Ff][Ii][Gg]; do
+    [ -e "$candidate" ] || [ -L "$candidate" ] || continue
+    tracked_candidate=$(clean_git ls-files -- ":(top,literal)$candidate")
+    if [ "$tracked_candidate" != "$candidate" ]; then
+      policy_filesystem_status+="UNTRACKED-POLICY $candidate"$'\n'
+    fi
+  done
+
+  [ -z "$tracked_status" ] || printf '%s\n' "$tracked_status"
+  [ -z "$untracked_status" ] \
+    || printf '?? %s\n' "$untracked_status"
+  [ -z "$hidden_index_flags" ] || printf '%s\n' "$hidden_index_flags"
+  [ -z "$policy_filesystem_status" ] \
+    || printf '%s' "$policy_filesystem_status"
+}
+
+source_head=$(clean_git rev-parse HEAD)
+source_tree=$(clean_git rev-parse 'HEAD^{tree}')
+if [ "$(realpath "$(clean_git rev-parse --show-toplevel)")" \
+  != "$physical_repo_root" ]; then
+  echo "REFUSED: Git did not resolve the physical probe checkout" >&2
+  exit 2
+fi
+input_status=$(clean_input_status)
 if [ -n "$input_status" ]; then
   echo "REFUSED: engine/build or probe inputs differ from HEAD; commit or identify them before probing" >&2
   printf '%s\n' "$input_status" >&2
   exit 2
 fi
 
+if ! clean_git show-ref --verify --quiet refs/heads/main; then
+  echo "REFUSED: local main is required to anchor the thin source bundle" >&2
+  exit 2
+fi
+if ! source_prerequisite=$(clean_git merge-base "$source_head" main); then
+  echo "REFUSED: source HEAD and local main have no common prerequisite" >&2
+  exit 2
+fi
+if [ "$source_prerequisite" = "$source_head" ]; then
+  if ! source_prerequisite=$(clean_git rev-parse "$source_head^"); then
+    echo "REFUSED: source HEAD has no parent available as a bundle prerequisite" >&2
+    exit 2
+  fi
+fi
+if ! clean_git merge-base --is-ancestor "$source_prerequisite" main; then
+  echo "REFUSED: source-bundle prerequisite is not retained by local main" >&2
+  exit 2
+fi
+source_bundle_ref=HEAD
+
 collector_snapshot=$(mktemp)
 identity_checker_snapshot=$(mktemp)
 manifest_checker_snapshot=$(mktemp)
-trap 'rm -f "$collector_snapshot" "$identity_checker_snapshot" "$manifest_checker_snapshot"' EXIT
-git show HEAD:scripts/jenkins-workspace-v2.sh >"$collector_snapshot"
-git show HEAD:scripts/check-fg037-jenkins-identity.sh >"$identity_checker_snapshot"
-git show HEAD:scripts/check-fg037-manifest.py >"$manifest_checker_snapshot"
+source_bundle_checker_snapshot=$(mktemp)
+allowed_signers_snapshot=$(mktemp)
+trap 'rm -f "$collector_snapshot" "$identity_checker_snapshot" "$manifest_checker_snapshot" "$source_bundle_checker_snapshot" "$allowed_signers_snapshot"' EXIT
+clean_git show HEAD:scripts/jenkins-workspace-v2.sh >"$collector_snapshot"
+clean_git show HEAD:scripts/check-fg037-jenkins-identity.sh >"$identity_checker_snapshot"
+clean_git show HEAD:scripts/check-fg037-manifest.py >"$manifest_checker_snapshot"
+clean_git show HEAD:scripts/check-fg037-source-bundle.sh >"$source_bundle_checker_snapshot"
+clean_git show "HEAD:$source_signers_input" >"$allowed_signers_snapshot"
 if ! cmp -s "$collector_snapshot" scripts/jenkins-workspace-v2.sh \
   || ! cmp -s "$identity_checker_snapshot" scripts/check-fg037-jenkins-identity.sh \
-  || ! cmp -s "$manifest_checker_snapshot" scripts/check-fg037-manifest.py; then
+  || ! cmp -s "$manifest_checker_snapshot" scripts/check-fg037-manifest.py \
+  || ! cmp -s "$source_bundle_checker_snapshot" scripts/check-fg037-source-bundle.sh \
+  || ! cmp -s "$allowed_signers_snapshot" "$source_signers_input"; then
   echo "REFUSED: load-bearing probe input changed after the clean-input check" >&2
   exit 2
 fi
 collector_sha=$(sha256sum "$collector_snapshot" | awk '{print $1}')
 identity_checker_sha=$(sha256sum "$identity_checker_snapshot" | awk '{print $1}')
 manifest_checker_sha=$(sha256sum "$manifest_checker_snapshot" | awk '{print $1}')
+source_bundle_checker_sha=$(sha256sum "$source_bundle_checker_snapshot" | awk '{print $1}')
+allowed_signers_sha=$(sha256sum "$allowed_signers_snapshot" | awk '{print $1}')
 
 require_stable_inputs() {
   local current_head
   local current_tree
   local current_status
 
-  current_head=$(git rev-parse HEAD)
-  current_tree=$(git rev-parse 'HEAD^{tree}')
-  current_status=$(git status --porcelain=v1 --untracked-files=all -- \
-    "${engine_input_pathspecs[@]}" "${probe_input_pathspecs[@]}")
+  current_head=$(clean_git rev-parse HEAD)
+  current_tree=$(clean_git rev-parse 'HEAD^{tree}')
+  current_status=$(clean_input_status)
   if [ "$current_head" != "$source_head" ] \
     || [ "$current_tree" != "$source_tree" ] \
     || [ -n "$current_status" ] \
     || ! cmp -s "$collector_snapshot" scripts/jenkins-workspace-v2.sh \
     || ! cmp -s "$identity_checker_snapshot" scripts/check-fg037-jenkins-identity.sh \
-    || ! cmp -s "$manifest_checker_snapshot" scripts/check-fg037-manifest.py; then
+    || ! cmp -s "$manifest_checker_snapshot" scripts/check-fg037-manifest.py \
+    || ! cmp -s "$source_bundle_checker_snapshot" scripts/check-fg037-source-bundle.sh \
+    || ! cmp -s "$allowed_signers_snapshot" "$source_signers_input"; then
     echo "REFUSED: load-bearing HEAD or probe inputs changed while evidence was being produced" >&2
     [ -z "$current_status" ] || printf '%s\n' "$current_status" >&2
     return 2
@@ -168,7 +290,14 @@ FOGELL_JENKINS_GIT_VERSION_CMD=$(
 )
 export FOGELL_JENKINS_ENV_CMD FOGELL_JENKINS_GIT_VERSION_CMD
 
-mkdir -p "$output/cases" "$output/receipts"
+mkdir -p "$output/cases" "$output/receipts" "$output/source"
+
+source_bundle=$output/source/fg037-measured-source.bundle
+clean_git bundle create "$source_bundle" HEAD "^$source_prerequisite"
+cp "$allowed_signers_snapshot" "$output/source/allowed_signers"
+bash "$source_bundle_checker_snapshot" \
+  "$source_bundle" "$output/source/allowed_signers" "$source_bundle_ref" \
+  "$source_prerequisite" "$source_head" "$source_head" "$source_tree" >/dev/null
 
 python3 - "$output/cases" <<'PY'
 import pathlib
@@ -257,7 +386,10 @@ python3 scripts/check-fg037-step-ceiling.py \
 dotnet run --project "$cli_project" -c Release --no-build -- \
   --verify-seals "$output/receipts" >"$output/seal-verification.log" 2>&1
 
-scripts/prove-fg037-step-ceiling.sh "$output" >"$output/proof.log"
+FG037_SOURCE_BUNDLE_CHECKER="$source_bundle_checker_snapshot" \
+  scripts/prove-fg037-step-ceiling.sh "$output" \
+  "$source_bundle_ref" "$source_prerequisite" "$source_head" "$source_head" "$source_tree" \
+  >"$output/proof.log"
 
 # The build, semantic checker and hostile proof above intentionally use the
 # checkout. Revalidate every governed input and the exact commit/tree before
@@ -301,11 +433,19 @@ require_stable_inputs || exit $?
     "scripts/check-fg037-jenkins-identity.sh (executed HEAD snapshot)"
   printf '%s  %s\n' "$manifest_checker_sha" \
     "scripts/check-fg037-manifest.py (executed HEAD snapshot)"
+  printf '%s  %s\n' "$source_bundle_checker_sha" \
+    "scripts/check-fg037-source-bundle.sh (executed HEAD snapshot)"
+  printf '%s  %s\n' "$allowed_signers_sha" \
+    "$source_signers_input (executed HEAD snapshot)"
   printf '%s  %s\n' "$collector_sha" \
     "scripts/jenkins-workspace-v2.sh (executed HEAD snapshot)"
+  echo "source-bundle-ref: $source_bundle_ref"
+  echo "source-bundle-prerequisite: $source_prerequisite (retained by local main)"
+  echo "source-bundle-head: $source_head"
+  echo "source-bundle-sha256: $(sha256sum "$source_bundle" | awk '{print $1}')"
   echo ""
   echo "worktree-status:"
-  git status --short
+  clean_git status --short
 } >"$output/source-identity.txt"
 
 {
@@ -319,6 +459,9 @@ require_stable_inputs || exit $?
   echo ""
   echo "These receipts are intentional capability differences. They must remain outside"
   echo "differential/receipts and are not part of the compatibility scorecard."
+  echo ""
+  echo "source/fg037-measured-source.bundle reconstructs the signed measured source"
+  echo "from a prerequisite retained by local main; source/allowed_signers pins its signer."
 } >"$output/README.md"
 
 require_stable_inputs || exit $?
