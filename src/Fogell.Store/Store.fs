@@ -2798,6 +2798,152 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         tx.Commit()
         snapshot
 
+    /// Resolve an attempt through its tenant/project/build lineage. Attempt
+    /// terminality is immutable even when a later retry reopens the build.
+    member _.ArtifactAttemptState
+        (org: OrganizationId, project: ProjectId, build: BuildId, attempt: AttemptId)
+        : string option =
+        use conn = openConn ()
+        use tx = beginTenantTransaction conn org
+        use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
+        cmd.CommandText <-
+            "SELECT a.state
+               FROM builds b
+               JOIN nodes n
+                 ON n.organization_id = b.organization_id
+                AND n.build_id = b.id
+               JOIN attempts a
+                 ON a.organization_id = n.organization_id
+                AND a.node_id = n.id
+              WHERE b.organization_id = @o
+                AND b.project_id = @p
+                AND b.id = @b
+                AND a.id = @a"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("p", project.Value) |> ignore
+        cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        use reader = cmd.ExecuteReader()
+        let state = if reader.Read() then Some(reader.GetString 0) else None
+        reader.Close()
+        tx.Commit()
+        state
+
+    /// Adopt the pre-FG-042b build-keyed directory only for the current
+    /// terminal leaf. Hold the canonical attempt -> node -> build locks across
+    /// the filesystem callback so DecideRetry cannot reopen the lineage in the
+    /// eligibility-check/move gap.
+    member _.MigrateLegacyArtifactSnapshot
+        (org: OrganizationId,
+         project: ProjectId,
+         build: BuildId,
+         attempt: AttemptId,
+         migration: unit -> Result<unit, string>)
+        : Result<bool, string> =
+        use conn = openConn ()
+        use tx = beginTenantTransaction conn org
+
+        let rollback error =
+            try tx.Rollback() with _ -> ()
+            Error error
+
+        let notEligible () =
+            tx.Commit()
+            Ok false
+
+        try
+            use attemptCmd = conn.CreateCommand()
+            attemptCmd.Transaction <- tx
+            attemptCmd.CommandText <-
+                "SELECT node_id, state
+                   FROM attempts
+                  WHERE organization_id = @o AND id = @a
+                  FOR UPDATE"
+            attemptCmd.Parameters.AddWithValue("o", org.Value) |> ignore
+            attemptCmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+            use attemptReader = attemptCmd.ExecuteReader()
+
+            if not (attemptReader.Read()) then
+                attemptReader.Close()
+                notEligible ()
+            else
+                let nodeId = attemptReader.GetGuid 0
+                let attemptState = attemptReader.GetString 1
+                attemptReader.Close()
+
+                use nodeCmd = conn.CreateCommand()
+                nodeCmd.Transaction <- tx
+                nodeCmd.CommandText <-
+                    "SELECT build_id
+                       FROM nodes
+                      WHERE organization_id = @o AND id = @n
+                      FOR UPDATE"
+                nodeCmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                nodeCmd.Parameters.AddWithValue("n", nodeId) |> ignore
+                let actualBuild = nodeCmd.ExecuteScalar()
+
+                if attemptState <> "terminal" || actualBuild <> box build.Value then
+                    notEligible ()
+                else
+                    use buildCmd = conn.CreateCommand()
+                    buildCmd.Transaction <- tx
+                    buildCmd.CommandText <-
+                        "SELECT b.project_id, b.status,
+                                (SELECT count(*)
+                                   FROM nodes all_nodes
+                                  WHERE all_nodes.organization_id = b.organization_id
+                                    AND all_nodes.build_id = b.id)
+                           FROM builds b
+                          WHERE b.organization_id = @o AND b.id = @b
+                          FOR UPDATE OF b"
+                    buildCmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                    buildCmd.Parameters.AddWithValue("b", build.Value) |> ignore
+                    use buildReader = buildCmd.ExecuteReader()
+
+                    if not (buildReader.Read()) then
+                        buildReader.Close()
+                        notEligible ()
+                    else
+                        let actualProject = buildReader.GetGuid 0
+                        let buildStatus = buildReader.GetString 1
+                        let nodeCount = buildReader.GetInt64 2
+                        buildReader.Close()
+                        let terminalBuild =
+                            buildStatus = "success"
+                            || buildStatus = "unstable"
+                            || buildStatus = "failure"
+                            || buildStatus = "aborted"
+                            || buildStatus = "succeeded"
+                            || buildStatus = "failed"
+
+                        // Legacy output is keyed only by build. More than one
+                        // node makes ownership by an attempt inherently
+                        // ambiguous, so no attempt URL may adopt those bytes.
+                        if actualProject <> project.Value || not terminalBuild || nodeCount <> 1L then
+                            notEligible ()
+                        else
+                            use childCmd = conn.CreateCommand()
+                            childCmd.Transaction <- tx
+                            childCmd.CommandText <-
+                                "SELECT EXISTS (
+                                     SELECT 1
+                                       FROM attempts
+                                      WHERE organization_id = @o AND retry_of = @a)"
+                            childCmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                            childCmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+
+                            if childCmd.ExecuteScalar() :?> bool then
+                                notEligible ()
+                            else
+                                match migration () with
+                                | Ok () ->
+                                    tx.Commit()
+                                    Ok true
+                                | Error error -> rollback error
+        with ex ->
+            rollback ex.Message
+
     member _.CountOutbox(org: OrganizationId) : int =
         use conn = openConn ()
         use tx = beginTenantTransaction conn org
