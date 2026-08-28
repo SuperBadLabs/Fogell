@@ -32,6 +32,11 @@ type JenkinsConfig =
       /// The output is normalised through exactly the same exclusion rules as a
       /// local hash, so neither side gets a different definition of "workspace".
       WorkspaceCollector: string option
+      /// Optional, exact build-scoped raw-console export. The console is written
+      /// atomically after Jenkins returns it and before the disposable job is
+      /// deleted. A configured write failure fails that build rather than leaving
+      /// a stale or partial evidence artifact.
+      RawConsoleExport: RawConsoleExport option
       /// FG-053. Whether the SCRIPT declares `options { timestamps() }`.
       ///
       /// Jenkins cannot be asked, and its console cannot be inspected for it
@@ -40,6 +45,15 @@ type JenkinsConfig =
       /// [Trace.Concurrent] already uses, so the CLI reads it off the script and
       /// tells both engines.
       DeclaresTimestamps: bool }
+
+and RawConsoleExport =
+    { JobName: string
+      BuildNumber: int
+      Path: string
+      /// Set only after the selected console has been atomically published.
+      /// The CLI checks this after every requested case, so a selector that
+      /// matched no executed build cannot silently report success.
+      mutable Observed: bool }
 
 /// FG-052. What defines a build's pipeline on the Jenkins side: an inline
 /// script (CpsFlowDefinition) or an SCM the Jenkinsfile is obtained from
@@ -51,6 +65,95 @@ type JobDefinition =
 module Jenkins =
 
     let private client = new HttpClient(Timeout = TimeSpan.FromMinutes 10.0)
+
+    let jobNameForCase (casePath: string) =
+        "diff-"
+        + Regex.Replace(
+            IO.Path.GetFileNameWithoutExtension(IO.Path.GetFileName casePath),
+            "[^A-Za-z0-9]+",
+            "-"
+        )
+
+    /// Jenkins execution and raw-console selection are keyed by job/build.
+    /// Refuse two source cases that normalize to the same job before either
+    /// case can execute.
+    let validateUniqueCaseJobs (casePaths: string list) =
+        let collisions =
+            casePaths
+            |> List.groupBy jobNameForCase
+            |> List.choose (fun (job, paths) ->
+                if List.length paths > 1 then Some(job, paths |> List.map IO.Path.GetFileName) else None)
+
+        match collisions with
+        | [] -> Ok()
+        | _ ->
+            collisions
+            |> List.map (fun (job, names) -> sprintf "%s <- %s" job (String.concat ", " names))
+            |> String.concat "; "
+            |> sprintf "normalized Jenkins job-name collision: %s"
+            |> Error
+
+    let private hasReparsePoint (path: string) =
+        let info = IO.FileInfo path
+
+        info.LinkTarget <> null
+        || ((IO.File.Exists path || IO.Directory.Exists path)
+            && info.Attributes.HasFlag IO.FileAttributes.ReparsePoint)
+
+    /// Refuse every existing symlink/reparse point in the lexical target chain.
+    /// Resolving the whole path first would hide the evidence-directory escape.
+    let private hasReparseComponent (path: string) =
+        let full = IO.Path.GetFullPath path
+        let root = IO.Path.GetPathRoot full
+
+        full.Substring(root.Length)
+            .Split(
+                [| IO.Path.DirectorySeparatorChar; IO.Path.AltDirectorySeparatorChar |],
+                StringSplitOptions.RemoveEmptyEntries
+            )
+        |> Array.mapFold (fun current part ->
+            let next = IO.Path.Combine(current, part)
+            hasReparsePoint next, next) root
+        |> fst
+        |> Array.exists id
+
+    let internal exportRawConsole
+        (export: RawConsoleExport option)
+        (jobName: string)
+        (buildNumber: int)
+        (console: string)
+        =
+        match export with
+        | Some configured when configured.JobName = jobName && configured.BuildNumber = buildNumber ->
+            let target = configured.Path
+            let directory = IO.Path.GetDirectoryName target
+
+            if not (IO.Path.IsPathFullyQualified target) || String.IsNullOrEmpty directory then
+                invalidOp "configured raw-console export path must be absolute"
+
+            if not (IO.Directory.Exists directory) then
+                invalidOp $"configured raw-console export directory does not exist: {directory}"
+
+            if hasReparseComponent target then
+                invalidOp $"configured raw-console export path passes through a symlink or reparse point: {target}"
+
+            if IO.Directory.Exists target then
+                invalidOp $"configured raw-console export target is a directory: {target}"
+
+            let temporary =
+                IO.Path.Combine(
+                    directory,
+                    $".{IO.Path.GetFileName target}.{Guid.NewGuid():N}.tmp"
+                )
+
+            try
+                IO.File.WriteAllText(temporary, console, UTF8Encoding(false))
+                IO.File.Move(temporary, target, true)
+                configured.Observed <- true
+            finally
+                if IO.File.Exists temporary then
+                    IO.File.Delete temporary
+        | _ -> ()
 
     /// FG-129. Jenkins has no structured "compiler refused" result, so the
     /// distinction is reduced from the controller-owned terminal result and raw
@@ -319,6 +422,8 @@ module Jenkins =
                 | Some terminal ->
                     let console =
                         client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/{buildNumber}/consoleText").Result
+
+                    exportRawConsole cfg.RawConsoleExport jobName buildNumber console
 
                     let rawLines = console.Replace("\r\n", "\n").Split '\n'
                     let disposition = classifyExecutionDisposition terminal rawLines

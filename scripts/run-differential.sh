@@ -2,7 +2,7 @@
 # FG-002/002b. Runs every differential case through both engines and seals
 # receipts. Exits non-zero unless every case is FULLY proven.
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit
 
 : "${FOGELL_JENKINS_URL:=http://127.0.0.1:18099}"
 : "${FOGELL_JENKINS_CORE:=2.568.1}"
@@ -23,38 +23,17 @@ fi
 
 # Jenkins does not share a filesystem with us, so the workspace is enumerated WHERE
 # IT LIVES. FG-173's v2 wire format is strict and framed; Trace.collectRemote validates
-# it before reducing it to the byte-compatible canonical file records plus tagged empty
-# leaf records. GNU find's default -P policy is stated explicitly: directory symlinks are
-# never followed, and a directory containing only a symlink is not physically empty.
-read -r -d '' FOGELL_WORKSPACE_COLLECTOR_SOURCE <<'FOGELL_WORKSPACE_COLLECTOR' || true
-set -uo pipefail
-workspace=$1
-cd "$workspace" 2>/dev/null || exit 3
-export LC_ALL=C
-printf 'FOGELL-WORKSPACE-MANIFEST\t2\n'
-count=0
-inventory=$(mktemp) || exit 4
-trap 'rm -f "$inventory"' EXIT
-if ! find -P . -mindepth 1 \( -type f -o \( -type d -empty \) \) -print0 | sort -z >"$inventory"; then
-  exit 5
+# it before reducing it to canonical file records plus tagged empty leaf records.
+# shellcheck source=scripts/jenkins-workspace-v2.sh disable=SC1091
+if ! source scripts/jenkins-workspace-v2.sh; then
+  echo "REFUSED: shared Jenkins workspace collector could not be loaded" >&2
+  exit 2
 fi
-while IFS= read -r -d '' entry; do
-  relative=${entry#./}
-  encoded=$(printf '%s' "$relative" | base64 -w 0) || exit 6
-  if [[ -f "$entry" && ! -L "$entry" ]]; then
-    hash=$(sha256sum -- "$entry" | cut -d ' ' -f 1) || exit 7
-    printf 'F\t%s\t%s\n' "$hash" "$encoded"
-  elif [[ -d "$entry" && ! -L "$entry" ]]; then
-    printf 'D\t%s\n' "$encoded"
-  else
-    exit 8
-  fi
-  count=$((count + 1))
-done <"$inventory"
-printf 'END\t%s\n' "$count"
-FOGELL_WORKSPACE_COLLECTOR
-FOGELL_WORKSPACE_COLLECTOR_B64=$(printf '%s' "$FOGELL_WORKSPACE_COLLECTOR_SOURCE" | base64 -w 0)
-export FOGELL_JENKINS_WORKSPACE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} bash -c \\\"printf %s ${FOGELL_WORKSPACE_COLLECTOR_B64} | base64 -d | bash -s -- '/var/jenkins_home/workspace/{job}'\\\"\""
+if ! fogell_configure_jenkins_workspace_v2 \
+  "$FOGELL_JENKINS_HOST" "$FOGELL_JENKINS_CONTAINER"; then
+  echo "REFUSED: shared Jenkins workspace collector could not be configured" >&2
+  exit 2
+fi
 # engine-inherited env (PATH and friends) for trace canonicalisation
 export FOGELL_JENKINS_ENV_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} env\""
 # each engine's `git --version` folds to ${GITVERSION} (FG-111 git step)
@@ -72,12 +51,6 @@ if ! timeout 15 git ls-remote "$FOGELL_SCM_URL" >/dev/null 2>&1; then
   echo "warning: SCM lane repo unreachable at $FOGELL_SCM_URL — git-step cases will fail." >&2
   echo "         start it on ${FOGELL_JENKINS_HOST}: git daemon --base-path=\$HOME/fogell-scm --export-all --enable=receive-pack --reuseaddr --port=9418" >&2
 fi
-# Establish the empty starting workspace explicitly after the wipe. A Jenkins
-# compile-time refusal may never allocate one; treating a failed `cd` as empty was
-# the old collector's false-pass route, while refusing it would make such cases
-# permanently partial. Precreating the root lets v2 observe an actual empty tree.
-export FOGELL_JENKINS_WIPE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGELL_JENKINS_CONTAINER} sh -c \\\"rm -rf /var/jenkins_home/workspace/{job} /var/jenkins_home/workspace/{job}@tmp && mkdir -p /var/jenkins_home/workspace/{job}\\\"\""
-
 # FG-052: SCM-marked cases live in the fixture repo — sync before running.
 # A failed sync only WARNS: every SCM case verifies its checked-out bytes
 # against the local body and fails CLOSED on drift, so stale content cannot

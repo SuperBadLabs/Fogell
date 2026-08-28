@@ -1,0 +1,513 @@
+# Differential receipt — fg037-400-steps.Jenkinsfile
+
+jenkins-core: 2.568.1
+seal:         908defa30d2446e54574c115e9552229477075ba8f40f10158a0b21151f3d074
+case-digest:  02f6bc53459b4d91adedf2a1e0dc68f77a19095c50807c92ecff487a0bde2102
+sealed-output: sequence
+
+VERDICT: DIVERGED (3)
+  - terminal result: jenkins=failure fogell=success
+  - output line 0: jenkins=Started by user unknown or anonymous fogell=+ printf reached
+  - workspace hash: jenkins=e3b0c44298fc fogell=15a29062f49a
+
+## Comparison contract
+  compared: terminal result
+  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
+    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
+  compared: canonical workspace hash over sorted (path, content-hash) pairs
+  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
+  compared as a CLASSIFICATION — none / partial / all — over COMPARED survivors:
+    timestamps() coverage. Two engines read two clocks, so the instants can never
+    agree; an engine that IGNORED the option, or honoured it for only some lines,
+    would otherwise compare equal to one that honoured it fully. Line COUNTS are
+    printed but never compared — the engines do not emit the same number of lines.
+    FG-118: prefix provenance follows each line through the complete contextual
+    normaliser, and both counts come from its final survivor set. `all` means every
+    compared survivor carried a prefix; suppressed narration and other raw console
+    lines are outside both output comparison and this coverage claim.
+    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
+    the option, and read as true only because none did.
+  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
+    trace is identical emitted output, continuations included (retires FG-002c)
+  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
+    its first physical line only (measured; no re-quoting, no record terminator),
+    so a mismatching line pair that becomes equal under the SAME inherited-env
+    replacement list applied to BOTH sides compares as that canonical form.
+    Literals cancel; receipt lines stay literal; the rule can only turn a
+    divergence into an equality, never hide one direction only. EVERY pair the
+    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
+    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
+    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
+    multiplicity instead of pair records. FG-158: this said EVERY pair while the
+    concurrent path emitted occurrences, which is a promise the mode cannot keep.
+    A canonical
+    comparison is always visible in the case it decided — ordinary output that
+    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
+    declared environment-of-necessity class the ${WORKSPACE} fold already is
+  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+  compared as a BOOLEAN, not text: whether a failure reason was reported
+    (applies to failure/aborted only — an unstable build is explained by its test report)
+    (Jenkins' wording comes from whichever plugin implements the step;
+     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
+  excluded: credential-masking narration — both engines announce it, wording differs
+  engine notes: printed in the receipt, never compared — the engine reporting
+    on its own checks (e.g. an unavailable /proc scan), not on the build
+  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
+    context-gated, emitted identically by both engines, or an exact measured
+    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
+    text is COMPARED, and tests carry look-alike rows proving it.
+  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
+    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
+    the same workspace, and comparing a compiler's error layout is over-fitting
+  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
+    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
+    sentences ALSO count as the abort's reported reason
+  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
+    the reported reason; the wording comes from whichever plugin implements the step
+  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
+    (the workspace HASH is sealed, the listing under it is not); any engine notes;
+    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
+    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
+    RECOVERED provenance block, which can be added, removed or fabricated without
+    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
+    is unsealed too — see the PARALLEL lines below. Everything else printed here is
+    bound.
+    So `--verify-seals` passing does NOT mean this document is unaltered — it means
+    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
+    minus fenced regions; it is NOT implemented, so this list is what holds today.
+
+## Jenkins
+  result:         failure
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  output (21 lines):
+    | Started by user unknown or anonymous
+    | org.codehaus.groovy.control.MultipleCompilationErrorsException: startup failed:
+    | General error during class generation: The max number of supported arguments is 255, but found 400
+    | 1 error
+    | at org.codehaus.groovy.control.ErrorCollector.failIfErrors(ErrorCollector.java:309)
+    | at org.codehaus.groovy.control.CompilationUnit.applyToPrimaryClassNodes(CompilationUnit.java:1107)
+    | at org.codehaus.groovy.control.CompilationUnit.doPhaseOperation(CompilationUnit.java:624)
+    | at org.codehaus.groovy.control.CompilationUnit.processPhaseOperations(CompilationUnit.java:602)
+    | at org.codehaus.groovy.control.CompilationUnit.compile(CompilationUnit.java:579)
+    | at groovy.lang.GroovyClassLoader.doParseClass(GroovyClassLoader.java:323)
+    | at groovy.lang.GroovyClassLoader.parseClass(GroovyClassLoader.java:293)
+    | at PluginClassLoader for script-security//org.jenkinsci.plugins.scriptsecurity.sandbox.groovy.GroovySandbox$Scope.parse(GroovySandbox.java:162)
+    | at PluginClassLoader for workflow-cps//org.jenkinsci.plugins.workflow.cps.CpsGroovyShell.doParse(CpsGroovyShell.java:202)
+    | at PluginClassLoader for workflow-cps//org.jenkinsci.plugins.workflow.cps.CpsGroovyShell.reparse(CpsGroovyShell.java:186)
+    | at PluginClassLoader for workflow-cps//org.jenkinsci.plugins.workflow.cps.CpsFlowExecution.parseScript(CpsFlowExecution.java:670)
+    | at PluginClassLoader for workflow-cps//org.jenkinsci.plugins.workflow.cps.CpsFlowExecution.start(CpsFlowExecution.java:616)
+    | at PluginClassLoader for workflow-job//org.jenkinsci.plugins.workflow.job.WorkflowRun.run(WorkflowRun.java:368)
+    | at hudson.model.ResourceController.execute(ResourceController.java:97)
+    | at hudson.model.Executor.run(Executor.java:456)
+    | [withMaven] downstreamPipelineTriggerRunListener - Failure to introspect build steps: java.io.IOException: diff-fg037-400-steps #1 did not yet start
+    | [withMaven] downstreamPipelineTriggerRunListener - Failure to introspect build steps: java.io.IOException: diff-fg037-400-steps #1 did not yet start
+
+## Fogell
+  result:         success
+  workspace-hash: 15a29062f49a6e41d45fc7c06cc2219e1f372ec131888916d2813aeb4a9b7dd4
+  output (400 lines):
+    | + printf reached
+    | FG037-002
+    | FG037-003
+    | FG037-004
+    | FG037-005
+    | FG037-006
+    | FG037-007
+    | FG037-008
+    | FG037-009
+    | FG037-010
+    | FG037-011
+    | FG037-012
+    | FG037-013
+    | FG037-014
+    | FG037-015
+    | FG037-016
+    | FG037-017
+    | FG037-018
+    | FG037-019
+    | FG037-020
+    | FG037-021
+    | FG037-022
+    | FG037-023
+    | FG037-024
+    | FG037-025
+    | FG037-026
+    | FG037-027
+    | FG037-028
+    | FG037-029
+    | FG037-030
+    | FG037-031
+    | FG037-032
+    | FG037-033
+    | FG037-034
+    | FG037-035
+    | FG037-036
+    | FG037-037
+    | FG037-038
+    | FG037-039
+    | FG037-040
+    | FG037-041
+    | FG037-042
+    | FG037-043
+    | FG037-044
+    | FG037-045
+    | FG037-046
+    | FG037-047
+    | FG037-048
+    | FG037-049
+    | FG037-050
+    | FG037-051
+    | FG037-052
+    | FG037-053
+    | FG037-054
+    | FG037-055
+    | FG037-056
+    | FG037-057
+    | FG037-058
+    | FG037-059
+    | FG037-060
+    | FG037-061
+    | FG037-062
+    | FG037-063
+    | FG037-064
+    | FG037-065
+    | FG037-066
+    | FG037-067
+    | FG037-068
+    | FG037-069
+    | FG037-070
+    | FG037-071
+    | FG037-072
+    | FG037-073
+    | FG037-074
+    | FG037-075
+    | FG037-076
+    | FG037-077
+    | FG037-078
+    | FG037-079
+    | FG037-080
+    | FG037-081
+    | FG037-082
+    | FG037-083
+    | FG037-084
+    | FG037-085
+    | FG037-086
+    | FG037-087
+    | FG037-088
+    | FG037-089
+    | FG037-090
+    | FG037-091
+    | FG037-092
+    | FG037-093
+    | FG037-094
+    | FG037-095
+    | FG037-096
+    | FG037-097
+    | FG037-098
+    | FG037-099
+    | FG037-100
+    | FG037-101
+    | FG037-102
+    | FG037-103
+    | FG037-104
+    | FG037-105
+    | FG037-106
+    | FG037-107
+    | FG037-108
+    | FG037-109
+    | FG037-110
+    | FG037-111
+    | FG037-112
+    | FG037-113
+    | FG037-114
+    | FG037-115
+    | FG037-116
+    | FG037-117
+    | FG037-118
+    | FG037-119
+    | FG037-120
+    | FG037-121
+    | FG037-122
+    | FG037-123
+    | FG037-124
+    | FG037-125
+    | FG037-126
+    | FG037-127
+    | FG037-128
+    | FG037-129
+    | FG037-130
+    | FG037-131
+    | FG037-132
+    | FG037-133
+    | FG037-134
+    | FG037-135
+    | FG037-136
+    | FG037-137
+    | FG037-138
+    | FG037-139
+    | FG037-140
+    | FG037-141
+    | FG037-142
+    | FG037-143
+    | FG037-144
+    | FG037-145
+    | FG037-146
+    | FG037-147
+    | FG037-148
+    | FG037-149
+    | FG037-150
+    | FG037-151
+    | FG037-152
+    | FG037-153
+    | FG037-154
+    | FG037-155
+    | FG037-156
+    | FG037-157
+    | FG037-158
+    | FG037-159
+    | FG037-160
+    | FG037-161
+    | FG037-162
+    | FG037-163
+    | FG037-164
+    | FG037-165
+    | FG037-166
+    | FG037-167
+    | FG037-168
+    | FG037-169
+    | FG037-170
+    | FG037-171
+    | FG037-172
+    | FG037-173
+    | FG037-174
+    | FG037-175
+    | FG037-176
+    | FG037-177
+    | FG037-178
+    | FG037-179
+    | FG037-180
+    | FG037-181
+    | FG037-182
+    | FG037-183
+    | FG037-184
+    | FG037-185
+    | FG037-186
+    | FG037-187
+    | FG037-188
+    | FG037-189
+    | FG037-190
+    | FG037-191
+    | FG037-192
+    | FG037-193
+    | FG037-194
+    | FG037-195
+    | FG037-196
+    | FG037-197
+    | FG037-198
+    | FG037-199
+    | FG037-200
+    | FG037-201
+    | FG037-202
+    | FG037-203
+    | FG037-204
+    | FG037-205
+    | FG037-206
+    | FG037-207
+    | FG037-208
+    | FG037-209
+    | FG037-210
+    | FG037-211
+    | FG037-212
+    | FG037-213
+    | FG037-214
+    | FG037-215
+    | FG037-216
+    | FG037-217
+    | FG037-218
+    | FG037-219
+    | FG037-220
+    | FG037-221
+    | FG037-222
+    | FG037-223
+    | FG037-224
+    | FG037-225
+    | FG037-226
+    | FG037-227
+    | FG037-228
+    | FG037-229
+    | FG037-230
+    | FG037-231
+    | FG037-232
+    | FG037-233
+    | FG037-234
+    | FG037-235
+    | FG037-236
+    | FG037-237
+    | FG037-238
+    | FG037-239
+    | FG037-240
+    | FG037-241
+    | FG037-242
+    | FG037-243
+    | FG037-244
+    | FG037-245
+    | FG037-246
+    | FG037-247
+    | FG037-248
+    | FG037-249
+    | FG037-250
+    | FG037-251
+    | FG037-252
+    | FG037-253
+    | FG037-254
+    | FG037-255
+    | FG037-256
+    | FG037-257
+    | FG037-258
+    | FG037-259
+    | FG037-260
+    | FG037-261
+    | FG037-262
+    | FG037-263
+    | FG037-264
+    | FG037-265
+    | FG037-266
+    | FG037-267
+    | FG037-268
+    | FG037-269
+    | FG037-270
+    | FG037-271
+    | FG037-272
+    | FG037-273
+    | FG037-274
+    | FG037-275
+    | FG037-276
+    | FG037-277
+    | FG037-278
+    | FG037-279
+    | FG037-280
+    | FG037-281
+    | FG037-282
+    | FG037-283
+    | FG037-284
+    | FG037-285
+    | FG037-286
+    | FG037-287
+    | FG037-288
+    | FG037-289
+    | FG037-290
+    | FG037-291
+    | FG037-292
+    | FG037-293
+    | FG037-294
+    | FG037-295
+    | FG037-296
+    | FG037-297
+    | FG037-298
+    | FG037-299
+    | FG037-300
+    | FG037-301
+    | FG037-302
+    | FG037-303
+    | FG037-304
+    | FG037-305
+    | FG037-306
+    | FG037-307
+    | FG037-308
+    | FG037-309
+    | FG037-310
+    | FG037-311
+    | FG037-312
+    | FG037-313
+    | FG037-314
+    | FG037-315
+    | FG037-316
+    | FG037-317
+    | FG037-318
+    | FG037-319
+    | FG037-320
+    | FG037-321
+    | FG037-322
+    | FG037-323
+    | FG037-324
+    | FG037-325
+    | FG037-326
+    | FG037-327
+    | FG037-328
+    | FG037-329
+    | FG037-330
+    | FG037-331
+    | FG037-332
+    | FG037-333
+    | FG037-334
+    | FG037-335
+    | FG037-336
+    | FG037-337
+    | FG037-338
+    | FG037-339
+    | FG037-340
+    | FG037-341
+    | FG037-342
+    | FG037-343
+    | FG037-344
+    | FG037-345
+    | FG037-346
+    | FG037-347
+    | FG037-348
+    | FG037-349
+    | FG037-350
+    | FG037-351
+    | FG037-352
+    | FG037-353
+    | FG037-354
+    | FG037-355
+    | FG037-356
+    | FG037-357
+    | FG037-358
+    | FG037-359
+    | FG037-360
+    | FG037-361
+    | FG037-362
+    | FG037-363
+    | FG037-364
+    | FG037-365
+    | FG037-366
+    | FG037-367
+    | FG037-368
+    | FG037-369
+    | FG037-370
+    | FG037-371
+    | FG037-372
+    | FG037-373
+    | FG037-374
+    | FG037-375
+    | FG037-376
+    | FG037-377
+    | FG037-378
+    | FG037-379
+    | FG037-380
+    | FG037-381
+    | FG037-382
+    | FG037-383
+    | FG037-384
+    | FG037-385
+    | FG037-386
+    | FG037-387
+    | FG037-388
+    | FG037-389
+    | FG037-390
+    | FG037-391
+    | FG037-392
+    | FG037-393
+    | FG037-394
+    | FG037-395
+    | FG037-396
+    | FG037-397
+    | FG037-398
+    | FG037-399
+    | FG037-400
+  workspace:
+    52774637822c  reached-agent.txt

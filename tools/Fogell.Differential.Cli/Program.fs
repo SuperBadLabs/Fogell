@@ -14,6 +14,12 @@ open Fogell.Execution
 /// Environment:
 ///   FOGELL_JENKINS_WORKSPACE  host path of Jenkins' workspace root (optional;
 ///                             without it, workspace hashes are not compared)
+///   FOGELL_JENKINS_RAW_CONSOLE_JOB / _BUILD / _PATH
+///                             optional all-or-none exact build console export;
+///                             PATH must be absolute, its parent must already
+///                             exist, contain no symlink/reparse component, and
+///                             not name a directory. The file is atomically
+///                             replaced; export failure aborts the run.
 [<EntryPoint>]
 let main argv =
     match Array.toList argv with
@@ -64,6 +70,12 @@ let main argv =
                     1
 
     | baseUrl :: core :: receiptDir :: (_ :: _ as files) ->
+        match Jenkins.validateUniqueCaseJobs files with
+        | Ok() -> ()
+        | Error why ->
+            eprintfn $"case identity refused: {why}"
+            exit 2
+
         let jenkinsWorkspace =
             match Environment.GetEnvironmentVariable "FOGELL_JENKINS_WORKSPACE" with
             | null | "" -> None
@@ -73,6 +85,41 @@ let main argv =
             match Environment.GetEnvironmentVariable "FOGELL_JENKINS_WORKSPACE_CMD" with
             | null | "" -> None
             | v -> Some v
+
+        let rawConsoleExport =
+            let job = Environment.GetEnvironmentVariable "FOGELL_JENKINS_RAW_CONSOLE_JOB"
+            let build = Environment.GetEnvironmentVariable "FOGELL_JENKINS_RAW_CONSOLE_BUILD"
+            let path = Environment.GetEnvironmentVariable "FOGELL_JENKINS_RAW_CONSOLE_PATH"
+            let present value = not (String.IsNullOrEmpty value)
+
+            match present job, present build, present path with
+            | false, false, false -> None
+            | true, true, true ->
+                match Int32.TryParse build with
+                | true, buildNumber
+                    when buildNumber > 0
+                         && Text.RegularExpressions.Regex.IsMatch(
+                             job,
+                             "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+                         )
+                         && Path.IsPathFullyQualified path ->
+                    Some
+                        { JobName = job
+                          BuildNumber = buildNumber
+                          Path = Path.GetFullPath path
+                          Observed = false }
+                | _ ->
+                    eprintfn
+                        "raw-console export refused: JOB must be one safe Jenkins job name, BUILD a positive integer, and PATH absolute"
+
+                    exit 2
+                    None
+            | _ ->
+                eprintfn
+                    "raw-console export refused: FOGELL_JENKINS_RAW_CONSOLE_JOB, _BUILD and _PATH must be configured together"
+
+                exit 2
+                None
 
         // ONE coordinated canonicalisation set for BOTH traces: the union of each
         // engine's inherited values for the curated names, so a literal equal to
@@ -262,6 +309,7 @@ let main argv =
               CoreVersion = core
               WorkspaceRoot = jenkinsWorkspace
               WorkspaceCollector = collector
+              RawConsoleExport = rawConsoleExport
               // per-case; replaced at each call site from that case's script
               DeclaresTimestamps = false }
 
@@ -314,10 +362,7 @@ let main argv =
                 // index-derived name reshuffles when a case is added, and the
                 // new occupant inherits the previous run's workspace. That
                 // showed up as a phantom workspace-hash divergence.
-                let job =
-                    "diff-"
-                    + Text.RegularExpressions.Regex.Replace(
-                        Path.GetFileNameWithoutExtension name, "[^A-Za-z0-9]+", "-")
+                let job = Jenkins.jobNameForCase file
 
                 // Wipe any stale workspace so a hash can only match on merit.
                 //
@@ -716,9 +761,20 @@ let main argv =
         printfn "tier-1 proven (incl. workspace): %d / %d" full receipts.Length
         printfn "proven-partial (result+output):  %d / %d" partial receipts.Length
 
-        // Exit non-zero unless every file is fully proven. A partial pass is not
-        // a pass: it is a claim with a hole in it.
-        if full = receipts.Length then 0 else 1
+        // A configured evidence export is a REQUIRED observation, not a hint.
+        // A safe but stale job/build selector used to do nothing and could leave
+        // an older target file looking current even when the comparison passed.
+        // Refuse the whole run unless the exact selected console was published.
+        match rawConsoleExport with
+        | Some configured when not configured.Observed ->
+            eprintfn
+                $"raw-console export refused: selected build was not observed: {configured.JobName} #{configured.BuildNumber}"
+
+            2
+        | _ ->
+            // Exit non-zero unless every file is fully proven. A partial pass is not
+            // a pass: it is a claim with a hole in it.
+            if full = receipts.Length then 0 else 1
     | _ ->
         eprintfn "usage: fogell-diff <jenkins-url> <jenkins-core> <receipt-dir> <file...>"
         2

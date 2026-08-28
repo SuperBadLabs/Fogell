@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # FG-000/FG-001 — the gate every ticket must pass before its PR.
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 echo "=== sdk ==="; dotnet --version
 ./scripts/prove-dependency-locks.sh \
   || { echo "DEPENDENCY-LOCK/SOURCE-CLEARED BUILD PROOF FAILED"; exit 1; }
@@ -120,6 +120,34 @@ echo "=== controller/build environment isolation proof (FG-222, blocking) ==="
 echo "=== fail-closed evidence sealer proof (FG-223, blocking) ==="
 ./scripts/prove-seal-evidence.sh \
   || { echo "FAIL-CLOSED EVIDENCE SEALER PROOF FAILED"; exit 1; }
+
+# FG-037. The live 250/251/400 comparison stays off CI because it needs the
+# pinned Jenkins lab. Its fail-closed evidence boundaries are pure: fourteen semantic
+# mutations, three controller-identity substitutions, eleven collector/configuration
+# attacks, two manifest attacks and three measured-source bundle attacks must all
+# be rejected before publication.
+echo "=== step-ceiling evidence-boundary proof (FG-037, blocking) ==="
+./scripts/prove-fg037-step-ceiling.sh \
+  evidence/20260827T185436Z-fg037-step-ceiling \
+  || { echo "STEP-CEILING EVIDENCE-BOUNDARY PROOF FAILED"; exit 1; }
+bash scripts/check-fg037-source-bundle.sh \
+  evidence/20260827T185436Z-fg037-step-ceiling/source/fg037-measured-source.bundle \
+  evidence/20260827T185436Z-fg037-step-ceiling/source/allowed_signers \
+  refs/heads/codex/fg-037-step-ceiling-publish \
+  804bf7967cf3708eb3bb44387d59a24310c89607 \
+  488b662000dea32859ae507f92f4dc045f6e8fcd \
+  65674f9a4af80e358f645ad3409765a8738c68b4 \
+  7e09d220260b9117890cf4275fc240d989101f7c \
+  || { echo "STEP-CEILING MEASURED SOURCE BUNDLE FAILED"; exit 1; }
+python3 scripts/check-fg037-manifest.py \
+  --expected-manifest-sha256 \
+  2944f2adde1122ab1d6cfd7cceb911e4b478a643156334ae79a9531fe2205891 \
+  evidence/20260827T185436Z-fg037-step-ceiling \
+  || { echo "STEP-CEILING EVIDENCE MANIFEST FAILED"; exit 1; }
+dotnet run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj \
+  -c Release --no-build -- \
+  --verify-seals evidence/20260827T185436Z-fg037-step-ceiling/receipts \
+  || { echo "STEP-CEILING RECEIPT SEALS FAILED"; exit 1; }
 
 # FG-162. Board rows quoting generated counts are re-derived from the committed
 # ledger. Runs EVERYWHERE including CI — both files are in the repo, unlike the
