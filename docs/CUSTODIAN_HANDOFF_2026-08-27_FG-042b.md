@@ -110,9 +110,10 @@ GitHub recorded three successful exact-head `gate` jobs:
 The repository's own `scripts/review-coverage.py --pr 172` reports both expected
 reviewers covered the current head: Copilot through an exact-head pull-request
 review and Codex through an exact-head clean issue comment. Copilot reviewed all
-11 changed files and generated no comments. `scripts/review-rounds.bb 172`
-reports zero inline comments across zero finding rounds. No earlier green SHA or
-review was substituted for the merged source head.
+11 changed files and generated no comments. The current replacement command,
+`scripts/bin/review-rounds 172`, reports zero inline comments across zero finding
+rounds. No earlier green SHA or review was substituted for the merged source
+head.
 
 ## Scope boundaries to preserve
 
