@@ -6,7 +6,13 @@
   <ItemGroup>
     <Compile Include="Contracts.fs" />
     <Compile Include="Authorization.fs" />
+    <Compile Include="ArtifactSnapshots.fs" />
     <Compile Include="Router.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Fogell.Controller.Api.Tests</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Fogell.Store/Fogell.Store.fsproj" />
