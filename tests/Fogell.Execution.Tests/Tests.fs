@@ -49,13 +49,28 @@ let private request root script =
 /// --marker`). That is an INVALID sleep interval, so the child exited
 /// immediately and every reaping assertion passed vacuously — the daemon it
 /// claimed to reap never existed. Identifying by recorded pid cannot lie.
-let private daemonScript (pidFile: string) =
+let private shellQuote (value: string) = "'" + value.Replace("'", "'\"'\"'") + "'"
+
+let private daemonScriptAfter (delayMilliseconds: int) (pidFile: string) =
     // The parent must not exit until the child has established the evidence
     // this test reads. The old 40ms reader-settlement floor accidentally gave
     // the child time to write; event-driven completion correctly lets reaping
     // win that race. Make the precondition explicit and bounded instead of
     // depending on executor slowness.
-    $"nohup /bin/sh -c 'echo $$ > {pidFile}; exec sleep 600' >/dev/null 2>&1 & i=0; while [ ! -s {pidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; sleep 0.01; done;"
+    let delay =
+        if delayMilliseconds <= 0 then
+            ""
+        else
+            let seconds =
+                (float delayMilliseconds / 1_000.0)
+                    .ToString("0.###", Globalization.CultureInfo.InvariantCulture)
+
+            $"/bin/sleep {seconds}; "
+
+    let quotedPidFile = shellQuote pidFile
+    $"nohup /bin/sh -c '{delay}echo $$ > \"$1\"; exec /bin/sleep 600' fogell-daemon {quotedPidFile} >/dev/null 2>&1 & i=0; while [ ! -s {quotedPidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; /bin/sleep 0.01; done;"
+
+let private daemonScript (pidFile: string) = daemonScriptAfter 0 pidFile
 
 let private waitForPidFile (pidFile: string) =
     let clock = Diagnostics.Stopwatch.StartNew()
@@ -1151,6 +1166,33 @@ let containment =
                   | None -> failtest "reaping should report a termination"
           }
 
+          test "FG-165: success waits for a delayed daemon to establish its precondition" {
+              // A loaded runner can schedule the session leader through exit
+              // before its background child runs. Without daemonScriptAfter's
+              // bounded pid-file handshake, successful group reaping kills the
+              // delayed child before it records its pid and this test fails.
+              let root = Path.Combine(tempRoot (), "fixture ' $ [x]")
+              Directory.CreateDirectory root |> ignore
+              let req = request root ""
+              let pidFile = Path.Combine(req.Workspace, "delayed-daemon.pid")
+
+              let r =
+                  Executor.runStep
+                      { req with
+                          Script = Some(daemonScriptAfter 250 pidFile + " echo spawned") }
+
+              Expect.equal r.Status Success "the synchronized step succeeds"
+
+              match waitForPidFile pidFile with
+              | None -> failtest "the delayed daemon was reaped before establishing the test precondition"
+              | Some pid ->
+                  Expect.isTrue (waitForReap pid) $"delayed daemon {pid} must be reaped after success"
+
+                  match r.Termination with
+                  | Some t -> Expect.equal t.LeakedProcesses 0 "the established daemon was fully reaped"
+                  | None -> failtest "successful group reaping must report its termination"
+          }
+
           test "BEAT JENKINS: a backgrounded child is reaped after a TIMEOUT too" {
               let root = tempRoot ()
               let req = request root ""
@@ -1427,48 +1469,60 @@ let eventDrivenWaits =
           test "a delayed pre-signal user Terminated line does not suppress synthetic narration" {
               let root = tempRoot ()
               let readyFile = Path.Combine(root, "user-terminated.ready")
+              let signalFile = Path.Combine(root, "user-terminated.signal")
               use callbackEntered = new Threading.ManualResetEventSlim(false)
               use interruptObserved = new Threading.ManualResetEventSlim(false)
+              use abortFixture = new Threading.ManualResetEventSlim(false)
               use releaseCallback = new Threading.ManualResetEventSlim(false)
               let streamed = Collections.Concurrent.ConcurrentQueue<string>()
 
               let releaser =
                   Threading.Tasks.Task.Run(fun () ->
-                      let clock = Diagnostics.Stopwatch.StartNew()
-
-                      while not (File.Exists readyFile) && clock.ElapsedMilliseconds < 3_000L do
-                          Threading.Thread.Sleep 5
-
-                      interruptObserved.Wait 3_000 |> ignore
-                      // Keep the user callback in flight while the interrupt is
-                      // observed and the bounded pre-signal snapshot is taken.
-                      Threading.Thread.Sleep 150
-                      releaseCallback.Set())
+                      let interrupted = interruptObserved.Wait 3_000
+                      if not interrupted then abortFixture.Set()
+                      // The trap runs only after ProcessGroup has taken its
+                      // pre-signal output snapshot and delivered TERM. Waiting
+                      // for its marker keeps the already-ingested user callback
+                      // in flight across that boundary without a timing guess.
+                      let signalled = interrupted && waitForFile signalFile 3_000
+                      releaseCallback.Set()
+                      interrupted, signalled)
 
               let onLine line =
                   streamed.Enqueue line
 
-                  if line = "hold-user-callback" then
+                  if line = "Terminated" then
                       callbackEntered.Set()
-                      releaseCallback.Wait 3_000 |> ignore
+                      if not (releaseCallback.Wait 3_000) then
+                          failwith "TERM did not cross the pre-signal snapshot while the user callback was held"
 
               let result =
                   ProcessGroup.run
                       { RunRequest.create (
-                            $"#!/bin/sh\ntrap 'exit 0' TERM\necho hold-user-callback\necho Terminated\nprintf ready > '{readyFile}'\nwhile :; do :; done",
+                            $"#!/bin/sh\ntrap 'printf signal > \"{signalFile}\"; exit 0' TERM\necho Terminated\nprintf ready > '{readyFile}'\nwhile :; do :; done",
                             root) with
                           GraceMs = 500
                           Interrupt =
                               Some(fun () ->
-                                  let ready = File.Exists readyFile
+                                  // The callback starts only after the reader has
+                                  // appended the line to its classification sink.
+                                  // Requiring both handshakes makes the line
+                                  // deterministically pre-signal while its user
+                                  // callback remains deliberately incomplete.
+                                  let ready = File.Exists readyFile && callbackEntered.IsSet
                                   if ready then interruptObserved.Set()
-                                  ready)
+                                  // A reader/callback regression must fail this
+                                  // test promptly instead of leaving its endless
+                                  // shell alive until the outer CI timeout.
+                                  ready || abortFixture.IsSet)
                           OnLine = Some onLine }
 
-              releaser.GetAwaiter().GetResult()
+              let interruptCrossed, signalCrossed = releaser.GetAwaiter().GetResult()
               Expect.isTrue (File.Exists readyFile) "the script printed before requesting interruption"
               Expect.isTrue callbackEntered.IsSet "the pre-signal user callback was genuinely delayed"
-              Expect.equal result.Outcome Cancelled "the ready-file interrupt ended the step"
+              Expect.isTrue interruptCrossed "the fixture observed the interrupt before releasing the callback"
+              Expect.isTrue signalCrossed "the callback remained delayed until TERM crossed the snapshot boundary"
+              Expect.equal result.Outcome Cancelled "the synchronized interrupt ended the step"
 
               let terminatedCount =
                   streamed.ToArray()
