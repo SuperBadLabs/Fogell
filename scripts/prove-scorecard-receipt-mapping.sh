@@ -13,7 +13,12 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-GENERATOR="$PWD/scripts/generate-scorecard.bb"
+GENERATOR="$PWD/scripts/bin/generate-scorecard"
+if ! audit_check=$(./scripts/build-audits.sh --check 2>&1); then
+  echo "SCORECARD RECEIPT-MAPPING PROOF FAILED: audit binaries missing or stale — run scripts/build-audits.sh" >&2
+  printf '%s\n' "$audit_check" | tail -20 >&2
+  exit 1
+fi
 LAB=$(mktemp -d /tmp/fogell-scorecard-mapping-proof.XXXXXX)
 trap 'rm -rf "$LAB"' EXIT
 
@@ -22,23 +27,28 @@ new_root() {
   local root="$LAB/$name"
   mkdir -p "$root/scripts" "$root/bin" "$root/docs" \
     "$root/differential/cases" "$root/differential/receipts"
-  cp "$GENERATOR" "$root/scripts/generate-scorecard.bb"
+  mkdir -p "$root/scripts/bin"
+  cp "$GENERATOR" "$root/scripts/bin/generate-scorecard"
   cat > "$root/scripts/verify-corpus.sh" <<'EOF'
 #!/bin/sh
 exit 0
 EOF
   cat > "$root/bin/dotnet" <<'EOF'
 #!/bin/sh
+if [ -e scorer-refuse ]; then
+  printf 'planted scorer stdout detail\n'
+  exit 1
+fi
 printf 'file\tverdict\tcode\tstages\tsteps\tdetail\n'
 EOF
-  chmod +x "$root/scripts/generate-scorecard.bb" \
+  chmod +x "$root/scripts/bin/generate-scorecard" \
     "$root/scripts/verify-corpus.sh" "$root/bin/dotnet"
   printf '%s\n' "$root"
 }
 
 run_generator() {
   local root=$1
-  PATH="$root/bin:$PATH" "$root/scripts/generate-scorecard.bb" 2>&1
+  PATH="$root/bin:$PATH" "$root/scripts/bin/generate-scorecard" 2>&1
 }
 
 write_case() {
@@ -60,6 +70,20 @@ MIDDLE=202401020000.00
 NEWER=202401030000.00
 
 root=$(new_root mapping)
+
+touch "$root/scorer-refuse"
+set +e
+scorer_output=$(run_generator "$root")
+scorer_rc=$?
+set -e
+rm -f "$root/scorer-refuse"
+if [ "$scorer_rc" -eq 0 ] \
+  || ! grep -Fq 'FAIL: corpus scorer did not run' <<<"$scorer_output" \
+  || ! grep -Fq 'planted scorer stdout detail' <<<"$scorer_output"; then
+  echo 'FAIL: scorer stdout diagnostic was discarded'
+  printf '%s\n' "$scorer_output" | sed 's/^/  | /'
+  exit 1
+fi
 
 # A literal `.b1` singleton is the reported defect. The two multi-build fixtures
 # hold both directions: every receipt can be stale independently, and two stale
@@ -144,4 +168,4 @@ if find "$collision/docs" -mindepth 1 -type f -print -quit | grep -q .; then
   exit 1
 fi
 
-echo "SCORECARD RECEIPT-MAPPING PROOF: literal .b1, independent and repeated multi-build warnings, fresh singleton controls, exact sorting, and pre-map collision refusal all hold"
+echo "SCORECARD RECEIPT-MAPPING PROOF: literal .b1, independent and repeated multi-build warnings, fresh singleton controls, exact sorting, pre-map collision refusal, and scorer stdout diagnostics all hold"
