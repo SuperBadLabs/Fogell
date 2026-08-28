@@ -12,11 +12,27 @@ mode=$1
 workspace=$2
 shift 2
 
-if [[ $workspace != /* ]] || [ ! -d "$workspace" ] || [ -L "$workspace" ]; then
-  echo "REFUSED: controlled dotnet workspace must be one real absolute directory" >&2
+if [[ $workspace != /var/tmp/fogell-fg037-source.* ]] \
+  || [ ! -d "$workspace" ] || [ -L "$workspace" ]; then
+  echo "REFUSED: controlled dotnet workspace must be one root-owned private directory" >&2
   exit 2
 fi
 workspace=$(/usr/bin/realpath -- "$workspace")
+var_tmp_mode=$(/usr/bin/stat -Lc %a -- /var/tmp)
+if [ "$(/usr/bin/stat -Lc %u -- "$workspace")" != 0 ] \
+  || [ "$(/usr/bin/stat -Lc %u -- /var/tmp)" != 0 ] \
+  || [ -L /var/tmp ] || [ "$(/usr/bin/realpath -- /var/tmp)" != /var/tmp ] \
+  || [[ ! $var_tmp_mode =~ ^[0-7]+$ ]] \
+  || (( (8#$var_tmp_mode & 01000) == 0 )); then
+  echo "REFUSED: controlled dotnet workspace ancestry is not root-owned" >&2
+  exit 2
+fi
+workspace_mode=$(/usr/bin/stat -Lc %a -- "$workspace")
+if [[ ! $workspace_mode =~ ^[0-7]+$ ]] \
+  || (( (8#$workspace_mode & 0022) != 0 )); then
+  echo "REFUSED: controlled dotnet workspace namespace must be read-only" >&2
+  exit 2
+fi
 source_root=$workspace/source
 if [ ! -d "$source_root" ] || [ -L "$source_root" ]; then
   echo "REFUSED: controlled dotnet source root must be one real directory" >&2
@@ -27,13 +43,24 @@ if [[ $source_root != "$workspace/"* ]]; then
   echo "REFUSED: controlled dotnet source root escapes its private workspace" >&2
   exit 2
 fi
+source_mode=$(/usr/bin/stat -Lc %a -- "$source_root")
+if [ "$(/usr/bin/stat -Lc %u -- "$source_root")" != 0 ] \
+  || [[ ! $source_mode =~ ^[0-7]+$ ]] \
+  || (( (8#$source_mode & 0022) != 0 )); then
+  echo "REFUSED: controlled dotnet source root is writable by the probe identity" >&2
+  exit 2
+fi
 source_global_json=$source_root/global.json
 source_build_props=$source_root/Directory.Build.props
 source_build_targets=$source_root/Directory.Build.targets
 source_packages_props=$source_root/Directory.Packages.props
 for governed_build_input in "$source_global_json" "$source_build_props" \
   "$source_build_targets" "$source_packages_props"; do
-  if [ ! -f "$governed_build_input" ] || [ -L "$governed_build_input" ]; then
+  governed_mode=$(/usr/bin/stat -Lc %a -- "$governed_build_input" 2>/dev/null || true)
+  if [ ! -f "$governed_build_input" ] || [ -L "$governed_build_input" ] \
+    || [ "$(/usr/bin/stat -Lc %u -- "$governed_build_input" 2>/dev/null)" != 0 ] \
+    || [[ ! $governed_mode =~ ^[0-7]+$ ]] \
+    || (( (8#$governed_mode & 0022) != 0 )); then
     echo "REFUSED: controlled dotnet source root lacks real governed build inputs" >&2
     exit 2
   fi
@@ -54,11 +81,14 @@ bundle_cache=$workspace/dotnet-bundle-cache
 build_cwd=$workspace/dotnet-cwd
 /usr/bin/mkdir -p "$build_home" "$build_tmp" "$nuget_packages" \
   "$nuget_cache" "$bundle_cache" "$build_cwd"
-if [ -L "$build_cwd" ] \
-  || [[ $(/usr/bin/realpath -- "$build_cwd") != "$workspace/"* ]]; then
-  echo "REFUSED: controlled dotnet working directory escapes its private workspace" >&2
-  exit 2
-fi
+for writable_dir in "$build_home" "$build_tmp" "$nuget_packages" \
+  "$nuget_cache" "$bundle_cache" "$build_cwd"; do
+  if [ ! -d "$writable_dir" ] || [ -L "$writable_dir" ] \
+    || [[ $(/usr/bin/realpath -- "$writable_dir") != "$workspace/"* ]]; then
+    echo "REFUSED: controlled dotnet writable directory is not one real directory" >&2
+    exit 2
+  fi
+done
 build_global_json=$build_cwd/global.json
 if [ -e "$build_global_json" ] || [ -L "$build_global_json" ]; then
   if [ ! -f "$build_global_json" ] || [ -L "$build_global_json" ] \

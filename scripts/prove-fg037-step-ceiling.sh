@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # FG-037. Mutation proof for the retained-evidence checkers.
 set -euo pipefail
+PATH=/usr/local/bin:/usr/bin:/bin
+export PATH
 script_source_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 publication_repo_root=${FG037_PUBLICATION_REPO_ROOT:-$script_source_root}
 cd "$publication_repo_root"
@@ -13,7 +15,18 @@ fi
 
 source_dir=$1
 scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+msbuild_workspace=
+proof_cleanup() {
+  set +e
+  if [[ $msbuild_workspace == /var/tmp/fogell-fg037-source.* ]] \
+    && [ -d "$msbuild_workspace" ] && [ ! -L "$msbuild_workspace" ] \
+    && [ "$(stat -Lc %u -- "$msbuild_workspace" 2>/dev/null)" = 0 ]; then
+    /usr/bin/sudo -n /bin/chmod -R u+w -- "$msbuild_workspace"
+    /usr/bin/sudo -n /bin/rm -rf --one-file-system -- "$msbuild_workspace"
+  fi
+  rm -rf "$scratch"
+}
+trap proof_cleanup EXIT
 
 check() {
   python3 "$script_source_root/scripts/check-fg037-step-ceiling.py" \
@@ -318,7 +331,29 @@ fi
 echo "  contained hostile overrides across nested workspace/wipe/env/git commands"
 
 msbuild_case=$scratch/msbuild-environment
-mkdir -p "$msbuild_case/workspace/source" "$msbuild_case/ambient-cwd" \
+proof_var_tmp_mode=$(/usr/bin/stat -Lc %a -- /var/tmp 2>/dev/null || true)
+if [ ! -d /var/tmp ] || [ -L /var/tmp ] \
+  || [ "$(/usr/bin/realpath -- /var/tmp 2>/dev/null)" != /var/tmp ] \
+  || [ "$(/usr/bin/stat -Lc %u -- /var/tmp 2>/dev/null)" != 0 ] \
+  || [[ ! $proof_var_tmp_mode =~ ^[0-7]+$ ]] \
+  || (( (8#$proof_var_tmp_mode & 01000) == 0 )); then
+  echo "FAIL: root-workspace proof requires canonical root-owned sticky /var/tmp" >&2
+  exit 1
+fi
+if ! /usr/bin/sudo -n /bin/true; then
+  echo "FAIL: FG-037 root-workspace proof requires noninteractive sudo" >&2
+  exit 1
+fi
+msbuild_workspace=$(/usr/bin/sudo -n /usr/bin/mktemp -d \
+  /var/tmp/fogell-fg037-source.XXXXXXXXXX)
+if [[ $msbuild_workspace != /var/tmp/fogell-fg037-source.* ]] \
+  || [ ! -d "$msbuild_workspace" ] || [ -L "$msbuild_workspace" ] \
+  || [ "$(stat -Lc %u -- "$msbuild_workspace")" != 0 ]; then
+  echo "FAIL: root-owned proof workspace is malformed" >&2
+  exit 1
+fi
+/usr/bin/sudo -n /bin/chmod 0777 "$msbuild_workspace"
+mkdir -p "$msbuild_workspace/source" "$msbuild_case/ambient-cwd" \
   "$msbuild_case/fake-bin"
 safe_dotnet_version=$(python3 - "$script_source_root/global.json" <<'PY'
 import json
@@ -332,19 +367,25 @@ print(value)
 PY
 )
 printf '{"sdk":{"version":"%s","rollForward":"disable"}}\n' \
-  "$safe_dotnet_version" >"$msbuild_case/workspace/source/global.json"
+  "$safe_dotnet_version" >"$msbuild_workspace/source/global.json"
 cp "$script_source_root/Directory.Build.props" \
-  "$msbuild_case/workspace/source/Directory.Build.props"
+  "$msbuild_workspace/source/Directory.Build.props"
 msbuild_marker=$msbuild_case/ambient-target-ran
 build_ancestor_marker=$msbuild_case/ancestor-build-target-ran
 packages_ancestor_marker=$msbuild_case/ancestor-packages-props-ran
-cat >"$msbuild_case/workspace/source/project.proj" <<'PROJECT'
+build_ancestor_file=$msbuild_workspace/Directory.Build.targets
+packages_ancestor_file=$msbuild_workspace/Directory.Packages.props
+safe_project_marker=$msbuild_case/private-workspace-project-ran
+cat >"$msbuild_workspace/source/project.proj" <<'PROJECT'
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
-  <Target Name="Probe" />
+  <Target Name="Probe">
+    <WriteLinesToFile Condition="'$(FG037SafeProjectMarker)' != ''"
+      File="$(FG037SafeProjectMarker)" Lines="safe" />
+  </Target>
 </Project>
 PROJECT
 printf '<Project><Target Name="Injected" BeforeTargets="Probe"><WriteLinesToFile File="%s" Lines="hostile" /></Target></Project>\n' \
@@ -356,7 +397,7 @@ DOTNET_CLI_HOME=$msbuild_case/precondition-home \
   DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 \
   MSBuildEnableWorkloadResolver=false \
   DirectoryBuildTargetsPath=$msbuild_case/hostile.targets \
-  /usr/bin/dotnet msbuild "$msbuild_case/workspace/source/project.proj" \
+  /usr/bin/dotnet msbuild "$msbuild_workspace/source/project.proj" \
   -t:Probe -nologo >/dev/null 2>&1
 if [ ! -f "$msbuild_marker" ]; then
   echo "FAIL: ambient MSBuild attack precondition did not import its target" >&2
@@ -365,29 +406,29 @@ fi
 rm "$msbuild_marker"
 
 printf '<Project><Target Name="InjectedBuildAncestor" BeforeTargets="Probe"><WriteLinesToFile File="%s" Lines="hostile" /></Target></Project>\n' \
-  "$build_ancestor_marker" >"$msbuild_case/Directory.Build.targets"
+  "$build_ancestor_marker" >"$build_ancestor_file"
 DOTNET_CLI_HOME=$msbuild_case/precondition-home \
   DOTNET_CLI_TELEMETRY_OPTOUT=1 \
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
   DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 \
   MSBuildEnableWorkloadResolver=false \
-  /usr/bin/dotnet msbuild "$msbuild_case/workspace/source/project.proj" \
+  /usr/bin/dotnet msbuild "$msbuild_workspace/source/project.proj" \
   -t:Probe -nologo >/dev/null 2>&1
 if [ ! -f "$build_ancestor_marker" ]; then
   echo "FAIL: ancestor Directory.Build.targets attack precondition did not import" >&2
   exit 1
 fi
 rm "$build_ancestor_marker"
-rm "$msbuild_case/Directory.Build.targets"
+rm "$build_ancestor_file"
 
 printf '<Project><Target Name="InjectedPackagesAncestor" BeforeTargets="Probe"><WriteLinesToFile File="%s" Lines="hostile" /></Target></Project>\n' \
-  "$packages_ancestor_marker" >"$msbuild_case/Directory.Packages.props"
+  "$packages_ancestor_marker" >"$packages_ancestor_file"
 DOTNET_CLI_HOME=$msbuild_case/precondition-home \
   DOTNET_CLI_TELEMETRY_OPTOUT=1 \
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
   DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 \
   MSBuildEnableWorkloadResolver=false \
-  /usr/bin/dotnet msbuild "$msbuild_case/workspace/source/project.proj" \
+  /usr/bin/dotnet msbuild "$msbuild_workspace/source/project.proj" \
   -t:Probe -nologo >/dev/null 2>&1
 if [ ! -f "$packages_ancestor_marker" ]; then
   echo "FAIL: ancestor Directory.Packages.props attack precondition did not import" >&2
@@ -395,11 +436,53 @@ if [ ! -f "$packages_ancestor_marker" ]; then
 fi
 rm "$packages_ancestor_marker"
 printf '<Project><Target Name="InjectedBuildAncestor" BeforeTargets="Probe"><WriteLinesToFile File="%s" Lines="hostile" /></Target></Project>\n' \
-  "$build_ancestor_marker" >"$msbuild_case/Directory.Build.targets"
+  "$build_ancestor_marker" >"$build_ancestor_file"
 cp "$script_source_root/Directory.Build.targets" \
-  "$msbuild_case/workspace/source/Directory.Build.targets"
+  "$msbuild_workspace/source/Directory.Build.targets"
 cp "$script_source_root/Directory.Packages.props" \
-  "$msbuild_case/workspace/source/Directory.Packages.props"
+  "$msbuild_workspace/source/Directory.Packages.props"
+
+controlled_writable_dirs=(
+  "$msbuild_workspace/dotnet-home"
+  "$msbuild_workspace/tmp"
+  "$msbuild_workspace/nuget-packages"
+  "$msbuild_workspace/nuget-http-cache"
+  "$msbuild_workspace/dotnet-bundle-cache"
+  "$msbuild_workspace/dotnet-cwd"
+)
+mkdir -p -- "${controlled_writable_dirs[@]}"
+set +e
+/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin \
+  /bin/bash --noprofile --norc "$dotnet_wrapper" version \
+  "$msbuild_workspace" >"$scratch/writable-workspace.log" 2>&1
+writable_workspace_rc=$?
+set -e
+if [ "$writable_workspace_rc" -ne 2 ] \
+  || ! grep -Fq "workspace namespace must be read-only" \
+    "$scratch/writable-workspace.log"; then
+  echo "FAIL: controlled dotnet accepted a writable workspace namespace" >&2
+  sed -n '1,80p' "$scratch/writable-workspace.log" >&2
+  exit 1
+fi
+/usr/bin/sudo -n /bin/chown -R root:root "$msbuild_workspace/source"
+/usr/bin/sudo -n /bin/chmod -R a-w,u+rwX,go+rX "$msbuild_workspace/source"
+chmod u+rwx -- "${controlled_writable_dirs[@]}"
+/usr/bin/sudo -n /bin/chmod 0755 "$msbuild_workspace"
+source_identity=$(stat -Lc '%d:%i' "$msbuild_workspace/source")
+set +e
+chmod u+w "$msbuild_workspace" 2>/dev/null
+chmod_rc=$?
+mv "$msbuild_workspace/source" "$msbuild_workspace/source-swapped" 2>/dev/null
+source_swap_rc=$?
+mv "$msbuild_workspace" "$msbuild_workspace-swapped" 2>/dev/null
+workspace_swap_rc=$?
+set -e
+if [ "$chmod_rc" -eq 0 ] || [ "$source_swap_rc" -eq 0 ] \
+  || [ "$workspace_swap_rc" -eq 0 ] \
+  || [ "$(stat -Lc '%d:%i' "$msbuild_workspace/source")" != "$source_identity" ]; then
+  echo "FAIL: probe UID could mutate or replace the root-owned workspace namespace" >&2
+  exit 1
+fi
 
 bash_env_marker=$msbuild_case/bash-env-ran
 fake_env_marker=$msbuild_case/fake-env-ran
@@ -431,11 +514,12 @@ fi
     PATH=$msbuild_case/fake-bin:/usr/local/bin:/usr/bin:/bin \
     /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin \
     /bin/bash --noprofile --norc "$dotnet_wrapper" build \
-    "$msbuild_case/workspace" msbuild \
-    "$msbuild_case/workspace/source/project.proj" \
+    "$msbuild_workspace" msbuild \
+    "$msbuild_workspace/source/project.proj" \
     "-p:DirectoryBuildPropsPath=$msbuild_case/hostile.targets" \
     "-p:DirectoryBuildTargetsPath=$msbuild_case/hostile.targets" \
-    "-p:DirectoryPackagesPropsPath=$msbuild_case/Directory.Packages.props" \
+    "-p:DirectoryPackagesPropsPath=$packages_ancestor_file" \
+    "-p:FG037SafeProjectMarker=$safe_project_marker" \
     -t:Probe -nologo >/dev/null 2>&1
 )
 for inherited_input in \
@@ -451,7 +535,14 @@ for inherited_input in \
     exit 1
   fi
 done
-echo "  cleared ambient Bash, PATH, CWD/SDK, MSBuild-property, and ancestor policy inputs"
+if [ ! -f "$safe_project_marker" ]; then
+  echo "FAIL: controlled dotnet did not remain in its private workspace" >&2
+  exit 1
+fi
+/usr/bin/sudo -n /bin/chmod -R u+w -- "$msbuild_workspace"
+/usr/bin/sudo -n /bin/rm -rf --one-file-system -- "$msbuild_workspace"
+msbuild_workspace=
+echo "  cleared ambient Bash, PATH, CWD/SDK, MSBuild policy, and same-UID namespace inputs"
 
 fresh
 sed -i 's/^jenkins-core: 2\.568\.1$/jenkins-core: 9.99.9/' \

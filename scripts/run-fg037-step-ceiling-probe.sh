@@ -4,6 +4,8 @@
 # 251/400 cases are supposed to diverge. Retain them as evidence, never as
 # canonical compatibility cases or receipts.
 set -euo pipefail
+PATH=/usr/local/bin:/usr/bin:/bin
+export PATH
 
 immutable_runner_fd=${FOGELL_FG037_IMMUTABLE_RUNNER_FD:-}
 immutable_runner_path=
@@ -21,6 +23,7 @@ if [ -n "$immutable_runner_fd" ]; then
 else
   cd "$(dirname "${BASH_SOURCE[0]}")/.."
 fi
+
 unset FOGELL_FG037_IMMUTABLE_RUNNER_FD FOGELL_FG037_PHYSICAL_REPO_ROOT
 
 if [ "$#" -ne 1 ]; then
@@ -51,8 +54,12 @@ cleanup() {
     [ -z "$snapshot" ] || rm -f -- "$snapshot"
   done
   if [ -n "$source_workspace" ]; then
-    chmod -R u+w -- "$source_workspace"
-    rm -rf -- "$source_workspace"
+    if [[ $source_workspace == /var/tmp/fogell-fg037-source.* ]] \
+      && [ -d "$source_workspace" ] && [ ! -L "$source_workspace" ] \
+      && [ "$(stat -Lc %u -- "$source_workspace" 2>/dev/null)" = 0 ]; then
+      /usr/bin/sudo -n /bin/chmod -R u+w -- "$source_workspace"
+      /usr/bin/sudo -n /bin/rm -rf --one-file-system -- "$source_workspace"
+    fi
   fi
 }
 trap cleanup EXIT
@@ -327,10 +334,30 @@ if [ -z "$immutable_runner_fd" ]; then
   chmod a-w,u+x "$immutable_runner_tmp"
   exec 9<"$immutable_runner_tmp"
   rm -f -- "$immutable_runner_tmp" "$graft_file"
-  exec env \
+  immutable_runner_env=(
+    "PATH=$PATH"
+    "HOME=${HOME:?}"
+    LANG=C.UTF-8
+    LC_ALL=C.UTF-8
+    "FOGELL_JENKINS_URL=$FOGELL_JENKINS_URL"
+    "FOGELL_JENKINS_CORE=$FOGELL_JENKINS_CORE"
+    "FOGELL_JENKINS_HOST=$FOGELL_JENKINS_HOST"
+    "FOGELL_JENKINS_CONTAINER=$FOGELL_JENKINS_CONTAINER"
+    "FOGELL_JENKINS_WORKSPACE_CMD=${FOGELL_JENKINS_WORKSPACE_CMD:-}"
+    "FOGELL_JENKINS_WIPE_CMD=${FOGELL_JENKINS_WIPE_CMD:-}"
+    "FOGELL_JENKINS_ENV_CMD=${FOGELL_JENKINS_ENV_CMD:-}"
+    "FOGELL_JENKINS_GIT_VERSION_CMD=${FOGELL_JENKINS_GIT_VERSION_CMD:-}"
+    "FOGELL_JENKINS_RAW_CONSOLE_JOB=${FOGELL_JENKINS_RAW_CONSOLE_JOB:-}"
+    "FOGELL_JENKINS_RAW_CONSOLE_BUILD=${FOGELL_JENKINS_RAW_CONSOLE_BUILD:-}"
+    "FOGELL_JENKINS_RAW_CONSOLE_PATH=${FOGELL_JENKINS_RAW_CONSOLE_PATH:-}"
+  )
+  if [ -n "${SSH_AUTH_SOCK:-}" ]; then
+    immutable_runner_env+=("SSH_AUTH_SOCK=$SSH_AUTH_SOCK")
+  fi
+  exec /usr/bin/env -i "${immutable_runner_env[@]}" \
     FOGELL_FG037_IMMUTABLE_RUNNER_FD=9 \
     "FOGELL_FG037_PHYSICAL_REPO_ROOT=$physical_repo_root" \
-    bash /proc/self/fd/9 "$@"
+    /bin/bash /proc/self/fd/9 "$@"
 fi
 runner_head_snapshot=$(mktemp)
 clean_git show HEAD:scripts/run-fg037-step-ceiling-probe.sh \
@@ -367,10 +394,41 @@ source_bundle_ref=HEAD
 # a concurrent edit-and-restore there cannot influence the measured executable.
 # Only project-local bin/obj directories are writable; every governed source
 # file and each parent namespace the compiler resolves stays read-only.
-source_workspace=$(mktemp -d)
+var_tmp_mode=$(/usr/bin/stat -Lc %a -- /var/tmp 2>/dev/null || true)
+if [ ! -d /var/tmp ] || [ -L /var/tmp ] \
+  || [ "$(/usr/bin/realpath -- /var/tmp 2>/dev/null)" != /var/tmp ] \
+  || [ "$(/usr/bin/stat -Lc %u -- /var/tmp 2>/dev/null)" != 0 ] \
+  || [[ ! $var_tmp_mode =~ ^[0-7]+$ ]] \
+  || (( (8#$var_tmp_mode & 01000) == 0 )); then
+  echo "REFUSED: FG-037 requires canonical root-owned sticky /var/tmp" >&2
+  exit 2
+fi
+if [ ! -x /usr/bin/sudo ] || ! /usr/bin/sudo -n /bin/true; then
+  echo "REFUSED: FG-037 requires noninteractive root workspace setup" >&2
+  exit 2
+fi
+source_workspace=$(/usr/bin/sudo -n /usr/bin/mktemp -d \
+  /var/tmp/fogell-fg037-source.XXXXXXXXXX)
+if [[ $source_workspace != /var/tmp/fogell-fg037-source.* ]] \
+  || [ ! -d "$source_workspace" ] || [ -L "$source_workspace" ] \
+  || [ "$(stat -Lc %u -- "$source_workspace")" != 0 ]; then
+  echo "REFUSED: FG-037 root-owned source workspace is malformed" >&2
+  exit 2
+fi
 source_snapshot=$source_workspace/source
-mkdir -p "$source_snapshot"
-clean_git archive --format=tar "$source_head" | tar -xf - -C "$source_snapshot"
+/usr/bin/sudo -n /usr/bin/install -d -o root -g root -m 0755 \
+  "$source_snapshot"
+clean_git archive --format=tar "$source_head" \
+  | /usr/bin/sudo -n /bin/tar --no-same-owner --no-same-permissions \
+      -xf - -C "$source_snapshot"
+/usr/bin/sudo -n /bin/chmod -R a-w,u+rwX,go+rX -- "$source_snapshot"
+/usr/bin/sudo -n /bin/chmod 0755 -- "$source_workspace"
+root_export_violation=$(/usr/bin/find "$source_snapshot" -xdev \
+  \( ! -user root -o \( ! -type l -perm /022 \) \) -print -quit)
+if [ -n "$root_export_violation" ]; then
+  echo "REFUSED: exported HEAD contains a non-root-owned or group/other-writable path: $root_export_violation" >&2
+  exit 2
+fi
 if ! require_raw_tracked_inputs "$source_snapshot"; then
   echo "REFUSED: exported HEAD source bytes or modes differ from the recorded index" >&2
   exit 2
@@ -383,19 +441,43 @@ while IFS= read -r -d '' project; do
     echo "REFUSED: exported HEAD contains a pre-existing project bin/obj path" >&2
     exit 2
   fi
-  mkdir -p "$project_dir/bin" "$project_dir/obj"
+  /usr/bin/sudo -n /usr/bin/install -d -o "$(/usr/bin/id -u)" \
+    -g "$(/usr/bin/id -g)" \
+    -m 0700 "$project_dir/bin" "$project_dir/obj"
   build_output_dirs+=("$project_dir/bin" "$project_dir/obj")
-done < <(find "$source_snapshot/src" "$source_snapshot/tools" \
+done < <(/usr/bin/find "$source_snapshot/src" "$source_snapshot/tools" \
   -type f -name '*.fsproj' -print0)
 for output_dir in "${build_output_dirs[@]}"; do
   if [ ! -d "$output_dir" ] || [ -L "$output_dir" ] \
-    || [[ $(realpath "$output_dir") != "$source_snapshot"/* ]]; then
+    || [[ $(/usr/bin/realpath "$output_dir") != "$source_snapshot"/* ]]; then
     echo "REFUSED: project build output directory escapes the exported HEAD" >&2
     exit 2
   fi
 done
-chmod -R a-w "$source_snapshot"
-chmod u+rwx -- "${build_output_dirs[@]}"
+workspace_writable_dirs=(
+  "$source_workspace/dotnet-home"
+  "$source_workspace/tmp"
+  "$source_workspace/nuget-packages"
+  "$source_workspace/nuget-http-cache"
+  "$source_workspace/dotnet-bundle-cache"
+  "$source_workspace/dotnet-cwd"
+)
+/usr/bin/sudo -n /usr/bin/install -d -o "$(/usr/bin/id -u)" \
+  -g "$(/usr/bin/id -g)" \
+  -m 0700 -- "${workspace_writable_dirs[@]}"
+for writable_dir in "${workspace_writable_dirs[@]}"; do
+  if [ ! -d "$writable_dir" ] || [ -L "$writable_dir" ] \
+    || [[ $(/usr/bin/realpath "$writable_dir") \
+      != "$(/usr/bin/realpath "$source_workspace")/"* ]]; then
+    echo "REFUSED: controlled build writable directory escapes its private workspace" >&2
+    exit 2
+  fi
+done
+chmod u+rwx -- "${build_output_dirs[@]}" "${workspace_writable_dirs[@]}"
+# The root-owned workspace and its sticky root-owned /var/tmp parent prevent a
+# process running as the probe UID from replacing either the workspace or its
+# source entry. Only the pre-created output/cache children are probe-writable.
+/usr/bin/sudo -n /bin/chmod 0755 -- "$source_workspace"
 
 collector_snapshot=$(mktemp)
 identity_checker_snapshot=$(mktemp)
@@ -578,6 +660,7 @@ export FOGELL_JENKINS_RAW_CONSOLE_PATH=$jenkins_251_console
 # stale-binary route if the CLI were ever removed from that solution.
 controlled_dotnet build \
   build "$cli_project" -c Release --nologo --no-incremental \
+  -m:1 \
   >"$output/build.log" 2>&1
 if [ ! -f "$cli_assembly" ] || [ -L "$cli_assembly" ]; then
   echo "REFUSED: controlled build did not produce the expected real CLI assembly" >&2
