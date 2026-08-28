@@ -16,6 +16,14 @@ bundle_head=$5
 measured_commit=$6
 measured_tree=$7
 
+graft_file=$(mktemp)
+scratch=
+cleanup() {
+  rm -f -- "$graft_file"
+  [ -z "$scratch" ] || rm -rf -- "$scratch"
+}
+trap cleanup EXIT
+
 # Do not let caller-supplied repository/object environment bleed into either
 # the publication checkout or the isolated import. In particular,
 # GIT_ALTERNATE_OBJECT_DIRECTORIES could make an empty bundle appear complete.
@@ -41,7 +49,7 @@ clean_git_env=(
   -u GIT_COMMON_DIR
   GIT_CONFIG_NOSYSTEM=1
   GIT_CONFIG_GLOBAL=/dev/null
-  GIT_GRAFT_FILE=/dev/null/fogell-no-grafts
+  "GIT_GRAFT_FILE=$graft_file"
   GIT_NO_REPLACE_OBJECTS=1
 )
 clean_git() {
@@ -89,7 +97,6 @@ if [ "$(clean_git bundle list-heads "$bundle")" != "$bundle_head $expected_ref" 
 fi
 
 scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
 clean_git -C "$scratch" init -q
 
 # Fetch only the prerequisite and its ancestors. The measured descendant must

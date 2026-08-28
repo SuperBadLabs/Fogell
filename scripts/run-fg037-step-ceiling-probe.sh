@@ -13,6 +13,26 @@ fi
 
 physical_repo_root=$(pwd -P)
 
+# A real empty graft file suppresses legacy graft discovery without relying on
+# an invalid parent path. It is created before the first Git operation and
+# removed together with the later HEAD snapshots.
+graft_file=$(mktemp)
+collector_snapshot=
+identity_checker_snapshot=
+manifest_checker_snapshot=
+source_bundle_checker_snapshot=
+allowed_signers_snapshot=
+cleanup() {
+  rm -f -- "$graft_file"
+  local snapshot
+  for snapshot in "$collector_snapshot" "$identity_checker_snapshot" \
+    "$manifest_checker_snapshot" "$source_bundle_checker_snapshot" \
+    "$allowed_signers_snapshot"; do
+    [ -z "$snapshot" ] || rm -f -- "$snapshot"
+  done
+}
+trap cleanup EXIT
+
 case "$1" in
   /*) output=$1 ;;
   *) output=$PWD/$1 ;;
@@ -54,7 +74,7 @@ clean_git_env=(
   -u GIT_COMMON_DIR
   GIT_CONFIG_NOSYSTEM=1
   GIT_CONFIG_GLOBAL=/dev/null
-  GIT_GRAFT_FILE=/dev/null/fogell-no-grafts
+  "GIT_GRAFT_FILE=$graft_file"
   GIT_NO_REPLACE_OBJECTS=1
 )
 clean_git() {
@@ -158,6 +178,97 @@ clean_input_status() {
     || printf '%s' "$policy_filesystem_status"
 }
 
+require_raw_tracked_inputs() {
+  local raw_index
+  local audit_rc=0
+  raw_index=$(mktemp)
+  clean_git ls-files --stage -z -- \
+    "${engine_input_pathspecs[@]}" "${probe_input_pathspecs[@]}" \
+    >"$raw_index" || audit_rc=$?
+  if [ "$audit_rc" -eq 0 ]; then
+    python3 - "$physical_repo_root" "$raw_index" <<'PY' || audit_rc=$?
+import hashlib
+import os
+import stat
+import sys
+
+
+def refuse(message: str) -> None:
+    print(f"RAW-IDENTITY {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def unchanged(before: os.stat_result, after: os.stat_result, label: str) -> None:
+    fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    if tuple(getattr(before, field) for field in fields) != tuple(
+        getattr(after, field) for field in fields
+    ):
+        refuse(f"tracked input changed while it was read: {label}")
+
+
+def blob_id(payload: bytes) -> bytes:
+    header = b"blob " + str(len(payload)).encode("ascii") + b"\0"
+    return hashlib.sha1(header + payload).hexdigest().encode("ascii")
+
+
+root = os.fsencode(sys.argv[1])
+with open(sys.argv[2], "rb") as handle:
+    records = handle.read().split(b"\0")
+
+for record in records:
+    if not record:
+        continue
+    header, separator, raw_path = record.partition(b"\t")
+    fields = header.split()
+    label = os.fsdecode(raw_path)
+    if not separator or len(fields) != 3:
+        refuse("tracked index entry has an unexpected shape")
+    raw_mode, expected_blob, raw_stage = fields
+    if raw_stage != b"0":
+        refuse(f"tracked input has a non-stage-0 index entry: {label}")
+
+    path = os.path.join(root, raw_path)
+    try:
+        before = os.lstat(path)
+        if raw_mode in (b"100644", b"100755"):
+            if not stat.S_ISREG(before.st_mode):
+                refuse(f"tracked regular input is not a regular file: {label}")
+            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(path, flags)
+            try:
+                opened = os.fstat(descriptor)
+                if not stat.S_ISREG(opened.st_mode) or (
+                    before.st_dev,
+                    before.st_ino,
+                ) != (opened.st_dev, opened.st_ino):
+                    refuse(f"tracked input changed while it was opened: {label}")
+                with os.fdopen(descriptor, "rb", closefd=False) as handle:
+                    payload = handle.read()
+                unchanged(opened, os.fstat(descriptor), label)
+            finally:
+                os.close(descriptor)
+            executable = bool(opened.st_mode & 0o111)
+            if executable != (raw_mode == b"100755"):
+                refuse(f"tracked regular-file executable mode does not match index: {label}")
+            if blob_id(payload) != expected_blob:
+                refuse(f"tracked regular-file raw bytes do not match index blob: {label}")
+        elif raw_mode == b"120000":
+            if not stat.S_ISLNK(before.st_mode):
+                refuse(f"tracked symlink input is not a symlink: {label}")
+            payload = os.readlink(path)
+            unchanged(before, os.lstat(path), label)
+            if blob_id(payload) != expected_blob:
+                refuse(f"tracked symlink target bytes do not match index blob: {label}")
+        else:
+            refuse(f"tracked input has an unsupported index mode {os.fsdecode(raw_mode)}: {label}")
+    except OSError as error:
+        refuse(f"tracked input cannot be read: {label}: {error.strerror}")
+PY
+  fi
+  rm -f -- "$raw_index"
+  return "$audit_rc"
+}
+
 source_head=$(clean_git rev-parse HEAD)
 source_tree=$(clean_git rev-parse 'HEAD^{tree}')
 if [ "$(realpath "$(clean_git rev-parse --show-toplevel)")" \
@@ -169,6 +280,10 @@ input_status=$(clean_input_status)
 if [ -n "$input_status" ]; then
   echo "REFUSED: engine/build or probe inputs differ from HEAD; commit or identify them before probing" >&2
   printf '%s\n' "$input_status" >&2
+  exit 2
+fi
+if ! require_raw_tracked_inputs; then
+  echo "REFUSED: governed input bytes or modes differ from the HEAD index" >&2
   exit 2
 fi
 
@@ -197,7 +312,6 @@ identity_checker_snapshot=$(mktemp)
 manifest_checker_snapshot=$(mktemp)
 source_bundle_checker_snapshot=$(mktemp)
 allowed_signers_snapshot=$(mktemp)
-trap 'rm -f "$collector_snapshot" "$identity_checker_snapshot" "$manifest_checker_snapshot" "$source_bundle_checker_snapshot" "$allowed_signers_snapshot"' EXIT
 clean_git show HEAD:scripts/jenkins-workspace-v2.sh >"$collector_snapshot"
 clean_git show HEAD:scripts/check-fg037-jenkins-identity.sh >"$identity_checker_snapshot"
 clean_git show HEAD:scripts/check-fg037-manifest.py >"$manifest_checker_snapshot"
@@ -228,6 +342,7 @@ require_stable_inputs() {
   if [ "$current_head" != "$source_head" ] \
     || [ "$current_tree" != "$source_tree" ] \
     || [ -n "$current_status" ] \
+    || ! require_raw_tracked_inputs \
     || ! cmp -s "$collector_snapshot" scripts/jenkins-workspace-v2.sh \
     || ! cmp -s "$identity_checker_snapshot" scripts/check-fg037-jenkins-identity.sh \
     || ! cmp -s "$manifest_checker_snapshot" scripts/check-fg037-manifest.py \

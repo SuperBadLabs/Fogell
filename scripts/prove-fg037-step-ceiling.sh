@@ -492,4 +492,34 @@ if [ "$probe_rc" -ne 2 ] \
 fi
 echo "  refused physical engine drift despite hostile core.worktree"
 
-echo "FG-037 proof PASS (14 semantic + 3 controller-identity + 7 collector/configuration + 2 manifest + 3 source-bundle rejection arms)"
+# Git status applies repository-local clean filters. Prove that an attacker
+# cannot use .git/info/attributes plus a filter that returns the HEAD payload to
+# make modified physical engine bytes look clean to porcelain status.
+git -C "$probe_repo" config --unset core.worktree
+git -C "$probe_repo" show HEAD:src/Engine.fs >"$probe_repo/src/Engine.fs"
+git -C "$probe_repo" config filter.constant.clean 'git show HEAD:src/Engine.fs'
+printf '/src/Engine.fs filter=constant\n' >"$probe_repo/.git/info/attributes"
+printf '\n// drift hidden by a repository-local clean filter\n' \
+  >>"$probe_repo/src/Engine.fs"
+if [ -n "$(git -C "$probe_repo" status --short -- src/Engine.fs)" ]; then
+  echo "FAIL: clean-filter attack precondition did not hide the engine drift" >&2
+  exit 1
+fi
+probe_output=$probe_repo/clean-filter-drift-evidence
+set +e
+FOGELL_JENKINS_URL=http://127.0.0.1:1 \
+  "$probe_repo/scripts/run-fg037-step-ceiling-probe.sh" "$probe_output" \
+  >"$scratch/clean-filter-drift.log" 2>&1
+probe_rc=$?
+set -e
+if [ "$probe_rc" -ne 2 ] \
+  || [ -e "$probe_output" ] \
+  || ! grep -Fq "tracked regular-file raw bytes do not match index blob: src/Engine.fs" \
+    "$scratch/clean-filter-drift.log"; then
+  echo "FAIL: probe accepted physical engine drift hidden by a clean filter" >&2
+  sed -n '1,120p' "$scratch/clean-filter-drift.log" >&2
+  exit 1
+fi
+echo "  refused physical engine drift hidden by a repository-local clean filter"
+
+echo "FG-037 proof PASS (14 semantic + 3 controller-identity + 8 collector/configuration + 2 manifest + 3 source-bundle rejection arms)"

@@ -123,7 +123,7 @@ echo "=== fail-closed evidence sealer proof (FG-223, blocking) ==="
 
 # FG-037. The live 250/251/400 comparison stays off CI because it needs the
 # pinned Jenkins lab. Its fail-closed evidence boundaries are pure: fourteen semantic
-# mutations, three controller-identity substitutions, seven collector/configuration
+# mutations, three controller-identity substitutions, eight collector/configuration
 # attacks, two manifest attacks and three measured-source bundle attacks must all
 # be rejected before publication.
 echo "=== step-ceiling evidence-boundary proof (FG-037, blocking) ==="
