@@ -219,12 +219,14 @@ poison_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$poison_respons
 [[ -n "$poison_build_id" ]] \
   || { echo "FG-224 REFUSED: materialization-poison admission returned no build id" >&2; exit 1; }
 
-pipeline=$'pipeline {\n  agent any\n  stages {\n    stage(\'Build\') {\n      steps {\n        echo \'hello-controller-before\'\n        echo "FG224-METADATA:${env.BUILD_NUMBER}:${env.BUILD_ID}:${env.BUILD_DISPLAY_NAME}"\n        sh \'printf QkVHSU4tMjI0 | base64 -d; head -c 20000 /dev/zero | base64 -w0; printf RU5ELTEtMjI0 | base64 -d\'\n        sh \'sleep 5\'\n        echo \'hello-controller-after\'\n      }\n    }\n  }\n}'
+pipeline=$'pipeline {\n  agent any\n  stages {\n    stage(\'Build\') {\n      steps {\n        echo \'hello-controller-before\'\n        echo "FG224-METADATA:${env.BUILD_NUMBER}:${env.BUILD_ID}:${env.BUILD_DISPLAY_NAME}"\n        sh \'printf QkVHSU4tMjI0 | base64 -d; head -c 20000 /dev/zero | base64 -w0; printf RU5ELTEtMjI0 | base64 -d\'\n        sh \'mkdir -p dist; printf "\\\\000\\\\377A\\\\r\\\\nB" > dist/payload.bin\'\n        archiveArtifacts artifacts: \'dist/payload.bin\'\n        sh \'sleep 5\'\n        echo \'hello-controller-after\'\n      }\n    }\n  }\n}'
 
 response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-e2e' \
   -H 'content-type: application/x-jenkinsfile' --data-binary "$pipeline" "$builds_url")
 build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$response")
 [[ -n "$build_id" ]] || { echo "FG-224 REFUSED: admission returned no build id" >&2; exit 1; }
+attempt_id=$(sed -n 's/.*"attempt_id":"\([^"]*\)".*/\1/p' <<<"$response")
+[[ -n "$attempt_id" ]] || { echo "FG-042b REFUSED: admission returned no attempt id" >&2; exit 1; }
 build_number=$(sed -n 's/.*"number":\([0-9][0-9]*\).*/\1/p' <<<"$response")
 [[ "$build_number" = 4 ]] \
   || { echo "FG-224 REFUSED: fourth project admission returned build number ${build_number:-missing}" >&2; exit 1; }
@@ -327,6 +329,30 @@ for _ in $(seq 1 300); do
   sleep 0.05
 done
 grep -q '"status":"success"' <<<"$terminal" || { echo "FG-224 REFUSED: build did not finish" >&2; exit 1; }
+
+# FG-042b. Build + immutable attempt UUID + relative path form the stable URL.
+# Drive the real child archiver above, then require the authenticated controller
+# response to preserve non-UTF-8 bytes and transport metadata exactly.
+printf '\000\377A\r\nB' >"$scratch/expected-artifact.bin"
+artifact_code=$(curl -sS -D "$scratch/artifact.headers" -o "$scratch/artifact.bin" -w '%{http_code}' \
+  -H "$auth" "$builds_url/$build_id/attempts/$attempt_id/artifacts/dist/payload.bin")
+[[ "$artifact_code" = 200 ]] \
+  || { echo "FG-042b REFUSED: artifact retrieval returned $artifact_code" >&2; exit 1; }
+cmp -s "$scratch/expected-artifact.bin" "$scratch/artifact.bin" \
+  || { echo "FG-042b REFUSED: retrieved artifact bytes differ" >&2; exit 1; }
+grep -iq '^content-type: application/octet-stream' "$scratch/artifact.headers" \
+  || { echo "FG-042b REFUSED: artifact content type is not binary" >&2; exit 1; }
+grep -iq '^content-length: 6' "$scratch/artifact.headers" \
+  || { echo "FG-042b REFUSED: artifact content length is not byte-exact" >&2; exit 1; }
+grep -iq '^x-content-type-options: nosniff' "$scratch/artifact.headers" \
+  || { echo "FG-042b REFUSED: artifact response permits content sniffing" >&2; exit 1; }
+
+unauthenticated_artifact_code=$(curl -sS -o "$scratch/artifact-unauthenticated.json" -w '%{http_code}' \
+  "$builds_url/$build_id/attempts/$attempt_id/artifacts/dist/payload.bin")
+[[ "$unauthenticated_artifact_code" = 401 ]] \
+  || { echo "FG-042b REFUSED: unauthenticated artifact retrieval returned $unauthenticated_artifact_code" >&2; exit 1; }
+! cmp -s "$scratch/expected-artifact.bin" "$scratch/artifact-unauthenticated.json" \
+  || { echo "FG-042b REFUSED: unauthenticated response disclosed artifact bytes" >&2; exit 1; }
 
 logs=$(curl -fsS -H "$auth" "$builds_url/$build_id/logs")
 [[ $(grep -o 'hello-controller-before' <<<"$logs" | wc -l | tr -d '[:space:]') = 1 ]] \
@@ -685,4 +711,4 @@ if grep -Fq 'fg224-proof-token-0123456789abcdef' "$host_log" || grep -Fq 'Passwo
   exit 1
 fi
 
-echo "FG-224 PROOF PASS: safe timing refusal; exact execution-preflight admission and idempotency boundary; restart-discovered durable admission; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; attempt-keyed retry journals with same-child deterministic resume; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; terminal event-file cleanup; graceful-shutdown reason event, outbox, and byte-exact recovery file; atomic terminal roll-up"
+echo "FG-224/FG-042b PROOF PASS: safe timing refusal; exact execution-preflight admission and idempotency boundary; restart-discovered durable admission; authenticated byte-exact artifact retrieval; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; attempt-keyed retry journals with same-child deterministic resume; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; terminal event-file cleanup; graceful-shutdown reason event, outbox, and byte-exact recovery file; atomic terminal roll-up"

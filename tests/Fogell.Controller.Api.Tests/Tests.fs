@@ -15,6 +15,7 @@ open Fogell.Domain
 open Fogell.Store
 open Fogell.Controller.Api
 open Fogell.Controller.Host
+open Fogell.Execution
 
 [<DllImport("libc")>]
 extern uint32 private geteuid()
@@ -39,6 +40,10 @@ let private token = String.replicate 32 "k"
 
 let private store = Store(connectionString)
 let private maxPipelineBytes = 1024
+let private stateRoot =
+    IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-controller-api-{Guid.NewGuid():N}")
+
+do IO.Directory.CreateDirectory stateRoot |> ignore
 
 let private startServer maxLogChunks =
     let auth =
@@ -58,6 +63,7 @@ let private startServer maxLogChunks =
         { Store = store
           Auth = auth
           TrustPool = "trusted-linux"
+          StateRoot = stateRoot
           MaxPipelineBytes = maxPipelineBytes
           MaxLogChunks = maxLogChunks }
         app
@@ -126,6 +132,22 @@ let private sendChunked (url: string) (idem: string) (body: byte array) =
     req.Content.Headers.TryAddWithoutValidation("content-type", "application/x-jenkinsfile") |> ignore
     use response = client.Send req
     int response.StatusCode, response.Content.ReadAsStringAsync().Result
+
+let private getArtifact (url: string) bearer =
+    use request = new HttpRequestMessage(HttpMethod.Get, url)
+    bearer
+    |> Option.iter (fun value ->
+        request.Headers.TryAddWithoutValidation("authorization", $"Bearer {value}") |> ignore)
+    use response = client.Send request
+    let body = response.Content.ReadAsByteArrayAsync().Result
+    let contentType = response.Content.Headers.ContentType |> Option.ofObj |> Option.map string
+    let contentLength = response.Content.Headers.ContentLength |> Option.ofNullable
+    let disposition = response.Content.Headers.ContentDisposition |> Option.ofObj |> Option.map string
+    let noSniff =
+        match response.Headers.TryGetValues "X-Content-Type-Options" with
+        | true, values -> values |> Seq.toList
+        | _ -> []
+    int response.StatusCode, body, contentType, contentLength, disposition, noSniff
 
 let private stateRootReadiness =
     let status databaseReady capabilitiesReady launchersReady stateRootReady =
@@ -615,6 +637,7 @@ let endpoints =
                   [ HttpMethod.Post, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds"
                     HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}"
                     HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}/logs"
+                    HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}/attempts/{Guid.NewGuid()}/artifacts/output.bin"
                     HttpMethod.Post, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}/cancel"
                     HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/scheduler/explain" ]
 
@@ -1137,6 +1160,545 @@ let endpoints =
               Expect.stringContains response "invalid_log_cursor" "stable cursor code"
           }
 
+          test "archived binary bytes are retrievable at a stable authenticated attempt URL" {
+              let org, project = freshProject ()
+              let buildsUrl = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+              let _, admission =
+                  send HttpMethod.Post buildsUrl (Some token) (Some "artifact-api") (Some pipeline)
+              let build =
+                  Text.RegularExpressions.Regex.Match(admission, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
+                  |> Guid.Parse
+              let attempt =
+                  Text.RegularExpressions.Regex.Match(admission, "\"attempt_id\":\"([^\"]+)\"").Groups[1].Value
+                  |> Guid.Parse
+                  |> AttemptId
+              let buildKey = build.ToString "N"
+              let workspace = IO.Path.Combine(stateRoot, "artifact-source", buildKey)
+              let relative = "dist/result #1.bin"
+              let source = IO.Path.Combine(workspace, relative)
+              let payload = [| 0uy; 255uy; byte 'A'; 13uy; 10uy; byte 'B' |]
+              IO.Directory.CreateDirectory(IO.Path.GetDirectoryName source) |> ignore
+              IO.File.WriteAllBytes(source, payload)
+
+              let artifactRoot =
+                  IO.Path.Combine(
+                      stateRoot,
+                      "workspaces",
+                      org.Value.ToString "N",
+                      "_artifacts")
+
+              Expect.sequenceEqual
+                  (Publish.archive (ArtifactStore.under artifactRoot) buildKey workspace [ relative ])
+                  [ relative ]
+                  "the production archiver publishes the requested relative path"
+
+              let workspaceRoot = IO.Path.Combine(stateRoot, "workspaces", org.Value.ToString "N")
+              let snapshot =
+                  IO.Path.Combine(workspaceRoot, "_artifact-snapshots", attempt.Value.ToString "N")
+
+              let encodedName = Uri.EscapeDataString "result #1.bin"
+              let artifactUrl = $"{buildsUrl}/{build}/attempts/{attempt.Value}/artifacts/dist/{encodedName}"
+
+              let pendingCode, pendingBody, _, _, _, _ = getArtifact artifactUrl (Some token)
+              Expect.equal pendingCode 409 "mutable output is unavailable before terminal publication"
+              Expect.isFalse (pendingBody = payload) "a queued build cannot disclose archived bytes"
+              Expect.stringContains
+                  (Text.Encoding.UTF8.GetString pendingBody)
+                  "artifact_not_ready"
+                  "the nonterminal refusal has a stable code"
+
+              let owner = "artifact-api-owner"
+              let fence =
+                  match store.OfferAttempt(org, attempt, owner, 60) with
+                  | Ok value -> value
+                  | Error error -> failtestf "offer failed: %s" error
+              Expect.isTrue (store.AcceptAttempt(org, attempt, fence, owner)) "artifact attempt accepted"
+              match store.PublishTerminal(org, attempt, fence, owner, Success) with
+              | Ok () -> ()
+              | Error error -> failtestf "terminal publication failed: %s" error
+
+              let retryAttempt = AttemptId(Guid.NewGuid())
+
+              for retrievalNumber in 1..2 do
+                  let code, downloaded, contentType, contentLength, disposition, noSniff =
+                      getArtifact artifactUrl (Some token)
+                  Expect.equal code 200 $"stable retrieval {retrievalNumber} succeeds"
+                  Expect.sequenceEqual downloaded payload $"retrieval {retrievalNumber} is byte-exact"
+                  Expect.equal contentType (Some "application/octet-stream") "binary content is never interpreted"
+                  Expect.equal contentLength (Some(int64 payload.Length)) "the transport declares the exact byte count"
+                  Expect.isTrue
+                      (disposition |> Option.exists (fun value -> value.Contains "result%20%231.bin"))
+                      "the attachment name is safely URL-encoded"
+                  Expect.contains noSniff "nosniff" "clients are told not to infer an active content type"
+
+                  if retrievalNumber = 1 then
+                      Expect.isTrue
+                          (IO.Directory.Exists snapshot)
+                          "the first terminal read adopts the legacy build-keyed artifact directory"
+                      Expect.isFalse
+                          (IO.Directory.Exists(IO.Path.Combine(artifactRoot, buildKey)))
+                          "legacy mutable staging no longer aliases the published attempt"
+                      Expect.equal
+                          (ArtifactSnapshots.finalize stateRoot org.Value build attempt.Value)
+                          (Ok snapshot)
+                          "snapshot publication replays after a crash between rename and terminal truth"
+
+                      let retryStaging = IO.Path.Combine(artifactRoot, buildKey)
+                      IO.Directory.CreateDirectory retryStaging |> ignore
+                      let ordinaryMissingCode, ordinaryMissingBody =
+                          send HttpMethod.Get
+                              $"{buildsUrl}/{build}/attempts/{attempt.Value}/artifacts/not-archived.bin"
+                              (Some token) None None
+                      Expect.equal ordinaryMissingCode 404 "a missing file in an existing snapshot stays a normal 404"
+                      Expect.stringContains ordinaryMissingBody "artifact_not_found" "the ordinary miss is named"
+                      Expect.isTrue
+                          (IO.Directory.Exists retryStaging)
+                          "an ordinary miss does not invoke legacy migration or collide with retry staging"
+
+                      match store.DecideRetry(org, attempt, 2, retryAttempt) with
+                      | Ok _ -> ()
+                      | Error error -> failtestf "retry decision failed: %A" error
+
+                      let retryPayload = [| 6uy; 5uy; 4uy; 3uy; 2uy; 1uy |]
+                      IO.File.WriteAllBytes(source, retryPayload)
+                      Expect.sequenceEqual
+                          (Publish.archive (ArtifactStore.under artifactRoot) buildKey workspace [ relative ])
+                          [ relative ]
+                          "the retry can overwrite only its mutable build-key staging path"
+
+              let retryCode, retryBody, _, _, _, _ =
+                  getArtifact
+                      $"{buildsUrl}/{build}/attempts/{retryAttempt.Value}/artifacts/dist/{encodedName}"
+                      (Some token)
+              Expect.equal retryCode 409 "the queued retry has no published artifact snapshot"
+              Expect.isFalse (retryBody = payload) "the queued retry cannot borrow its parent's bytes"
+
+              let unauthenticated, leaked, _, _, _, _ = getArtifact artifactUrl None
+              Expect.equal unauthenticated 401 "artifact retrieval is authenticated"
+              Expect.isFalse (leaked = payload) "an unauthenticated response contains no artifact bytes"
+
+              let wrongProject = ProjectId(Guid.NewGuid())
+              store.CreateProject(org, $"org-{org.Value}", wrongProject, "artifact-wrong-project")
+              let wrongCode, wrongBody =
+                  send HttpMethod.Get
+                      $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{wrongProject.Value}/builds/{build}/attempts/{attempt.Value}/artifacts/dist/{encodedName}"
+                      (Some token) None None
+              Expect.equal wrongCode 404 "a physical artifact cannot bypass project ownership"
+              Expect.stringContains wrongBody "not_found" "the ownership refusal reveals no artifact path"
+
+              let missingCode, missingBody =
+                  send HttpMethod.Get
+                      $"{buildsUrl}/{build}/attempts/{attempt.Value}/artifacts/dist/missing.bin"
+                      (Some token) None None
+              Expect.equal missingCode 404 "an absent artifact is not an empty success"
+              Expect.stringContains missingBody "artifact_not_found" "the missing artifact has a stable code"
+
+              let outside = IO.Path.Combine(stateRoot, $"outside-{buildKey}.bin")
+              IO.File.WriteAllBytes(outside, [| 9uy; 8uy; 7uy |])
+              let escape =
+                  IO.Path.Combine(
+                      stateRoot,
+                      "workspaces",
+                      org.Value.ToString "N",
+                      "_artifact-snapshots",
+                      attempt.Value.ToString "N",
+                      "dist",
+                      "escape.bin")
+              IO.File.CreateSymbolicLink(escape, outside) |> ignore
+              let escapeCode, escapeBody =
+                  send HttpMethod.Get
+                      $"{buildsUrl}/{build}/attempts/{attempt.Value}/artifacts/dist/escape.bin"
+                      (Some token) None None
+              Expect.equal escapeCode 404 "a final symlink is not downloadable"
+              Expect.stringContains escapeBody "artifact_not_found" "the symlink target is not disclosed"
+
+              let savedSnapshot = snapshot + ".saved"
+              IO.Directory.Move(snapshot, savedSnapshot)
+              let outsideSnapshot = IO.Path.Combine(stateRoot, $"outside-snapshot-{buildKey}")
+              let outsideArtifact = IO.Path.Combine(outsideSnapshot, relative)
+              IO.Directory.CreateDirectory(IO.Path.GetDirectoryName outsideArtifact) |> ignore
+              IO.File.WriteAllBytes(outsideArtifact, payload)
+              IO.Directory.CreateSymbolicLink(snapshot, outsideSnapshot) |> ignore
+              let rootEscapeCode, rootEscapeBytes, _, _, _, _ = getArtifact artifactUrl (Some token)
+              Expect.equal rootEscapeCode 404 "a symlinked attempt snapshot root is not downloadable"
+              Expect.isFalse (rootEscapeBytes = payload) "a replaced snapshot root cannot disclose outside bytes"
+
+              // The upgrade adoption callback runs while the terminal attempt
+              // is locked. A retry must not reopen the build-key staging path
+              // until that callback has frozen the parent's snapshot.
+              let lockOrg, lockProject = freshProject ()
+              let lockBuildsUrl =
+                  $"{baseUrl}/api/v1/organizations/{lockOrg.Value}/projects/{lockProject.Value}/builds"
+              let _, lockAdmission =
+                  send HttpMethod.Post lockBuildsUrl (Some token) (Some "artifact-lock") (Some pipeline)
+              let lockBuild =
+                  Text.RegularExpressions.Regex.Match(lockAdmission, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
+                  |> Guid.Parse
+                  |> BuildId
+              let lockAttempt =
+                  Text.RegularExpressions.Regex.Match(lockAdmission, "\"attempt_id\":\"([^\"]+)\"").Groups[1].Value
+                  |> Guid.Parse
+                  |> AttemptId
+              let lockOwner = "artifact-lock-owner"
+              let lockFence =
+                  match store.OfferAttempt(lockOrg, lockAttempt, lockOwner, 60) with
+                  | Ok value -> value
+                  | Error error -> failtestf "offer failed: %s" error
+              Expect.isTrue
+                  (store.AcceptAttempt(lockOrg, lockAttempt, lockFence, lockOwner))
+                  "migration-race attempt accepted"
+              match store.PublishTerminal(lockOrg, lockAttempt, lockFence, lockOwner, Success) with
+              | Ok () -> ()
+              | Error error -> failtestf "terminal publication failed: %s" error
+
+              use migrationEntered = new Threading.ManualResetEventSlim(false)
+              use releaseMigration = new Threading.ManualResetEventSlim(false)
+              let migration =
+                  Threading.Tasks.Task.Run(fun () ->
+                      store.MigrateLegacyArtifactSnapshot(
+                          lockOrg,
+                          lockProject,
+                          lockBuild,
+                          lockAttempt,
+                          fun () ->
+                              migrationEntered.Set()
+                              releaseMigration.Wait()
+                              ArtifactSnapshots.finalize
+                                  stateRoot
+                                  lockOrg.Value
+                                  lockBuild.Value
+                                  lockAttempt.Value
+                              |> Result.map ignore))
+              Expect.isTrue
+                  (migrationEntered.Wait(TimeSpan.FromSeconds 5.0))
+                  "the migration callback enters while holding the lineage locks"
+              let lockRetryAttempt = AttemptId(Guid.NewGuid())
+              let competingRetry =
+                  Threading.Tasks.Task.Run(fun () ->
+                      store.DecideRetry(lockOrg, lockAttempt, 2, lockRetryAttempt))
+              let retryFinishedWhileMigrationHeld = competingRetry.Wait(TimeSpan.FromMilliseconds 200.0)
+              releaseMigration.Set()
+              Expect.isFalse
+                  retryFinishedWhileMigrationHeld
+                  "DecideRetry waits until legacy snapshot adoption commits"
+              match migration.Result with
+              | Ok true -> ()
+              | result -> failtestf "legacy migration failed: %A" result
+              match competingRetry.Result with
+              | Ok _ -> ()
+              | Error error -> failtestf "retry decision failed after migration: %A" error
+
+              let multiOrg, multiProject = freshProject ()
+              let multiBuildsUrl =
+                  $"{baseUrl}/api/v1/organizations/{multiOrg.Value}/projects/{multiProject.Value}/builds"
+              let _, multiAdmission =
+                  send HttpMethod.Post multiBuildsUrl (Some token) (Some "artifact-multi-node") (Some pipeline)
+              let multiBuild =
+                  Text.RegularExpressions.Regex.Match(multiAdmission, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
+                  |> Guid.Parse
+                  |> BuildId
+              let multiAttempt =
+                  Text.RegularExpressions.Regex.Match(multiAdmission, "\"attempt_id\":\"([^\"]+)\"").Groups[1].Value
+                  |> Guid.Parse
+                  |> AttemptId
+              let multiOwner = "artifact-multi-owner"
+              let multiFence =
+                  match store.OfferAttempt(multiOrg, multiAttempt, multiOwner, 60) with
+                  | Ok value -> value
+                  | Error error -> failtestf "offer failed: %s" error
+              Expect.isTrue
+                  (store.AcceptAttempt(multiOrg, multiAttempt, multiFence, multiOwner))
+                  "multi-node migration attempt accepted"
+              match store.PublishTerminal(multiOrg, multiAttempt, multiFence, multiOwner, Success) with
+              | Ok () -> ()
+              | Error error -> failtestf "terminal publication failed: %s" error
+
+              use multiConnection = new Npgsql.NpgsqlConnection(connectionString)
+              multiConnection.Open()
+              use multiTransaction = multiConnection.BeginTransaction()
+              use addLegacyNode = multiConnection.CreateCommand()
+              addLegacyNode.Transaction <- multiTransaction
+              addLegacyNode.CommandText <-
+                  "SELECT set_config('fogell.organization_id', @org_text, true);
+                   INSERT INTO nodes
+                       (id, organization_id, build_id, name, ordinal,
+                        required_trust_pool, required_capabilities, status)
+                   VALUES
+                       (@node, @org, @build, 'legacy-second-node', 1,
+                        'trusted-linux', ARRAY['linux'], 'success');
+                   INSERT INTO attempts
+                       (id, organization_id, node_id, ordinal, state, fence,
+                        restore_epoch, result)
+                   SELECT @attempt, @org, @node, 0, 'terminal', 0,
+                          restore_epoch, 'success'
+                     FROM controller_metadata WHERE singleton"
+              addLegacyNode.Parameters.AddWithValue("org_text", string multiOrg.Value) |> ignore
+              addLegacyNode.Parameters.AddWithValue("org", multiOrg.Value) |> ignore
+              addLegacyNode.Parameters.AddWithValue("build", multiBuild.Value) |> ignore
+              addLegacyNode.Parameters.AddWithValue("node", Guid.NewGuid()) |> ignore
+              addLegacyNode.Parameters.AddWithValue("attempt", Guid.NewGuid()) |> ignore
+              addLegacyNode.ExecuteNonQuery() |> ignore
+              multiTransaction.Commit()
+              let mutable ambiguousMigrationCalled = false
+              Expect.equal
+                  (store.MigrateLegacyArtifactSnapshot(
+                      multiOrg,
+                      multiProject,
+                      multiBuild,
+                      multiAttempt,
+                      fun () ->
+                          ambiguousMigrationCalled <- true
+                          Ok()))
+                  (Ok false)
+                  "build-keyed legacy output is not assigned to one attempt of a multi-node build"
+              Expect.isFalse
+                  ambiguousMigrationCalled
+                  "ambiguous multi-node migration performs no filesystem callback"
+
+              let handoffOrg, handoffProject = freshProject ()
+              let handoffBuildsUrl =
+                  $"{baseUrl}/api/v1/organizations/{handoffOrg.Value}/projects/{handoffProject.Value}/builds"
+              let _, handoffAdmission =
+                  send HttpMethod.Post handoffBuildsUrl (Some token) (Some "artifact-retry-handoff") (Some pipeline)
+              let handoffBuild =
+                  Text.RegularExpressions.Regex.Match(handoffAdmission, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
+                  |> Guid.Parse
+                  |> BuildId
+              let handoffParent =
+                  Text.RegularExpressions.Regex.Match(handoffAdmission, "\"attempt_id\":\"([^\"]+)\"").Groups[1].Value
+                  |> Guid.Parse
+                  |> AttemptId
+              let handoffBuildKey = handoffBuild.Value.ToString "N"
+              let handoffWorkspace = IO.Path.Combine(stateRoot, "artifact-handoff", handoffBuildKey)
+              let parentOnly = IO.Path.Combine(handoffWorkspace, "parent-only.bin")
+              IO.Directory.CreateDirectory handoffWorkspace |> ignore
+              IO.File.WriteAllBytes(parentOnly, [| 1uy; 2uy; 3uy |])
+              let handoffArtifactRoot =
+                  IO.Path.Combine(
+                      stateRoot,
+                      "workspaces",
+                      handoffOrg.Value.ToString "N",
+                      "_artifacts")
+              Expect.sequenceEqual
+                  (Publish.archive
+                      (ArtifactStore.under handoffArtifactRoot)
+                      handoffBuildKey
+                      handoffWorkspace
+                      [ "parent-only.bin" ])
+                  [ "parent-only.bin" ]
+                  "the pre-upgrade parent leaves one build-keyed artifact"
+              let handoffOwner = "artifact-handoff-owner"
+              let handoffFence =
+                  match store.OfferAttempt(handoffOrg, handoffParent, handoffOwner, 60) with
+                  | Ok value -> value
+                  | Error error -> failtestf "offer failed: %s" error
+              Expect.isTrue
+                  (store.AcceptAttempt(handoffOrg, handoffParent, handoffFence, handoffOwner))
+                  "retry-handoff parent accepted"
+              match store.PublishTerminal(handoffOrg, handoffParent, handoffFence, handoffOwner, Success) with
+              | Ok () -> ()
+              | Error error -> failtestf "terminal publication failed: %s" error
+              let handoffChild = AttemptId(Guid.NewGuid())
+              match store.DecideRetry(handoffOrg, handoffParent, 2, handoffChild) with
+              | Ok _ -> ()
+              | Error error -> failtestf "retry decision failed: %A" error
+              let handoffClaim =
+                  match
+                      store.ClaimNextExecution(
+                          handoffOrg,
+                          "artifact-handoff-worker",
+                          "trusted-linux",
+                          [ "linux" ],
+                          60)
+                  with
+                  | Ok(Some claim) -> claim
+                  | result -> failtestf "retry execution claim failed: %A" result
+              Expect.equal handoffClaim.AttemptId handoffChild "the queued retry is claimed"
+              Expect.equal
+                  handoffClaim.RetryOf
+                  (Some handoffParent)
+                  "the execution claim carries its exact artifact parent"
+              Expect.equal
+                  (ArtifactSnapshots.prepareRetry
+                      stateRoot
+                      handoffOrg.Value
+                      handoffBuild.Value
+                      (handoffClaim.RetryOf |> Option.map _.Value))
+                  (Ok())
+                  "retry preparation freezes leftover build-keyed bytes to the parent attempt"
+              let handoffParentSnapshot =
+                  IO.Path.Combine(
+                      stateRoot,
+                      "workspaces",
+                      handoffOrg.Value.ToString "N",
+                      "_artifact-snapshots",
+                      handoffParent.Value.ToString "N")
+              Expect.isTrue
+                  (IO.File.Exists(IO.Path.Combine(handoffParentSnapshot, "parent-only.bin")))
+                  "the legacy file belongs to the parent snapshot"
+              Expect.isFalse
+                  (IO.Directory.Exists(IO.Path.Combine(handoffArtifactRoot, handoffBuildKey)))
+                  "retry staging starts empty after parent handoff"
+              IO.File.WriteAllBytes(IO.Path.Combine(handoffWorkspace, "retry-only.bin"), [| 4uy; 5uy; 6uy |])
+              Expect.sequenceEqual
+                  (Publish.archive
+                      (ArtifactStore.under handoffArtifactRoot)
+                      handoffBuildKey
+                      handoffWorkspace
+                      [ "retry-only.bin" ])
+                  [ "retry-only.bin" ]
+                  "the retry archives only its own requested file"
+              let handoffChildSnapshot =
+                  match
+                      ArtifactSnapshots.finalize
+                          stateRoot
+                          handoffOrg.Value
+                          handoffBuild.Value
+                          handoffChild.Value
+                  with
+                  | Ok path -> path
+                  | Error error -> failtestf "retry snapshot failed: %s" error
+              Expect.isTrue
+                  (IO.File.Exists(IO.Path.Combine(handoffChildSnapshot, "retry-only.bin")))
+                  "the retry snapshot contains its own artifact"
+              Expect.isFalse
+                  (IO.File.Exists(IO.Path.Combine(handoffChildSnapshot, "parent-only.bin")))
+                  "the retry snapshot cannot inherit a parent-only legacy artifact"
+
+              let concurrentOrg = Guid.NewGuid()
+              let concurrentBuild = Guid.NewGuid()
+              let concurrentAttempt = Guid.NewGuid()
+              let concurrentStaging =
+                  IO.Path.Combine(
+                      stateRoot,
+                      "workspaces",
+                      concurrentOrg.ToString "N",
+                      "_artifacts",
+                      concurrentBuild.ToString "N")
+              IO.Directory.CreateDirectory concurrentStaging |> ignore
+              IO.File.WriteAllText(IO.Path.Combine(concurrentStaging, "race.txt"), "one immutable winner")
+              use startFinalizers = new Threading.ManualResetEventSlim(false)
+              let concurrentFinalizers =
+                  [| for _ in 1..16 ->
+                         Threading.Tasks.Task.Run(fun () ->
+                             startFinalizers.Wait()
+                             ArtifactSnapshots.finalize
+                                 stateRoot
+                                 concurrentOrg
+                                 concurrentBuild
+                                 concurrentAttempt) |]
+              startFinalizers.Set()
+              Threading.Tasks.Task.WaitAll(
+                  concurrentFinalizers
+                  |> Array.map (fun finalizer -> finalizer :> Threading.Tasks.Task))
+              let concurrentTarget =
+                  IO.Path.Combine(
+                      stateRoot,
+                      "workspaces",
+                      concurrentOrg.ToString "N",
+                      "_artifact-snapshots",
+                      concurrentAttempt.ToString "N")
+              for finalizer in concurrentFinalizers do
+                  Expect.equal
+                      finalizer.Result
+                      (Ok concurrentTarget)
+                      "concurrent snapshot publication is idempotent after the atomic move"
+
+              if not (effectiveIdentityIsRoot ()) then
+                  let unavailableOrg, unavailableProject = freshProject ()
+                  let unavailableBuildsUrl =
+                      $"{baseUrl}/api/v1/organizations/{unavailableOrg.Value}/projects/{unavailableProject.Value}/builds"
+                  let _, unavailableAdmission =
+                      send HttpMethod.Post unavailableBuildsUrl (Some token) (Some "artifact-unavailable") (Some pipeline)
+                  let unavailableBuild =
+                      Text.RegularExpressions.Regex.Match(unavailableAdmission, "\"build_id\":\"([^\"]+)\"").Groups[1].Value
+                      |> Guid.Parse
+                      |> BuildId
+                  let unavailableAttempt =
+                      Text.RegularExpressions.Regex.Match(unavailableAdmission, "\"attempt_id\":\"([^\"]+)\"").Groups[1].Value
+                      |> Guid.Parse
+                      |> AttemptId
+                  let unavailableOwner = "artifact-unavailable-owner"
+                  let unavailableFence =
+                      match store.OfferAttempt(unavailableOrg, unavailableAttempt, unavailableOwner, 60) with
+                      | Ok value -> value
+                      | Error error -> failtestf "offer failed: %s" error
+                  Expect.isTrue
+                      (store.AcceptAttempt(
+                          unavailableOrg,
+                          unavailableAttempt,
+                          unavailableFence,
+                          unavailableOwner))
+                      "unavailable-storage attempt accepted"
+                  match
+                      store.PublishTerminal(
+                          unavailableOrg,
+                          unavailableAttempt,
+                          unavailableFence,
+                          unavailableOwner,
+                          Success)
+                  with
+                  | Ok () -> ()
+                  | Error error -> failtestf "terminal publication failed: %s" error
+                  match
+                      ArtifactSnapshots.finalize
+                          stateRoot
+                          unavailableOrg.Value
+                          unavailableBuild.Value
+                          unavailableAttempt.Value
+                  with
+                  | Ok _ -> ()
+                  | Error error -> failtestf "unavailable-storage snapshot failed: %s" error
+                  let unavailableWorkspace =
+                      IO.Path.Combine(
+                          stateRoot,
+                          "workspaces",
+                          unavailableOrg.Value.ToString "N")
+                  let originalMode = IO.File.GetUnixFileMode unavailableWorkspace
+                  let mutable unavailableCode = 0
+                  try
+                      IO.File.SetUnixFileMode(unavailableWorkspace, enum<IO.UnixFileMode> 0)
+                      let code, _ =
+                          send HttpMethod.Get
+                              $"{unavailableBuildsUrl}/{unavailableBuild.Value}/attempts/{unavailableAttempt.Value}/artifacts/missing.bin"
+                              (Some token) None None
+                      unavailableCode <- code
+                  finally
+                      IO.File.SetUnixFileMode(unavailableWorkspace, originalMode)
+                  Expect.equal
+                      unavailableCode
+                      503
+                      "a workspace open failure remains retryable storage unavailability, not a false 404"
+
+              let snapshotParent = IO.Path.GetDirectoryName snapshot
+              let savedSnapshotParent = snapshotParent + ".saved"
+              IO.Directory.Move(snapshotParent, savedSnapshotParent)
+              let outsideSnapshotParent = IO.Path.Combine(stateRoot, $"outside-snapshot-parent-{buildKey}")
+              let outsideAttemptArtifact =
+                  IO.Path.Combine(outsideSnapshotParent, attempt.Value.ToString "N", relative)
+              IO.Directory.CreateDirectory(IO.Path.GetDirectoryName outsideAttemptArtifact) |> ignore
+              IO.File.WriteAllBytes(outsideAttemptArtifact, payload)
+              IO.Directory.CreateSymbolicLink(snapshotParent, outsideSnapshotParent) |> ignore
+              let parentEscapeCode, parentEscapeBytes, _, _, _, _ = getArtifact artifactUrl (Some token)
+              Expect.equal parentEscapeCode 404 "a symlinked snapshot parent is not downloadable"
+              Expect.isFalse
+                  (parentEscapeBytes = payload)
+                  "a snapshot-parent replacement cannot disclose outside bytes"
+          }
+
+          test "artifact path validation rejects traversal and ambiguous segments" {
+              for invalid in [ ""; " "; "/absolute"; "../secret"; "a/../secret"; "a/./b"; "a//b"; "a\u0000b" ] do
+                  let shown = invalid.Replace("\u0000", "<NUL>")
+                  Expect.isNone
+                      (Router.artifactPathSegments invalid)
+                      $"invalid artifact path is refused: {shown}"
+
+              Expect.equal
+                  (Router.artifactPathSegments "reports/linux/output.bin")
+                  (Some [| "reports"; "linux"; "output.bin" |])
+                  "a nested relative artifact path remains admissible"
+          }
+
           test "an unknown build is 404, not 500" {
               let org, project = freshProject ()
               let code, body =
@@ -1158,7 +1720,7 @@ let endpoints =
               Expect.stringContains body "malformed_identifier" "named"
           }
 
-          test "a malformed project is 400 on status, logs and cancellation" {
+          test "a malformed project is 400 on status, logs, artifacts and cancellation" {
               let org = Guid.NewGuid()
               let build = Guid.NewGuid()
               let root = $"{baseUrl}/api/v1/organizations/{org}/projects/not-a-project/builds/{build}"
@@ -1166,6 +1728,7 @@ let endpoints =
               for method, route in
                   [ HttpMethod.Get, root
                     HttpMethod.Get, $"{root}/logs"
+                    HttpMethod.Get, $"{root}/attempts/{Guid.NewGuid()}/artifacts/output.bin"
                     HttpMethod.Post, $"{root}/cancel" ] do
                   let code, body = send method route (Some token) None None
                   Expect.equal code 400 $"{method} rejects a malformed project"
@@ -1321,7 +1884,10 @@ let endpoints =
               Expect.stringContains mismatch "linux" "names what is missing"
           }
 
-          test "teardown" { app.StopAsync() |> Async.AwaitTask |> Async.RunSynchronously }
+          test "teardown" {
+              app.StopAsync() |> Async.AwaitTask |> Async.RunSynchronously
+              if IO.Directory.Exists stateRoot then IO.Directory.Delete(stateRoot, true)
+          }
         ]
 
 [<EntryPoint>]
