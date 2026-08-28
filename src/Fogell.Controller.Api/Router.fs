@@ -2,7 +2,9 @@ namespace Fogell.Controller.Api
 
 open System
 open System.IO
+open System.Runtime.InteropServices
 open System.Text
+open Microsoft.Win32.SafeHandles
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.Routing
@@ -11,7 +13,7 @@ open Fogell.Store
 
 /// FG-060. The public API.
 ///
-/// Five endpoints, all tenant-scoped in the path. Authorization is checked before
+/// Six endpoints, all tenant-scoped in the path. Authorization is checked before
 /// anything else on every route — including before the path parameters are parsed
 /// — so an unauthenticated caller cannot learn whether an organization or build
 /// exists by comparing 404 against 400.
@@ -20,10 +22,249 @@ type ApiState =
       Auth: Authorization.Config
       /// Placement is controller policy. A bearer is not a placement grant.
       TrustPool: string
+      /// Durable controller root. Artifact URLs are derived from build UUIDs,
+      /// never from caller-supplied filesystem roots.
+      StateRoot: string
       MaxPipelineBytes: int
       MaxLogChunks: int }
 
 module Router =
+
+    type private ArtifactOpen =
+        | ArtifactOpened of FileStream
+        | InvalidArtifactPath
+        | ArtifactSnapshotNotFound
+        | ArtifactNotFound
+        | ArtifactPlatformUnsupported
+        | ArtifactUnavailable
+
+    [<Literal>]
+    let private OpenReadOnly = 0
+
+    [<Literal>]
+    let private OpenNonBlocking = 0x800
+
+    [<Literal>]
+    let private OpenDirectory = 0x10000
+
+    [<Literal>]
+    let private OpenNoFollow = 0x20000
+
+    [<Literal>]
+    let private OpenCloseOnExec = 0x80000
+
+    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
+    extern int private openFile(string path, int flags)
+
+    [<DllImport("libc", EntryPoint = "realpath", SetLastError = true)>]
+    extern nativeint private realpath(string path, nativeint resolvedPath)
+
+    [<DllImport("libc", EntryPoint = "free")>]
+    extern void private free(nativeint pointer)
+
+    let private physicalPath path =
+        let pointer = realpath (path, nativeint 0)
+
+        if pointer = nativeint 0 then
+            None
+        else
+            try
+                Marshal.PtrToStringUTF8 pointer |> Option.ofObj
+            finally
+                free pointer
+
+    let private isWithin (root: string) (path: string) =
+        let prefix = root.TrimEnd(Path.DirectorySeparatorChar) + string Path.DirectorySeparatorChar
+        path.StartsWith(prefix, StringComparison.Ordinal)
+
+    let private classifyOpenError () =
+        match Marshal.GetLastPInvokeError() with
+        | 2
+        | 20
+        | 40 -> ArtifactNotFound
+        | _ -> ArtifactUnavailable
+
+    let private classifySnapshotOpenError () =
+        match Marshal.GetLastPInvokeError() with
+        | 2 -> ArtifactSnapshotNotFound
+        | 20
+        | 40 -> ArtifactNotFound
+        | _ -> ArtifactUnavailable
+
+    let internal artifactPathSegments (rawPath: string) =
+        if String.IsNullOrWhiteSpace rawPath || rawPath.IndexOf '\u0000' >= 0 then
+            None
+        else
+            let values = rawPath.Split('/', StringSplitOptions.None)
+
+            if
+                values.Length = 0
+                || values
+                   |> Array.exists (fun value ->
+                       String.IsNullOrEmpty value || value = "." || value = "..")
+            then
+                None
+            else
+                Some values
+
+    /// Open through a descriptor before trusting the resolved target. O_NOFOLLOW
+    /// rejects a final symlink and /proc/self/fd binds the check to the object
+    /// actually opened, so a pathname swap cannot redirect response bytes outside
+    /// this attempt's artifact root between validation and streaming.
+    let private tryOpenArtifact (stateRoot: string) (organizationId: Guid) (attemptId: Guid) (rawPath: string) =
+        match artifactPathSegments rawPath with
+        | None -> InvalidArtifactPath
+        | Some _ when not (OperatingSystem.IsLinux()) -> ArtifactPlatformUnsupported
+        | Some values ->
+            // A missing snapshot parent is a legacy-migration signal only
+            // beneath the real organization workspace. Refuse symlinked
+            // workspace ancestors before an ENOENT can cause filesystem work.
+            let workspaceRoot =
+                Path.Combine(stateRoot, "workspaces", organizationId.ToString "N")
+            let workspaceDescriptor =
+                openFile (
+                    workspaceRoot,
+                    OpenReadOnly
+                    ||| OpenNonBlocking
+                    ||| OpenDirectory
+                    ||| OpenNoFollow
+                    ||| OpenCloseOnExec)
+            let workspaceStatus =
+                if workspaceDescriptor < 0 then
+                    Error(classifyOpenError ())
+                else
+                    use _workspaceHandle = new SafeFileHandle(nativeint workspaceDescriptor, true)
+                    match physicalPath stateRoot, physicalPath $"/proc/self/fd/{workspaceDescriptor}" with
+                    | Some physicalStateRoot, Some physicalWorkspace ->
+                        let expectedPhysicalWorkspace =
+                            Path.Combine(
+                                physicalStateRoot,
+                                "workspaces",
+                                organizationId.ToString "N")
+                        if String.Equals(physicalWorkspace, expectedPhysicalWorkspace, StringComparison.Ordinal) then
+                            Ok()
+                        else
+                            Error ArtifactNotFound
+                    | _ -> Error ArtifactUnavailable
+
+            let snapshotParent =
+                Path.Combine(
+                    stateRoot,
+                    "workspaces",
+                    organizationId.ToString "N",
+                    "_artifact-snapshots")
+
+            let parentDescriptor =
+                if Result.isOk workspaceStatus then
+                    openFile (
+                        snapshotParent,
+                        OpenReadOnly
+                        ||| OpenNonBlocking
+                        ||| OpenDirectory
+                        ||| OpenNoFollow
+                        ||| OpenCloseOnExec)
+                else
+                    -1
+
+            match workspaceStatus with
+            | Error result -> result
+            | Ok () when parentDescriptor < 0 -> classifySnapshotOpenError ()
+            | Ok () ->
+                use _parentHandle = new SafeFileHandle(nativeint parentDescriptor, true)
+                let parentDescriptorPath = $"/proc/self/fd/{parentDescriptor}"
+
+                match physicalPath stateRoot, physicalPath parentDescriptorPath with
+                | Some physicalStateRoot, Some physicalParent ->
+                    let expectedPhysicalParent =
+                        Path.Combine(
+                            physicalStateRoot,
+                            "workspaces",
+                            organizationId.ToString "N",
+                            "_artifact-snapshots")
+
+                    if not (String.Equals(physicalParent, expectedPhysicalParent, StringComparison.Ordinal)) then
+                        ArtifactNotFound
+                    else
+                        let snapshotRoot = Path.Combine(parentDescriptorPath, attemptId.ToString "N")
+
+                        let rootDescriptor =
+                            openFile (
+                                snapshotRoot,
+                                OpenReadOnly
+                                ||| OpenNonBlocking
+                                ||| OpenDirectory
+                                ||| OpenNoFollow
+                                ||| OpenCloseOnExec)
+
+                        if rootDescriptor < 0 then
+                            classifySnapshotOpenError ()
+                        else
+                            use _rootHandle = new SafeFileHandle(nativeint rootDescriptor, true)
+                            let rootDescriptorPath = $"/proc/self/fd/{rootDescriptor}"
+
+                            match physicalPath rootDescriptorPath with
+                            | None -> ArtifactUnavailable
+                            | Some physicalRoot ->
+                                let expectedPhysicalRoot =
+                                    Path.Combine(physicalParent, attemptId.ToString "N")
+
+                                if not (String.Equals(physicalRoot, expectedPhysicalRoot, StringComparison.Ordinal)) then
+                                    ArtifactNotFound
+                                else
+                                    let candidate =
+                                        values
+                                        |> Array.fold
+                                            (fun current segment -> Path.Combine(current, segment))
+                                            rootDescriptorPath
+
+                                    let descriptor =
+                                        openFile (
+                                            candidate,
+                                            OpenReadOnly ||| OpenNonBlocking ||| OpenNoFollow ||| OpenCloseOnExec)
+
+                                    if descriptor < 0 then
+                                        classifyOpenError ()
+                                    else
+                                        let handle = new SafeFileHandle(nativeint descriptor, true)
+
+                                        try
+                                            use stream = new FileStream(handle, FileAccess.Read, 65536, false)
+                                            let descriptorPath = $"/proc/self/fd/{descriptor}"
+
+                                            match physicalPath descriptorPath with
+                                            | Some openedPath
+                                                when isWithin physicalRoot openedPath
+                                                     && not (Directory.Exists descriptorPath)
+                                                     && stream.CanSeek ->
+                                                // Force metadata acquisition before returning a
+                                                // 200 response. A non-regular or unreadable object
+                                                // must fail before headers claim a byte length.
+                                                stream.Length |> ignore
+                                                // A raw SafeFileHandle cannot be marked async in
+                                                // .NET. Reopen the still-live descriptor through
+                                                // procfs, never the caller-controlled pathname, so
+                                                // response reads are async while the inode remains
+                                                // the one whose physical containment was verified.
+                                                let responseStream =
+                                                    new FileStream(
+                                                        descriptorPath,
+                                                        FileMode.Open,
+                                                        FileAccess.Read,
+                                                        FileShare.ReadWrite ||| FileShare.Delete,
+                                                        65536,
+                                                        FileOptions.Asynchronous ||| FileOptions.SequentialScan)
+                                                try
+                                                    responseStream.Length |> ignore
+                                                    ArtifactOpened responseStream
+                                                with _ ->
+                                                    responseStream.Dispose()
+                                                    reraise()
+                                            | _ ->
+                                                ArtifactNotFound
+                                        with _ ->
+                                            handle.Dispose()
+                                            ArtifactUnavailable
+                | _ -> ArtifactUnavailable
 
     let private json (ctx: HttpContext) (status: int) (payload: 'a) =
         ctx.Response.StatusCode <- status
@@ -283,6 +524,88 @@ module Router =
         }
         :> Threading.Tasks.Task
 
+    /// GET …/attempts/{attemptId}/artifacts/{path} — authenticated byte-exact
+    /// output from one immutable execution attempt (FG-042b).
+    let private artifact (state: ApiState) (ctx: HttpContext) =
+        task {
+            if not (authorized state ctx) then
+                return! fail ctx 401 "unauthorized" "a valid bearer token is required" None
+            else
+                match guid (string ctx.Request.RouteValues["organizationId"]),
+                      guid (string ctx.Request.RouteValues["projectId"]),
+                      guid (string ctx.Request.RouteValues["buildId"]),
+                      guid (string ctx.Request.RouteValues["attemptId"]) with
+                | None, _, _, _
+                | _, None, _, _
+                | _, _, None, _
+                | _, _, _, None -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
+                | Some org, Some project, Some build, Some attempt ->
+                    // Database ownership is authoritative. Never let a guessed
+                    // physical path bypass the organization/project boundary.
+                    match
+                        state.Store.ArtifactAttemptState(
+                            OrganizationId org,
+                            ProjectId project,
+                            BuildId build,
+                            AttemptId attempt)
+                    with
+                    | None -> return! fail ctx 404 "not_found" "no such build or attempt" None
+                    | Some attemptState when attemptState <> "terminal" ->
+                        return!
+                            fail ctx 409 "artifact_not_ready"
+                                "artifacts are available only after attempt completion" None
+                    | Some _ ->
+                        let artifactPath = string ctx.Request.RouteValues["artifactPath"]
+                        let opened = tryOpenArtifact state.StateRoot org attempt artifactPath
+                        let opened =
+                            match opened with
+                            | ArtifactSnapshotNotFound ->
+                                let migrate () =
+                                    ArtifactSnapshots.finalize state.StateRoot org build attempt
+                                    |> Result.map ignore
+                                match
+                                    state.Store.MigrateLegacyArtifactSnapshot(
+                                        OrganizationId org,
+                                        ProjectId project,
+                                        BuildId build,
+                                        AttemptId attempt,
+                                        migrate)
+                                with
+                                | Ok true -> tryOpenArtifact state.StateRoot org attempt artifactPath
+                                | Ok false -> ArtifactNotFound
+                                | Error _ -> ArtifactUnavailable
+                            | value -> value
+
+                        match opened with
+                        | InvalidArtifactPath ->
+                            return!
+                                fail ctx 400 "invalid_artifact_path"
+                                    "artifact path must contain only nonempty relative segments" None
+                        | ArtifactNotFound ->
+                            return! fail ctx 404 "artifact_not_found" "no such artifact" None
+                        | ArtifactSnapshotNotFound ->
+                            return! fail ctx 404 "artifact_not_found" "no such artifact" None
+                        | ArtifactPlatformUnsupported ->
+                            return!
+                                fail ctx 501 "artifact_platform_unsupported"
+                                    "artifact retrieval requires Linux descriptor semantics" None
+                        | ArtifactUnavailable ->
+                            return!
+                                fail ctx 503 "artifact_unavailable"
+                                    "artifact storage is temporarily unavailable" None
+                        | ArtifactOpened stream ->
+                            use stream = stream
+                            ctx.Response.StatusCode <- 200
+                            ctx.Response.ContentType <- "application/octet-stream"
+                            ctx.Response.ContentLength <- Nullable stream.Length
+                            ctx.Response.Headers["X-Content-Type-Options"] <- "nosniff"
+                            let fileName = Uri.EscapeDataString(Path.GetFileName artifactPath)
+                            ctx.Response.Headers["Content-Disposition"] <-
+                                $"attachment; filename*=UTF-8''{fileName}"
+                            do! stream.CopyToAsync(ctx.Response.Body, 65536, ctx.RequestAborted)
+        }
+        :> Threading.Tasks.Task
+
     let private cancel (state: ApiState) (ctx: HttpContext) =
         task {
             if not (authorized state ctx) then
@@ -342,6 +665,10 @@ module Router =
         endpoints.MapPost($"{orgPath}/projects/{{projectId}}/builds", RequestDelegate(submit state)) |> ignore
         endpoints.MapGet($"{orgPath}/projects/{{projectId}}/builds/{{buildId}}", RequestDelegate(status state)) |> ignore
         endpoints.MapGet($"{orgPath}/projects/{{projectId}}/builds/{{buildId}}/logs", RequestDelegate(logs state)) |> ignore
+        endpoints.MapGet(
+            $"{orgPath}/projects/{{projectId}}/builds/{{buildId}}/attempts/{{attemptId}}/artifacts/{{**artifactPath}}",
+            RequestDelegate(artifact state))
+        |> ignore
         endpoints.MapPost($"{orgPath}/projects/{{projectId}}/builds/{{buildId}}/cancel", RequestDelegate(cancel state)) |> ignore
         endpoints.MapGet($"{orgPath}/scheduler/explain", RequestDelegate(explain state)) |> ignore
         endpoints
