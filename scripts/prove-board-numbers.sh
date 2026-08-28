@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FG-162 plus the FG-224 accounting closure. Proves audit-board-numbers.bb FAILS
+# FG-162 plus the FG-224 accounting closure. Proves audit-board-numbers FAILS
 # independently on compatibility drift and canonical board-accounting drift, and
 # PASSES the compliant state.
 #
@@ -11,9 +11,14 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-AUDIT=scripts/audit-board-numbers.bb
+AUDIT=scripts/bin/audit-board-numbers
 BOARD=docs/EXECUTION_BOARD.md
 LEDGER=docs/COMPATIBILITY-LEDGER.tsv
+
+if ! ./scripts/build-audits.sh --check >/dev/null 2>&1; then
+  echo "BOARD-NUMBER PROOF FAILED: audit binaries missing or stale — run scripts/build-audits.sh" >&2
+  exit 1
+fi
 
 LAB=$(mktemp -d /tmp/fogell-board-proof.XXXXXX)
 trap 'rm -rf "$LAB"' EXIT

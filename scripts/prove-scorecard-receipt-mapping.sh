@@ -13,7 +13,11 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-GENERATOR="$PWD/scripts/generate-scorecard.bb"
+GENERATOR="$PWD/scripts/bin/generate-scorecard"
+if ! ./scripts/build-audits.sh --check >/dev/null 2>&1; then
+  echo "SCORECARD RECEIPT-MAPPING PROOF FAILED: audit binaries missing or stale — run scripts/build-audits.sh" >&2
+  exit 1
+fi
 LAB=$(mktemp -d /tmp/fogell-scorecard-mapping-proof.XXXXXX)
 trap 'rm -rf "$LAB"' EXIT
 
@@ -22,7 +26,8 @@ new_root() {
   local root="$LAB/$name"
   mkdir -p "$root/scripts" "$root/bin" "$root/docs" \
     "$root/differential/cases" "$root/differential/receipts"
-  cp "$GENERATOR" "$root/scripts/generate-scorecard.bb"
+  mkdir -p "$root/scripts/bin"
+  cp "$GENERATOR" "$root/scripts/bin/generate-scorecard"
   cat > "$root/scripts/verify-corpus.sh" <<'EOF'
 #!/bin/sh
 exit 0
@@ -31,14 +36,14 @@ EOF
 #!/bin/sh
 printf 'file\tverdict\tcode\tstages\tsteps\tdetail\n'
 EOF
-  chmod +x "$root/scripts/generate-scorecard.bb" \
+  chmod +x "$root/scripts/bin/generate-scorecard" \
     "$root/scripts/verify-corpus.sh" "$root/bin/dotnet"
   printf '%s\n' "$root"
 }
 
 run_generator() {
   local root=$1
-  PATH="$root/bin:$PATH" "$root/scripts/generate-scorecard.bb" 2>&1
+  PATH="$root/bin:$PATH" "$root/scripts/bin/generate-scorecard" 2>&1
 }
 
 write_case() {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FG-174. Proves the CITATION check in `audit-claims.bb` — every receipt a comment
+# FG-174. Proves the CITATION check in `audit-claims` — every receipt a comment
 # names must exist.
 #
 # WHY THIS EXISTS. That check was added after the SEVENTH documentation overclaim on
@@ -21,7 +21,12 @@
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
-AUDIT="$PWD/scripts/audit-claims.bb"
+AUDIT="$PWD/scripts/bin/audit-claims"
+
+if ! ./scripts/build-audits.sh --check >/dev/null 2>&1; then
+  echo "CLAIM-CITATION PROOF FAILED: audit binaries missing or stale — run scripts/build-audits.sh" >&2
+  exit 1
+fi
 
 fails=0
 tmp="$(mktemp -d)"
@@ -34,8 +39,12 @@ new_root() {
   # level. A first version planted `src/Planted.fs`, scanned ZERO files, and every
   # ACCEPT arm passed for that reason. Only the REJECT arms exposed it, which is the
   # argument for having both.
-  mkdir -p "$root/scripts" "$root/differential/receipts" "$root/src/Planted"
-  cp "$AUDIT" "$root/scripts/audit-claims.bb"
+  mkdir -p "$root/scripts/bin" "$root/differential/receipts" "$root/src/Planted"
+  # `scripts/bin/`, NOT `scripts/`: the compiled audit derives the repository
+  # root as THREE parents from its own location, one deeper than the .bb it
+  # replaced. Planting it at the old depth makes it audit the fixture's
+  # PARENT and every arm passes vacuously.
+  cp "$AUDIT" "$root/scripts/bin/audit-claims"
   # The citable set for every arm. `multi-case` is a MULTI-BUILD case, stored per
   # build; `fam-one`/`fam-two` are a family cited by glob.
   for r in real-case multi-case.b1 multi-case.b2 fam-one fam-two; do
@@ -50,7 +59,7 @@ expect() {
   local root; root="$(new_root "$(echo "$label" | tr -c 'a-zA-Z0-9' '-')")"
   cat > "$root/src/Planted/Planted.fs"
   local out rc
-  out="$("$root/scripts/audit-claims.bb" --strict 2>&1)"; rc=$?
+  out="$("$root/scripts/bin/audit-claims" --strict 2>&1)"; rc=$?
 
   case "$want" in
     reject)

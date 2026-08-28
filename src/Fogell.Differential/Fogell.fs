@@ -594,7 +594,7 @@ module FogellSide =
                     if remote.Script.Replace("\r\n", "\n").Trim() <> script.Replace("\r\n", "\n").Trim() then
                         failwith (
                             "SCM case drift: the local case body does not match the SCM's Jenkinsfile — "
-                            + "sync the fixture repo (scripts/sync-scm-cases.bb) before sealing"
+                            + "sync the fixture repo (scripts/bin/sync-scm-cases) before sealing"
                         )
 
                     if Environment.GetEnvironmentVariable "FOGELL_SCM_ATTESTATION" = "fg177-probes-v1" then
