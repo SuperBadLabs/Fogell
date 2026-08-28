@@ -643,7 +643,8 @@ export FOGELL_JENKINS_ENV_CMD FOGELL_JENKINS_GIT_VERSION_CMD
 mkdir -p "$output/cases" "$output/receipts" "$output/source"
 
 source_bundle=$output/source/fg037-measured-source.bundle
-clean_git bundle create "$source_bundle" HEAD "^$source_prerequisite"
+clean_git bundle create "$source_bundle" "$source_bundle_ref" \
+  "^$source_prerequisite"
 cp "$allowed_signers_snapshot" "$output/source/allowed_signers"
 bash "$source_bundle_checker_snapshot" \
   "$source_bundle" "$output/source/allowed_signers" "$source_bundle_ref" \
