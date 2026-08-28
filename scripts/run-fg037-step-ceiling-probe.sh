@@ -39,6 +39,7 @@ identity_checker_snapshot=
 manifest_checker_snapshot=
 source_bundle_checker_snapshot=
 allowed_signers_snapshot=
+dotnet_wrapper_snapshot=
 source_workspace=
 cleanup() {
   set +e
@@ -46,7 +47,7 @@ cleanup() {
   local snapshot
   for snapshot in "$collector_snapshot" "$identity_checker_snapshot" \
     "$manifest_checker_snapshot" "$source_bundle_checker_snapshot" \
-    "$allowed_signers_snapshot"; do
+    "$allowed_signers_snapshot" "$dotnet_wrapper_snapshot"; do
     [ -z "$snapshot" ] || rm -f -- "$snapshot"
   done
   if [ -n "$source_workspace" ]; then
@@ -125,6 +126,7 @@ for required in \
   scripts/check-fg037-manifest.py \
   scripts/check-fg037-source-bundle.sh \
   "$source_signers_input" \
+  scripts/fg037-controlled-dotnet.sh \
   scripts/jenkins-workspace-v2.sh; do
   if [ ! -f "$required" ]; then
     echo "REFUSED: required FG-037 engine/build input is absent: $required" >&2
@@ -152,6 +154,7 @@ probe_input_pathspecs=(
   scripts/check-fg037-manifest.py
   scripts/check-fg037-source-bundle.sh
   scripts/check-fg037-step-ceiling.py
+  scripts/fg037-controlled-dotnet.sh
   scripts/jenkins-workspace-v2.sh
   scripts/prove-fg037-step-ceiling.sh
   scripts/run-fg037-step-ceiling-probe.sh
@@ -397,16 +400,19 @@ identity_checker_snapshot=$(mktemp)
 manifest_checker_snapshot=$(mktemp)
 source_bundle_checker_snapshot=$(mktemp)
 allowed_signers_snapshot=$(mktemp)
+dotnet_wrapper_snapshot=$(mktemp)
 clean_git show HEAD:scripts/jenkins-workspace-v2.sh >"$collector_snapshot"
 clean_git show HEAD:scripts/check-fg037-jenkins-identity.sh >"$identity_checker_snapshot"
 clean_git show HEAD:scripts/check-fg037-manifest.py >"$manifest_checker_snapshot"
 clean_git show HEAD:scripts/check-fg037-source-bundle.sh >"$source_bundle_checker_snapshot"
 clean_git show "HEAD:$source_signers_input" >"$allowed_signers_snapshot"
+clean_git show HEAD:scripts/fg037-controlled-dotnet.sh >"$dotnet_wrapper_snapshot"
 if ! cmp -s "$collector_snapshot" scripts/jenkins-workspace-v2.sh \
   || ! cmp -s "$identity_checker_snapshot" scripts/check-fg037-jenkins-identity.sh \
   || ! cmp -s "$manifest_checker_snapshot" scripts/check-fg037-manifest.py \
   || ! cmp -s "$source_bundle_checker_snapshot" scripts/check-fg037-source-bundle.sh \
-  || ! cmp -s "$allowed_signers_snapshot" "$source_signers_input"; then
+  || ! cmp -s "$allowed_signers_snapshot" "$source_signers_input" \
+  || ! cmp -s "$dotnet_wrapper_snapshot" scripts/fg037-controlled-dotnet.sh; then
   echo "REFUSED: load-bearing probe input changed after the clean-input check" >&2
   exit 2
 fi
@@ -415,6 +421,33 @@ identity_checker_sha=$(sha256sum "$identity_checker_snapshot" | awk '{print $1}'
 manifest_checker_sha=$(sha256sum "$manifest_checker_snapshot" | awk '{print $1}')
 source_bundle_checker_sha=$(sha256sum "$source_bundle_checker_snapshot" | awk '{print $1}')
 allowed_signers_sha=$(sha256sum "$allowed_signers_snapshot" | awk '{print $1}')
+dotnet_wrapper_sha=$(sha256sum "$dotnet_wrapper_snapshot" | awk '{print $1}')
+
+# Containment starts before Bash reads the wrapper. In particular, BASH_ENV and
+# exported shell functions must not execute before the wrapper's own env -i.
+controlled_dotnet() {
+  local mode=$1
+  shift
+  local -a entry_env=("PATH=/usr/local/bin:/usr/bin:/bin")
+  if [ "$mode" = exec ]; then
+    entry_env+=(
+      "HOME=${HOME:?}"
+      "FOGELL_JENKINS_WORKSPACE_CMD=${FOGELL_JENKINS_WORKSPACE_CMD:-}"
+      "FOGELL_JENKINS_WIPE_CMD=${FOGELL_JENKINS_WIPE_CMD:-}"
+      "FOGELL_JENKINS_ENV_CMD=${FOGELL_JENKINS_ENV_CMD:-}"
+      "FOGELL_JENKINS_GIT_VERSION_CMD=${FOGELL_JENKINS_GIT_VERSION_CMD:-}"
+      "FOGELL_JENKINS_RAW_CONSOLE_JOB=${FOGELL_JENKINS_RAW_CONSOLE_JOB:-}"
+      "FOGELL_JENKINS_RAW_CONSOLE_BUILD=${FOGELL_JENKINS_RAW_CONSOLE_BUILD:-}"
+      "FOGELL_JENKINS_RAW_CONSOLE_PATH=${FOGELL_JENKINS_RAW_CONSOLE_PATH:-}"
+    )
+    if [ -n "${SSH_AUTH_SOCK:-}" ]; then
+      entry_env+=("SSH_AUTH_SOCK=$SSH_AUTH_SOCK")
+    fi
+  fi
+  /usr/bin/env -i "${entry_env[@]}" \
+    /bin/bash --noprofile --norc "$dotnet_wrapper_snapshot" \
+    "$mode" "$source_workspace" "$@"
+}
 
 require_stable_inputs() {
   local current_head
@@ -433,7 +466,8 @@ require_stable_inputs() {
     || ! cmp -s "$identity_checker_snapshot" scripts/check-fg037-jenkins-identity.sh \
     || ! cmp -s "$manifest_checker_snapshot" scripts/check-fg037-manifest.py \
     || ! cmp -s "$source_bundle_checker_snapshot" scripts/check-fg037-source-bundle.sh \
-    || ! cmp -s "$allowed_signers_snapshot" "$source_signers_input"; then
+    || ! cmp -s "$allowed_signers_snapshot" "$source_signers_input" \
+    || ! cmp -s "$dotnet_wrapper_snapshot" scripts/fg037-controlled-dotnet.sh; then
     echo "REFUSED: load-bearing HEAD or probe inputs changed while evidence was being produced" >&2
     [ -z "$current_status" ] || printf '%s\n' "$current_status" >&2
     return 2
@@ -531,6 +565,7 @@ python3 "$source_snapshot/scripts/check-fg037-step-ceiling.py" \
 
 cli_project_relative=tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj
 cli_project=$source_snapshot/$cli_project_relative
+cli_assembly=$source_snapshot/tools/Fogell.Differential.Cli/bin/Release/net10.0/fogell-diff.dll
 jenkins_251_console=$output/receipts/fg037-251-steps.jenkins-console.txt
 export FOGELL_JENKINS_RAW_CONSOLE_JOB=diff-fg037-251-steps
 export FOGELL_JENKINS_RAW_CONSOLE_BUILD=1
@@ -539,11 +574,16 @@ export FOGELL_JENKINS_RAW_CONSOLE_PATH=$jenkins_251_console
 # Build the exact executable used below, including its transitive engine
 # projects. A solution-default build followed by `dotnet run --no-build` left a
 # stale-binary route if the CLI were ever removed from that solution.
-dotnet build "$cli_project" -c Release --nologo --no-incremental \
+controlled_dotnet build \
+  build "$cli_project" -c Release --nologo --no-incremental \
   >"$output/build.log" 2>&1
+if [ ! -f "$cli_assembly" ] || [ -L "$cli_assembly" ]; then
+  echo "REFUSED: controlled build did not produce the expected real CLI assembly" >&2
+  exit 2
+fi
 
 set +e
-dotnet run --project "$cli_project" -c Release --no-build -- \
+controlled_dotnet exec "$cli_assembly" \
   "$FOGELL_JENKINS_URL" "$FOGELL_JENKINS_CORE" "$output/receipts" \
   "$output/cases/fg037-250-steps.Jenkinsfile" \
   "$output/cases/fg037-251-steps.Jenkinsfile" \
@@ -586,7 +626,7 @@ python3 "$source_snapshot/scripts/check-fg037-step-ceiling.py" \
   --cases "$output/cases" --receipts "$output/receipts" \
   --jenkins-core "$FOGELL_JENKINS_CORE" | tee "$output/semantic-check.log"
 
-dotnet run --project "$cli_project" -c Release --no-build -- \
+controlled_dotnet exec "$cli_assembly" \
   --verify-seals "$output/receipts" >"$output/seal-verification.log" 2>&1
 
 FG037_PUBLICATION_REPO_ROOT="$physical_repo_root" \
@@ -606,7 +646,7 @@ require_stable_inputs || exit $?
   echo "host: $(hostname)"
   echo "head: $source_head"
   echo "tree: $source_tree"
-  echo "dotnet: $(dotnet --version)"
+  echo "dotnet: $(controlled_dotnet build --version)"
   echo "jenkins-url: $FOGELL_JENKINS_URL"
   echo "jenkins-core: $actual_core (artifact, endpoint, and container-loopback agree)"
   echo "jenkins-session: $jenkins_session (endpoint and container-loopback agree before and after builds)"
@@ -622,6 +662,7 @@ require_stable_inputs || exit $?
   echo "engine-build-project: $cli_project_relative (read-only export of recorded HEAD)"
   echo "engine-build-configuration: Release"
   echo "engine-build-mode: --no-incremental (no stale output reuse)"
+  echo "engine-build-environment: env -i allowlist from scripts/fg037-controlled-dotnet.sh"
   echo "engine-build-pathspecs:"
   printf '  %s\n' "${engine_input_pathspecs[@]}"
   echo "probe-input-pathspecs:"
@@ -642,6 +683,8 @@ require_stable_inputs || exit $?
     "scripts/check-fg037-source-bundle.sh (executed HEAD snapshot)"
   printf '%s  %s\n' "$allowed_signers_sha" \
     "$source_signers_input (executed HEAD snapshot)"
+  printf '%s  %s\n' "$dotnet_wrapper_sha" \
+    "scripts/fg037-controlled-dotnet.sh (executed HEAD snapshot)"
   printf '%s  %s\n' "$collector_sha" \
     "scripts/jenkins-workspace-v2.sh (executed HEAD snapshot)"
   echo "source-bundle-ref: $source_bundle_ref"

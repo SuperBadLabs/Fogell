@@ -88,6 +88,7 @@ fi
 echo "  rejected a substituted payload and self-consistent manifest"
 
 source_bundle_checker=${FG037_SOURCE_BUNDLE_CHECKER:-$script_source_root/scripts/check-fg037-source-bundle.sh}
+dotnet_wrapper=$script_source_root/scripts/fg037-controlled-dotnet.sh
 source_bundle=$source_dir/source/fg037-measured-source.bundle
 source_allowed_signers=$source_dir/source/allowed_signers
 if [ "$#" -eq 6 ]; then
@@ -316,6 +317,86 @@ if [ "$(wc -l <"$nested_container_log")" -ne 4 ] \
 fi
 echo "  contained hostile overrides across nested workspace/wipe/env/git commands"
 
+msbuild_case=$scratch/msbuild-environment
+mkdir -p "$msbuild_case/workspace/source" "$msbuild_case/ambient-cwd" \
+  "$msbuild_case/fake-bin"
+safe_dotnet_version=$(python3 - "$script_source_root/global.json" <<'PY'
+import json
+import pathlib
+import sys
+
+value = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))["sdk"]["version"]
+if not isinstance(value, str) or not value:
+    raise SystemExit("global.json sdk.version is not one nonempty string")
+print(value)
+PY
+)
+printf '{"sdk":{"version":"%s","rollForward":"disable"}}\n' \
+  "$safe_dotnet_version" >"$msbuild_case/workspace/source/global.json"
+msbuild_marker=$msbuild_case/ambient-target-ran
+cat >"$msbuild_case/workspace/source/project.proj" <<'PROJECT'
+<Project DefaultTargets="Build">
+  <Import Project="$(DirectoryBuildTargetsPath)" Condition="'$(DirectoryBuildTargetsPath)' != ''" />
+  <Target Name="Build" />
+</Project>
+PROJECT
+printf '<Project><Target Name="Injected" BeforeTargets="Build"><WriteLinesToFile File="%s" Lines="hostile" /></Target></Project>\n' \
+  "$msbuild_marker" >"$msbuild_case/hostile.targets"
+mkdir "$msbuild_case/precondition-home"
+DOTNET_CLI_HOME=$msbuild_case/precondition-home \
+  DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
+  DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 \
+  MSBuildEnableWorkloadResolver=false \
+  DirectoryBuildTargetsPath=$msbuild_case/hostile.targets \
+  /usr/bin/dotnet msbuild "$msbuild_case/workspace/source/project.proj" \
+  -nologo >/dev/null 2>&1
+if [ ! -f "$msbuild_marker" ]; then
+  echo "FAIL: ambient MSBuild attack precondition did not import its target" >&2
+  exit 1
+fi
+rm "$msbuild_marker"
+
+bash_env_marker=$msbuild_case/bash-env-ran
+fake_env_marker=$msbuild_case/fake-env-ran
+printf 'printf hostile >%q\n' "$bash_env_marker" >"$msbuild_case/bash-env"
+printf '#!/bin/sh\nprintf hostile >%s\nexec /usr/bin/env "$@"\n' \
+  "$fake_env_marker" >"$msbuild_case/fake-bin/env"
+chmod +x "$msbuild_case/fake-bin/env"
+BASH_ENV=$msbuild_case/bash-env \
+  PATH=$msbuild_case/fake-bin:/usr/local/bin:/usr/bin:/bin \
+  /bin/bash --noprofile --norc -c 'env -i /bin/true'
+if [ ! -e "$bash_env_marker" ] || [ ! -e "$fake_env_marker" ]; then
+  echo "FAIL: hostile Bash-entry/PATH attack precondition did not execute" >&2
+  exit 1
+fi
+rm "$bash_env_marker" "$fake_env_marker"
+
+cat >"$msbuild_case/ambient-cwd/global.json" <<'JSON'
+{"sdk":{"version":"0.0.0","rollForward":"disable"}}
+JSON
+if (cd "$msbuild_case/ambient-cwd" && /usr/bin/dotnet --version >/dev/null 2>&1); then
+  echo "FAIL: hostile startup-directory SDK attack precondition did not fail" >&2
+  exit 1
+fi
+
+(
+  cd "$msbuild_case/ambient-cwd"
+  DirectoryBuildTargetsPath=$msbuild_case/hostile.targets \
+    BASH_ENV=$msbuild_case/bash-env \
+    PATH=$msbuild_case/fake-bin:/usr/local/bin:/usr/bin:/bin \
+    /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin \
+    /bin/bash --noprofile --norc "$dotnet_wrapper" build \
+    "$msbuild_case/workspace" msbuild \
+    "$msbuild_case/workspace/source/project.proj" -nologo >/dev/null 2>&1
+)
+if [ -e "$msbuild_marker" ] || [ -e "$bash_env_marker" ] \
+  || [ -e "$fake_env_marker" ]; then
+  echo "FAIL: controlled dotnet launch inherited an ambient build input" >&2
+  exit 1
+fi
+echo "  cleared ambient Bash, PATH, CWD/SDK, and MSBuild inputs from the measured build"
+
 fresh
 sed -i 's/^jenkins-core: 2\.568\.1$/jenkins-core: 9.99.9/' \
   "$scratch/case/receipts/fg037-251-steps.receipt.txt"
@@ -393,6 +474,7 @@ cp "$script_source_root/scripts/run-fg037-step-ceiling-probe.sh" \
   "$script_source_root/scripts/check-fg037-manifest.py" \
   "$script_source_root/scripts/check-fg037-source-bundle.sh" \
   "$script_source_root/scripts/check-fg037-step-ceiling.py" \
+  "$script_source_root/scripts/fg037-controlled-dotnet.sh" \
   "$script_source_root/scripts/jenkins-workspace-v2.sh" \
   "$script_source_root/scripts/prove-fg037-step-ceiling.sh" \
   "$probe_repo/scripts/"
@@ -582,4 +664,4 @@ if [ "$probe_rc" -ne 2 ] \
 fi
 echo "  refused physical engine drift hidden by a repository-local clean filter"
 
-echo "FG-037 proof PASS (14 semantic + 3 controller-identity + 10 collector/configuration + 2 manifest + 3 source-bundle rejection arms)"
+echo "FG-037 proof PASS (14 semantic + 3 controller-identity + 11 collector/configuration + 2 manifest + 3 source-bundle rejection arms)"
