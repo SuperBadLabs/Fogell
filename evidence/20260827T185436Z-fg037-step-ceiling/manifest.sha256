@@ -1,4 +1,4 @@
-e9be6c78728eb8965d884d1ef212feb74d47bb776e43d6a2cdffc1d8919dfefc  ./README.md
+89198147c10168d0f2a299ad9a7edc8717f341ffb07bbe403cf8cadefab6bbc4  ./README.md
 9115368e4bc2224a4088652db2a9ba636c29d05be6aa8788d702dd7ad9c082d9  ./build.log
 e8c4324936f4c654e9171633fcb07a0e1bce4088b69c331a53ff9e2ba8892f40  ./cases/fg037-250-steps.Jenkinsfile
 6e45f57916dc5c25fcaa4e50a51dd8c2c504cc8f02f28674329ae86cef32261a  ./cases/fg037-251-steps.Jenkinsfile
@@ -12,3 +12,5 @@ e8c4324936f4c654e9171633fcb07a0e1bce4088b69c331a53ff9e2ba8892f40  ./cases/fg037-
 dcffb404175f767a9a8f2a90a1f5eac653b622cc3223f667ccc9bc804c870df0  ./seal-verification.log
 d2ee500044490a25a3f5c5bc06223a53955b3dcce0d034fa69faec8805edfbd5  ./semantic-check.log
 15dddfadc6bb8a58abf31461d0ca92c31c63d909efcfd4ef160a493f945d6152  ./source-identity.txt
+86ca3dcfdc7f18299e0b6e126fd9aa9e8711d4eff6fc973433b46045db68ac0d  ./source/allowed_signers
+65af597faa54c3e0dc8038978854594af660379f76fa94964390fb6130422d8c  ./source/fg037-measured-source.bundle

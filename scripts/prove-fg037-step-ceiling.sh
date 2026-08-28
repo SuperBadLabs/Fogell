@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FG-037. Mutation proof for the retained-evidence semantic checker.
+# FG-037. Mutation proof for the retained-evidence checkers.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -83,6 +83,60 @@ if python3 "$manifest_checker" \
   exit 1
 fi
 echo "  rejected a substituted payload and self-consistent manifest"
+
+source_bundle_checker=scripts/check-fg037-source-bundle.sh
+source_bundle=$source_dir/source/fg037-measured-source.bundle
+source_allowed_signers=$source_dir/source/allowed_signers
+source_prerequisite=804bf7967cf3708eb3bb44387d59a24310c89607
+source_bundle_head=488b662000dea32859ae507f92f4dc045f6e8fcd
+measured_commit=65674f9a4af80e358f645ad3409765a8738c68b4
+measured_tree=7e09d220260b9117890cf4275fc240d989101f7c
+
+bash "$source_bundle_checker" "$source_bundle" "$source_allowed_signers" \
+  "$source_prerequisite" "$source_bundle_head" \
+  "$measured_commit" "$measured_tree" >/dev/null
+echo "  reconstructed the signed measured source commit from the retained bundle"
+
+clean_home=$scratch/clean-home
+mkdir "$clean_home"
+HOME="$clean_home" GIT_CONFIG_NOSYSTEM=1 \
+  bash "$source_bundle_checker" "$source_bundle" "$source_allowed_signers" \
+  "$source_prerequisite" "$source_bundle_head" \
+  "$measured_commit" "$measured_tree" >/dev/null
+echo "  verified the pinned signer without custodian Git configuration"
+
+corrupt_bundle=$scratch/corrupt-source.bundle
+cp "$source_bundle" "$corrupt_bundle"
+truncate -s -1 "$corrupt_bundle"
+if bash "$source_bundle_checker" "$corrupt_bundle" "$source_allowed_signers" \
+  "$source_prerequisite" "$source_bundle_head" \
+  "$measured_commit" "$measured_tree" >/dev/null 2>&1; then
+  echo "FAIL: source-bundle checker accepted a truncated bundle" >&2
+  exit 1
+fi
+echo "  rejected a truncated source bundle"
+
+if bash "$source_bundle_checker" "$source_bundle" "$source_allowed_signers" \
+  "$source_prerequisite" "$source_bundle_head" \
+  0000000000000000000000000000000000000000 "$measured_tree" >/dev/null 2>&1; then
+  echo "FAIL: source-bundle checker accepted a missing measured commit" >&2
+  exit 1
+fi
+echo "  rejected a missing measured commit identity"
+
+empty_bundle=$scratch/empty-source.bundle
+printf '# v2 git bundle\n-%s prerequisite\n%s %s\n\n' \
+  "$source_prerequisite" "$source_bundle_head" \
+  refs/heads/codex/fg-037-step-ceiling-publish >"$empty_bundle"
+printf '' | git pack-objects --stdout >>"$empty_bundle"
+if GIT_ALTERNATE_OBJECT_DIRECTORIES=$PWD/.git/objects \
+  bash "$source_bundle_checker" "$empty_bundle" "$source_allowed_signers" \
+  "$source_prerequisite" "$source_bundle_head" \
+  "$measured_commit" "$measured_tree" >/dev/null 2>&1; then
+  echo "FAIL: source-bundle checker borrowed descendants from an ambient object store" >&2
+  exit 1
+fi
+echo "  rejected an empty bundle despite a hostile ambient object alternate"
 
 identity_checker=scripts/check-fg037-jenkins-identity.sh
 good_identity=$'2.568.1\tpinned-session'
@@ -349,4 +403,4 @@ if [ "$probe_rc" -ne 2 ] \
 fi
 echo "  refused a dirty shared workspace collector before evidence creation"
 
-echo "FG-037 proof PASS (14 semantic + 3 controller-identity + 4 collector/configuration + 2 manifest rejection arms)"
+echo "FG-037 proof PASS (14 semantic + 3 controller-identity + 4 collector/configuration + 2 manifest + 3 source-bundle rejection arms)"
