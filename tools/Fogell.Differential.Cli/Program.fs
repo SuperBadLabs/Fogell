@@ -421,7 +421,7 @@ let main argv =
 
                 // FG-052. A case whose FIRST LINE is `//// SCM JOB ////` runs as an
                 // SCM-DEFINED job: the sync script pushed its body to the fixture
-                // repo branch `case/<stem>` (scripts/sync-scm-cases.bb), the Jenkins
+                // repo branch `case/<stem>` (scripts/bin/sync-scm-cases), the Jenkins
                 // job points at that SCM, and the Fogell side receives the same
                 // bytes plus the ScmSpec `checkout scm` resolves against.
                 let scmMarker = "//// SCM JOB ////"
