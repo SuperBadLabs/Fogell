@@ -121,6 +121,8 @@ for required in \
   Fogell.slnx \
   global.json \
   Directory.Build.props \
+  Directory.Build.targets \
+  Directory.Packages.props \
   tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj \
   scripts/check-fg037-jenkins-identity.sh \
   scripts/check-fg037-manifest.py \
@@ -646,7 +648,7 @@ require_stable_inputs || exit $?
   echo "host: $(hostname)"
   echo "head: $source_head"
   echo "tree: $source_tree"
-  echo "dotnet: $(controlled_dotnet build --version)"
+  echo "dotnet: $(controlled_dotnet version)"
   echo "jenkins-url: $FOGELL_JENKINS_URL"
   echo "jenkins-core: $actual_core (artifact, endpoint, and container-loopback agree)"
   echo "jenkins-session: $jenkins_session (endpoint and container-loopback agree before and after builds)"

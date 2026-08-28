@@ -3,8 +3,8 @@
 # arbitrary MSBuild properties from the custodian shell.
 set -euo pipefail
 
-if [ "$#" -lt 3 ]; then
-  echo "usage: $0 <build|exec> <private-workspace> <dotnet-arguments...>" >&2
+if [ "$#" -lt 2 ]; then
+  echo "usage: $0 <build|exec|version> <private-workspace> [dotnet-arguments...]" >&2
   exit 2
 fi
 
@@ -28,10 +28,16 @@ if [[ $source_root != "$workspace/"* ]]; then
   exit 2
 fi
 source_global_json=$source_root/global.json
-if [ ! -f "$source_global_json" ] || [ -L "$source_global_json" ]; then
-  echo "REFUSED: controlled dotnet source root lacks one real global.json" >&2
-  exit 2
-fi
+source_build_props=$source_root/Directory.Build.props
+source_build_targets=$source_root/Directory.Build.targets
+source_packages_props=$source_root/Directory.Packages.props
+for governed_build_input in "$source_global_json" "$source_build_props" \
+  "$source_build_targets" "$source_packages_props"; do
+  if [ ! -f "$governed_build_input" ] || [ -L "$governed_build_input" ]; then
+    echo "REFUSED: controlled dotnet source root lacks real governed build inputs" >&2
+    exit 2
+  fi
+done
 
 dotnet_bin=/usr/bin/dotnet
 controlled_path=/usr/local/bin:/usr/bin:/bin
@@ -84,12 +90,26 @@ controlled_env=(
   NUGET_PACKAGES="$nuget_packages"
   NUGET_HTTP_CACHE_PATH="$nuget_cache"
 )
+msbuild_global_properties=(
+  "-p:DirectoryBuildPropsPath=$source_build_props"
+  "-p:DirectoryBuildTargetsPath=$source_build_targets"
+  "-p:DirectoryPackagesPropsPath=$source_packages_props"
+)
 
 case "$mode" in
   build)
-    exec /usr/bin/env -i "${controlled_env[@]}" "$dotnet_bin" "$@"
+    if [ "$#" -eq 0 ]; then
+      echo "REFUSED: controlled dotnet build mode requires arguments" >&2
+      exit 2
+    fi
+    exec /usr/bin/env -i "${controlled_env[@]}" "$dotnet_bin" \
+      "$@" "${msbuild_global_properties[@]}"
     ;;
   exec)
+    if [ "$#" -eq 0 ]; then
+      echo "REFUSED: controlled dotnet exec mode requires an assembly" >&2
+      exit 2
+    fi
     # This launches a built assembly directly, so no MSBuild evaluation occurs.
     # Preserve only the runtime inputs consumed by the focused differential CLI.
     runtime_env=(
@@ -111,8 +131,15 @@ case "$mode" in
     fi
     exec /usr/bin/env -i "${runtime_env[@]}" "$dotnet_bin" "$@"
     ;;
+  version)
+    if [ "$#" -ne 0 ]; then
+      echo "REFUSED: controlled dotnet version mode takes no arguments" >&2
+      exit 2
+    fi
+    exec /usr/bin/env -i "${controlled_env[@]}" "$dotnet_bin" --version
+    ;;
   *)
-    echo "REFUSED: controlled dotnet mode must be build or exec" >&2
+    echo "REFUSED: controlled dotnet mode must be build, exec, or version" >&2
     exit 2
     ;;
 esac

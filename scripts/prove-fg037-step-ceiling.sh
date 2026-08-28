@@ -333,14 +333,21 @@ PY
 )
 printf '{"sdk":{"version":"%s","rollForward":"disable"}}\n' \
   "$safe_dotnet_version" >"$msbuild_case/workspace/source/global.json"
+cp "$script_source_root/Directory.Build.props" \
+  "$msbuild_case/workspace/source/Directory.Build.props"
 msbuild_marker=$msbuild_case/ambient-target-ran
+build_ancestor_marker=$msbuild_case/ancestor-build-target-ran
+packages_ancestor_marker=$msbuild_case/ancestor-packages-props-ran
 cat >"$msbuild_case/workspace/source/project.proj" <<'PROJECT'
-<Project DefaultTargets="Build">
-  <Import Project="$(DirectoryBuildTargetsPath)" Condition="'$(DirectoryBuildTargetsPath)' != ''" />
-  <Target Name="Build" />
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <Target Name="Probe" />
 </Project>
 PROJECT
-printf '<Project><Target Name="Injected" BeforeTargets="Build"><WriteLinesToFile File="%s" Lines="hostile" /></Target></Project>\n' \
+printf '<Project><Target Name="Injected" BeforeTargets="Probe"><WriteLinesToFile File="%s" Lines="hostile" /></Target></Project>\n' \
   "$msbuild_marker" >"$msbuild_case/hostile.targets"
 mkdir "$msbuild_case/precondition-home"
 DOTNET_CLI_HOME=$msbuild_case/precondition-home \
@@ -350,12 +357,49 @@ DOTNET_CLI_HOME=$msbuild_case/precondition-home \
   MSBuildEnableWorkloadResolver=false \
   DirectoryBuildTargetsPath=$msbuild_case/hostile.targets \
   /usr/bin/dotnet msbuild "$msbuild_case/workspace/source/project.proj" \
-  -nologo >/dev/null 2>&1
+  -t:Probe -nologo >/dev/null 2>&1
 if [ ! -f "$msbuild_marker" ]; then
   echo "FAIL: ambient MSBuild attack precondition did not import its target" >&2
   exit 1
 fi
 rm "$msbuild_marker"
+
+printf '<Project><Target Name="InjectedBuildAncestor" BeforeTargets="Probe"><WriteLinesToFile File="%s" Lines="hostile" /></Target></Project>\n' \
+  "$build_ancestor_marker" >"$msbuild_case/Directory.Build.targets"
+DOTNET_CLI_HOME=$msbuild_case/precondition-home \
+  DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
+  DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 \
+  MSBuildEnableWorkloadResolver=false \
+  /usr/bin/dotnet msbuild "$msbuild_case/workspace/source/project.proj" \
+  -t:Probe -nologo >/dev/null 2>&1
+if [ ! -f "$build_ancestor_marker" ]; then
+  echo "FAIL: ancestor Directory.Build.targets attack precondition did not import" >&2
+  exit 1
+fi
+rm "$build_ancestor_marker"
+rm "$msbuild_case/Directory.Build.targets"
+
+printf '<Project><Target Name="InjectedPackagesAncestor" BeforeTargets="Probe"><WriteLinesToFile File="%s" Lines="hostile" /></Target></Project>\n' \
+  "$packages_ancestor_marker" >"$msbuild_case/Directory.Packages.props"
+DOTNET_CLI_HOME=$msbuild_case/precondition-home \
+  DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
+  DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 \
+  MSBuildEnableWorkloadResolver=false \
+  /usr/bin/dotnet msbuild "$msbuild_case/workspace/source/project.proj" \
+  -t:Probe -nologo >/dev/null 2>&1
+if [ ! -f "$packages_ancestor_marker" ]; then
+  echo "FAIL: ancestor Directory.Packages.props attack precondition did not import" >&2
+  exit 1
+fi
+rm "$packages_ancestor_marker"
+printf '<Project><Target Name="InjectedBuildAncestor" BeforeTargets="Probe"><WriteLinesToFile File="%s" Lines="hostile" /></Target></Project>\n' \
+  "$build_ancestor_marker" >"$msbuild_case/Directory.Build.targets"
+cp "$script_source_root/Directory.Build.targets" \
+  "$msbuild_case/workspace/source/Directory.Build.targets"
+cp "$script_source_root/Directory.Packages.props" \
+  "$msbuild_case/workspace/source/Directory.Packages.props"
 
 bash_env_marker=$msbuild_case/bash-env-ran
 fake_env_marker=$msbuild_case/fake-env-ran
@@ -388,14 +432,26 @@ fi
     /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin \
     /bin/bash --noprofile --norc "$dotnet_wrapper" build \
     "$msbuild_case/workspace" msbuild \
-    "$msbuild_case/workspace/source/project.proj" -nologo >/dev/null 2>&1
+    "$msbuild_case/workspace/source/project.proj" \
+    "-p:DirectoryBuildPropsPath=$msbuild_case/hostile.targets" \
+    "-p:DirectoryBuildTargetsPath=$msbuild_case/hostile.targets" \
+    "-p:DirectoryPackagesPropsPath=$msbuild_case/Directory.Packages.props" \
+    -t:Probe -nologo >/dev/null 2>&1
 )
-if [ -e "$msbuild_marker" ] || [ -e "$bash_env_marker" ] \
-  || [ -e "$fake_env_marker" ]; then
-  echo "FAIL: controlled dotnet launch inherited an ambient build input" >&2
-  exit 1
-fi
-echo "  cleared ambient Bash, PATH, CWD/SDK, and MSBuild inputs from the measured build"
+for inherited_input in \
+  "MSBuild property:$msbuild_marker" \
+  "ancestor Directory.Build.targets:$build_ancestor_marker" \
+  "ancestor Directory.Packages.props:$packages_ancestor_marker" \
+  "BASH_ENV:$bash_env_marker" \
+  "PATH:$fake_env_marker"; do
+  inherited_label=${inherited_input%%:*}
+  inherited_marker=${inherited_input#*:}
+  if [ -e "$inherited_marker" ]; then
+    echo "FAIL: controlled dotnet launch inherited $inherited_label" >&2
+    exit 1
+  fi
+done
+echo "  cleared ambient Bash, PATH, CWD/SDK, MSBuild-property, and ancestor policy inputs"
 
 fresh
 sed -i 's/^jenkins-core: 2\.568\.1$/jenkins-core: 9.99.9/' \
@@ -482,7 +538,8 @@ chmod u+w "$probe_repo/scripts/"*
 cp evidence/20260827T185436Z-fg037-step-ceiling/source/allowed_signers \
   "$probe_repo/evidence/20260827T185436Z-fg037-step-ceiling/source/"
 touch "$probe_repo/Fogell.slnx" "$probe_repo/global.json" \
-  "$probe_repo/Directory.Build.props" \
+  "$probe_repo/Directory.Build.props" "$probe_repo/Directory.Build.targets" \
+  "$probe_repo/Directory.Packages.props" \
   "$probe_repo/tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj" \
   "$probe_repo/src/Engine.fs"
 git -C "$probe_repo" init -q --initial-branch=main
