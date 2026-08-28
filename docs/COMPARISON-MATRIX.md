@@ -11,7 +11,7 @@ last-verified: 2026-08-17
 
 > **HAND-MAINTAINED, NOT GENERATED.** `docs/COMPATIBILITY-SCORECARD.md` is generated and is the
 > authority for every Fogell corpus number; figures here are quoted from it, never recomputed.
-> Numeric tokens use the `tier1=` form so `scripts/audit-board-numbers.bb` re-derives them.
+> Numeric tokens use the `tier1=` form so `scripts/bin/audit-board-numbers` re-derives them.
 >
 > **REVISION 3, 2026-08-17.** Every `[D]` doc-cited cell was re-verified against CODE, with
 > architecture docs disallowed as evidence. **Eight confirmed and are now `[S]` with `file:line`
@@ -212,7 +212,7 @@ Either is worth more than any further row here.
 ## 9. Verification
 
 - Fogell corpus figures quoted from the generated scorecard; tokens `tier1=1`, `tier3=59`,
-  `admitted=168` match the ledger BY HAND — `scripts/audit-board-numbers.bb` reads only
+  `admitted=168` match the ledger BY HAND — `scripts/bin/audit-board-numbers` reads only
   `EXECUTION_BOARD.md`, so this file's copies are outside its reach and drift silently
   (they did: three `admitted=169` cells survived the token's move, caught by the
   FG-201-cycle verifier).

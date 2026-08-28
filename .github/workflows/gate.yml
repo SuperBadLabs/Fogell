@@ -95,16 +95,46 @@ jobs:
           # FSharp.Core reference, so the SDK and locks are one versioned unit.
           global-json-file: global.json
 
-      - name: install babashka and ripgrep
-        # Pinned release + checksum, never a mutable-branch installer piped to sudo:
-        # the gate must not execute whatever `master` holds today on every push.
+      - name: cache the fflat toolchain
+        # FG-226. `fflat` is a 199 MB nupkg that unpacks to 496 MB, downloaded on
+        # every run without this. The key pins the exact version, so a version
+        # bump is a cache miss by construction and can never serve a stale
+        # toolchain — which matters more here than the saved minutes, since the
+        # binaries this produces are what the blocking audits run.
+        #
+        # UNVERIFIED FROM HERE: whether restoring the extracted tree actually
+        # beats re-downloading the nupkg depends on GitHub's cache throughput and
+        # compression, which cannot be measured on HeMan. The first hosted run
+        # settles it; if restore is slower, drop this step rather than tuning it.
+        uses: actions/cache@v4
+        with:
+          path: ~/.dotnet/tools
+          key: fflat-2.1.3-${{ runner.os }}
+
+      - name: install fflat and ripgrep
+        # FG-226. The audit tools are F# scripts compiled to native binaries by
+        # fflat; `scripts/build-audits.sh` runs inside the gate itself.
+        #
+        # PINNED TO AN EXACT VERSION, for the reason the babashka install this
+        # replaced gave: the gate must not execute whatever a mutable channel
+        # holds today. bflat and fflat are one-maintainer projects sitting on the
+        # blocking path, so the version is a decision, not a default.
         run: |
-          sudo apt-get update -q && sudo apt-get install -y -q ripgrep
-          BB_VERSION=1.12.208
-          BB_SHA256=424c0be8be3932ecf16151e115c126e386931cd2ac8706afd99599f03cdb7129
-          curl -sL -o bb.tar.gz "https://github.com/babashka/babashka/releases/download/v${BB_VERSION}/babashka-${BB_VERSION}-linux-amd64-static.tar.gz"
-          echo "${BB_SHA256}  bb.tar.gz" | sha256sum -c -
-          tar -xzf bb.tar.gz && sudo mv bb /usr/local/bin/bb && bb --version
+          # libc++-dev is fflat's documented prerequisite on debian-based
+          # systems; bflat links against it. HeMan has it installed, which is
+          # why local builds never surfaced the dependency.
+          sudo apt-get update -q && sudo apt-get install -y -q ripgrep libc++-dev
+          # Idempotent: on a cache hit the tool is already there, and
+          # `dotnet tool install` exits non-zero rather than no-opping.
+          # Tested by RUNNING it, not by `-x`. `actions/cache` saves in its post
+          # step even when the job fails, so a half-populated install — shim
+          # present, `.store` incomplete — would be cached under the pinned key
+          # and skipped on every subsequent run, forever.
+          if ! "$HOME/.dotnet/tools/fflat" --version >/dev/null 2>&1; then
+            dotnet tool install -g fflat --version 2.1.3
+          fi
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+          "$HOME/.dotnet/tools/fflat" --version
 
       - name: gate
         env:

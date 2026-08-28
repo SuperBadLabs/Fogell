@@ -82,7 +82,13 @@ export FOGELL_JENKINS_WIPE_CMD="ssh ${FOGELL_JENKINS_HOST} \"podman exec ${FOGEL
 # A failed sync only WARNS: every SCM case verifies its checked-out bytes
 # against the local body and fails CLOSED on drift, so stale content cannot
 # seal a receipt; unrelated cases still run.
-bb scripts/sync-scm-cases.bb || echo "warning: scm case sync failed — SCM cases will fail closed on drift" >&2
+# BUILD BEFORE USE. `scripts/bin/` is gitignored, so on a fresh checkout this
+# tool does not exist and the sync silently took the warning path — where the
+# babashka original ran from a committed file that was always present. This
+# runner is standalone and never enters `build-and-test.sh`, so it must build
+# the tool itself. Raised by Codex on PR #180.
+./scripts/build-audits.sh >/dev/null || { echo "warning: audit tool build failed — skipping scm case sync" >&2; }
+./scripts/bin/sync-scm-cases || echo "warning: scm case sync failed — SCM cases will fail closed on drift" >&2
 
 dotnet build -c Release --nologo >/dev/null 2>&1 || { echo "build failed"; exit 1; }
 exec dotnet run --project tools/Fogell.Differential.Cli -c Release --no-build -- \

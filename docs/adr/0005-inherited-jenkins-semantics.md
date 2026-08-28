@@ -109,7 +109,7 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
   `Rejected`, followed by an `ErrorAction$ErrorId: <uuid>` line naming a Java class
   — and both land at END of build, after the pipeline teardown, not at the step.
   (**Measured** 2026-08-01, both directions, through the REST input API; rerun with
-  `scripts/probe-input.bb approve|reject|restart`.) Fogell emits `Rejected` at the
+  `scripts/bin/probe-input approve|reject|restart`.) Fogell emits `Rejected` at the
   step and deliberately does not emit the `ErrorId` line — engine-internal mimicry
   and a placement no receipt can compare, stated as residuals rather than guessed at.
 - Agent-side output is buffered locally and recovered by offset on reconnect: a

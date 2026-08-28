@@ -43,7 +43,16 @@ echo "=== grouped step-finish force proof (FG-207, blocking) ==="
 # FG-104. BLOCKING. Every MEASURED claim must cite a receipt or admit UNPROVEN. The
 # backlog it was introduced against (30) is zero, so the check now fails the build instead
 # of printing at it — an advisory check nobody must act on decays into noise.
-if [ -x scripts/audit-claims.bb ]; then
+# FG-226. The audit tools are compiled from scripts/fsx/*.fsx, never committed:
+# an fflat build is not reproducible, so a committed binary could not be proven
+# to match its source. Building them HERE makes that link true by construction
+# for the very run that then trusts them.
+./scripts/build-audits.sh || { echo "AUDIT TOOL BUILD FAILED"; exit 1; }
+# The prelude is shared by all eight tools, so a divergence in it changes every
+# audit's verdict at once. Proven before any of them runs.
+./scripts/prove-fsx-prelude.sh || { echo "FSX PRELUDE PROOF FAILED"; exit 1; }
+
+if [ -x scripts/bin/audit-claims ]; then
   echo "=== claim audit + its citation proof (FG-104/FG-174, blocking) ==="
   # THE PROOF RUNS FIRST, for the same reason the stale-ref proof does below. The audit
   # gained a SECOND check — every receipt a comment NAMES must exist — and a checker
@@ -53,11 +62,11 @@ if [ -x scripts/audit-claims.bb ]; then
   # must not. Both directions earned their place — the first draft called six genuine
   # citations dangling, and its ACCEPT arms were passing on zero scanned files.
   ./scripts/prove-claim-citations.sh || { echo "CLAIM-CITATION PROOF FAILED"; exit 1; }
-  # No `| head`: piping into head can SIGPIPE babashka and mask its exit status, which
+  # No `| head`: piping into head can SIGPIPE the audit and mask its exit status, which
   # would make an advisory check silently become a broken one.
-  # Status captured explicitly: without it a babashka that cannot start is indistinguishable
+  # Status captured explicitly: without it an audit binary that cannot start is indistinguishable
   # from a clean audit, and the planned `--strict` flip would never have failed a build.
-  if ! audit_out="$(./scripts/audit-claims.bb --strict 2>&1)"; then
+  if ! audit_out="$(./scripts/bin/audit-claims --strict 2>&1)"; then
     echo "CLAIM AUDIT FAILED"; printf '%s\n' "$audit_out"; exit 1
   fi
   printf '%s\n' "$audit_out" | sed -n '1,3p'
@@ -66,7 +75,7 @@ fi
 
 # FG-104b: a comment naming a mechanism the code no longer has. Three of those
 # landed in one day and every one was caught by a reviewer rather than a check —
-# `audit-claims.bb` asks a different question (does a MEASURED claim name a
+# `audit-claims` asks a different question (does a MEASURED claim name a
 # receipt) that a stale identifier passes trivially.
 #
 # Scope, stated exactly because vaguer versions of this sentence have been a
@@ -75,7 +84,7 @@ fi
 # or nested `(* ... *)` blocks. Short names are deliberately out (`x`, `id`,
 # `ctx` occur in ordinary English and a checker that fires on prose gets
 # switched off), and non-F# symbols are not extracted at all: a deleted shell
-# function or bb def can leave a stale comment this audit will not see.
+# function or shell def can leave a stale comment this audit will not see.
 #
 # Proven to fail before being trusted, and the proof runs first: 16 binding
 # forms, a comment repeating the keyword, a record field on the brace line and
@@ -124,7 +133,7 @@ echo "=== fail-closed evidence sealer proof (FG-223, blocking) ==="
 # FG-162. Board rows quoting generated counts are re-derived from the committed
 # ledger. Runs EVERYWHERE including CI — both files are in the repo, unlike the
 # corpus-dependent scorecard check below.
-./scripts/audit-board-numbers.bb || { echo "BOARD-NUMBER AUDIT FAILED"; exit 1; }
+./scripts/bin/audit-board-numbers || { echo "BOARD-NUMBER AUDIT FAILED"; exit 1; }
 ./scripts/prove-board-numbers.sh || { echo "BOARD-NUMBER PROOF FAILED"; exit 1; }
 
 # FG-198. Queue rows checked against the line-208 rule's deny-list — a FLOOR the
@@ -202,7 +211,7 @@ if [ -d "${FOGELL_CORPUS:-/sn8100/work/exchange/crucible-gate/corpus}" ]; then
 else
   echo "scorecard/regression check NOT RUN: corpus not mounted — generated artifacts and live compatibility non-regression are UNVERIFIED on this host"
 fi
-./scripts/audit-stale-refs.bb "${FOGELL_STALE_REF_BASE:-origin/main}" --strict \
+./scripts/bin/audit-stale-refs "${FOGELL_STALE_REF_BASE:-origin/main}" --strict \
   || { echo "STALE REFERENCE AUDIT FAILED"; exit 1; }
 
 # FG-112: the restart lane is self-contained (dotnet + bash + a SIGKILL) and
