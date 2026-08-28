@@ -403,7 +403,7 @@ touch "$probe_repo/Fogell.slnx" "$probe_repo/global.json" \
   "$probe_repo/Directory.Build.props" \
   "$probe_repo/tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj" \
   "$probe_repo/src/Engine.fs"
-git -C "$probe_repo" init -q
+git -C "$probe_repo" init -q --initial-branch=main
 git -C "$probe_repo" add .
 git -C "$probe_repo" -c user.name=FG-037 -c user.email=fg037@example.invalid \
   -c commit.gpgsign=false commit -qm baseline
