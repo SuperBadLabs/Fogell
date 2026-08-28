@@ -7049,10 +7049,32 @@ let compileRefusalDisposition =
 
           test "configured raw console export is exact-build scoped, atomic and fail-closed" {
               let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-console-export-{Guid.NewGuid():N}")
+              let outside = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-console-outside-{Guid.NewGuid():N}")
               let target = IO.Path.Combine(root, "jenkins-console.txt")
+
+              Expect.equal
+                  (Jenkins.jobNameForCase "/cases/foo.bar.Jenkinsfile")
+                  (Jenkins.jobNameForCase "/other/foo-bar.Jenkinsfile")
+                  "the hostile fixture reaches one normalized Jenkins identity"
+
+              match
+                  Jenkins.validateUniqueCaseJobs
+                      [ "/cases/foo.bar.Jenkinsfile"; "/other/foo-bar.Jenkinsfile" ]
+              with
+              | Ok() -> failtest "colliding case names were allowed to share the raw-console selector"
+              | Error why ->
+                  Expect.stringContains why "diff-foo-bar" "the ambiguous Jenkins identity is named"
+                  Expect.stringContains why "foo.bar.Jenkinsfile" "the first source case is named"
+                  Expect.stringContains why "foo-bar.Jenkinsfile" "the second source case is named"
+
+              Expect.isOk
+                  (Jenkins.validateUniqueCaseJobs
+                      [ "/cases/foo.bar.Jenkinsfile"; "/other/distinct.Jenkinsfile" ])
+                  "distinct normalized Jenkins identities remain admissible"
 
               try
                   IO.Directory.CreateDirectory root |> ignore
+                  IO.Directory.CreateDirectory outside |> ignore
 
                   let export =
                       Some
@@ -7117,12 +7139,88 @@ let compileRefusalDisposition =
                       (fun () -> Jenkins.exportRawConsole directoryTarget "diff-boundary" 1 "must fail\n")
                       "a directory cannot be mistaken for a published console"
 
+                  let linkedDirectory = IO.Path.Combine(root, "linked-directory")
+                  IO.Directory.CreateSymbolicLink(linkedDirectory, outside) |> ignore
+
+                  let directoryEscape =
+                      Some
+                          { JobName = "diff-boundary"
+                            BuildNumber = 1
+                            Path = IO.Path.Combine(linkedDirectory, "escaped-console.txt")
+                            Observed = false }
+
+                  Expect.throws
+                      (fun () -> Jenkins.exportRawConsole directoryEscape "diff-boundary" 1 "must fail\n")
+                      "a symlinked directory cannot redirect the configured evidence path"
+                  Expect.isFalse
+                      (IO.File.Exists(IO.Path.Combine(outside, "escaped-console.txt")))
+                      "the symlink target remains untouched"
+                  Expect.isFalse directoryEscape.Value.Observed "a refused directory escape is not observed"
+
+                  let ordinaryChild = IO.Path.Combine(outside, "ordinary-child")
+                  IO.Directory.CreateDirectory ordinaryChild |> ignore
+
+                  let nestedDirectoryEscape =
+                      Some
+                          { JobName = "diff-boundary"
+                            BuildNumber = 1
+                            Path = IO.Path.Combine(linkedDirectory, "ordinary-child", "nested-console.txt")
+                            Observed = false }
+
+                  Expect.throws
+                      (fun () -> Jenkins.exportRawConsole nestedDirectoryEscape "diff-boundary" 1 "must fail\n")
+                      "an earlier symlink component cannot hide behind an ordinary immediate parent"
+                  Expect.isFalse
+                      (IO.File.Exists(IO.Path.Combine(ordinaryChild, "nested-console.txt")))
+                      "the nested external target remains untouched"
+                  Expect.isFalse
+                      nestedDirectoryEscape.Value.Observed
+                      "a refused nested ancestor escape is not observed"
+
+                  let outsideFile = IO.Path.Combine(outside, "outside-console.txt")
+                  let linkedFile = IO.Path.Combine(root, "linked-console.txt")
+                  IO.File.WriteAllText(outsideFile, "outside sentinel\n")
+                  IO.File.CreateSymbolicLink(linkedFile, outsideFile) |> ignore
+
+                  let fileEscape =
+                      Some
+                          { JobName = "diff-boundary"
+                            BuildNumber = 1
+                            Path = linkedFile
+                            Observed = false }
+
+                  Expect.throws
+                      (fun () -> Jenkins.exportRawConsole fileEscape "diff-boundary" 1 "must fail\n")
+                      "an existing symlink target cannot redirect console publication"
+                  Expect.equal
+                      (IO.File.ReadAllText outsideFile)
+                      "outside sentinel\n"
+                      "the existing symlink destination remains untouched"
+                  Expect.isFalse fileEscape.Value.Observed "a refused file escape is not observed"
+
+                  let danglingFile = IO.Path.Combine(root, "dangling-console.txt")
+                  IO.File.CreateSymbolicLink(danglingFile, IO.Path.Combine(outside, "missing-console.txt"))
+                  |> ignore
+
+                  let danglingEscape =
+                      Some
+                          { JobName = "diff-boundary"
+                            BuildNumber = 1
+                            Path = danglingFile
+                            Observed = false }
+
+                  Expect.throws
+                      (fun () -> Jenkins.exportRawConsole danglingEscape "diff-boundary" 1 "must fail\n")
+                      "a dangling final symlink is still an unsafe configured target"
+                  Expect.isFalse danglingEscape.Value.Observed "a refused dangling target is not observed"
+
                   Expect.equal
                       (IO.Directory.GetFiles(root, ".*.tmp"))
                       [||]
                       "failed publications leave no partial temporary artifact"
               finally
                   if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+                  if IO.Directory.Exists outside then IO.Directory.Delete(outside, true)
           }
 
           test "Fogell input rejection returns a refusal trace without touching a fresh workspace" {

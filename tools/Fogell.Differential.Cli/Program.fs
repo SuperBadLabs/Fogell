@@ -17,8 +17,9 @@ open Fogell.Execution
 ///   FOGELL_JENKINS_RAW_CONSOLE_JOB / _BUILD / _PATH
 ///                             optional all-or-none exact build console export;
 ///                             PATH must be absolute, its parent must already
-///                             exist, and it may not name a directory. The file
-///                             is atomically replaced; export failure aborts the run.
+///                             exist, contain no symlink/reparse component, and
+///                             not name a directory. The file is atomically
+///                             replaced; export failure aborts the run.
 [<EntryPoint>]
 let main argv =
     match Array.toList argv with
@@ -69,6 +70,12 @@ let main argv =
                     1
 
     | baseUrl :: core :: receiptDir :: (_ :: _ as files) ->
+        match Jenkins.validateUniqueCaseJobs files with
+        | Ok() -> ()
+        | Error why ->
+            eprintfn $"case identity refused: {why}"
+            exit 2
+
         let jenkinsWorkspace =
             match Environment.GetEnvironmentVariable "FOGELL_JENKINS_WORKSPACE" with
             | null | "" -> None
@@ -355,10 +362,7 @@ let main argv =
                 // index-derived name reshuffles when a case is added, and the
                 // new occupant inherits the previous run's workspace. That
                 // showed up as a phantom workspace-hash divergence.
-                let job =
-                    "diff-"
-                    + Text.RegularExpressions.Regex.Replace(
-                        Path.GetFileNameWithoutExtension name, "[^A-Za-z0-9]+", "-")
+                let job = Jenkins.jobNameForCase file
 
                 // Wipe any stale workspace so a hash can only match on merit.
                 //

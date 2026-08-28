@@ -66,6 +66,57 @@ module Jenkins =
 
     let private client = new HttpClient(Timeout = TimeSpan.FromMinutes 10.0)
 
+    let jobNameForCase (casePath: string) =
+        "diff-"
+        + Regex.Replace(
+            IO.Path.GetFileNameWithoutExtension(IO.Path.GetFileName casePath),
+            "[^A-Za-z0-9]+",
+            "-"
+        )
+
+    /// Jenkins execution and raw-console selection are keyed by job/build.
+    /// Refuse two source cases that normalize to the same job before either
+    /// case can execute.
+    let validateUniqueCaseJobs (casePaths: string list) =
+        let collisions =
+            casePaths
+            |> List.groupBy jobNameForCase
+            |> List.choose (fun (job, paths) ->
+                if List.length paths > 1 then Some(job, paths |> List.map IO.Path.GetFileName) else None)
+
+        match collisions with
+        | [] -> Ok()
+        | _ ->
+            collisions
+            |> List.map (fun (job, names) -> sprintf "%s <- %s" job (String.concat ", " names))
+            |> String.concat "; "
+            |> sprintf "normalized Jenkins job-name collision: %s"
+            |> Error
+
+    let private hasReparsePoint (path: string) =
+        let info = IO.FileInfo path
+
+        info.LinkTarget <> null
+        || ((IO.File.Exists path || IO.Directory.Exists path)
+            && info.Attributes.HasFlag IO.FileAttributes.ReparsePoint)
+
+    /// Refuse every existing symlink/reparse point in the lexical target chain.
+    /// Resolving the whole path first would hide the evidence-directory escape.
+    let private hasReparseComponent (path: string) =
+        let full = IO.Path.GetFullPath path
+        let root = IO.Path.GetPathRoot full
+
+        full.Substring(root.Length)
+            .Split(
+                [| IO.Path.DirectorySeparatorChar; IO.Path.AltDirectorySeparatorChar |],
+                StringSplitOptions.RemoveEmptyEntries
+            )
+        |> Array.mapFold (fun current part ->
+            let next = IO.Path.Combine(current, part)
+            hasReparsePoint next, next) root
+        |> fst
+        |> Array.exists id
+
     let internal exportRawConsole
         (export: RawConsoleExport option)
         (jobName: string)
@@ -82,6 +133,9 @@ module Jenkins =
 
             if not (IO.Directory.Exists directory) then
                 invalidOp $"configured raw-console export directory does not exist: {directory}"
+
+            if hasReparseComponent target then
+                invalidOp $"configured raw-console export path passes through a symlink or reparse point: {target}"
 
             if IO.Directory.Exists target then
                 invalidOp $"configured raw-console export target is a directory: {target}"
