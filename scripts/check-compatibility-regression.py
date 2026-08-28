@@ -205,13 +205,13 @@ def run_scorecard_check(repository: Path, corpus: Path) -> None:
     environment = controlled_environment()
     environment["FOGELL_CORPUS"] = str(corpus)
     result = subprocess.run(
-        [str(repository / "scripts" / "generate-scorecard.bb"), "--check"],
+        [str(repository / "scripts" / "bin" / "generate-scorecard"), "--check"],
         cwd=repository,
         capture_output=True,
         env=environment,
     )
     if result.returncode != 0:
-        raise Refusal("generate-scorecard.bb --check failed before regression comparison")
+        raise Refusal("generate-scorecard --check failed before regression comparison")
 
 
 def require_filename(filename: str) -> None:

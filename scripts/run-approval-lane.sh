@@ -3,7 +3,7 @@
 # approvals inbox, with the answer surviving a genuine SIGKILL.
 #
 # The behaviour being reproduced was MEASURED on the pinned lab (Jenkins
-# 2.568.1, `scripts/probe-input.bb`): a pending `input` survives a
+# 2.568.1, `scripts/bin/probe-input`): a pending `input` survives a
 # controller restart with the SAME action id and is still approvable afterwards,
 # approving prints NOTHING, and a human abort ends the build ABORTED with
 # `Rejected`.
