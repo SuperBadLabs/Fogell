@@ -120,8 +120,12 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
 
 ## Beat
 
-- **No 250-step ceiling.** Jenkins fails to compile 251 steps in one stage
-  (JVM 255-argument limit). Measured: 400 steps run fine.
+- **No 250-step ceiling.** The exact 250-step control is tier-1 PROVEN; Jenkins
+  2.568.1 fails at 251 before a workspace effect while Fogell runs every step,
+  and at 400 Jenkins reports the JVM 255-argument limit while Fogell again runs
+  every ordered step. The intentional divergences are retained outside the
+  compatibility suite in the manifest-bound
+  [FG-037 evidence](../../evidence/20260827T185436Z-fg037-step-ceiling).
 - **Diagnose dirty-death data loss.** Jenkins' `PERFORMANCE_OPTIMIZED` mode
   fails silently on SIGKILL — truncated console, no resume attempt, no error.
 - **Detect dead step processes in seconds.** Jenkins took ~10 minutes to fail a

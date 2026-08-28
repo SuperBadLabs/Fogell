@@ -1270,6 +1270,47 @@ let controllerProcessGroupExtinction =
                   "an uncertain outer probe blocks terminal publication"
           } ]
 
+/// FG-037. Declarative Jenkins compiles the steps in one stage into a JVM
+/// method and reaches its argument ceiling at step 251. Fogell's IR is a list,
+/// so the corresponding local guarantee is that every one of 400 ordered
+/// top-level steps is admitted and executed. This is deliberately an in-process
+/// regression test; the pinned-Jenkins boundary is retained separately by the
+/// live, non-build-gated FG-037 probe.
+let noStepCeiling =
+    testList
+        "FG-037 no steps-per-stage ceiling"
+        [ test "400 ordered steps all execute" {
+              let expected = [ 1..400 ] |> List.map (fun i -> $"FG037-{i:D3}")
+
+              let steps =
+                  expected
+                  |> List.map (fun marker -> $"echo '{marker}'")
+                  |> String.concat "\n"
+
+              let source =
+                  "pipeline { agent any stages { stage('four-hundred') { steps {\n"
+                  + steps
+                  + "\n} } } }"
+
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg037-" + Guid.NewGuid().ToString("N"))
+
+              try
+                  match FogellSide.run [] root "fg037-four-hundred" source with
+                  | Error why -> failtestf "400-step pipeline refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the 400-step stage completes"
+
+                      let markers =
+                          trace.Output
+                          |> List.filter (fun line -> line.StartsWith("FG037-", StringComparison.Ordinal))
+
+                      Expect.equal markers expected "all 400 unique markers execute once and in order"
+              finally
+                  if IO.Directory.Exists root then
+                      IO.Directory.Delete(root, true)
+          } ]
+
 /// FG-002f. The acceptance this ticket actually demanded: emit each look-alike FROM A
 /// BUILD and assert it survives normalisation.
 ///
@@ -7006,6 +7047,84 @@ let compileRefusalDisposition =
               | Error why -> Expect.stringContains why "no compiler boundary" "boundary matching is exact"
           }
 
+          test "configured raw console export is exact-build scoped, atomic and fail-closed" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-console-export-{Guid.NewGuid():N}")
+              let target = IO.Path.Combine(root, "jenkins-console.txt")
+
+              try
+                  IO.Directory.CreateDirectory root |> ignore
+
+                  let export =
+                      Some
+                          { JobName = "diff-boundary"
+                            BuildNumber = 1
+                            Path = target
+                            Observed = false }
+
+                  Jenkins.exportRawConsole export "diff-other" 1 "wrong job\n"
+                  Jenkins.exportRawConsole export "diff-boundary" 2 "wrong build\n"
+                  Expect.isFalse (IO.File.Exists target) "non-selected builds cannot publish"
+                  Expect.isFalse export.Value.Observed "an unmatched selector remains visibly unsatisfied"
+
+                  Jenkins.exportRawConsole export "diff-boundary" 1 "first π console\n"
+                  Expect.isTrue export.Value.Observed "the exact selected build satisfies the export"
+                  Expect.equal
+                      (IO.File.ReadAllText(target, Text.Encoding.UTF8))
+                      "first π console\n"
+                      "selected build publishes exact UTF-8 text"
+
+                  Jenkins.exportRawConsole export "diff-boundary" 1 "confirmed console\n"
+                  Expect.equal
+                      (IO.File.ReadAllText target)
+                      "confirmed console\n"
+                      "a confirmed retry atomically replaces the prior attempt"
+
+                  Expect.equal
+                      (IO.Directory.GetFiles(root, ".*.tmp"))
+                      [||]
+                      "atomic publication leaves no temporary artifact"
+
+                  let unavailable =
+                      Some
+                          { JobName = "diff-boundary"
+                            BuildNumber = 1
+                            Path = IO.Path.Combine(root, "missing", "console.txt")
+                            Observed = false }
+
+                  Expect.throws
+                      (fun () -> Jenkins.exportRawConsole unavailable "diff-boundary" 1 "must fail\n")
+                      "a configured export cannot silently disappear"
+
+                  let relative =
+                      Some
+                          { JobName = "diff-boundary"
+                            BuildNumber = 1
+                            Path = "relative-console.txt"
+                            Observed = false }
+
+                  Expect.throws
+                      (fun () -> Jenkins.exportRawConsole relative "diff-boundary" 1 "must fail\n")
+                      "a configured export cannot escape its explicit absolute evidence path"
+
+                  let directoryTarget =
+                      Some
+                          { JobName = "diff-boundary"
+                            BuildNumber = 1
+                            Path = root
+                            Observed = false }
+
+                  Expect.throws
+                      (fun () -> Jenkins.exportRawConsole directoryTarget "diff-boundary" 1 "must fail\n")
+                      "a directory cannot be mistaken for a published console"
+
+                  Expect.equal
+                      (IO.Directory.GetFiles(root, ".*.tmp"))
+                      [||]
+                      "failed publications leave no partial temporary artifact"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
           test "Fogell input rejection returns a refusal trace without touching a fresh workspace" {
               let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-fresh-{Guid.NewGuid():N}")
               let workspace = IO.Path.Combine(root, "job")
@@ -7951,6 +8070,7 @@ let main argv =
               controllerWorkerTiming
               controllerStateRoot
               controllerProcessGroupExtinction
+              noStepCeiling
               hostedSignatures
               stepDescriptorValidation
               genuineNullRuntime

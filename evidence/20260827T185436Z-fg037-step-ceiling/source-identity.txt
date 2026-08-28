@@ -1,0 +1,43 @@
+utc: 2026-08-27T18:55:29Z
+host: HeMan
+head: 65674f9a4af80e358f645ad3409765a8738c68b4
+tree: 7e09d220260b9117890cf4275fc240d989101f7c
+dotnet: 10.0.301
+jenkins-url: http://127.0.0.1:18099
+jenkins-core: 2.568.1 (artifact, endpoint, and container-loopback agree)
+jenkins-session: e95d785a (endpoint and container-loopback agree before and after builds)
+jenkins-host: luigi
+jenkins-container: jenkins-lab
+jenkins-image-name: localhost/jenkins-rich:local
+jenkins-image-id: 7a193ff741388715adcb359f604ea7da4e9c5de7c87105e390af1410b3677602
+engine-build-input-status: clean against the recorded HEAD before and after the live run
+engine-build-project: tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj
+engine-build-configuration: Release
+engine-build-mode: --no-incremental (no stale output reuse)
+engine-build-pathspecs:
+  Fogell.slnx
+  global.json
+  :(glob)Directory.Build.*
+  :(glob)Directory.Packages.*
+  :(icase)nuget.config
+  src
+  tools
+probe-input-pathspecs:
+  scripts/check-fg037-jenkins-identity.sh
+  scripts/check-fg037-manifest.py
+  scripts/check-fg037-step-ceiling.py
+  scripts/jenkins-workspace-v2.sh
+  scripts/prove-fg037-step-ceiling.sh
+  scripts/run-fg037-step-ceiling-probe.sh
+
+implementation-sha256:
+d3e97c241e7992ad3a3d69de0744544a266e50fbb914b5033e9a15cfe91869ee  tests/Fogell.Differential.Tests/Tests.fs
+b77b089bdba1b2c6fc810937de2b14f76682b2845905e3ea93ea893e2bc7dcf7  scripts/check-fg037-step-ceiling.py
+38d96645432888118ddc517901cc5edde921dac1b0d3bb666871620b54624d9a  scripts/prove-fg037-step-ceiling.sh
+5834f9cb706bada10e4bf6c8dda85b5074715f9d64f811754714dd06b5cccd88  scripts/run-fg037-step-ceiling-probe.sh
+3c60d292c08d6bcfc03d357c80ccc32014b2473ef85cae7a90e0578ff105f14d  scripts/check-fg037-jenkins-identity.sh (executed HEAD snapshot)
+9b4da2ed8a4bf30f8997627a2b6f8a7bc97567ff3b5721ff7007d6562be9a0ef  scripts/check-fg037-manifest.py (executed HEAD snapshot)
+e77188dd47970da8b3c0c3c54b898bfc87a31591e80e2be16b8357ad490854ad  scripts/jenkins-workspace-v2.sh (executed HEAD snapshot)
+
+worktree-status:
+?? evidence/20260827T185436Z-fg037-step-ceiling/

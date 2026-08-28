@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # FG-000/FG-001 — the gate every ticket must pass before its PR.
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 echo "=== sdk ==="; dotnet --version
 ./scripts/prove-dependency-locks.sh \
   || { echo "DEPENDENCY-LOCK/SOURCE-CLEARED BUILD PROOF FAILED"; exit 1; }
@@ -120,6 +120,24 @@ echo "=== controller/build environment isolation proof (FG-222, blocking) ==="
 echo "=== fail-closed evidence sealer proof (FG-223, blocking) ==="
 ./scripts/prove-seal-evidence.sh \
   || { echo "FAIL-CLOSED EVIDENCE SEALER PROOF FAILED"; exit 1; }
+
+# FG-037. The live 250/251/400 comparison stays off CI because it needs the
+# pinned Jenkins lab. Its fail-closed evidence boundaries are pure: fourteen semantic
+# mutations, three controller-identity substitutions, four collector/configuration
+# attacks and two manifest attacks must all be rejected before publication.
+echo "=== step-ceiling evidence-boundary proof (FG-037, blocking) ==="
+./scripts/prove-fg037-step-ceiling.sh \
+  evidence/20260827T185436Z-fg037-step-ceiling \
+  || { echo "STEP-CEILING EVIDENCE-BOUNDARY PROOF FAILED"; exit 1; }
+python3 scripts/check-fg037-manifest.py \
+  --expected-manifest-sha256 \
+  488feb681882587345063e2294977767446cb5e69e1b3c648a4a1b9d78eff309 \
+  evidence/20260827T185436Z-fg037-step-ceiling \
+  || { echo "STEP-CEILING EVIDENCE MANIFEST FAILED"; exit 1; }
+dotnet run --project tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj \
+  -c Release --no-build -- \
+  --verify-seals evidence/20260827T185436Z-fg037-step-ceiling/receipts \
+  || { echo "STEP-CEILING RECEIPT SEALS FAILED"; exit 1; }
 
 # FG-162. Board rows quoting generated counts are re-derived from the committed
 # ledger. Runs EVERYWHERE including CI — both files are in the repo, unlike the
