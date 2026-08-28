@@ -13,7 +13,7 @@ open Fogell.Groovy.Interpreter
 /// an approval prints NOTHING and the build carries on; a rejection prints
 /// `Rejected` and the build ends ABORTED), and a bool at this boundary is how a
 /// caller ends up defaulting one of them. UNPROVEN BY RECEIPT — measured by
-/// `scripts/probe-input.bb`, asserted by `scripts/run-approval-lane.sh`.
+/// `scripts/bin/probe-input`, asserted by `scripts/run-approval-lane.sh`.
 type InputAnswer =
     | InputApproved of submitter: string
     | InputRejected of submitter: string
@@ -120,7 +120,7 @@ type PersistenceHooks =
       /// UNPROVEN BY RECEIPT, and unprovable by one: a receipt is a differential
       /// against real Jenkins, and the harness has no approver on EITHER side —
       /// an answered prompt cannot be driven in both engines from a Jenkinsfile
-      /// alone. The measurement is `scripts/probe-input.bb` against
+      /// alone. The measurement is `scripts/bin/probe-input` against
       /// the pinned lab (recorded in ADR 0005); the ENGINE side is proven by
       /// `scripts/run-approval-lane.sh`, which runs in the gate.
       /// The `cancellable` flag says this prompt can be STOPPED while it waits —
