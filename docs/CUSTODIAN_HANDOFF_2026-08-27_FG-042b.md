@@ -23,8 +23,7 @@ candidates as published work.
   head above.
 - GitHub merged the PR at `2026-08-28T03:50:40Z`, which was
   `2026-08-27T22:50:40-05:00` on HeMan.
-- The source commit has a good ED25519 signature for
-  `srikanth.remani@gmail.com`, key
+- The source commit verifies with ED25519 key
   `SHA256:6cTB2VnhVlZd0WqZSzWP6UsYjYewpNL20zho8M7R1tY`.
 - Handoff branch: `codex/custodian-handoff-fg042b-2026-08-27`.
 - Handoff publication: pull request
