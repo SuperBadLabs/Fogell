@@ -757,13 +757,21 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
 
                                 match plan.Terminal with
                                 | Some status ->
-                                    match store.PublishTerminal(claim.OrganizationId, claim.AttemptId, claim.Fence, owner, status) with
+                                    match WorkerPaths.finalizeArtifactSnapshot workspaceRoot buildKey claim.AttemptId with
+                                    | Error error ->
+                                        logger.LogError(
+                                            "FG-042b artifact snapshot failed for {AttemptId}: {Reason}",
+                                            claim.AttemptId.Value,
+                                            error)
+                                        requireReconciliation "artifact_snapshot_failed"
                                     | Ok _ ->
-                                        dispositionRecorded <- true
-                                        terminalPublished <- true
-                                    | Error _ ->
-                                        logger.LogError("FG-224 terminal publication was refused for {AttemptId}", claim.AttemptId.Value)
-                                        requireReconciliation "terminal_publication_refused"
+                                        match store.PublishTerminal(claim.OrganizationId, claim.AttemptId, claim.Fence, owner, status) with
+                                        | Ok _ ->
+                                            dispositionRecorded <- true
+                                            terminalPublished <- true
+                                        | Error _ ->
+                                            logger.LogError("FG-224 terminal publication was refused for {AttemptId}", claim.AttemptId.Value)
+                                            requireReconciliation "terminal_publication_refused"
                                 | None ->
                                     requireReconciliation "terminal_journal_missing"
                     finally

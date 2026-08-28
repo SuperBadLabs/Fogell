@@ -2798,6 +2798,38 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         tx.Commit()
         snapshot
 
+    /// Resolve an attempt through its tenant/project/build lineage. Attempt
+    /// terminality is immutable even when a later retry reopens the build.
+    member _.ArtifactAttemptSnapshot
+        (org: OrganizationId, project: ProjectId, build: BuildId, attempt: AttemptId)
+        : string option =
+        use conn = openConn ()
+        use tx = beginTenantTransaction conn org
+        use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
+        cmd.CommandText <-
+            "SELECT a.state
+               FROM builds b
+               JOIN nodes n
+                 ON n.organization_id = b.organization_id
+                AND n.build_id = b.id
+               JOIN attempts a
+                 ON a.organization_id = n.organization_id
+                AND a.node_id = n.id
+              WHERE b.organization_id = @o
+                AND b.project_id = @p
+                AND b.id = @b
+                AND a.id = @a"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("p", project.Value) |> ignore
+        cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        let state = cmd.ExecuteScalar()
+        tx.Commit()
+        match state with
+        | :? string as value -> Some value
+        | _ -> None
+
     member _.CountOutbox(org: OrganizationId) : int =
         use conn = openConn ()
         use tx = beginTenantTransaction conn org

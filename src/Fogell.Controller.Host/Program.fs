@@ -138,6 +138,7 @@ let main _ =
                         { Store = runtimeStore
                           Auth = auth
                           TrustPool = config.TrustPool
+                          StateRoot = config.StateRoot
                           MaxPipelineBytes = config.MaxPipelineBytes
                           MaxLogChunks = config.MaxLogChunks }
                         app
