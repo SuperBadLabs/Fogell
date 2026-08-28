@@ -55,7 +55,23 @@ fi
 # A failed sync only WARNS: every SCM case verifies its checked-out bytes
 # against the local body and fails CLOSED on drift, so stale content cannot
 # seal a receipt; unrelated cases still run.
-bb scripts/sync-scm-cases.bb || echo "warning: scm case sync failed — SCM cases will fail closed on drift" >&2
+# BUILD BEFORE USE. `scripts/bin/` is gitignored, so on a fresh checkout this
+# tool does not exist and the sync silently took the warning path — where the
+# babashka original ran from a committed file that was always present. This
+# runner is standalone and never enters `build-and-test.sh`, so it must build
+# the tool itself. Raised by Codex on PR #180.
+# The skip must actually SKIP. An earlier version of this guard printed
+# "skipping scm case sync" and then ran the tool on the next line regardless:
+# with a stale `scripts/bin/sync-scm-cases` left from an older build, that runs
+# OLD logic against the fixture remote while claiming to have done nothing —
+# the same say-one-thing-do-another failure the `runOrDie` work exists to close,
+# in the guard that was added to close it. Raised independently by Codex and
+# Copilot on PR #181.
+if ./scripts/build-audits.sh >/dev/null; then
+  ./scripts/bin/sync-scm-cases || echo "warning: scm case sync failed — SCM cases will fail closed on drift" >&2
+else
+  echo "warning: audit tool build failed — skipping scm case sync" >&2
+fi
 
 dotnet build -c Release --nologo >/dev/null 2>&1 || { echo "build failed"; exit 1; }
 exec dotnet run --project tools/Fogell.Differential.Cli -c Release --no-build -- \

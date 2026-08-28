@@ -14,3 +14,6 @@ evidence/**/workspace/
 # tests-*.log into every seal — so the next seal would have been silently
 # untracked while looking complete. Caught in review before it merged.
 /error.log
+
+# FG-226: audit tools are compiled at gate time, never committed (see scripts/build-audits.sh)
+scripts/bin/
