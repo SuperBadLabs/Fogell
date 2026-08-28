@@ -34,5 +34,6 @@ This receipt indexes the detailed
   and same-UID isolation boundaries. The detailed handoff records the full
   contract and nonclaims.
 
-Handoff branch: `codex/custodian-handoff-fg042b-2026-08-27`. The documentation
-PR and its merge record identify the commit containing these artifacts.
+Handoff branch: `codex/custodian-handoff-fg042b-2026-08-27`. Handoff publication:
+[#173](https://github.com/SuperBadLabs/Fogell/pull/173). That PR and its merge
+record identify the commit containing these artifacts.

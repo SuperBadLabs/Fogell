@@ -27,8 +27,10 @@ candidates as published work.
   `srikanth.remani@gmail.com`, key
   `SHA256:6cTB2VnhVlZd0WqZSzWP6UsYjYewpNL20zho8M7R1tY`.
 - Handoff branch: `codex/custodian-handoff-fg042b-2026-08-27`.
-- The documentation PR and its resulting merge identity are the publication
-  record for this file; do not copy a predicted self-reference into it.
+- Handoff publication: pull request
+  [#173](https://github.com/SuperBadLabs/Fogell/pull/173). Its resulting merge
+  identity is the publication record for this file; do not copy a predicted
+  self-reference into it.
 
 The local `main` branch was not the source of this handoff. It was stale at
 `804bf7967cf3708eb3bb44387d59a24310c89607`; the handoff branch was created
