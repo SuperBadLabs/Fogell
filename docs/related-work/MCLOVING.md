@@ -109,7 +109,7 @@ For symmetry: proven execution parity (63/63 tier-1 differential cases,
 ~49 sealed receipts, per-construct measured Jenkins semantics in `adr/0005`),
 demand counts counted rather than recalled, the five-class review-findings
 taxonomy (cancellation ordering, string provenance, abort-cause, fail-closed,
-narration), and the claim-audit gate (`scripts/audit-claims.bb`). The reverse
+narration), and the claim-audit gate (`scripts/bin/audit-claims`). The reverse
 dossier records these for their side.
 
 ## Boundary rules (non-negotiable, mirrored in their copy)

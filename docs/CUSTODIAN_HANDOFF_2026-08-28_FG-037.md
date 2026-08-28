@@ -236,8 +236,9 @@ before cleanup; use recoverable cleanup where practical.
 
 1. Fetch `origin`, record the exact current `origin/main`, and create a new
    `codex/` branch from it.
-2. Run `scripts/audit-board-numbers.bb`, inspect open PRs, and inventory
-   worktrees before trusting queue prose or local branch names.
+2. Build the audit tools with `scripts/build-audits.sh`, run
+   `scripts/bin/audit-board-numbers`, inspect open PRs, and inventory worktrees
+   before trusting queue prose or local branch names.
 3. Decide explicitly whether to reconcile PR #181, reconcile PR #163, or start
    a fresh impact dimension. Do not combine those scopes implicitly.
 4. If taking #181, begin with the two false-green/stale-binary findings and the

@@ -286,7 +286,7 @@ fi
 
 # 14g. A VALID RECEIPT COPIED ONTO ANOTHER CASE'S NAME. It verifies fine on its own
 # terms — the seal binds which case was compared, and nothing bound WHERE the document
-# sits — while `generate-scorecard.bb` attributes evidence by the ON-DISK filename. So
+# sits — while `generate-scorecard` attributes evidence by the ON-DISK filename. So
 # copying any proven receipt over another case name grants that case tier 1 from a run
 # that never tested it. Raised by review on PR #48.
 d="$LAB/copied"
@@ -433,7 +433,7 @@ else
 fi
 
 # 15. A FORGED SECOND VERDICT. The seal binds the FIRST verdict block, and
-# `generate-scorecard.bb` classifies tier 1 with a regex matching ANY line — so appending
+# `generate-scorecard` classifies tier 1 with a regex matching ANY line — so appending
 # one line to a diverged receipt verified AND promoted it. Measured: this arm passed
 # before the duplicate refusal existed, on the commit that added seal verification.
 # The check that closes a hole shipped with a green tick in front of it.
