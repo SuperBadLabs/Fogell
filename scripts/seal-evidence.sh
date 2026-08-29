@@ -31,7 +31,8 @@ repository_git () {
       -u GIT_PREFIX -u GIT_NAMESPACE \
       GIT_INDEX_FILE="$index_file" \
       git -C "$repository" --work-tree="$repository" \
-        -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
+        -c core.hooksPath=/dev/null -c core.fsmonitor=false \
+        -c color.ui=false -c color.diff=false -c color.status=false "$@"
   else
     env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE \
       -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
@@ -39,7 +40,8 @@ repository_git () {
       -u GIT_REPLACE_REF_BASE \
       -u GIT_PREFIX -u GIT_NAMESPACE \
       git -C "$repository" --work-tree="$repository" \
-        -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
+        -c core.hooksPath=/dev/null -c core.fsmonitor=false \
+        -c color.ui=false -c color.diff=false -c color.status=false "$@"
   fi
 }
 root_git () {
@@ -480,6 +482,8 @@ fi
 mapfile -d '' test_projects < <(
   snapshot_git ls-files -z -- ':(glob)tests/**/*.fsproj'
 )
+test_projects_pid=$!
+wait "$test_projects_pid" || fail "tracked test project inventory could not be read"
 [ "${#test_projects[@]}" -gt 0 ] || fail "no test projects were discovered"
 for t in "${test_projects[@]}"; do
   n="$(basename -- "${t%.fsproj}")"

@@ -3,7 +3,16 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="$ROOT/scripts/seal-evidence.sh"
-REAL_CP="$(command -v cp)"
+REAL_CP="$(type -P cp || true)"
+if [ -z "$REAL_CP" ] || [ ! -x "$REAL_CP" ]; then
+  echo "FAIL: external cp executable is unavailable"
+  exit 1
+fi
+REAL_GIT="$(type -P git || true)"
+if [ -z "$REAL_GIT" ] || [ ! -x "$REAL_GIT" ]; then
+  echo "FAIL: external git executable is unavailable"
+  exit 1
+fi
 LAB="$(mktemp -d /tmp/fogell-fg223-seal-proof.XXXXXX)"
 trap 'rm -rf -- "$LAB"' EXIT
 
@@ -127,6 +136,28 @@ no_tests_rc=0
 ) > "$no_tests_log" 2>&1 || no_tests_rc=$?
 [ "$no_tests_rc" -ne 0 ] || { echo "FAIL: missing test inventory was accepted"; exit 1; }
 rg -q "no test projects were discovered" "$no_tests_log" || { cat "$no_tests_log"; exit 1; }
+
+# A process substitution gives mapfile its own successful exit status. The Git
+# producer must be waited explicitly or a real inventory failure is flattened
+# into the semantically false "no test projects" diagnostic.
+test_inventory_error_repo="$(make_case test-inventory-error)"
+# shellcheck disable=SC2016 # Argument matching belongs to the generated fake.
+{
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'for arg in "$@"; do' \
+    '  if [ "$arg" = ":(glob)tests/**/*.fsproj" ]; then' \
+    '    echo "planted test inventory Git failure" >&2' \
+    '    exit 66' \
+    '  fi' \
+    'done'
+  printf 'exec %q "$@"\n' "$REAL_GIT"
+} > "$test_inventory_error_repo/fakebin/git"
+chmod +x "$test_inventory_error_repo/fakebin/git"
+git -C "$test_inventory_error_repo" add fakebin/git
+git -C "$test_inventory_error_repo" commit -qm add-test-inventory-git-failure
+expect_refusal_at "$test_inventory_error_repo" test-inventory-error \
+  "tracked test project inventory could not be read"
 
 partial_inventory_repo="$(make_case partial-test-inventory)"
 mkdir -p "$partial_inventory_repo/tests/Hidden"
@@ -856,6 +887,30 @@ rg -q '^MEASURED: real repository candidate$' "$locator_bundle/build.log" \
 rg -q '^GIT_CONTEXT_BOUND$' "$locator_bundle/build.log" \
   || { echo "FAIL: prerequisite child Git did not bind the linked worktree context"; cat "$locator_bundle/build.log"; exit 1; }
 
+# Machine-parsed status/diff bytes must not inherit ANSI coloring. Otherwise an
+# evidence staging path begins with escape bytes instead of `?? evidence/`, and
+# the final capture sees a different private staging inventory.
+colored_git_repo="$(make_case colored-git-output)"
+printf 'dirty candidate with forced Git color\n' > "$colored_git_repo/candidate.txt"
+git -C "$colored_git_repo" config color.status always
+git -C "$colored_git_repo" config color.diff always
+(
+  cd "$colored_git_repo"
+  env PATH="$colored_git_repo/fakebin:$PATH" FAKE_MEASURE_FILE=candidate.txt \
+    ./scripts/seal-evidence.sh FG-223-PROOF > "$LAB/colored-git-output.log"
+)
+colored_git_bundle="$(find "$colored_git_repo/evidence" -mindepth 1 -maxdepth 1 -type d -name '*-fg-223-proof' -print -quit)"
+[ -n "$colored_git_bundle" ] \
+  || { echo "FAIL: forced Git color prevented evidence publication"; exit 1; }
+if LC_ALL=C rg -q $'\033' "$colored_git_bundle/status-before-commit.txt" \
+  "$colored_git_bundle/candidate.diff" "$colored_git_bundle/diffstat.txt"; then
+  echo "FAIL: machine-parsed evidence retained ANSI color escapes"
+  exit 1
+fi
+rg -q '^MEASURED: dirty candidate with forced Git color$' \
+  "$colored_git_bundle/build.log" \
+  || { echo "FAIL: forced Git color changed the measured candidate"; cat "$colored_git_bundle/build.log"; exit 1; }
+
 aba_repo="$(make_case checkout-aba)"
 aba_build_marker="$LAB/checkout-aba-build-started"
 aba_measured_marker="$LAB/checkout-aba-measured"
@@ -1085,4 +1140,4 @@ fi
 [ "$build_pwd" != "$success_repo" ] \
   || { echo "FAIL: prerequisites executed from the publishing checkout"; exit 1; }
 
-echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty-inventory, input-boundary, late-untracked, post-checkout-hook, active/conditional-filter, raw-transform, external/Git-admin-symlink, tracked, staging-state, HEAD and atomic-move failures publish no manifest; caller Git repository/index overrides and configured core.worktree cannot redirect snapshot operations or mutate the publishing index; an unused configured filter remains inert; every tracked tests/**/*.fsproj runs; dirty text, binary bytes, unstaged/staged deletions, staged additions, and confined broken/trailing-dot symlinks reach/reconstruct from one hook-free raw-identity-audited isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)"
+echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty/test-inventory, input-boundary, late-untracked, post-checkout-hook, active/conditional-filter, raw-transform, external/Git-admin-symlink, tracked, staging-state, HEAD and atomic-move failures publish no manifest; caller Git repository/index overrides, configured core.worktree, and forced Git color cannot redirect or corrupt machine-parsed snapshot operations; an unused configured filter remains inert; every tracked tests/**/*.fsproj runs; dirty text, binary bytes, unstaged/staged deletions, staged additions, and confined broken/trailing-dot symlinks reach/reconstruct from one hook-free raw-identity-audited isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)"
