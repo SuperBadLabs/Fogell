@@ -32,6 +32,14 @@ for p in tests/*/; do
 done
 [ "$fail" -ne 0 ] && { echo "TESTS FAILED"; exit 1; }
 
+# FG-026. The ordinary Store project run above covers the ledger and already
+# refuses a no-summary database skip. This focused wrapper additionally proves
+# that the named ten-test slice and exact live schema marker ran, after first
+# rejecting planted skip/count/marker/summary/exit-code outputs.
+echo "=== effect-checkpoint ledger proof (FG-026, blocking) ==="
+./scripts/prove-fg026-effect-ledger.sh \
+  || { echo "EFFECT-CHECKPOINT LEDGER PROOF FAILED"; exit 1; }
+
 # FG-207. StepFinished and its optional StepReason are historical records but
 # one current durability group: exact order under one lock and exactly one
 # EveryStep Flush(true). The deterministic observer proof runs everywhere;
