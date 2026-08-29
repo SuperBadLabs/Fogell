@@ -87,6 +87,23 @@ cleanup () {
 }
 trap cleanup EXIT
 
+capture_tracked_inventory () {
+  local destination="$1"
+  local candidate_index="$destination/.candidate-index"
+  # Derive the inventory represented by HEAD + candidate.diff in a private
+  # index. The publishing index alone still names unstaged deletions and thus
+  # does not describe the candidate that the prerequisites will consume.
+  GIT_INDEX_FILE="$candidate_index" git read-tree HEAD
+  if [ -s "$destination/candidate.diff" ]; then
+    if ! GIT_INDEX_FILE="$candidate_index" \
+      git apply --cached --binary "$destination/candidate.diff"; then
+      fail "captured candidate tracked inventory could not be derived"
+    fi
+  fi
+  GIT_INDEX_FILE="$candidate_index" git ls-files > "$destination/tree.txt"
+  rm "$candidate_index"
+}
+
 capture_candidate () {
   local destination="$1"
   git diff --no-ext-diff --no-textconv HEAD --stat \
@@ -104,7 +121,7 @@ capture_candidate () {
     printf '%s\n' "$status_line"
   done                              > "$destination/status-before-commit.txt"
   git rev-parse HEAD                  > "$destination/base-commit.txt"
-  git ls-files                        > "$destination/tree.txt"
+  capture_tracked_inventory "$destination"
 }
 
 # Copy caller-owned measurements before the long-running prerequisites. The

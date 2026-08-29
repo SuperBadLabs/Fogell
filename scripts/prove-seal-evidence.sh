@@ -26,6 +26,8 @@ make_case () {
     '    [ -z "${FAKE_BUILD_MARKER:-}" ] || : > "$FAKE_BUILD_MARKER"' \
     '    sleep "${FAKE_MEASURE_DELAY:-0}"' \
     '    [ -z "${FAKE_MEASURE_FILE:-}" ] || { printf "MEASURED: "; cat "$FAKE_MEASURE_FILE"; }' \
+    '    [ -z "${FAKE_ASSERT_ABSENT:-}" ] || { [ ! -e "$FAKE_ASSERT_ABSENT" ] || { echo "unexpected candidate path: $FAKE_ASSERT_ABSENT"; exit 96; }; echo "ABSENT: $FAKE_ASSERT_ABSENT"; }' \
+    '    [ -z "${FAKE_ASSERT_SYMLINK:-}" ] || { [ -L "$FAKE_ASSERT_SYMLINK" ] || { echo "missing candidate symlink: $FAKE_ASSERT_SYMLINK"; exit 95; }; echo "SYMLINK: $FAKE_ASSERT_SYMLINK"; }' \
     '    [ -z "${FAKE_MUTATE_FILE:-}" ] || printf "%s\n" "${FAKE_MUTATE_CONTENT:-mutated by prerequisite}" > "$FAKE_MUTATE_FILE"' \
     '    [ -z "${FAKE_MEASURED_MARKER:-}" ] || : > "$FAKE_MEASURED_MARKER"' \
     '    sleep "${FAKE_BUILD_DELAY:-0}"; echo "BUILD_PWD=$PWD"; echo "Build succeeded."; exit "${FAKE_BUILD_RC:-0}" ;;' \
@@ -449,6 +451,64 @@ dirty_text_bundle="$(find "$dirty_text_repo/evidence" -mindepth 1 -maxdepth 1 -t
 rg -q '^MEASURED: dirty measured candidate$' "$dirty_text_bundle/build.log" \
   || { echo "FAIL: materialized build did not consume dirty candidate bytes"; cat "$dirty_text_bundle/build.log"; exit 1; }
 
+deleted_repo="$(make_case unstaged-tracked-deletion)"
+rm "$deleted_repo/candidate.txt"
+# An empty directory at the deleted path is invisible to Git. This kills a
+# physical `-e` inventory filter while the private candidate index stays exact.
+mkdir "$deleted_repo/candidate.txt"
+(
+  cd "$deleted_repo"
+  env PATH="$deleted_repo/fakebin:$PATH" FAKE_ASSERT_ABSENT=candidate.txt \
+    ./scripts/seal-evidence.sh FG-223-PROOF > "$LAB/unstaged-tracked-deletion.log"
+)
+deleted_bundle="$(find "$deleted_repo/evidence" -mindepth 1 -maxdepth 1 -type d -name '*-fg-223-proof' -print -quit)"
+[ -n "$deleted_bundle" ] || { echo "FAIL: unstaged tracked deletion published no bundle"; exit 1; }
+rg -q '^deleted file mode ' "$deleted_bundle/candidate.diff" \
+  || { echo "FAIL: candidate diff did not bind the unstaged tracked deletion"; exit 1; }
+if rg -qx 'candidate.txt' "$deleted_bundle/tree.txt"; then
+  echo "FAIL: candidate inventory retained an unstaged tracked deletion"
+  exit 1
+fi
+rg -q '^ABSENT: candidate.txt$' "$deleted_bundle/build.log" \
+  || { echo "FAIL: materialized build did not observe the tracked deletion"; cat "$deleted_bundle/build.log"; exit 1; }
+[ -d "$deleted_repo/candidate.txt" ] \
+  || { echo "FAIL: sealing mutated the publishing checkout's empty replacement directory"; exit 1; }
+(
+  cd "$deleted_bundle"
+  sha256sum -c SHA256SUMS >/dev/null
+)
+
+staged_repo="$(make_case staged-inventory-transitions)"
+printf 'staged candidate\n' > "$staged_repo/staged.txt"
+ln -s missing-target "$staged_repo/broken.link"
+(
+  cd "$staged_repo"
+  git add staged.txt broken.link
+  git rm -q candidate.txt
+  env PATH="$staged_repo/fakebin:$PATH" \
+    FAKE_MEASURE_FILE=staged.txt FAKE_ASSERT_ABSENT=candidate.txt \
+    FAKE_ASSERT_SYMLINK=broken.link \
+    ./scripts/seal-evidence.sh FG-223-PROOF > "$LAB/staged-inventory-transitions.log"
+)
+staged_bundle="$(find "$staged_repo/evidence" -mindepth 1 -maxdepth 1 -type d -name '*-fg-223-proof' -print -quit)"
+[ -n "$staged_bundle" ] || { echo "FAIL: staged candidate transitions published no bundle"; exit 1; }
+rg -qx 'staged.txt' "$staged_bundle/tree.txt" \
+  || { echo "FAIL: candidate inventory omitted a staged addition"; exit 1; }
+rg -qx 'broken.link' "$staged_bundle/tree.txt" \
+  || { echo "FAIL: candidate inventory omitted a staged broken symlink"; exit 1; }
+if rg -qx 'candidate.txt' "$staged_bundle/tree.txt"; then
+  echo "FAIL: candidate inventory retained a staged deletion"
+  exit 1
+fi
+rg -q '^new file mode 120000$' "$staged_bundle/candidate.diff" \
+  || { echo "FAIL: candidate diff did not bind the staged broken symlink"; exit 1; }
+rg -q '^MEASURED: staged candidate$' "$staged_bundle/build.log" \
+  || { echo "FAIL: materialized build did not consume the staged addition"; cat "$staged_bundle/build.log"; exit 1; }
+rg -q '^ABSENT: candidate.txt$' "$staged_bundle/build.log" \
+  || { echo "FAIL: materialized build did not observe the staged deletion"; cat "$staged_bundle/build.log"; exit 1; }
+rg -q '^SYMLINK: broken.link$' "$staged_bundle/build.log" \
+  || { echo "FAIL: materialized build did not observe the staged broken symlink"; cat "$staged_bundle/build.log"; exit 1; }
+
 success_repo="$(make_case success)"
 (
   cd "$success_repo"
@@ -472,4 +532,4 @@ fi
 [ "$build_pwd" != "$success_repo" ] \
   || { echo "FAIL: prerequisites executed from the publishing checkout"; exit 1; }
 
-echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty-inventory, input-boundary, tracked, staging-state, HEAD and atomic-move failures publish no manifest; every tracked tests/**/*.fsproj runs; dirty text and binary bytes reach/reconstruct from one isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)"
+echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty-inventory, input-boundary, tracked, staging-state, HEAD and atomic-move failures publish no manifest; every tracked tests/**/*.fsproj runs; dirty text, binary bytes, unstaged/staged deletions, staged additions, and a broken symlink reach/reconstruct from one isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)"
