@@ -54,19 +54,32 @@ mkdir -p evidence
 # evidence-only files into the product commit. They are exempt; everything else is not.
 # Normalised: `git ls-files` reports `x.log` while a caller naturally writes `./x.log`,
 # and an exemption that fails on a leading `./` is no exemption at all.
-UNTRACKED="$(git ls-files --others --exclude-standard | while read -r f; do
-  # ALL of evidence/ is output, not input. Excluding only the current run's directory
-  # still tripped over the PREVIOUS bundle, which makes the check circular: you cannot
-  # seal until you stage the last seal. The check exists to catch untracked SOURCE.
-  case "$f" in evidence/*) continue ;; esac
-  [[ -n "${EXTRA_PATHS[$f]+present}" ]] || printf '%s\n' "$f"
-done)"
-if [ -n "$UNTRACKED" ]; then
-  echo "REFUSING TO SEAL: untracked files would be omitted from the evidence:" >&2
-  while IFS= read -r f; do printf '  %s\n' "$f"; done <<< "$UNTRACKED" >&2
-  echo "Stage them (git add) so the sealed diff covers the actual change." >&2
-  exit 1
-fi
+assert_no_untracked_source () {
+  local -a all_untracked=()
+  local -a untracked_source=()
+  local listing_pid
+  local untracked_path
+  mapfile -d '' all_untracked < <(git ls-files --others --exclude-standard -z)
+  listing_pid=$!
+  wait "$listing_pid" || fail "untracked source inventory could not be read"
+  for untracked_path in "${all_untracked[@]}"; do
+    # ALL of evidence/ is output, not input. Excluding only this run's directory
+    # would make every previous receipt block the next seal.
+    case "$untracked_path" in evidence/*) continue ;; esac
+    [[ -n "${EXTRA_PATHS[$untracked_path]+present}" ]] \
+      || untracked_source+=("$untracked_path")
+  done
+  if [ "${#untracked_source[@]}" -gt 0 ]; then
+    echo "REFUSING TO SEAL: untracked files would be omitted from the evidence:" >&2
+    for untracked_path in "${untracked_source[@]}"; do
+      printf '  %q\n' "$untracked_path" >&2
+    done
+    echo "Stage them (git add) so the sealed diff covers the actual change." >&2
+    exit 1
+  fi
+}
+
+assert_no_untracked_source
 
 # Build the bundle outside its final name. A failed measurement leaves neither a
 # checksum nor a directory that looks sealed; the exact mktemp result is the only
@@ -106,6 +119,9 @@ capture_tracked_inventory () {
 
 capture_candidate () {
   local destination="$1"
+  # Bookend the capture itself. A stable file created after the early preflight
+  # must never survive merely as an unbound `??` status record.
+  assert_no_untracked_source
   git diff --no-ext-diff --no-textconv HEAD --stat \
                                              > "$destination/diffstat.txt"
   git diff --no-ext-diff --no-textconv --binary --full-index HEAD \
@@ -122,6 +138,7 @@ capture_candidate () {
   done                              > "$destination/status-before-commit.txt"
   git rev-parse HEAD                  > "$destination/base-commit.txt"
   capture_tracked_inventory "$destination"
+  assert_no_untracked_source
 }
 
 # Copy caller-owned measurements before the long-running prerequisites. The

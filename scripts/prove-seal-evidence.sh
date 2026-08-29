@@ -3,6 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="$ROOT/scripts/seal-evidence.sh"
+REAL_CP="$(command -v cp)"
 LAB="$(mktemp -d /tmp/fogell-fg223-seal-proof.XXXXXX)"
 trap 'rm -rf -- "$LAB"' EXIT
 
@@ -178,6 +179,55 @@ hidden_rc=0
 [ "$hidden_rc" -ne 0 ] || { echo "FAIL: hidden internal extra basename was silently omitted"; exit 1; }
 rg -q "extra evidence basename is reserved for internal staging" "$hidden_log" \
   || { cat "$hidden_log"; exit 1; }
+
+late_untracked_repo="$(make_case late-untracked-source)"
+printf 'caller measurement\n' > "$late_untracked_repo/measurement.log"
+# shellcheck disable=SC2016 # Expansion belongs to the generated fake, not this proof.
+{
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    '[ -z "${FAKE_CP_MARKER:-}" ] || : > "$FAKE_CP_MARKER"' \
+    'sleep "${FAKE_CP_DELAY:-0}"'
+  printf 'exec %q "$@"\n' "$REAL_CP"
+} > "$late_untracked_repo/fakebin/cp"
+chmod +x "$late_untracked_repo/fakebin/cp"
+(
+  cd "$late_untracked_repo"
+  git add fakebin/cp
+  git commit -qm add-delayed-copy
+)
+late_untracked_marker="$LAB/late-untracked-copy-started"
+late_untracked_log="$LAB/late-untracked-source.log"
+late_untracked_rc=0
+(
+  cd "$late_untracked_repo"
+  env PATH="$late_untracked_repo/fakebin:$PATH" \
+    FAKE_CP_MARKER="$late_untracked_marker" FAKE_CP_DELAY=0.5 \
+    ./scripts/seal-evidence.sh FG-223-PROOF measurement.log
+) > "$late_untracked_log" 2>&1 &
+late_untracked_pid=$!
+for _ in $(seq 1 100); do
+  [ -e "$late_untracked_marker" ] && break
+  sleep 0.02
+done
+[ -e "$late_untracked_marker" ] \
+  || { echo "FAIL: late-untracked capture window never opened"; kill "$late_untracked_pid" 2>/dev/null || true; exit 1; }
+printf 'late source bytes\n' > "$late_untracked_repo/late-source.fs"
+wait "$late_untracked_pid" || late_untracked_rc=$?
+[ "$late_untracked_rc" -ne 0 ] \
+  || { echo "FAIL: untracked source created after preflight was omitted from a published bundle"; exit 1; }
+rg -q "untracked files would be omitted from the evidence" "$late_untracked_log" \
+  || { echo "FAIL: late untracked source was not diagnosed"; cat "$late_untracked_log"; exit 1; }
+rg -q "late-source.fs" "$late_untracked_log" \
+  || { echo "FAIL: late untracked diagnostic did not name the source path"; cat "$late_untracked_log"; exit 1; }
+if find "$late_untracked_repo/evidence" -type f -name SHA256SUMS -print -quit 2>/dev/null | rg -q .; then
+  echo "FAIL: late untracked source published a manifest"
+  exit 1
+fi
+if find "$late_untracked_repo/evidence" -maxdepth 1 -type d -name '*.partial.*' -print -quit 2>/dev/null | rg -q .; then
+  echo "FAIL: late untracked source left a partial bundle"
+  exit 1
+fi
 
 unsafe_repo="$(make_case unsafe-ticket)"
 unsafe_log="$LAB/unsafe-ticket.log"
@@ -532,4 +582,4 @@ fi
 [ "$build_pwd" != "$success_repo" ] \
   || { echo "FAIL: prerequisites executed from the publishing checkout"; exit 1; }
 
-echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty-inventory, input-boundary, tracked, staging-state, HEAD and atomic-move failures publish no manifest; every tracked tests/**/*.fsproj runs; dirty text, binary bytes, unstaged/staged deletions, staged additions, and a broken symlink reach/reconstruct from one isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)"
+echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty-inventory, input-boundary, late-untracked, tracked, staging-state, HEAD and atomic-move failures publish no manifest; every tracked tests/**/*.fsproj runs; dirty text, binary bytes, unstaged/staged deletions, staged additions, and a broken symlink reach/reconstruct from one isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)"
