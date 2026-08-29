@@ -380,7 +380,7 @@ git config --file "$conditional_filter_config" filter.unspecified.required true
 git -C "$conditional_filter_repo" config --local \
   'includeIf.gitdir:**/worktrees/source.path' "$conditional_filter_config"
 if git -C "$conditional_filter_repo" config \
-  --get-regexp '^filter\..*\.(clean|smudge|process)$' >/dev/null; then
+  --get-regexp '^filter\.unspecified\.(clean|smudge|process)$' >/dev/null; then
   echo "FAIL: conditional filter unexpectedly appeared in the publishing checkout"
   exit 1
 fi
