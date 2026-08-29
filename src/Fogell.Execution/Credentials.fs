@@ -17,7 +17,7 @@ type Credential =
     /// Bytes, not a string. REVIEW FIX (Codex, PR #15 round 4): decoding to UTF-8 text
     /// corrupts any real file credential — a keystore, a DER certificate, a gzip — and
     /// corrupting a credential silently is worse than refusing it.
-    | SecretFile of fileName: string * content: byte[]
+    | SecretFile of PreparedFileCredential
 
 /// A binding requested by `withCredentials`, before resolution.
 type CredentialRequest =
@@ -28,6 +28,12 @@ type CredentialRequest =
     | BindUnmodelled of kind: string * source: string
 
 module Credentials =
+
+    /// Resolve one file credential's log-protection forms once. Every lexical
+    /// binding can then share the immutable strings instead of retaining another
+    /// full base64/hex set for the remainder of the run.
+    let secretFile (fileName: string) (content: byte[]) =
+        SecretFile(Secrets.prepareFileCredential fileName content)
 
     /// Parse the list literal `withCredentials` is given. The parser hands it over as
     /// raw source (ADR 0002), so the shape is decided here, where it is needed.

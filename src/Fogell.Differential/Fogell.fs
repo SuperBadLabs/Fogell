@@ -203,7 +203,7 @@ module FogellSide =
                             match kind.Trim() with
                             | "text" -> Some(id.Trim(), SecretText asText)
                             // Bytes are preserved verbatim for a file credential.
-                            | "file" -> Some(id.Trim(), SecretFile("secret.dat", bytes))
+                            | "file" -> Some(id.Trim(), Credentials.secretFile "secret.dat" bytes)
                             | "userpass" ->
                                 match asText.Split '\n' with
                                 | [| u; p |] -> Some(id.Trim(), UsernamePassword(u, p))
@@ -556,6 +556,11 @@ module FogellSide =
         // Capture the closest Fogell analogue at build entry, before preflight.
         let buildStartTimeInMillis = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         let isRestartedRun = persistence |> Option.exists (fun hooks -> hooks.IsRestartedRun)
+        // Resolve at most once, and only if a withCredentials step is reached.
+        // File credentials carry one immutable prepared-form object in this map;
+        // repeated lexical bindings share it instead of multiplying full encoded
+        // strings in WalkerCtx's run-scoped protection history.
+        let credentialsForRun = lazy (credentials ())
         // The execution root belongs to the caller and may intentionally be a
         // shared/mounted parent.  Create it when absent, but never chmod or
         // otherwise reinterpret an existing root; only Fogell's child HOME is
@@ -1199,7 +1204,7 @@ module FogellSide =
                       WorkspaceRoot = workspaceRoot
                       ArtifactRoot = artifactRoot
                       JobName = jobName
-                      Credentials = credentials
+                      Credentials = fun () -> credentialsForRun.Value
                       PreviousBuild = previousBuild
                       BuildNumber = buildNumber
                       Scm = scm
@@ -1422,6 +1427,34 @@ module FogellSide =
             runWithCredentialStore (fun () -> credentials) None envReplacements workspaceRoot jobName 1 None true None None script
         with ex ->
             Result.Error ex.Message
+
+    /// Test/internal entrypoint for exercising credential lexical cleanup when
+    /// persisted-host callbacks fail. Production hosts use runPersisted with the
+    /// same hook path; keeping the credential store explicit avoids process-global
+    /// test authority.
+    let internal runWithCredentialsAndPersistence
+        (credentials: Map<string, Credential>)
+        (workspaceRoot: string)
+        (jobName: string)
+        (hooks: PersistenceHooks)
+        (script: string)
+        =
+        try
+            runWithCredentialStore
+                (fun () -> credentials)
+                None
+                []
+                workspaceRoot
+                jobName
+                1
+                None
+                true
+                None
+                (Some hooks)
+                script
+        with
+        | :? OutputPublicationException -> reraise ()
+        | ex -> Result.Error ex.Message
 
     /// Run one Jenkinsfile as a fresh single build — the pre-FG-110 contract.
     let run (envReplacements: (string * string) list) (workspaceRoot: string) (jobName: string) (script: string) =
