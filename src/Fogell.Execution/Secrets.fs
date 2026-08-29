@@ -10,8 +10,9 @@ open System.IO
 /// 1. A secret placed in the child's ENVIRONMENT is readable from
 ///    /proc/<pid>/environ by any process running as the same user, for the whole
 ///    life of the step. Measured, not assumed. Jenkins' `withCredentials` does
-///    exactly this. So Fogell does not do it: the value goes to a 0600 file and
-///    the environment carries only the PATH.
+///    exactly this, and lift-and-shift compatibility requires Fogell to bind the
+///    value too. The 0600 file is an additive companion, not same-UID isolation;
+///    `environmentForPathOnly` retains the incompatible path-only alternative.
 ///
 /// 2. Masking cannot be a security boundary. A script that can read a secret can
 ///    transform it, and the measured Jenkins masker handles literal, base64 and
@@ -19,6 +20,22 @@ open System.IO
 ///    silently, with the build green. Fogell masks the same registered forms but
 ///    treats masking as defence-in-depth and, crucially, is NOT silent when a
 ///    transformation likely escaped it.
+type SecretForms =
+    private
+        { TextValue: string
+          MaskForms: string list
+          LeakForms: (string * string) list }
+
+/// One file credential's byte snapshot and the log-protection forms derived from
+/// that exact snapshot. The representation is opaque outside this assembly so a
+/// caller cannot pair forms for one value with bytes from another.
+[<Sealed>]
+type PreparedFileCredential internal (fileName: string, content: byte[], forms: Lazy<SecretForms>) =
+    member internal _.FileName = fileName
+    member internal _.Content = content
+    member internal _.Forms = forms.Value
+    member internal _.FormsCreated = forms.IsValueCreated
+
 type SecretBinding =
     { /// The variable carrying the VALUE, exactly as Jenkins binds it.
       ///
@@ -38,8 +55,12 @@ type SecretBinding =
       PathVariable: string
       /// Absolute path of the 0600 file holding the value.
       FilePath: string
-      /// The value, retained only to build the masker and to detect leaks.
+      /// Text value retained for Jenkins-compatible environment binding and
+      /// literal leak checks. Binary file credentials leave this empty.
       Value: string
+      /// Immutable text forms shared by every lexical binding of one resolved
+      /// credential. They are run-scoped metadata, not zeroized memory.
+      Forms: SecretForms
       /// FG-044. True for a `file()` credential, where Jenkins binds the requested
       /// variable to a PATH rather than to the content. The content is still what gets
       /// masked — the path is not a secret, the bytes are.
@@ -52,80 +73,227 @@ type Leak =
 
 module Secrets =
 
-    /// Encodings the masker recognises. Deliberately the SAME set Jenkins was
-    /// measured to handle, so parity is exact — plus the detector below, which
-    /// Jenkins has no equivalent of.
-    let private registeredForms (value: string) =
-        let bytes = Text.Encoding.UTF8.GetBytes value
+    [<Literal>]
+    let private MinimumBinaryEncodingBytes = 8
 
+    [<Literal>]
+    let private MinimumBinaryDistinctBytes = 4
+
+    type internal SecretFilePhase =
+        | Opened
+        | ReadyToWrite
+
+    let internal writeSecretFileAtPathWithObserver
+        (path: string)
+        (bytes: byte[])
+        (observe: SecretFilePhase -> string -> unit)
+        =
+        let ownerOnly = UnixFileMode.UserRead ||| UnixFileMode.UserWrite
+        let options =
+            FileStreamOptions(
+                Mode = FileMode.CreateNew,
+                Access = FileAccess.Write,
+                Share = FileShare.None,
+                UnixCreateMode = ownerOnly)
+
+        // FG-073 review: WriteAllText/WriteAllBytes created under the process
+        // umask and chmodded afterwards. A traversable parent plus a permissive
+        // umask therefore exposed a different-UID read window. CreateNew with
+        // the final mode makes both non-overwrite and confidentiality properties
+        // true at the opening syscall, before any secret byte is written.
+        let secret = File.Open(path, options)
+
+        try
+            use stream = secret
+            observe Opened path
+
+            // open(2) applies the process umask even to an explicit create mode.
+            // Tighten through the already-open descriptor: this cannot redirect
+            // through a path race, it restores owner readability under a hardened
+            // umask, and no secret byte exists yet.
+            File.SetUnixFileMode(stream.SafeFileHandle, ownerOnly)
+            observe ReadyToWrite path
+            stream.Write bytes
+            stream.Flush()
+            path
+        with _ ->
+            try File.Delete path with _ -> ()
+            reraise()
+
+    let internal createSecretFileWithObserver
+        (directory: string)
+        (bytes: byte[])
+        (observe: SecretFilePhase -> string -> unit)
+        =
+        Directory.CreateDirectory directory |> ignore
+        // The full 128-bit identifier keeps stale files and high-concurrency
+        // bindings from turning CreateNew's fail-closed collision into an
+        // avoidable build failure.
+        let unique = Guid.NewGuid().ToString("N")
+        // The Jenkinsfile controls the environment-variable name. Keep that
+        // untrusted string out of the filesystem namespace entirely: a GUID-only
+        // leaf cannot add separators, rooted paths, or platform-hostile names.
+        let path = Path.Combine(directory, $".secret-{unique}")
+        writeSecretFileAtPathWithObserver path bytes observe
+
+    let private createSecretFile (directory: string) (bytes: byte[]) =
+        createSecretFileWithObserver directory bytes (fun _ _ -> ())
+
+    /// Encodings the masker recognises. Text credentials retain the set Jenkins
+    /// was measured to handle; file credentials add exact byte-base64 only when
+    /// the caller's documented length floor admits it. The detector below has no
+    /// Jenkins equivalent.
+    let private registeredForms (includeByteEncoding: bool) (value: string) (bytes: byte[]) =
         [ "literal", value
-          "base64", Convert.ToBase64String bytes
           "upper", value.ToUpperInvariant()
-          "lower", value.ToLowerInvariant() ]
+          "lower", value.ToLowerInvariant()
+          if includeByteEncoding then
+              "base64", Convert.ToBase64String bytes ]
         |> List.filter (fun (_, v) -> v <> "")
+        |> List.distinctBy snd
 
     /// Transformations Jenkins is measured to LEAK on. Fogell does not mask them
     /// either — masking every possible encoding is impossible — but it detects
     /// them and says so, which is the difference between a known gap and a silent
     /// one.
-    let private detectableForms (value: string) =
-        let bytes = Text.Encoding.UTF8.GetBytes value
-
+    let private detectableForms (includeByteEncoding: bool) (value: string) (bytes: byte[]) =
         // REVIEW FIX (Copilot, PR #11): only the lowercase hex form was generated,
         // so a secret hex-encoded by anything using .NET's default casing — which
         // is UPPERCASE — went undetected while the report claimed hex was covered.
         // A detector with a hole it does not admit to is worse than no detector.
         [ "reversed", String(value.ToCharArray() |> Array.rev)
-          "hex", Convert.ToHexString(bytes).ToLowerInvariant()
-          "hex-upper", Convert.ToHexString bytes
-          "char-split", String.Join("_", value.ToCharArray()) ]
+          "char-split", String.Join("_", value.ToCharArray())
+          if includeByteEncoding then
+              "hex", Convert.ToHexString(bytes).ToLowerInvariant()
+              "hex-upper", Convert.ToHexString bytes ]
         |> List.filter (fun (_, v) -> v.Length > 3)
+        |> List.distinctBy snd
+
+    let private textValueOfBytes (bytes: byte[]) =
+        try
+            let text = Text.Encoding.UTF8.GetString bytes
+            if Text.Encoding.UTF8.GetBytes text = bytes then text else ""
+        with _ ->
+            ""
+
+    let private hasMinimumBinaryDiversity (bytes: byte[]) =
+        let distinct = Collections.Generic.HashSet<byte>()
+        let mutable index = 0
+
+        while distinct.Count < MinimumBinaryDistinctBytes && index < bytes.Length do
+            distinct.Add bytes.[index] |> ignore
+            index <- index + 1
+
+        distinct.Count >= MinimumBinaryDistinctBytes
+
+    let private prepareForms (isFileCredential: bool) (value: string) (bytes: byte[]) =
+        // Very short binary encodings are ordinary low-entropy words (`DE AD` ->
+        // `dead`). Treating them as proof of disclosure makes unrelated output fail.
+        // Text credentials retain the measured Jenkins forms at every length;
+        // File-content base64 masking requires eight bytes. Terminal hex detection
+        // additionally requires at least four distinct byte values because length
+        // alone admits repeated-byte strings such as eight NULs in ordinary output.
+        // Masking is non-terminal defence-in-depth, so retaining exact base64 for
+        // every sufficiently long binary credential cannot falsely fail a build.
+        // Hex detection is terminal and therefore also requires the diversity
+        // floor that keeps ordinary repeated-byte output from becoming leak proof.
+        let includeBase64 =
+            not isFileCredential || bytes.Length >= MinimumBinaryEncodingBytes
+
+        let includeHexDetection =
+            not isFileCredential
+            || (bytes.Length >= MinimumBinaryEncodingBytes
+                && hasMinimumBinaryDiversity bytes)
+
+        { TextValue = value
+          MaskForms = registeredForms includeBase64 value bytes |> List.map snd
+          LeakForms = detectableForms includeHexDetection value bytes }
+
+    let internal prepareBinaryForms (bytes: byte[]) =
+        prepareForms true (textValueOfBytes bytes) bytes
+
+    let internal prepareFileCredential (fileName: string) (content: byte[]) =
+        // The credential store owns one defensive snapshot. Forms and every
+        // materialized file are derived from this same otherwise-inaccessible array.
+        // Derivation is lazy: resolving one store entry must not retain encodings for
+        // every other file credential in the store.
+        let snapshot = Array.copy content
+        PreparedFileCredential(fileName, snapshot, lazy (prepareBinaryForms snapshot))
+
+    let private validateVariableName (variableName: string) =
+        // System.Diagnostics.Process environment keys cannot be empty or contain
+        // NUL/'='. Reject them before materializing a file so a partial-construction
+        // failure has deterministic cleanup semantics rather than path side effects.
+        if String.IsNullOrEmpty variableName
+           || variableName.IndexOf('\000') >= 0
+           || variableName.Contains '=' then
+            invalidArg
+                (nameof variableName)
+                "credential variable name must be nonempty and contain neither NUL nor '='"
+
+    let internal inMemoryTextBinding (variableName: string) (value: string) =
+        validateVariableName variableName
+        let bytes = Text.Encoding.UTF8.GetBytes value
+
+        { ValueVariable = variableName
+          PathVariable = variableName + "_FILE"
+          FilePath = ""
+          Value = value
+          Forms = prepareForms false value bytes
+          ValueVariableCarriesPath = false }
 
     /// Write the secret to a file only the running user can read, and return the
-    /// binding. The file lives in the attempt's own directory so it is removed
-    /// with the workspace.
+    /// binding. The caller owns lexical revocation and recovery cleanup for its
+    /// controller-side secret directory; abrupt process death can bypass both the
+    /// lexical scope and this module's best-effort deletion.
     /// Bind raw BYTES, for a file credential whose content is not text.
-    let bindBytes (directory: string) (variableName: string) (bytes: byte[]) : SecretBinding =
-        Directory.CreateDirectory directory |> ignore
-        let unique = Guid.NewGuid().ToString("N").Substring(0, 8)
-        let path = Path.Combine(directory, $".secret-{variableName}-{unique}")
-        File.WriteAllBytes(path, bytes)
-        File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
-
-        // The masker works on text. Non-text bytes cannot appear verbatim in a log, so
-        // an empty Value simply registers nothing to mask — which is correct, not a gap.
-        let asText =
-            try
-                let t = Text.Encoding.UTF8.GetString bytes
-                if Text.Encoding.UTF8.GetBytes t = bytes then t else ""
-            with _ ->
-                ""
+    let internal bindBytesPrepared
+        (directory: string)
+        (variableName: string)
+        (bytes: byte[])
+        (forms: SecretForms)
+        : SecretBinding =
+        validateVariableName variableName
+        let path = createSecretFile directory bytes
 
         { ValueVariable = variableName
           PathVariable = variableName + "_FILE"
           FilePath = path
-          Value = asText
+          Value = forms.TextValue
+          Forms = forms
           ValueVariableCarriesPath = true }
 
+    let bindBytes (directory: string) (variableName: string) (bytes: byte[]) : SecretBinding =
+        bindBytesPrepared directory variableName bytes (prepareBinaryForms bytes)
+
+    /// Materialize an opaque prepared file credential. Consumers can carry this
+    /// value and bind it, but cannot separate or mutate its bytes and forms.
+    let bindPreparedFile
+        (directory: string)
+        (variableName: string)
+        (credential: PreparedFileCredential)
+        : SecretBinding =
+        // Validate before forcing the lazy forms: a refused environment key must
+        // neither touch disk nor retain derived strings for an otherwise-unused ID.
+        validateVariableName variableName
+        bindBytesPrepared directory variableName credential.Content credential.Forms
+
     let bind (directory: string) (variableName: string) (value: string) : SecretBinding =
-        Directory.CreateDirectory directory |> ignore
         // REVIEW FIX (Codex, PR #15): a FIXED `.secret-<variable>` path meant two
         // bindings of the same variable — nested `withCredentials`, or concurrent
         // parallel branches — shared one file. The inner one overwrote the outer, and
         // revoking the inner deleted the file the outer's variable still pointed at.
         // Jenkins allocates a fresh temporary path per binding; so do we.
-        let unique = Guid.NewGuid().ToString("N").Substring(0, 8)
-        let path = Path.Combine(directory, $".secret-{variableName}-{unique}")
-        File.WriteAllText(path, value)
-
-        // 0600 before anything can read it. WriteAllText creates with the
-        // process umask, so this is tightened immediately after.
-        File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
+        validateVariableName variableName
+        let bytes = Text.Encoding.UTF8.GetBytes value
+        let forms = prepareForms false value bytes
+        let path = createSecretFile directory bytes
 
         { ValueVariable = variableName
           PathVariable = variableName + "_FILE"
           FilePath = path
           Value = value
+          Forms = forms
           ValueVariableCarriesPath = false }
 
     /// Environment entries for a set of bindings: the VALUE (Jenkins parity) and the
@@ -175,7 +343,7 @@ module Secrets =
             let pathForms =
                 if b.ValueVariableCarriesPath && b.FilePath <> "" then [ b.FilePath ] else []
 
-            (registeredForms b.Value |> List.map snd) @ pathForms)
+            b.Forms.MaskForms @ pathForms)
         |> List.sortByDescending String.length
         |> List.fold (fun (acc: string) form -> acc.Replace(form, "****")) text
 
@@ -192,7 +360,7 @@ module Secrets =
               if b.Value <> "" && maskedText.Contains b.Value then
                   { Variable = b.ValueVariable; Encoding = "literal" }
 
-              for name, form in detectableForms b.Value do
+              for name, form in b.Forms.LeakForms do
                   if maskedText.Contains form then
                       { Variable = b.ValueVariable; Encoding = name } ]
 
