@@ -27,6 +27,7 @@ make_case () {
     '    [ -z "${FAKE_BUILD_MARKER:-}" ] || : > "$FAKE_BUILD_MARKER"' \
     '    sleep "${FAKE_MEASURE_DELAY:-0}"' \
     '    [ -z "${FAKE_MEASURE_FILE:-}" ] || { printf "MEASURED: "; cat "$FAKE_MEASURE_FILE"; }' \
+    '    if [ -n "${FAKE_ASSERT_GIT_CONTEXT_BOUND:-}" ]; then for git_locator in GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; do [ -z "${!git_locator:-}" ] || { echo "inherited Git locator: $git_locator"; exit 94; }; done; git_top="$(git rev-parse --show-toplevel)"; [ "$git_top" = "$PWD" ] || { echo "prerequisite Git top-level redirect: $git_top"; exit 93; }; git_index="$(git rev-parse --path-format=absolute --git-path index)"; [ "$git_index" != "${FAKE_FORBIDDEN_GIT_INDEX_ONE:-}" ] && [ "$git_index" != "${FAKE_FORBIDDEN_GIT_INDEX_TWO:-}" ] || { echo "prerequisite Git index redirect: $git_index"; exit 92; }; echo "GIT_CONTEXT_BOUND"; fi' \
     '    [ -z "${FAKE_ASSERT_ABSENT:-}" ] || { [ ! -e "$FAKE_ASSERT_ABSENT" ] || { echo "unexpected candidate path: $FAKE_ASSERT_ABSENT"; exit 96; }; echo "ABSENT: $FAKE_ASSERT_ABSENT"; }' \
     '    [ -z "${FAKE_ASSERT_SYMLINK:-}" ] || { [ -L "$FAKE_ASSERT_SYMLINK" ] || { echo "missing candidate symlink: $FAKE_ASSERT_SYMLINK"; exit 95; }; echo "SYMLINK: $FAKE_ASSERT_SYMLINK"; }' \
     '    [ -z "${FAKE_MUTATE_FILE:-}" ] || printf "%s\n" "${FAKE_MUTATE_CONTENT:-mutated by prerequisite}" > "$FAKE_MUTATE_FILE"' \
@@ -753,6 +754,108 @@ wait "$index_drift_pid" || index_drift_rc=$?
 rg -q "candidate source changed while prerequisites ran: status-before-commit.txt" "$index_drift_log" \
   || { echo "FAIL: index/status drift was not isolated"; cat "$index_drift_log"; exit 1; }
 
+# An absolute caller GIT_INDEX_FILE used to leak through both publishing and
+# snapshot Git. A foreign index could therefore make the receipt claim a real
+# tracked file was deleted, or read-tree/apply --cached could rewrite a caller
+# index. The script location must bind the publishing repository, while each
+# linked worktree must retain its own automatically selected index.
+inherited_index_repo="$(make_case inherited-absolute-index)"
+printf 'candidate.txt\n' >> "$inherited_index_repo/.gitignore"
+git -C "$inherited_index_repo" add .gitignore
+git -C "$inherited_index_repo" commit -qm ignore-tracked-candidate
+foreign_index="$LAB/inherited-absolute-index.foreign"
+cp "$inherited_index_repo/.git/index" "$foreign_index"
+GIT_INDEX_FILE="$foreign_index" \
+  git -C "$inherited_index_repo" update-index --force-remove candidate.txt
+GIT_INDEX_FILE="$foreign_index" \
+  git -C "$inherited_index_repo" diff HEAD -- candidate.txt \
+  | rg -q '^deleted file mode ' \
+  || { echo "FAIL: foreign-index deletion control was not live"; exit 1; }
+inherited_real_before="$(sha256sum "$inherited_index_repo/.git/index")"
+inherited_foreign_before="$(sha256sum "$foreign_index")"
+(
+  cd "$inherited_index_repo"
+  env PATH="$inherited_index_repo/fakebin:$PATH" \
+    GIT_INDEX_FILE="$foreign_index" \
+    FAKE_MEASURE_FILE=candidate.txt \
+    ./scripts/seal-evidence.sh FG-223-PROOF > "$LAB/inherited-absolute-index.log"
+)
+inherited_real_after="$(sha256sum "$inherited_index_repo/.git/index")"
+inherited_foreign_after="$(sha256sum "$foreign_index")"
+[ "$inherited_real_before" = "$inherited_real_after" ] \
+  || { echo "FAIL: inherited GIT_INDEX_FILE rewrote the publishing index"; exit 1; }
+[ "$inherited_foreign_before" = "$inherited_foreign_after" ] \
+  || { echo "FAIL: inherited GIT_INDEX_FILE rewrote the foreign index"; exit 1; }
+inherited_index_bundle="$(find "$inherited_index_repo/evidence" -mindepth 1 -maxdepth 1 -type d -name '*-fg-223-proof' -print -quit)"
+[ -n "$inherited_index_bundle" ] \
+  || { echo "FAIL: inherited GIT_INDEX_FILE prevented evidence publication"; exit 1; }
+rg -qx 'candidate.txt' "$inherited_index_bundle/tree.txt" \
+  || { echo "FAIL: inherited GIT_INDEX_FILE replaced the publishing inventory"; exit 1; }
+[ ! -s "$inherited_index_bundle/candidate.diff" ] || {
+  echo "FAIL: inherited GIT_INDEX_FILE published a foreign deletion"
+  exit 1
+}
+rg -q '^MEASURED: stable candidate$' \
+  "$inherited_index_bundle/build.log" \
+  || { echo "FAIL: inherited GIT_INDEX_FILE changed the measured candidate"; cat "$inherited_index_bundle/build.log"; exit 1; }
+(
+  cd "$inherited_index_bundle"
+  sha256sum -c SHA256SUMS >/dev/null
+)
+
+# GIT_DIR/GIT_WORK_TREE can override `git -C` just as completely as an index
+# override. A decoy repository must neither supply the candidate nor receive
+# snapshot writes, and prerequisites must inherit no redirect back to it.
+locator_repo="$(make_case inherited-repository-locators)"
+locator_decoy="$(make_case inherited-repository-locators-decoy)"
+printf 'real repository candidate\n' > "$locator_repo/candidate.txt"
+printf 'decoy repository candidate\n' > "$locator_decoy/candidate.txt"
+# A repository-local core.worktree is an independent redirect: unlike ambient
+# env it survives a process-wide unset unless each command binds its worktree.
+git --git-dir="$locator_repo/.git" config core.worktree "$locator_decoy"
+configured_locator_toplevel="$(git -C "$locator_repo" rev-parse --show-toplevel)"
+[ "$configured_locator_toplevel" = "$locator_decoy" ] \
+  || { echo "FAIL: configured core.worktree redirect control was not live"; exit 1; }
+locator_control_toplevel="$(
+  env GIT_DIR="$locator_decoy/.git" GIT_WORK_TREE="$locator_decoy" \
+    GIT_COMMON_DIR="$locator_decoy/.git" \
+    git -C "$locator_repo" rev-parse --show-toplevel
+)"
+[ "$locator_control_toplevel" = "$locator_decoy" ] \
+  || { echo "FAIL: inherited repository-locator redirect control was not live"; exit 1; }
+env GIT_DIR="$locator_decoy/.git" GIT_WORK_TREE="$locator_decoy" \
+  GIT_COMMON_DIR="$locator_decoy/.git" \
+  git -C "$locator_repo" diff -- candidate.txt \
+  | rg -Fq '+decoy repository candidate' \
+  || { echo "FAIL: inherited repository-locator decoy-byte control was not live"; exit 1; }
+locator_real_before="$(sha256sum "$locator_repo/.git/index")"
+locator_decoy_before="$(sha256sum "$locator_decoy/.git/index")"
+(
+  cd "$locator_repo"
+  env PATH="$locator_repo/fakebin:$PATH" \
+    GIT_DIR="$locator_decoy/.git" GIT_WORK_TREE="$locator_decoy" \
+    GIT_COMMON_DIR="$locator_decoy/.git" FAKE_MEASURE_FILE=candidate.txt \
+    FAKE_ASSERT_GIT_CONTEXT_BOUND=1 \
+    FAKE_FORBIDDEN_GIT_INDEX_ONE="$locator_repo/.git/index" \
+    FAKE_FORBIDDEN_GIT_INDEX_TWO="$locator_decoy/.git/index" \
+    ./scripts/seal-evidence.sh FG-223-PROOF > "$LAB/inherited-repository-locators.log"
+)
+[ "$locator_real_before" = "$(sha256sum "$locator_repo/.git/index")" ] \
+  || { echo "FAIL: inherited repository locators rewrote the publishing index"; exit 1; }
+[ "$locator_decoy_before" = "$(sha256sum "$locator_decoy/.git/index")" ] \
+  || { echo "FAIL: inherited repository locators rewrote the decoy index"; exit 1; }
+locator_bundle="$(find "$locator_repo/evidence" -mindepth 1 -maxdepth 1 -type d -name '*-fg-223-proof' -print -quit)"
+[ -n "$locator_bundle" ] \
+  || { echo "FAIL: inherited repository locators prevented real publication"; exit 1; }
+if find "$locator_decoy/evidence" -type f -name SHA256SUMS -print -quit 2>/dev/null | rg -q .; then
+  echo "FAIL: inherited repository locators published into the decoy"
+  exit 1
+fi
+rg -q '^MEASURED: real repository candidate$' "$locator_bundle/build.log" \
+  || { echo "FAIL: inherited repository locators changed the measured candidate"; cat "$locator_bundle/build.log"; exit 1; }
+rg -q '^GIT_CONTEXT_BOUND$' "$locator_bundle/build.log" \
+  || { echo "FAIL: prerequisite child Git did not bind the linked worktree context"; cat "$locator_bundle/build.log"; exit 1; }
+
 aba_repo="$(make_case checkout-aba)"
 aba_build_marker="$LAB/checkout-aba-build-started"
 aba_measured_marker="$LAB/checkout-aba-measured"
@@ -982,4 +1085,4 @@ fi
 [ "$build_pwd" != "$success_repo" ] \
   || { echo "FAIL: prerequisites executed from the publishing checkout"; exit 1; }
 
-echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty-inventory, input-boundary, late-untracked, post-checkout-hook, active/conditional-filter, raw-transform, external/Git-admin-symlink, tracked, staging-state, HEAD and atomic-move failures publish no manifest; an unused configured filter remains inert; every tracked tests/**/*.fsproj runs; dirty text, binary bytes, unstaged/staged deletions, staged additions, and confined broken/trailing-dot symlinks reach/reconstruct from one hook-free raw-identity-audited isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)"
+echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty-inventory, input-boundary, late-untracked, post-checkout-hook, active/conditional-filter, raw-transform, external/Git-admin-symlink, tracked, staging-state, HEAD and atomic-move failures publish no manifest; caller Git repository/index overrides and configured core.worktree cannot redirect snapshot operations or mutate the publishing index; an unused configured filter remains inert; every tracked tests/**/*.fsproj runs; dirty text, binary bytes, unstaged/staged deletions, staged additions, and confined broken/trailing-dot symlinks reach/reconstruct from one hook-free raw-identity-audited isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)"

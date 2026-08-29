@@ -4,8 +4,46 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ROOT="$PWD"
+# Evidence always describes the repository containing this script. Ambient Git
+# plumbing variables are process-local selectors, not part of the sealer's
+# interface; ignoring them also keeps every prerequisite's child Git bound to
+# the isolated candidate it runs inside.
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE \
+  GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_QUARANTINE_PATH \
+  GIT_GRAFT_FILE GIT_SHALLOW_FILE GIT_REPLACE_REF_BASE GIT_PREFIX GIT_NAMESPACE
+GIT_NO_REPLACE_OBJECTS=1
+export GIT_NO_REPLACE_OBJECTS
+repository_git () {
+  local repository="$1"
+  local index_file="$2"
+  shift 2
+  # The script path, not caller-provided Git plumbing variables, selects the
+  # repository being sealed. In particular, an inherited absolute
+  # GIT_INDEX_FILE must never make linked-worktree read-tree/apply operations
+  # rewrite the publishing checkout's index. Clear repository/object locators
+  # that can override `git -C`, then opt into a private index only at
+  # the one call site that derives the captured candidate inventory.
+  if [ -n "$index_file" ]; then
+    env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE \
+      -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+      -u GIT_QUARANTINE_PATH -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE \
+      -u GIT_REPLACE_REF_BASE \
+      -u GIT_PREFIX -u GIT_NAMESPACE \
+      GIT_INDEX_FILE="$index_file" \
+      git -C "$repository" --work-tree="$repository" \
+        -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
+  else
+    env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE \
+      -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+      -u GIT_QUARANTINE_PATH -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE \
+      -u GIT_REPLACE_REF_BASE \
+      -u GIT_PREFIX -u GIT_NAMESPACE \
+      git -C "$repository" --work-tree="$repository" \
+        -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
+  fi
+}
 root_git () {
-  git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
+  repository_git "$ROOT" "" "$@"
 }
 fail () {
   echo "REFUSING TO SEAL: $*" >&2
@@ -169,8 +207,9 @@ trap cleanup EXIT
 
 snapshot_git () {
   # A measured source must not execute repository hooks or a configured
-  # filesystem monitor while Git inspects/materializes it.
-  root_git -C "$SOURCE_SNAPSHOT" "$@"
+  # filesystem monitor while Git inspects/materializes it. Bind it to the
+  # linked worktree's own Git directory and index regardless of caller env.
+  repository_git "$SOURCE_SNAPSHOT" "" "$@"
 }
 
 assert_pristine_materialized_inputs () {
@@ -326,15 +365,15 @@ capture_tracked_inventory () {
   # Derive the inventory represented by HEAD + candidate.diff in a private
   # index. The publishing index alone still names unstaged deletions and thus
   # does not describe the candidate that the prerequisites will consume.
-  GIT_INDEX_FILE="$candidate_index" root_git read-tree HEAD
+  repository_git "$ROOT" "$candidate_index" read-tree HEAD
   if [ -s "$destination/candidate.diff" ]; then
-    if ! GIT_INDEX_FILE="$candidate_index" \
-      root_git apply --cached --binary "$destination/candidate.diff"; then
+    if ! repository_git "$ROOT" "$candidate_index" \
+      apply --cached --binary "$destination/candidate.diff"; then
       fail "captured candidate tracked inventory could not be derived"
     fi
   fi
-  GIT_INDEX_FILE="$candidate_index" root_git ls-files > "$destination/tree.txt"
-  GIT_INDEX_FILE="$candidate_index" root_git ls-files --stage -z \
+  repository_git "$ROOT" "$candidate_index" ls-files > "$destination/tree.txt"
+  repository_git "$ROOT" "$candidate_index" ls-files --stage -z \
     > "$destination/.candidate-index-entries"
   assert_raw_index_identity "$ROOT" "$destination/.candidate-index-entries" \
     "publishing candidate"
