@@ -4,15 +4,27 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="$ROOT/scripts/seal-evidence.sh"
 REAL_CP="$(type -P cp || true)"
+case "$REAL_CP" in
+  /*) ;;
+  ?*) REAL_CP="$PWD/$REAL_CP" ;;
+esac
 if [ -z "$REAL_CP" ] || [ ! -x "$REAL_CP" ]; then
   echo "FAIL: external cp executable is unavailable"
   exit 1
 fi
 REAL_GIT="$(type -P git || true)"
+case "$REAL_GIT" in
+  /*) ;;
+  ?*) REAL_GIT="$PWD/$REAL_GIT" ;;
+esac
 if [ -z "$REAL_GIT" ] || [ ! -x "$REAL_GIT" ]; then
   echo "FAIL: external git executable is unavailable"
   exit 1
 fi
+# The proof deliberately changes cwd into many fixtures. Keep its own direct
+# cp/git calls stable too when the caller supplied a relative PATH component.
+PATH="${REAL_CP%/*}:${REAL_GIT%/*}:$PATH"
+export PATH
 LAB="$(mktemp -d /tmp/fogell-fg223-seal-proof.XXXXXX)"
 trap 'rm -rf -- "$LAB"' EXIT
 
