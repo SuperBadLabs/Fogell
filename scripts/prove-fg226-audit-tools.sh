@@ -98,6 +98,7 @@ scenario, port_file = sys.argv[1], sys.argv[2]
 
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
+    delete_count = 0
 
     def reply(self, status, body=b"", cookie=False):
         self.send_response(status)
@@ -129,6 +130,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.reply(200, body, True)
         elif self.path.endswith("/wfapi/nextPendingInputAction"):
             self.reply(200, b'{"id":"pending-1"}')
+        elif self.path.endswith("/1/api/json"):
+            self.reply(200, b'{"building":false,"result":"SUCCESS"}')
+        elif self.path.endswith("/1/consoleText"):
+            self.reply(200, b"probe complete\n")
         elif self.path == "/api/json":
             if scenario == "slow-restart-poll":
                 count_file = port_file + ".polls"
@@ -155,11 +160,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if length:
             self.rfile.read(length)
         if self.path.endswith("/doDelete"):
-            self.reply(404)  # The initial absent-job delete is the sole allowed 404.
+            type(self).delete_count += 1
+            count = type(self).delete_count
+            if scenario == "initial-delete-500" and count == 1:
+                self.reply(500)
+            elif scenario == "final-delete-500" and count > 1:
+                self.reply(500)
+            else:
+                # The initial absent-job delete is the sole allowed 404. A
+                # completed probe must delete the job successfully so the next
+                # measurement does not inherit mutable lab state.
+                self.reply(404 if count == 1 else 200)
         elif self.path.startswith("/createItem"):
             self.reply(403 if scenario == "create-403" else 200)
         elif self.path.endswith("/build"):
             self.reply(500 if scenario == "build-500" else 201)
+        elif "/input/" in self.path and scenario == "input-action-500":
+            self.reply(500)
         else:
             self.reply(200)
 
@@ -217,8 +234,11 @@ fi
 echo "  refused unreachable crumb endpoint"
 run_http_case missing-crumb 'response is missing crumbRequestField or crumb'
 run_http_case invalid-crumb-field 'response is missing crumbRequestField or crumb'
+run_http_case initial-delete-500 'FAIL: delete prior probe job: HTTP 500'
 run_http_case create-403 'FAIL: create probe job: HTTP 403'
 run_http_case build-500 'FAIL: start probe build: HTTP 500'
+run_http_case input-action-500 'FAIL: proceedEmpty pending input: HTTP 500'
+run_http_case final-delete-500 'FAIL: delete completed probe job: HTTP 500'
 run_http_case restart-noop 'FAIL: controller identity did not change; RESTART_CMD did not prove a restart' restart
 
 echo "=== restart polling retains the five-second request bound ==="
@@ -245,4 +265,4 @@ if [ "$rc" -ne 124 ] || [ "$polls" -lt 3 ]; then
 fi
 echo "  passed  slow restart poll retried inside 15 s ($polls requests including identity setup)"
 
-echo "FG-226 AUDIT-TOOL PROOF: active fflat selection, bounded raw launcher diagnostics, six fail-closed Jenkins setup/restart arms, and the five-second restart-poll bound pass"
+echo "FG-226 AUDIT-TOOL PROOF: active fflat selection, bounded raw launcher diagnostics, nine fail-closed Jenkins POST/setup/restart arms, and the five-second restart-poll bound pass"
