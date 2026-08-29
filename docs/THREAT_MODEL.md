@@ -133,7 +133,9 @@ effects per tenant. FG-027b persists retry arbitration and exact replay. These
 are durable primitives, not a claim that every registered external-effect step
 uses `PrepareEffect`/`AdvanceEffect` or that controller retry policy is complete.
 The current runnable worker has no generic external connector that discharges
-those integration residuals.
+those integration residuals; FG-026b owns controller-managed producer adoption,
+scheduled reconciliation, and operator surfacing. Arbitrary shell/process side
+effects remain governed by the execution and egress boundaries, not this ledger.
 
 **Boundary.** Transaction-local RLS context is selected by trusted controller
 code; PostgreSQL custom settings are not an identity provider. Code already
@@ -345,7 +347,7 @@ recorded inputs and oracle.
 | Guess another project’s artifact URL or use traversal/symlink substitution | Organization/project/build/terminal-attempt lineage, strict relative segments, and Linux descriptor containment refuse it. A same-UID writer can still change an ordinary artifact in place. | Keep FG-042b lineage, terminal-state, byte-identity, traversal, and symlink tests; use workload identity or VM isolation for hostile concurrent writers. |
 | Exhaust memory with a known-length or chunked pipeline body | Router retains at most the configured maximum plus one byte and returns 413. Fogell adds no explicit application-level request deadline, rate limiter, or aggregate-concurrency cap; server/deployment defaults are outside this proof. | Keep both body-shape tests; add deployment-level deadline, rate, and concurrency controls separately. |
 | Forge an approval by writing Run.Host inbox files | Fresh controller admission refuses unbounded `input`; the filesystem inbox is standalone trusted orchestration only. | Build an authenticated controller approval broker before exposing approvals. |
-| Replay or substitute an external-effect payload | The Store ledger rejects digest substitution and lists stale prepared/applied effects; runtime use is not universal. | Require connector/step integration to call the ledger before claiming effect safety. |
+| Replay or substitute an external-effect payload | The Store ledger rejects digest substitution and lists stale prepared/applied effects; no controller-managed producer or scheduler consumes it. Arbitrary shell effects are outside the modelled ledger. | Close FG-026b for the bounded producer registry: require connector integration, scheduled classification, and operator surfacing before claiming modelled-effect safety. |
 | Fetch a changed or compromised dependency | Changed graph/content is rejected against locks; correctly locked malicious content is still accepted. | Add trusted-feed, advisory/SBOM/signature and reproducibility controls as separate evidence. |
 | Replace or loosen the API token file | Startup reads one absolute file but does not itself reject symlinks, permissive mode, or ownership drift after read. | Deploy a service-owned regular non-symlink file at 0400/0600 and control rotation/restart. |
 
@@ -400,7 +402,9 @@ recorded inputs and oracle.
 - Artifact descriptor containment does not provide same-UID, hard-link, mount,
   namespace, or host-administrator isolation, nor listing or retention policy.
 - The effect checkpoint and retry ledgers are durable Store foundations, not
-  evidence that every step/connector or controller policy consumes them.
+  evidence that every step/connector or controller policy consumes them;
+  FG-026b owns the controller-managed producer and scheduled-reconciliation
+  residual, while arbitrary shell/process effects remain outside that ledger.
 - NuGet locks and source-cleared warm-cache restore do not establish package
   safety, vulnerability freshness, cold-airgap operation, or reproducibility.
 - The runnable controller is single-node Linux and has no remote mTLS agent
@@ -417,7 +421,7 @@ network, SCM, credential, artifact, or controller capability; when a `Value`
 carrier, builtin, or step descriptor changes; when agent protocol or tenant
 authentication changes; when a new compatibility exception crosses a workspace
 boundary; when controller/workload OS identities change; or when state-root
-protocol, ownership, mode, ACL, or namespace changes. Review it when FG-026/
+protocol, ownership, mode, ACL, or namespace changes. Review it when FG-026b/
 FG-027 runtime integration, FG-062, FG-063, FG-070b, FG-080, FG-093, FG-221,
 FG-222, FG-223, FG-224, or FG-225 changes state, and when a controller process-
 launch profile, token/database capability, approval path, restore policy, or
