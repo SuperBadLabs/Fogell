@@ -28,11 +28,14 @@ assert_no_configured_content_filters () {
   shift
   local config_rc
   # Attribute values named `unset`/`unspecified` are textually ambiguous with
-  # check-attr's special states. Refusing every configured executable driver
-  # first closes that ambiguity and prevents even an unused driver from running.
-  if "$@" config --get-regexp '^filter\..*\.(clean|smudge|process)$' \
+  # check-attr's special states. Refuse those two driver names conservatively;
+  # other configured drivers are allowed only when the path audits below prove
+  # no candidate/base path activates them. This avoids making an unrelated
+  # machine-wide LFS driver disable sealing for a repository that does not use it.
+  if "$@" config --get-regexp \
+    '^filter\.(unset|unspecified)\.(clean|smudge|process)$' \
     > /dev/null; then
-    fail "$label has configured Git content filters, which evidence sealing does not support"
+    fail "$label has an ambiguously named configured Git content filter"
   else
     config_rc=$?
     [ "$config_rc" -eq 1 ] \
@@ -61,10 +64,10 @@ assert_no_effective_content_filters () {
     esac
   done
 
-  # Worktree creation checks out the base before candidate.diff is applied. A
-  # dirty candidate may remove both an attribute and its target, so audit the
-  # exact base independently or its smudge driver could execute without leaving
-  # a post-apply raw-identity witness.
+  # The receipt binds both the exact base and its candidate patch. Audit base
+  # policy independently so a dirty candidate cannot make an active filter
+  # disappear merely by deleting both its attribute and target; file checkout
+  # still remains candidate-index-first below.
   attributes=()
   mapfile -d '' attributes < <(
     root_git ls-tree -rz --name-only HEAD \
@@ -195,12 +198,63 @@ assert_pristine_materialized_inputs () {
   fi
 }
 
+assert_no_candidate_index_content_filters () {
+  local -a attributes=()
+  local listing_pid i value
+  # The candidate index already contains base + candidate.diff, while the
+  # worktree is still empty. Audit its exact .gitattributes view in the linked
+  # worktree configuration context before checkout-index can execute a driver.
+  mapfile -d '' attributes < <(
+    snapshot_git ls-files -z \
+      | snapshot_git check-attr -z --cached --stdin filter
+  )
+  listing_pid=$!
+  wait "$listing_pid" \
+    || fail "materialized candidate Git content-filter attributes could not be audited"
+  (( ${#attributes[@]} % 3 == 0 )) \
+    || fail "materialized candidate Git content-filter audit returned malformed output"
+  for ((i = 0; i < ${#attributes[@]}; i += 3)); do
+    value="${attributes[i + 2]}"
+    case "$value" in
+      unspecified|unset) ;;
+      *) fail "materialized candidate Git content filter is unsupported: ${attributes[i]} ($value)" ;;
+    esac
+  done
+}
+
+assert_no_materialized_content_filters () {
+  local phase="$1"
+  local -a attributes=()
+  local listing_pid i value
+  # Candidate files can themselves satisfy a conditional include (for example,
+  # an absolute /proc/self/cwd include), and prerequisites can create ignored
+  # build outputs named by one. Reload exact-context config and attributes before
+  # any later diff/status operation that could execute a clean driver.
+  assert_no_configured_content_filters "$phase materialized worktree" snapshot_git
+  mapfile -d '' attributes < <(
+    snapshot_git ls-files -z \
+      | snapshot_git check-attr -z --stdin filter
+  )
+  listing_pid=$!
+  wait "$listing_pid" \
+    || fail "$phase materialized Git content-filter attributes could not be audited"
+  (( ${#attributes[@]} % 3 == 0 )) \
+    || fail "$phase materialized Git content-filter audit returned malformed output"
+  for ((i = 0; i < ${#attributes[@]}; i += 3)); do
+    value="${attributes[i + 2]}"
+    case "$value" in
+      unspecified|unset) ;;
+      *) fail "$phase materialized Git content filter is unsupported: ${attributes[i]} ($value)" ;;
+    esac
+  done
+}
+
 assert_raw_index_identity () {
   local checkout="$1"
   local entries="$2"
   local label="$3"
   local entry metadata mode expected stage tracked_path actual physical_mode
-  local link_target_with_sentinel link_target link_base checkout_root resolved_target
+  local link_target_with_sentinel link_target link_sentinel link_base checkout_root resolved_target
   while IFS= read -r -d '' entry; do
     metadata="${entry%%$'\t'*}"
     [ "$metadata" != "$entry" ] \
@@ -225,10 +279,14 @@ assert_raw_index_identity () {
       120000)
         [ -L "$checkout/$tracked_path" ] \
           || fail "$label tracked symlink has the wrong physical type: $tracked_path"
-        if ! link_target_with_sentinel="$(readlink -n -- "$checkout/$tracked_path"; printf .)"; then
+        link_sentinel='__FG223_LINK_TARGET_END__'
+        if ! link_target_with_sentinel="$(
+          readlink -n -- "$checkout/$tracked_path"
+          printf %s "$link_sentinel"
+        )"; then
           fail "$label tracked symlink target could not be read: $tracked_path"
         fi
-        link_target="${link_target_with_sentinel%.}"
+        link_target="${link_target_with_sentinel%"$link_sentinel"}"
         [[ "$link_target" != /* ]] \
           || fail "$label tracked symlink has an absolute target: $tracked_path"
         if [[ "$tracked_path" == */* ]]; then
@@ -331,20 +389,29 @@ if ! root_git worktree add --no-checkout --detach "$SOURCE_SNAPSHOT" "$(cat "$ST
 fi
 # Conditional includes can produce a different effective configuration for a
 # linked worktree than for its publishing checkout. Establish only its Git admin
-# context first, then refuse executable drivers before any checkout can run one.
+# context first, then audit the complete candidate index before any checkout can
+# run a driver. An unrelated configured driver that no candidate path activates
+# is harmless and does not make the evidence command host-dependent.
 assert_no_configured_content_filters "materialized worktree" snapshot_git
-if ! snapshot_git reset --hard "$(cat "$STAGING/base-commit.txt")" \
+if ! snapshot_git read-tree "$(cat "$STAGING/base-commit.txt")" \
   >> "$STAGING/.materialization.log" 2>&1; then
   cat "$STAGING/.materialization.log" >&2
-  fail "captured candidate base could not be materialized"
+  fail "captured candidate base index could not be established"
 fi
 if [ -s "$STAGING/candidate.diff" ]; then
-  if ! snapshot_git apply --binary --index "$STAGING/candidate.diff" \
+  if ! snapshot_git apply --cached --binary "$STAGING/candidate.diff" \
     >> "$STAGING/.materialization.log" 2>&1; then
     cat "$STAGING/.materialization.log" >&2
-    fail "captured candidate patch could not be materialized"
+    fail "captured candidate index could not be derived"
   fi
 fi
+assert_no_candidate_index_content_filters
+if ! snapshot_git checkout-index --all --force \
+  >> "$STAGING/.materialization.log" 2>&1; then
+  cat "$STAGING/.materialization.log" >&2
+  fail "captured candidate files could not be materialized"
+fi
+assert_no_materialized_content_filters "initial"
 snapshot_git ls-files --stage -z > "$SOURCE_PARENT/index.initial"
 assert_raw_index_identity "$SOURCE_SNAPSHOT" "$SOURCE_PARENT/index.initial" \
   "materialized candidate"
@@ -398,6 +465,7 @@ done
 # any lasting tracked, staging-state, HEAD, inventory, or non-ignored mutation
 # they leave behind. Ignored build outputs are expected and deliberately absent
 # from this audit.
+assert_no_materialized_content_filters "post-prerequisite"
 snapshot_git ls-files --stage -z > "$SOURCE_PARENT/index.final"
 cmp -s "$SOURCE_PARENT/index.initial" "$SOURCE_PARENT/index.final" \
   || fail "materialized candidate changed while prerequisites ran: index"

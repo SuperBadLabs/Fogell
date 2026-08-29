@@ -326,7 +326,7 @@ filter_rc=0
     ./scripts/seal-evidence.sh FG-223-PROOF
 ) > "$filter_log" 2>&1 || filter_rc=$?
 [ "$filter_rc" -ne 0 ] || { echo "FAIL: effective checkout filter was accepted"; exit 1; }
-rg -q "publishing checkout has configured Git content filters" "$filter_log" \
+rg -q "publishing checkout has an ambiguously named configured Git content filter" "$filter_log" \
   || { echo "FAIL: effective checkout filter was not diagnosed"; cat "$filter_log"; exit 1; }
 if [ -e "$filter_clean_marker" ] || [ -e "$filter_smudge_marker" ]; then
   echo "FAIL: evidence sealer executed a hostile checkout filter before refusal"
@@ -336,6 +336,32 @@ if find "$filter_repo/evidence" -type f -name SHA256SUMS -print -quit 2>/dev/nul
   echo "FAIL: effective checkout filter published a manifest"
   exit 1
 fi
+
+unused_filter_repo="$(make_case unused-configured-filter)"
+unused_filter_marker="$LAB/unused-filter.marker"
+unused_filter_driver="$LAB/unused-filter-driver"
+# shellcheck disable=SC2016 # Marker expansion belongs to the unused driver.
+printf '%s\n' '#!/usr/bin/env bash' 'tee' ': > "$FG223_UNUSED_FILTER_MARKER"' \
+  > "$unused_filter_driver"
+chmod +x "$unused_filter_driver"
+git -C "$unused_filter_repo" config filter.lfs.clean "$unused_filter_driver"
+git -C "$unused_filter_repo" config filter.lfs.smudge "$unused_filter_driver"
+git -C "$unused_filter_repo" config filter.lfs.required true
+(
+  cd "$unused_filter_repo"
+  env PATH="$unused_filter_repo/fakebin:$PATH" \
+    FG223_UNUSED_FILTER_MARKER="$unused_filter_marker" \
+    ./scripts/seal-evidence.sh FG-223-PROOF > "$LAB/unused-configured-filter.log"
+)
+unused_filter_bundle="$(find "$unused_filter_repo/evidence" -mindepth 1 -maxdepth 1 -type d -name '*-fg-223-proof' -print -quit)"
+[ -n "$unused_filter_bundle" ] \
+  || { echo "FAIL: an unused configured filter disabled evidence sealing"; exit 1; }
+[ ! -e "$unused_filter_marker" ] \
+  || { echo "FAIL: an unused configured filter unexpectedly executed"; exit 1; }
+(
+  cd "$unused_filter_bundle"
+  sha256sum -c SHA256SUMS >/dev/null
+)
 
 conditional_filter_repo="$(make_case conditional-checkout-filter)"
 printf 'candidate.txt filter=unspecified\n' > "$conditional_filter_repo/.gitattributes"
@@ -377,7 +403,7 @@ conditional_filter_rc=0
 ) > "$LAB/conditional-checkout-filter.log" 2>&1 || conditional_filter_rc=$?
 [ "$conditional_filter_rc" -ne 0 ] \
   || { echo "FAIL: linked-worktree conditional filter was accepted"; exit 1; }
-rg -q 'materialized worktree has configured Git content filters' \
+rg -q 'materialized worktree has an ambiguously named configured Git content filter' \
   "$LAB/conditional-checkout-filter.log" \
   || { echo "FAIL: linked-worktree conditional filter was not diagnosed"; cat "$LAB/conditional-checkout-filter.log"; exit 1; }
 [ ! -e "$conditional_filter_marker" ] \
@@ -386,6 +412,109 @@ rg -q 'materialized worktree has configured Git content filters' \
   || { echo "FAIL: build ran before linked-worktree conditional-filter refusal"; exit 1; }
 if find "$conditional_filter_repo/evidence" -type f -name SHA256SUMS -print -quit 2>/dev/null | rg -q .; then
   echo "FAIL: linked-worktree conditional filter published a manifest"
+  exit 1
+fi
+
+conditional_active_repo="$(make_case conditional-active-filter)"
+conditional_active_marker="$LAB/conditional-active-filter.marker"
+conditional_active_driver="$LAB/conditional-active-filter-driver"
+conditional_active_config="$LAB/conditional-active-filter.config"
+conditional_active_attributes="$LAB/conditional-active-filter.attributes"
+printf 'candidate.txt filter=linked\n' > "$conditional_active_attributes"
+# shellcheck disable=SC2016 # Marker expansion belongs to the hostile driver.
+printf '%s\n' '#!/usr/bin/env bash' 'tee' ': > "$FG223_CONDITIONAL_ACTIVE_MARKER"' \
+  > "$conditional_active_driver"
+chmod +x "$conditional_active_driver"
+git config --file "$conditional_active_config" core.attributesFile \
+  "$conditional_active_attributes"
+git config --file "$conditional_active_config" filter.linked.clean \
+  "$conditional_active_driver"
+git config --file "$conditional_active_config" filter.linked.smudge \
+  "$conditional_active_driver"
+git config --file "$conditional_active_config" filter.linked.required true
+git -C "$conditional_active_repo" config --local \
+  'includeIf.gitdir:**/worktrees/source.path' "$conditional_active_config"
+conditional_active_control_parent="$(mktemp -d "$LAB/conditional-active-control.XXXXXX")"
+env FG223_CONDITIONAL_ACTIVE_MARKER="$conditional_active_marker" \
+  git -C "$conditional_active_repo" worktree add --detach \
+  "$conditional_active_control_parent/source" HEAD >/dev/null
+[ -e "$conditional_active_marker" ] \
+  || { echo "FAIL: conditional active-filter control did not execute"; exit 1; }
+git -C "$conditional_active_repo" worktree remove --force \
+  "$conditional_active_control_parent/source"
+rmdir "$conditional_active_control_parent"
+rm "$conditional_active_marker"
+conditional_active_rc=0
+(
+  cd "$conditional_active_repo"
+  env PATH="$conditional_active_repo/fakebin:$PATH" \
+    FG223_CONDITIONAL_ACTIVE_MARKER="$conditional_active_marker" \
+    FAKE_BUILD_MARKER="$LAB/conditional-active-build.marker" \
+    ./scripts/seal-evidence.sh FG-223-PROOF
+) > "$LAB/conditional-active-filter.log" 2>&1 || conditional_active_rc=$?
+[ "$conditional_active_rc" -ne 0 ] \
+  || { echo "FAIL: linked-worktree-only effective filter was accepted"; exit 1; }
+rg -Fq 'materialized candidate Git content filter is unsupported: candidate.txt (linked)' \
+  "$LAB/conditional-active-filter.log" \
+  || { echo "FAIL: linked-worktree-only effective filter was not diagnosed"; cat "$LAB/conditional-active-filter.log"; exit 1; }
+[ ! -e "$conditional_active_marker" ] \
+  || { echo "FAIL: linked-worktree-only effective filter executed before refusal"; exit 1; }
+[ ! -e "$LAB/conditional-active-build.marker" ] \
+  || { echo "FAIL: build ran before linked-worktree-only effective-filter refusal"; exit 1; }
+if find "$conditional_active_repo/evidence" -type f -name SHA256SUMS -print -quit 2>/dev/null | rg -q .; then
+  echo "FAIL: linked-worktree-only effective filter published a manifest"
+  exit 1
+fi
+
+delayed_filter_repo="$(make_case delayed-linked-filter)"
+delayed_filter_marker="$LAB/delayed-linked-filter.marker"
+delayed_filter_driver="$LAB/delayed-linked-filter-driver"
+# shellcheck disable=SC2016 # Marker expansion belongs to the hostile driver.
+printf '%s\n' '#!/usr/bin/env bash' 'tee' ': > "$FG223_DELAYED_FILTER_MARKER"' \
+  > "$delayed_filter_driver"
+chmod +x "$delayed_filter_driver"
+printf 'candidate.txt filter=hostile\n' > "$delayed_filter_repo/global.attrs"
+git config --file "$delayed_filter_repo/filter.inc" core.attributesFile \
+  /proc/self/cwd/global.attrs
+git config --file "$delayed_filter_repo/filter.inc" filter.hostile.clean \
+  "$delayed_filter_driver"
+git config --file "$delayed_filter_repo/filter.inc" filter.hostile.smudge \
+  "$delayed_filter_driver"
+git config --file "$delayed_filter_repo/filter.inc" filter.hostile.required true
+git -C "$delayed_filter_repo" add filter.inc global.attrs
+git -C "$delayed_filter_repo" commit -qm add-delayed-linked-filter-config
+git -C "$delayed_filter_repo" config --local \
+  'includeIf.gitdir:**/worktrees/source.path' /proc/self/cwd/filter.inc
+delayed_control_parent="$(mktemp -d "$LAB/delayed-filter-control.XXXXXX")"
+git -C "$delayed_filter_repo" worktree add --detach \
+  "$delayed_control_parent/source" HEAD >/dev/null
+touch "$delayed_control_parent/source/candidate.txt"
+env FG223_DELAYED_FILTER_MARKER="$delayed_filter_marker" \
+  git -C "$delayed_control_parent/source" diff -- candidate.txt >/dev/null
+[ -e "$delayed_filter_marker" ] \
+  || { echo "FAIL: candidate-created linked filter control did not execute after checkout"; exit 1; }
+git -C "$delayed_filter_repo" worktree remove --force "$delayed_control_parent/source"
+rmdir "$delayed_control_parent"
+rm "$delayed_filter_marker"
+delayed_filter_rc=0
+(
+  cd "$delayed_filter_repo"
+  env PATH="$delayed_filter_repo/fakebin:$PATH" \
+    FG223_DELAYED_FILTER_MARKER="$delayed_filter_marker" \
+    FAKE_BUILD_MARKER="$LAB/delayed-linked-filter-build.marker" \
+    ./scripts/seal-evidence.sh FG-223-PROOF
+) > "$LAB/delayed-linked-filter.log" 2>&1 || delayed_filter_rc=$?
+[ "$delayed_filter_rc" -ne 0 ] \
+  || { echo "FAIL: a candidate-created linked-worktree filter was accepted"; exit 1; }
+rg -Fq 'initial materialized Git content filter is unsupported: candidate.txt (hostile)' \
+  "$LAB/delayed-linked-filter.log" \
+  || { echo "FAIL: candidate-created linked-worktree filter was not diagnosed"; cat "$LAB/delayed-linked-filter.log"; exit 1; }
+[ ! -e "$delayed_filter_marker" ] \
+  || { echo "FAIL: candidate-created linked-worktree filter executed before refusal"; exit 1; }
+[ ! -e "$LAB/delayed-linked-filter-build.marker" ] \
+  || { echo "FAIL: build ran before candidate-created linked-worktree filter refusal"; exit 1; }
+if find "$delayed_filter_repo/evidence" -type f -name SHA256SUMS -print -quit 2>/dev/null | rg -q .; then
+  echo "FAIL: candidate-created linked-worktree filter published a manifest"
   exit 1
 fi
 
@@ -756,6 +885,25 @@ rg -q '^ABSENT: candidate.txt$' "$staged_bundle/build.log" \
 rg -q '^SYMLINK: broken.link$' "$staged_bundle/build.log" \
   || { echo "FAIL: materialized build did not observe the staged broken symlink"; cat "$staged_bundle/build.log"; exit 1; }
 
+trailing_dot_link_repo="$(make_case trailing-dot-symlink)"
+ln -s 'missing-target.' "$trailing_dot_link_repo/trailing-dot.link"
+(
+  cd "$trailing_dot_link_repo"
+  git add trailing-dot.link
+  env PATH="$trailing_dot_link_repo/fakebin:$PATH" \
+    FAKE_ASSERT_SYMLINK=trailing-dot.link \
+    ./scripts/seal-evidence.sh FG-223-PROOF > "$LAB/trailing-dot-symlink.log"
+)
+trailing_dot_bundle="$(find "$trailing_dot_link_repo/evidence" -mindepth 1 -maxdepth 1 -type d -name '*-fg-223-proof' -print -quit)"
+[ -n "$trailing_dot_bundle" ] \
+  || { echo "FAIL: trailing-dot symlink published no bundle"; exit 1; }
+rg -qx 'trailing-dot.link' "$trailing_dot_bundle/tree.txt" \
+  || { echo "FAIL: trailing-dot symlink was omitted from candidate inventory"; exit 1; }
+rg -Fqx '+missing-target.' "$trailing_dot_bundle/candidate.diff" \
+  || { echo "FAIL: trailing-dot symlink target bytes were not sealed exactly"; exit 1; }
+rg -q '^SYMLINK: trailing-dot.link$' "$trailing_dot_bundle/build.log" \
+  || { echo "FAIL: materialized build did not observe the trailing-dot symlink"; exit 1; }
+
 external_symlink_repo="$(make_case external-symlink)"
 external_target="$LAB/external-source.txt"
 printf 'mutable external input\n' > "$external_target"
@@ -834,4 +982,4 @@ fi
 [ "$build_pwd" != "$success_repo" ] \
   || { echo "FAIL: prerequisites executed from the publishing checkout"; exit 1; }
 
-echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty-inventory, input-boundary, late-untracked, post-checkout-hook, executable-filter, raw-transform, external/Git-admin-symlink, tracked, staging-state, HEAD and atomic-move failures publish no manifest; every tracked tests/**/*.fsproj runs; dirty text, binary bytes, unstaged/staged deletions, staged additions, and a confined broken symlink reach/reconstruct from one hook-free raw-identity-audited isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)"
+echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty-inventory, input-boundary, late-untracked, post-checkout-hook, active/conditional-filter, raw-transform, external/Git-admin-symlink, tracked, staging-state, HEAD and atomic-move failures publish no manifest; an unused configured filter remains inert; every tracked tests/**/*.fsproj runs; dirty text, binary bytes, unstaged/staged deletions, staged additions, and confined broken/trailing-dot symlinks reach/reconstruct from one hook-free raw-identity-audited isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)"
