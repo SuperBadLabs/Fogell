@@ -118,10 +118,11 @@ let failHttp (what: string) (r: Resp) =
     exitWith 1
 
 /// Jenkins setup and action requests are measurement prerequisites, not best
-/// effort cleanup. A dropped response means a 403 or 500 can leave no build
-/// running and still produce a zero-exit timeout transcript — a FABRICATED
-/// measurement of the semantics ADR 0005 cites. Only the initial delete admits
-/// 404: absence of the job being replaced is the expected clean-start state.
+/// effort calls. The initial delete must establish a clean start (while
+/// admitting the expected 404); create, build and input-action failures would
+/// otherwise produce a missing or false transcript; and final-delete failure
+/// would leave mutable lab state for the next run. Every other HTTP/transport
+/// failure therefore refuses instead of publishing apparent evidence.
 ///
 /// THIS IS A DELIBERATE DEVIATION FROM THE ORIGINAL, not a port defect. An
 /// earlier version of this comment said "the port originally dropped every POST
@@ -131,10 +132,11 @@ let failHttp (what: string) (r: Resp) =
 /// threw. Stated that precisely, because "dropped the response" would be too
 /// strong: the input-action call DID read its result, printing `(:status …)`.
 /// Reading a status and refusing to continue on it are different things, and
-/// the original did the first without the second. Refusing here stops
-/// reproducing that fail-open in a tool whose only output is evidence; it is
-/// listed among the deliberate deviations in `docs/tickets/FG-226.md` rather
-/// than left for a reader to discover by comparison.
+/// the original did the first without the second. Refusing all five sites here
+/// stops reproducing that fail-open in a tool whose only output is evidence;
+/// each site is exercised by `scripts/prove-fg226-audit-tools.sh`, and the
+/// deviation is listed in `docs/tickets/FG-226.md` rather than left for a reader
+/// to discover by comparison.
 let postOrDie (what: string) (allowNotFound: bool) (url: string) (headers: (string * string) list) (body: string option) =
     let r = post url headers body
     if r.Status = 0 || r.Status >= 400 && not (allowNotFound && r.Status = 404) then
