@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FG-104b. The proof for `audit-stale-refs.bb` — one planted fixture per binding
+# FG-104b. The proof for `audit-stale-refs` — one planted fixture per binding
 # form it claims to support, plus the two ways it can be wrong about its own job.
 #
 # The operating contract says a checker must be PROVEN TO FAIL. That rule has now
@@ -20,7 +20,23 @@
 # one — a proof that mutates the tree it audits is its own confounder.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-AUDIT="$(pwd)/scripts/audit-stale-refs.bb"
+AUDIT="$(pwd)/scripts/bin/audit-stale-refs"
+# THE MUTATIONS COMPILE. A native binary cannot be edited with sed, so proving
+# this checker fails on a known-bad variant means BUILDING that variant — which
+# also makes the thing under test provably the source the mutation touched,
+# rather than a binary someone hopes matches it. The prelude travels with it
+# because the script `#load`s it by relative path.
+AUDIT_SRC="$(pwd)/scripts/fsx/audit-stale-refs.fsx"
+PRELUDE="$(pwd)/scripts/fsx/prelude.fsx"
+
+# `--check`, not merely `-x`. Run standalone this would otherwise compare a
+# possibly STALE base binary against freshly compiled mutants, and every verdict
+# would be about two different versions of the checker.
+if ! audit_check=$(./scripts/build-audits.sh --check 2>&1); then
+  echo "STALE-REF PROOF FAILED: audit binaries missing or stale — run scripts/build-audits.sh" >&2
+  printf '%s\n' "$audit_check" | tail -20 >&2
+  exit 1
+fi
 
 FAIL=0
 note() { printf '  %-34s %s\n' "$1" "$2"; }
@@ -28,7 +44,7 @@ note() { printf '  %-34s %s\n' "$1" "$2"; }
 expect_clean() {
   local label=$1 repo=$2 removed_count=$3 forbidden_ids=$4
   local out rc id forbidden_ok=1
-  out=$( cd "$repo" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+  out=$( cd "$repo" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
   for id in $forbidden_ids; do
     grep -qE "^  $id[[:space:]]" <<<"$out" && forbidden_ok=0
   done
@@ -47,7 +63,7 @@ expect_clean() {
 expect_reported() {
   local label=$1 repo=$2 removed_count=$3 expected_ids=$4 forbidden_ids=$5
   local out rc id expected_ok=1 forbidden_ok=1
-  out=$( cd "$repo" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+  out=$( cd "$repo" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
   for id in $expected_ids; do
     grep -qE "^  $id[[:space:]]" <<<"$out" || expected_ok=0
   done
@@ -82,21 +98,68 @@ replace_line_once() {
   mv "$tmp" "$file"
 }
 
-prove_false_positive_mutation() {
-  local label=$1 repo=$2 expected_id=$3 old=$4 new=$5
-  local original original_rc d mutant before after out rc
-  original=$( cd "$repo" && bb "$AUDIT" HEAD --strict 2>&1 ); original_rc=$?
-  d=$(mktemp -d /tmp/stale-mutant.XXXXXX)
-  mutant="$d/audit-stale-refs.bb"
-  cp "$AUDIT" "$mutant"
-  before=$(sha256sum "$mutant" | cut -d' ' -f1)
-  if ! replace_line_once "$mutant" "$old" "$new"; then
-    note "$label mutation" "MUTATION TARGET NOT UNIQUE"
-    FAIL=1
+# ---------------------------------------------------------------------------
+# MUTANT BUILDS ARE BATCHED AND PARALLEL. Ten mutants at ~7s each cost 70s of
+# wall time run one at a time, on a host with 32 cores idle. They are
+# independent by construction — each is a separate source tree in its own
+# directory — so the only ordering that matters is that every one is built
+# before the first arm judges its result. Failures are recorded per mutant and
+# reported by the arm that owns them, so a build error still fails the proof
+# rather than silently reading as a killed mutation.
+MUTANT_DIRS=()
+mutant_prepare() {
+  local key=$1 old=$2 new=$3
+  local d="$MUTANT_ROOT/$key"
+  mkdir -p "$d"
+  cp "$AUDIT_SRC" "$d/audit-stale-refs.fsx"
+  cp "$PRELUDE" "$d/prelude.fsx"
+  if ! replace_line_once "$d/audit-stale-refs.fsx" "$old" "$new"; then
+    echo "not-unique" > "$d/status"
     return
   fi
-  after=$(sha256sum "$mutant" | cut -d' ' -f1)
-  out=$( cd "$repo" && bb "$mutant" HEAD --strict 2>&1 ); rc=$?
+  sha256sum "$d/audit-stale-refs.fsx" | cut -d' ' -f1 > "$d/after"
+  MUTANT_DIRS+=("$d")
+}
+mutant_build_all() {
+  local jobs_max d
+  jobs_max=$(nproc 2>/dev/null || echo 4)
+  jobs_max=$(( jobs_max / 3 )); [ "$jobs_max" -lt 1 ] && jobs_max=1
+  for d in "${MUTANT_DIRS[@]}"; do
+    while [ "$(jobs -rp | wc -l)" -ge "$jobs_max" ]; do wait -n; done
+    {
+      if fflat "$d/audit-stale-refs.fsx" -o "$d/audit-stale-refs" >"$d/compile.log" 2>&1; then
+        echo built > "$d/status"
+      else
+        echo compile-failed > "$d/status"
+      fi
+    } &
+  done
+  wait
+}
+BASE_SHA=$(sha256sum "$AUDIT_SRC" | cut -d' ' -f1)
+
+prove_false_positive_mutation() {
+  local label=$1 repo=$2 expected_id=$3 key=$4
+  local original original_rc d before after out rc
+  original=$( cd "$repo" && "$AUDIT" HEAD --strict 2>&1 ); original_rc=$?
+  d="$MUTANT_ROOT/$key"
+  before="$BASE_SHA"
+  case "$(cat "$d/status" 2>/dev/null)" in
+    built) after=$(cat "$d/after") ;;
+    not-unique)
+      note "$label mutation" "MUTATION TARGET NOT UNIQUE"
+      FAIL=1
+      return ;;
+    *)
+      # A mutant that does not COMPILE has not been tested. Without this the arm
+      # would report a killed mutation on the strength of a build error, which is
+      # the vacuous-pass shape this whole proof exists to refuse.
+      note "$label mutation" "MUTANT DID NOT COMPILE"
+      tail -5 "$d/compile.log" 2>/dev/null | sed 's/^/      /'
+      FAIL=1
+      return ;;
+  esac
+  out=$( cd "$repo" && "$d/audit-stale-refs" HEAD --strict 2>&1 ); rc=$?
   if [ "$original_rc" -eq 0 ] \
      && grep -qF "no surviving comment names a deleted identifier" <<<"$original" \
      && [ "$before" != "$after" ] \
@@ -111,20 +174,27 @@ prove_false_positive_mutation() {
 }
 
 prove_coverage_mutation() {
-  local label=$1 repo=$2 expected_id=$3 old=$4 new=$5
-  local original original_rc d mutant before after out rc
-  original=$( cd "$repo" && bb "$AUDIT" HEAD --strict 2>&1 ); original_rc=$?
-  d=$(mktemp -d /tmp/stale-mutant.XXXXXX)
-  mutant="$d/audit-stale-refs.bb"
-  cp "$AUDIT" "$mutant"
-  before=$(sha256sum "$mutant" | cut -d' ' -f1)
-  if ! replace_line_once "$mutant" "$old" "$new"; then
-    note "$label mutation" "MUTATION TARGET NOT UNIQUE"
-    FAIL=1
-    return
-  fi
-  after=$(sha256sum "$mutant" | cut -d' ' -f1)
-  out=$( cd "$repo" && bb "$mutant" HEAD --strict 2>&1 ); rc=$?
+  local label=$1 repo=$2 expected_id=$3 key=$4
+  local original original_rc d before after out rc
+  original=$( cd "$repo" && "$AUDIT" HEAD --strict 2>&1 ); original_rc=$?
+  d="$MUTANT_ROOT/$key"
+  before="$BASE_SHA"
+  case "$(cat "$d/status" 2>/dev/null)" in
+    built) after=$(cat "$d/after") ;;
+    not-unique)
+      note "$label mutation" "MUTATION TARGET NOT UNIQUE"
+      FAIL=1
+      return ;;
+    *)
+      # A mutant that does not COMPILE has not been tested. Without this the arm
+      # would report a killed mutation on the strength of a build error, which is
+      # the vacuous-pass shape this whole proof exists to refuse.
+      note "$label mutation" "MUTANT DID NOT COMPILE"
+      tail -5 "$d/compile.log" 2>/dev/null | sed 's/^/      /'
+      FAIL=1
+      return ;;
+  esac
+  out=$( cd "$repo" && "$d/audit-stale-refs" HEAD --strict 2>&1 ); rc=$?
   if [ "$original_rc" -eq 1 ] \
      && grep -qE "^  $expected_id[[:space:]]" <<<"$original" \
      && [ "$before" != "$after" ] \
@@ -140,20 +210,27 @@ prove_coverage_mutation() {
 }
 
 prove_coverage_pair_mutation() {
-  local label=$1 repo=$2 expected_one=$3 expected_two=$4 old=$5 new=$6
-  local original original_rc d mutant before after out rc
-  original=$( cd "$repo" && bb "$AUDIT" HEAD --strict 2>&1 ); original_rc=$?
-  d=$(mktemp -d /tmp/stale-mutant.XXXXXX)
-  mutant="$d/audit-stale-refs.bb"
-  cp "$AUDIT" "$mutant"
-  before=$(sha256sum "$mutant" | cut -d' ' -f1)
-  if ! replace_line_once "$mutant" "$old" "$new"; then
-    note "$label mutation" "MUTATION TARGET NOT UNIQUE"
-    FAIL=1
-    return
-  fi
-  after=$(sha256sum "$mutant" | cut -d' ' -f1)
-  out=$( cd "$repo" && bb "$mutant" HEAD --strict 2>&1 ); rc=$?
+  local label=$1 repo=$2 expected_one=$3 expected_two=$4 key=$5
+  local original original_rc d before after out rc
+  original=$( cd "$repo" && "$AUDIT" HEAD --strict 2>&1 ); original_rc=$?
+  d="$MUTANT_ROOT/$key"
+  before="$BASE_SHA"
+  case "$(cat "$d/status" 2>/dev/null)" in
+    built) after=$(cat "$d/after") ;;
+    not-unique)
+      note "$label mutation" "MUTATION TARGET NOT UNIQUE"
+      FAIL=1
+      return ;;
+    *)
+      # A mutant that does not COMPILE has not been tested. Without this the arm
+      # would report a killed mutation on the strength of a build error, which is
+      # the vacuous-pass shape this whole proof exists to refuse.
+      note "$label mutation" "MUTANT DID NOT COMPILE"
+      tail -5 "$d/compile.log" 2>/dev/null | sed 's/^/      /'
+      FAIL=1
+      return ;;
+  esac
+  out=$( cd "$repo" && "$d/audit-stale-refs" HEAD --strict 2>&1 ); rc=$?
   if [ "$original_rc" -eq 1 ] \
      && grep -qE "^  $expected_one[[:space:]]" <<<"$original" \
      && grep -qE "^  $expected_two[[:space:]]" <<<"$original" \
@@ -188,7 +265,7 @@ prove_form() {
   ) >/dev/null 2>&1
 
   local out
-  out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 )
+  out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 )
   local rc=$?
   # THE EXPECTED IDENTIFIER, not merely "some report happened". These cases
   # checked only the generic phrase, so a run that reported the wrong thing —
@@ -241,7 +318,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && mkdir -p src \
   && printf 'type T =\n    member _.staleGateValue = 1\n// member staleGateValue used to publish the gate\n' > src/F.fs \
   && git add -A && git commit -qm base && sed -i '2d' src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -ne 0 ] && grep -q "staleGateValue" <<<"$out"; then
   note "comment repeats the keyword" "reported (exit $rc) — OK"
 else
@@ -257,7 +334,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && printf 'type T =\n    { StaleGateValue: string\n      Keep: int }\n// StaleGateValue is the gate hook\n' > src/F.fs \
   && git add -A && git commit -qm base \
   && printf 'type T =\n    { Keep: int }\n// StaleGateValue is the gate hook\n' > src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -ne 0 ] && grep -q "StaleGateValue" <<<"$out"; then
   note "record field on the brace line" "reported (exit $rc) — OK"
 else
@@ -273,7 +350,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && mkdir -p src \
   && printf 'let staleGateValue = 1\n(* the gate hook\n   (* nested aside *)\n   staleGateValue is explained here *)\n' > src/F.fs \
   && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -ne 0 ] && grep -q "staleGateValue" <<<"$out"; then
   note "nested (* block comment *)" "reported (exit $rc) — OK"
 else
@@ -289,7 +366,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && mkdir -p src \
   && printf 'let StaleGateValue = 1\nlet keep = "let StaleGateValue"\n// StaleGateValue is the gate hook\n' > src/F.fs \
   && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -ne 0 ] && grep -q "StaleGateValue" <<<"$out"; then
   note "string that looks like a def" "reported (exit $rc) — OK"
 else
@@ -306,7 +383,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && mkdir -p src \
   && printf 'let keep = 1\n// let GhostGateValue = old docs only\n// GhostGateValue was once described here\n' > src/F.fs \
   && git add -A && git commit -qm base && sed -i '2d' src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -eq 0 ]; then
   note "deleting a comment is not a deletion" "silent (exit 0) — OK"
 else
@@ -323,7 +400,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && printf 'type T =\n    { StaleGateValue: string\n      Keep: int }\n(* the old shape was\n   StaleGateValue: string\n*)\n' > src/F.fs \
   && git add -A && git commit -qm base \
   && printf 'type T =\n    { Keep: int }\n(* the old shape was\n   StaleGateValue: string\n*)\n' > src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -ne 0 ] && grep -q "StaleGateValue" <<<"$out"; then
   note "field named inside a block comment" "reported (exit $rc) — OK"
 else
@@ -340,7 +417,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && printf 'type T =\n    { Keep: int\n      StaleGateValue: string }\n// StaleGateValue is the gate hook\n' > src/F.fs \
   && git add -A && git commit -qm base \
   && printf 'type T =\n    { StaleGateValue: string }\n// StaleGateValue is the gate hook\n' > src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -eq 0 ]; then
   note "field moved onto the brace line" "silent (exit 0) — OK"
 else
@@ -356,7 +433,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && mkdir -p src \
   && printf 'type T =\n    member _.staleGateValue = 1\n// team member rotation notes\n// let the record show, this type of thing\n' > src/F.fs \
   && git add -A && git commit -qm base && sed -i '2d' src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if grep -qE "^  (member|let|type)\\b" <<<"$out"; then
   note "keyword prose is not an identifier" "FALSE POSITIVE on a keyword"; printf '%s\n' "$out" | sed 's/^/      /'; FAIL=1
 else
@@ -380,7 +457,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && printf 'let syntax = "(*"\nlet staleGateValue = 1\nlet keeper = 2\n// staleGateValue is the gate hook\n' > src/F.fs \
   && git add -A && git commit -qm base \
   && printf 'let syntax = "(*"\nlet keeper = 2\nlet staleGateValue = 1\n// staleGateValue is the gate hook\n' > src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -eq 0 ]; then
   note "inert (* does not mask a real def" "silent (exit 0) — OK"
 else
@@ -394,7 +471,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && printf 'type T =\n    { [<JsonPropertyName "gate">] StaleGateValue: string\n      Keep: int }\n// StaleGateValue is the gate hook\n' > src/F.fs \
   && git add -A && git commit -qm base \
   && printf 'type T =\n    { Keep: int }\n// StaleGateValue is the gate hook\n' > src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -ne 0 ] && grep -q "StaleGateValue" <<<"$out"; then
   note "attributed record field" "reported (exit $rc) — OK"
 else
@@ -408,7 +485,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && printf 'type T =\n    { mutable StaleGateValue: int\n      Keep: int }\n// StaleGateValue is the gate hook\n' > src/F.fs \
   && git add -A && git commit -qm base \
   && printf 'type T =\n    { Keep: int }\n// StaleGateValue is the gate hook\n' > src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -ne 0 ] && grep -q "StaleGateValue" <<<"$out"; then
   note "mutable record field" "reported (exit $rc) — OK"
 else
@@ -425,7 +502,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && printf 'let keeper = 1\n' > src/F.fs \
   && printf 'StageName: old script step\n# StageName is documented here\n' > scripts/lane.sh \
   && git add -A && git commit -qm base && sed -i '1d' scripts/lane.sh ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -eq 0 ]; then
   note "non-F# deletion (out of scope)" "not extracted (exit 0) — OK"
 else
@@ -449,7 +526,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && printf 'let sql =\n    "SELECT n\n     FROM t WHERE count(*) > 0"\nlet staleGateValue = 1\nlet keeper = 2\n// staleGateValue is the gate hook\n' > src/F.fs \
   && git add -A && git commit -qm base \
   && printf 'let sql =\n    "SELECT n\n     FROM t WHERE count(*) > 0"\nlet keeper = 2\nlet staleGateValue = 1\n// staleGateValue is the gate hook\n' > src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -eq 0 ]; then
   note "multi-line string with (*" "silent (exit 0) — OK"
 else
@@ -467,7 +544,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && mkdir -p src \
   && printf 'let isQuote c = (c = %s)\nlet staleGateValue = 1\n// staleGateValue is the gate hook\n' "'\"'" > src/F.fs \
   && git add -A && git commit -qm base && sed -i '2d' src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -ne 0 ] && grep -q "staleGateValue" <<<"$out"; then
   note "char literal holding a quote" "reported (exit $rc) — OK"
 else
@@ -482,7 +559,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && mkdir -p src \
   && printf 'let (staleGateValue, foldedGate), staleOuterGate = (1, 2), 3\nlet keeper = 1\n// staleGateValue and foldedGate and staleOuterGate are the gate hooks\n' > src/F.fs \
   && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 # BOTH names, because a regression that extracted only the FIRST tuple binder
 # would have passed a single-name assertion while missing the `folds` case the
 # audit's own comment cites from Compare.fs:194.
@@ -504,7 +581,7 @@ else
 fi
 
 echo "=== the checker's own failure modes ==="
-out=$(bb "$AUDIT" definitely-not-a-ref --strict 2>&1); rc=$?
+out=$("$AUDIT" definitely-not-a-ref --strict 2>&1); rc=$?
 if [ "$rc" -eq 2 ] && grep -q "does not resolve" <<<"$out"; then
   note "unresolvable base" "refused (exit 2) — OK"
 else
@@ -521,7 +598,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
 ( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
   && mkdir -p src && printf 'let staleGateValue = 1\n// staleGateValue is explained here\n' > src/F.fs \
   && git add -A && git commit -qm base ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -eq 0 ] && grep -q "no surviving comment" <<<"$out"; then
   note "clean tree" "silent (exit 0) — OK"
 else
@@ -536,7 +613,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && mkdir -p src bin && printf 'let staleGateValue = 1\n// staleGateValue is explained here\n' > src/F.fs \
   && git add -A && git commit -qm base && sed -i '1d' src/F.fs \
   && printf '#!/bin/sh\necho "stub rg failure" >&2\nexit 2\n' > bin/rg && chmod +x bin/rg ) >/dev/null 2>&1
-out=$( cd "$d" && PATH="$d/bin:$PATH" bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && PATH="$d/bin:$PATH" "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -eq 2 ] && grep -q "rg failed while" <<<"$out"; then
   note "search tool errors" "refused (exit 2) — OK"
 else
@@ -552,7 +629,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
 ( cd "$d" && git init -q . && git config user.email p@p && git config user.name p \
   && mkdir -p src && printf 'let foo = 1\n// foo is still documented\n' > src/F.fs \
   && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -eq 0 ]; then
   note "short identifier (by design)" "not tracked (exit 0) — OK"
 else
@@ -569,7 +646,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && printf 'type T =\n    { staleGateValue: string\n      Keep: int }\n// staleGateValue is the gate hook\n' > src/F.fs \
   && git add -A && git commit -qm base \
   && printf 'type T =\n    { Keep: int }\n// staleGateValue is the gate hook\n' > src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -eq 0 ]; then
   note "lowercase field (by design)" "not tracked (exit 0) — OK"
 else
@@ -586,7 +663,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && mkdir -p src \
   && printf 'let (staleGateValue: string, other: string) = ("a", "b")\nlet keeper = 1\n// staleGateValue is the gate hook\n' > src/F.fs \
   && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -eq 0 ]; then
   note "typed destructuring (by design)" "not tracked (exit 0) — OK"
 else
@@ -603,7 +680,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && mkdir -p src \
   && printf 'let (Some staleGateValue, other) = (Some 1, 2)\nlet keeper = 1\n// Some wraps staleGateValue in the gate hook\n' > src/F.fs \
   && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 # BOTH halves. Asserting only that `Some` is absent would pass if the audit
 # stopped extracting the binder beside it too — silence for the wrong reason.
 # The binder must be REPORTED and the constructor must NOT be.
@@ -623,7 +700,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && mkdir -p src \
   && printf 'let ((staleGateValue), other) = ((1), 2)\nlet keeper = 1\n// staleGateValue is the gate hook\n' > src/F.fs \
   && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -eq 0 ]; then
   note "nested pattern (by design)" "not tracked (exit 0) — OK"
 else
@@ -642,7 +719,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && printf 'let (staleGateValue, foldedGate) = (1, 2)\n// staleGateValue and foldedGate are the gate hooks\n' > src/F.fs \
   && git add -A && git commit -qm base \
   && printf 'let (staleGateValue, foldedGate) = (3, 4)\n// staleGateValue and foldedGate are the gate hooks\n' > src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -eq 0 ]; then
   note "destructured binding survives" "silent (exit 0) — OK"
 else
@@ -658,7 +735,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && mkdir -p src \
   && printf "let (staleGateValue', foldedGate) = (1, 2)\nlet keeper = 1\n// staleGateValue' is the gate hook\n" > src/F.fs \
   && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -ne 0 ] && grep -qE "^  staleGateValue'[[:space:]]" <<<"$out"; then
   note "destructured name ending in '" "reported (exit $rc) — OK"
 else
@@ -674,7 +751,7 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
   && mkdir -p src \
   && printf 'let ("staleGateValue", other) = ("x", 2)\nlet keeper = 1\n// staleGateValue is the gate hook\n' > src/F.fs \
   && git add -A && git commit -qm base && sed -i '1d' src/F.fs ) >/dev/null 2>&1
-out=$( cd "$d" && bb "$AUDIT" HEAD --strict 2>&1 ); rc=$?
+out=$( cd "$d" && "$AUDIT" HEAD --strict 2>&1 ); rc=$?
 if [ "$rc" -eq 0 ]; then
   note "literal in a pattern (by design)" "not tracked (exit 0) — OK"
 else
@@ -978,55 +1055,81 @@ d=$(mktemp -d /tmp/stale-proof.XXXXXX)
 expect_reported "constructor neighbor binder" "$d" 1 'staleGateValue' 'hoice'
 
 echo "=== FG-117 direct mutation kills ==="
-prove_false_positive_mutation \
-  "literal allowlist" "$fg117_b_fixture" true \
-  '  #{"true" "false" "null"})' \
-  '  #{})'
+MUTANT_ROOT=$(mktemp -d /tmp/stale-mutants.XXXXXX)
+trap 'rm -rf "$MUTANT_ROOT"' EXIT
+
+mutant_prepare literal-allowlist \
+  'let patternLiterals = set [ "true"; "false"; "null" ]' \
+  'let patternLiterals = Set.empty<string>'
+
+mutant_prepare definition-form \
+  '        |> List.filter (fun t -> not (definitionParenForm t))' \
+  '        |> List.filter (fun t -> true)'
+
+mutant_prepare numeric-tuple \
+  '    javaRx "^(?:\\(\\s*[!%&*+\\-./<=>?@^|~:]+\\s*\\)|\\(\\s*\\|(?:[A-Z][A-Za-z0-9_'"'"']*\\|)+(?:_\\|)?\\s*\\))\\s+[^,=\\s]"' \
+  '    javaRx "^\\(\\s*[!%&*+\\-./<=>?@^|~:]"'
+
+mutant_prepare underscore-preservation \
+  '        |> List.collect (fun t -> [ for m in destructuredToken.Matches t -> m.Groups.[1].Value ])' \
+  '        |> List.collect (fun t -> [ for m in destructuredToken.Matches t -> (let v = m.Groups.[1].Value in (if v.StartsWith "_" then v.Substring 1 else v)) ])'
+
+mutant_prepare multi-underscore \
+  'let destructuredToken = javaRx "(?:^|[^A-Za-z0-9_'"'"'])(_+[A-Za-z0-9][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})"' \
+  'let destructuredToken = javaRx "(?:^|[^A-Za-z0-9_'"'"'])(_[A-Za-z0-9][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})"'
+
+mutant_prepare underscore-domain \
+  'let destructuredToken = javaRx "(?:^|[^A-Za-z0-9_'"'"'])(_+[A-Za-z0-9][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})"' \
+  'let destructuredToken = javaRx "(?:^|[^A-Za-z0-9_'"'"'])(_+[a-z][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})"'
+
+mutant_prepare length-floor \
+  '        |> List.filter (fun s -> s.Length >= 4)' \
+  '        |> List.filter (fun s -> true)'
+
+mutant_prepare suffix-floor \
+  'let destructuredToken = javaRx "(?:^|[^A-Za-z0-9_'"'"'])(_+[A-Za-z0-9][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})"' \
+  'let destructuredToken = javaRx "(?:^|[^A-Za-z0-9_'"'"'])(_+[A-Za-z0-9][A-Za-z0-9_'"'"']{2,}|[a-z][A-Za-z0-9_'"'"']{3,})"'
+
+mutant_prepare base-projection \
+  '            let projected = match proj.TryGetValue n with | true, code -> Some code | _ -> None' \
+  '            let projected = match proj.TryGetValue n with | true, code -> Some code | _ -> Some (raw.Substring 1)'
+
+mutant_prepare left-boundary \
+  'let destructuredToken = javaRx "(?:^|[^A-Za-z0-9_'"'"'])(_+[A-Za-z0-9][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})"' \
+  'let destructuredToken = javaRx "(?:^|.)(_+[A-Za-z0-9][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})"'
+
+# Every mutant is built before any arm judges one.
+mutant_build_all
 
 prove_false_positive_mutation \
-  "definition-form filter" "$fg117_c_fixture" inputValue \
-  '                        (remove definition-paren-form?)' \
-  '                        (remove (constantly false))'
+  "literal allowlist" "$fg117_b_fixture" true literal-allowlist
+
+prove_false_positive_mutation \
+  "definition-form filter" "$fg117_c_fixture" inputValue definition-form
 
 prove_coverage_mutation \
-  "numeric tuple discrimination" "$fg117_c_numeric_fixture" staleGateValue \
-  '  (boolean (re-find #"^(?:\(\s*[!%&*+\-./<=>?@^|~:]+\s*\)|\(\s*\|(?:[A-Z][A-Za-z0-9_'"'"']*\|)+(?:_\|)?\s*\))\s+[^,=\s]" (str/trim t))))' \
-  '  (boolean (re-find #"^\(\s*[!%&*+\-./<=>?@^|~:]" (str/trim t))))'
+  "numeric tuple discrimination" "$fg117_c_numeric_fixture" staleGateValue numeric-tuple
 
 prove_false_positive_mutation \
-  "underscore preservation" "$fg117_e_fixture" staleGateValue \
-  '                        (mapcat #(map second (re-seq destructured-token %)))' \
-  '                        (mapcat #(map (fn [[_ id]] (if (str/starts-with? id "_") (subs id 1) id)) (re-seq destructured-token %)))'
+  "underscore preservation" "$fg117_e_fixture" staleGateValue underscore-preservation
 
 prove_coverage_mutation \
-  "multi-underscore binder" "$fg117_e_multi_fixture" __staleGateValue \
-  '  #"(?:^|[^A-Za-z0-9_'"'"'])(_+[A-Za-z0-9][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})")' \
-  '  #"(?:^|[^A-Za-z0-9_'"'"'])(_[A-Za-z0-9][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})")'
+  "multi-underscore binder" "$fg117_e_multi_fixture" __staleGateValue multi-underscore
 
 prove_coverage_pair_mutation \
-  "underscore uppercase/digit domain" "$fg117_e_domain_fixture" _StaleGateValue _123GateValue \
-  '  #"(?:^|[^A-Za-z0-9_'"'"'])(_+[A-Za-z0-9][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})")' \
-  '  #"(?:^|[^A-Za-z0-9_'"'"'])(_+[a-z][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})")'
+  "underscore uppercase/digit domain" "$fg117_e_domain_fixture" _StaleGateValue _123GateValue underscore-domain
 
 prove_false_positive_mutation \
-  "underscore complete-token length floor" "$fg117_e_short_floor_fixture" __A \
-  '                        (filter #(>= (count %) 4))' \
-  '                        (filter (constantly true))'
+  "underscore complete-token length floor" "$fg117_e_short_floor_fixture" __A length-floor
 
 prove_coverage_mutation \
-  "underscore suffix-floor regression" "$fg117_e_total_floor_fixture" __Ab \
-  '  #"(?:^|[^A-Za-z0-9_'"'"'])(_+[A-Za-z0-9][A-Za-z0-9_'"'"']*|[a-z][A-Za-z0-9_'"'"']{3,})")' \
-  '  #"(?:^|[^A-Za-z0-9_'"'"'])(_+[A-Za-z0-9][A-Za-z0-9_'"'"']{2,}|[a-z][A-Za-z0-9_'"'"']{3,})")'
+  "underscore suffix-floor regression" "$fg117_e_total_floor_fixture" __Ab suffix-floor
 
 prove_false_positive_mutation \
-  "base lexical projection" "$fg117_f_fixture" staleDirectValue \
-  '                 (when-let [code (get-in old-code-projections [file n])]' \
-  '                 (when-let [code (or (get-in old-code-projections [file n]) (subs _removed-text 1))]'
+  "base lexical projection" "$fg117_f_fixture" staleDirectValue base-projection
 
 prove_false_positive_mutation \
-  "constructor left boundary" "$fg117_g_fixture" hoice \
-  "  #\"(?:^|[^A-Za-z0-9_'])(_+[A-Za-z0-9][A-Za-z0-9_']*|[a-z][A-Za-z0-9_']{3,})\")" \
-  "  #\"(?:^|.)(_+[A-Za-z0-9][A-Za-z0-9_']*|[a-z][A-Za-z0-9_']{3,})\")"
+  "constructor left boundary" "$fg117_g_fixture" hoice left-boundary
 
 [ "$FAIL" -eq 0 ] && echo "STALE-REF PROOF: supported forms report, pinned boundaries stay silent, and FG-117 false positives are excluded (10 direct mutations killed)" \
                   || { echo "STALE-REF PROOF FAILED"; exit 1; }

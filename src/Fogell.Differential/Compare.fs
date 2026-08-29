@@ -1189,7 +1189,7 @@ module Compare =
 
     /// FG-161. Recompute a receipt's seal FROM THE RENDERED RECEIPT and compare.
     ///
-    /// `generate-scorecard.bb` classifies a receipt as proven from its VERDICT LINE, so a
+    /// `generate-scorecard` classifies a receipt as proven from its VERDICT LINE, so a
     /// receipt edited while that line stays intact inflated the published proven count
     /// and `--check` approved it. Nothing recomputed the hash that the whole artifact
     /// rests on. This is the recomputation.
@@ -1232,7 +1232,7 @@ module Compare =
         //
         // MEASURED on when-conditions.receipt.txt: appending a second `VERDICT: PROVEN
         // (tier 1)` line left `--verify-seals` reporting VALID, because extraction stops at the first verdict
-        // block — while `generate-scorecard.bb` classifies tier 1 with `(?m)^VERDICT:
+        // block — while `generate-scorecard` classifies tier 1 with `(?m)^VERDICT:
         // PROVEN \(tier 1\)`, which matches ANY line. A diverged receipt with one appended
         // line would have verified AND promoted. Raised by the pre-push verifier's review
         // on the commit that added seal verification: the fix shipped a green check in
@@ -1646,7 +1646,7 @@ module Compare =
                         || (not anyRefused && modeText = "omitted")
 
                     // THE FILENAME IS PART OF THE CLAIM. A valid receipt COPIED onto another
-                    // expected name verifies fine on its own terms — and `generate-scorecard.bb`
+                    // expected name verifies fine on its own terms — and `generate-scorecard`
                     // attributes evidence by the ON-DISK filename, so copying any proven
                     // receipt over another case name grants that case tier 1 from a run that
                     // never tested it. The seal binds which case was compared; nothing bound

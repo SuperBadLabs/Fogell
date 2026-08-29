@@ -19,7 +19,9 @@ ORACLE="$OUT/oracle.tsv"
 BASELINE="$OUT/baseline.json"
 SCORECARD_MARKER="$OUT/scorecard-ran"
 FAILED=0
-mkdir -p "$REPO/scripts" "$REPO/docs" "$REPO/corpus" "$MOUNT" "$OUT"
+# `scripts/bin` too: the generator this proof substitutes now lives there, and
+# a missing directory made the stub write fail rather than the arm refuse.
+mkdir -p "$REPO/scripts/bin" "$REPO/docs" "$REPO/corpus" "$MOUNT" "$OUT"
 
 sha256() { sha256sum "$1" | awk '{print $1}'; }
 
@@ -107,8 +109,12 @@ baseline_for_corpus() {
 }
 
 cp -p "$CHECKER" "$REPO/scripts/check-compatibility-regression.py"
-printf '#!/bin/sh\nprintf "ran\\n" >> "%s"\n[ ! -e "%s" ]\n' "$SCORECARD_MARKER" "$OUT/scorecard-refuse" > "$REPO/scripts/generate-scorecard.bb"
-chmod +x "$REPO/scripts/generate-scorecard.bb"
+printf '#!/bin/sh\nif [ -e "%s" ]; then\n  printf "planted stale audit detail\\n" >&2\n  exit 1\nfi\n' \
+  "$OUT/audit-check-refuse" > "$REPO/scripts/build-audits.sh"
+printf '#!/bin/sh\nprintf "ran\\n" >> "%s"\nif [ -e "%s" ]; then\n  printf "%%02048dTAIL-SHOULD-BE-ABSENT\\n" 0 >&2\n  exit 1\nfi\nif [ -e "%s" ]; then\n  printf "planted scorecard detail\\n" >&2\n  exit 1\nfi\n' \
+  "$SCORECARD_MARKER" "$OUT/scorecard-noisy" "$OUT/scorecard-refuse" \
+  > "$REPO/scripts/bin/generate-scorecard"
+chmod +x "$REPO/scripts/build-audits.sh" "$REPO/scripts/bin/generate-scorecard"
 write_ledger "$REPO/docs/COMPATIBILITY-LEDGER.tsv" 3 admitted 1 admitted
 write_manifest "$REPO/corpus/CORPUS-SHA256SUMS"
 git -C "$REPO" init -q
@@ -352,8 +358,34 @@ fi
 
 touch "$OUT/scorecard-refuse"
 printf '{broken\n' > "$BAD_BASELINE"
-expect_reject 'scorecard failure precedes malformed baseline comparison' "$REPO" "$BAD_BASELINE" "$ORACLE" 'generate-scorecard.bb --check failed before regression comparison'
+expect_reject 'scorecard failure precedes malformed baseline comparison' "$REPO" "$BAD_BASELINE" "$ORACLE" 'generate-scorecard --check failed before regression comparison (exit 1): planted scorecard detail'
 rm -f "$OUT/scorecard-refuse"
+
+touch "$OUT/scorecard-noisy"
+run_gate "$REPO" "$BAD_BASELINE" "$ORACLE" "$OUT/run.log"
+if [ "$RC" -eq 0 ] \
+  || ! grep -Fq '[diagnostic truncated]' "$OUT/run.log" \
+  || grep -Fq 'TAIL-SHOULD-BE-ABSENT' "$OUT/run.log"; then
+  echo '  FAIL: scorecard failure diagnostic was not bounded'
+  sed 's/^/    | /' "$OUT/run.log"
+  FAILED=1
+else
+  echo '  rejected oversized scorecard diagnostic after a bounded snippet'
+fi
+rm -f "$OUT/scorecard-noisy"
+
+touch "$OUT/audit-check-refuse"
+expect_reject 'stale audit binary precedes scorecard execution' "$REPO" "$BAD_BASELINE" "$ORACLE" \
+  'audit binaries are missing or stale; run scripts/build-audits.sh first (exit 1): planted stale audit detail'
+rm -f "$OUT/audit-check-refuse"
+
+mv "$REPO/scripts/bin/generate-scorecard" "$OUT/generate-scorecard-away"
+expect_reject 'missing native scorecard generator' "$REPO" "$BASELINE" "$ORACLE" \
+  'generate-scorecard --check could not start; run scripts/build-audits.sh first'
+if grep -Fq 'Traceback' "$OUT/run.log"; then
+  echo '  FAIL: missing generator leaked a Python traceback'; FAILED=1
+fi
+mv "$OUT/generate-scorecard-away" "$REPO/scripts/bin/generate-scorecard"
 
 echo '=== FG-094 direct checker mutations ==='
 mutant_case() {

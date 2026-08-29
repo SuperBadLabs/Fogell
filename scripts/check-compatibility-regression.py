@@ -177,6 +177,21 @@ def load_baseline(path: Path, repository: Path) -> dict[str, object]:
     return value
 
 
+def process_diagnostic(*outputs: bytes, limit: int = 2_000) -> str:
+    combined = b"\n".join(output.strip() for output in outputs if output.strip())
+    clipped = combined[:limit]
+    detail = clipped.decode("utf-8", errors="replace")
+    if len(combined) > limit:
+        detail += "\n[diagnostic truncated]"
+    return detail
+
+
+def with_diagnostic(message: str, result: subprocess.CompletedProcess[bytes]) -> str:
+    detail = process_diagnostic(result.stderr, result.stdout)
+    suffix = f": {detail}" if detail else ""
+    return f"{message} (exit {result.returncode}){suffix}"
+
+
 def git(repository: Path, *arguments: str) -> bytes:
     result = subprocess.run(
         ["git", *GIT_CONFIG, *arguments],
@@ -186,7 +201,7 @@ def git(repository: Path, *arguments: str) -> bytes:
     )
     if result.returncode == 0:
         return result.stdout
-    raise Refusal(f"Git command failed: {' '.join(arguments)}")
+    raise Refusal(with_diagnostic(f"Git command failed: {' '.join(arguments)}", result))
 
 
 def git_is_ancestor(repository: Path, ancestor: str) -> bool:
@@ -197,21 +212,49 @@ def git_is_ancestor(repository: Path, ancestor: str) -> bool:
         env=controlled_environment(),
     )
     if result.returncode not in {0, 1}:
-        raise Refusal("Git merge-base ancestry check failed")
+        raise Refusal(with_diagnostic("Git merge-base ancestry check failed", result))
     return result.returncode == 0
 
 
 def run_scorecard_check(repository: Path, corpus: Path) -> None:
     environment = controlled_environment()
     environment["FOGELL_CORPUS"] = str(corpus)
-    result = subprocess.run(
-        [str(repository / "scripts" / "generate-scorecard.bb"), "--check"],
-        cwd=repository,
-        capture_output=True,
-        env=environment,
-    )
+    build_check = repository / "scripts" / "build-audits.sh"
+    try:
+        freshness = subprocess.run(
+            [str(build_check), "--check"],
+            cwd=repository,
+            capture_output=True,
+            env=environment,
+        )
+    except OSError:
+        raise Refusal(
+            "audit-binary freshness check could not start; run scripts/build-audits.sh first"
+        ) from None
+    if freshness.returncode != 0:
+        raise Refusal(
+            with_diagnostic(
+                "audit binaries are missing or stale; run scripts/build-audits.sh first",
+                freshness,
+            )
+        )
+    try:
+        result = subprocess.run(
+            [str(repository / "scripts" / "bin" / "generate-scorecard"), "--check"],
+            cwd=repository,
+            capture_output=True,
+            env=environment,
+        )
+    except OSError:
+        raise Refusal(
+            "generate-scorecard --check could not start; run scripts/build-audits.sh first"
+        ) from None
     if result.returncode != 0:
-        raise Refusal("generate-scorecard.bb --check failed before regression comparison")
+        raise Refusal(
+            with_diagnostic(
+                "generate-scorecard --check failed before regression comparison", result
+            )
+        )
 
 
 def require_filename(filename: str) -> None:
