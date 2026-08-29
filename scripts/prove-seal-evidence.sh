@@ -229,6 +229,203 @@ if find "$late_untracked_repo/evidence" -maxdepth 1 -type d -name '*.partial.*' 
   exit 1
 fi
 
+hook_repo="$(make_case post-checkout-hook)"
+mkdir -p "$hook_repo/.githooks"
+# shellcheck disable=SC2016 # Expansion belongs to the generated hostile hook.
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "hook-created ignored input\n" > "$PWD/.hook-input"' \
+  > "$hook_repo/.githooks/post-checkout"
+chmod +x "$hook_repo/.githooks/post-checkout"
+printf '.hook-input\n' >> "$hook_repo/.gitignore"
+(
+  cd "$hook_repo"
+  git add .githooks/post-checkout .gitignore
+  git commit -qm add-hostile-post-checkout
+  git config core.hooksPath .githooks
+)
+hook_control_parent="$LAB/post-checkout-control"
+mkdir "$hook_control_parent"
+git -C "$hook_repo" worktree add --detach "$hook_control_parent/source" HEAD \
+  > "$LAB/post-checkout-control.log" 2>&1
+[ -f "$hook_control_parent/source/.hook-input" ] \
+  || { echo "FAIL: hostile post-checkout control did not create ignored input"; cat "$LAB/post-checkout-control.log"; exit 1; }
+git -C "$hook_repo" worktree remove --force "$hook_control_parent/source"
+rmdir "$hook_control_parent"
+(
+  cd "$hook_repo"
+  env PATH="$hook_repo/fakebin:$PATH" FAKE_ASSERT_ABSENT=.hook-input \
+    ./scripts/seal-evidence.sh FG-223-PROOF > "$LAB/post-checkout-hook.log"
+)
+hook_bundle="$(find "$hook_repo/evidence" -mindepth 1 -maxdepth 1 -type d -name '*-fg-223-proof' -print -quit)"
+[ -n "$hook_bundle" ] || { echo "FAIL: hook-hardened materialization published no bundle"; exit 1; }
+rg -q '^ABSENT: .hook-input$' "$hook_bundle/build.log" \
+  || { echo "FAIL: hostile post-checkout input reached the materialized build"; cat "$hook_bundle/build.log"; exit 1; }
+[ ! -e "$hook_repo/.hook-input" ] \
+  || { echo "FAIL: hostile post-checkout hook mutated the publishing checkout"; exit 1; }
+
+filter_repo="$(make_case checkout-content-filter)"
+printf 'candidate.txt filter=unspecified\n' > "$filter_repo/.gitattributes"
+(
+  cd "$filter_repo"
+  git add .gitattributes
+  git commit -qm add-hostile-filter-attribute
+)
+filter_clean="$LAB/filter-clean"
+filter_smudge="$LAB/filter-smudge"
+# shellcheck disable=SC2016 # Expansion belongs to the generated hostile filter.
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  '[ -z "${FG223_FILTER_CLEAN_MARKER:-}" ] || : > "$FG223_FILTER_CLEAN_MARKER"' \
+  "exec sed 's/SMUDGED UNBOUND/stable candidate/'" > "$filter_clean"
+# shellcheck disable=SC2016 # Expansion belongs to the generated hostile filter.
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  '[ -z "${FG223_FILTER_SMUDGE_MARKER:-}" ] || : > "$FG223_FILTER_SMUDGE_MARKER"' \
+  "exec sed 's/stable candidate/SMUDGED UNBOUND/'" > "$filter_smudge"
+chmod +x "$filter_clean" "$filter_smudge"
+git -C "$filter_repo" config filter.unspecified.clean "$filter_clean"
+git -C "$filter_repo" config filter.unspecified.smudge "$filter_smudge"
+git -C "$filter_repo" config filter.unspecified.required true
+filter_control_parent="$LAB/filter-control"
+filter_clean_marker="$LAB/filter-clean-executed"
+filter_smudge_marker="$LAB/filter-smudge-executed"
+mkdir "$filter_control_parent"
+FG223_FILTER_CLEAN_MARKER="$filter_clean_marker" \
+FG223_FILTER_SMUDGE_MARKER="$filter_smudge_marker" \
+  git -C "$filter_repo" worktree add --detach "$filter_control_parent/source" HEAD \
+  > "$LAB/filter-control.log" 2>&1
+[ -e "$filter_smudge_marker" ] \
+  || { echo "FAIL: hostile checkout filter control did not execute"; cat "$LAB/filter-control.log"; exit 1; }
+rg -qx 'SMUDGED UNBOUND' "$filter_control_parent/source/candidate.txt" \
+  || { echo "FAIL: hostile checkout filter control did not alter physical bytes"; exit 1; }
+filter_control_status="$(
+  FG223_FILTER_CLEAN_MARKER="$filter_clean_marker" \
+    FG223_FILTER_SMUDGE_MARKER="$filter_smudge_marker" \
+    git -C "$filter_control_parent/source" status --short
+)"
+[ -z "$filter_control_status" ] \
+  || { echo "FAIL: hostile checkout filter control was not Git-clean"; exit 1; }
+[ -e "$filter_clean_marker" ] \
+  || { echo "FAIL: hostile clean-filter control did not execute"; exit 1; }
+git -C "$filter_repo" worktree remove --force "$filter_control_parent/source"
+rmdir "$filter_control_parent"
+rm "$filter_clean_marker" "$filter_smudge_marker"
+# The dirty candidate removes both the attribute and its target. Worktree add
+# still checks out HEAD first, so a current-state-only audit would execute the
+# base smudge and then delete its raw-identity witness while applying the patch.
+: > "$filter_repo/.gitattributes"
+rm "$filter_repo/candidate.txt"
+filter_log="$LAB/checkout-content-filter.log"
+filter_rc=0
+(
+  cd "$filter_repo"
+  env PATH="$filter_repo/fakebin:$PATH" \
+    FG223_FILTER_CLEAN_MARKER="$filter_clean_marker" \
+    FG223_FILTER_SMUDGE_MARKER="$filter_smudge_marker" \
+    ./scripts/seal-evidence.sh FG-223-PROOF
+) > "$filter_log" 2>&1 || filter_rc=$?
+[ "$filter_rc" -ne 0 ] || { echo "FAIL: effective checkout filter was accepted"; exit 1; }
+rg -q "publishing checkout has configured Git content filters" "$filter_log" \
+  || { echo "FAIL: effective checkout filter was not diagnosed"; cat "$filter_log"; exit 1; }
+if [ -e "$filter_clean_marker" ] || [ -e "$filter_smudge_marker" ]; then
+  echo "FAIL: evidence sealer executed a hostile checkout filter before refusal"
+  exit 1
+fi
+if find "$filter_repo/evidence" -type f -name SHA256SUMS -print -quit 2>/dev/null | rg -q .; then
+  echo "FAIL: effective checkout filter published a manifest"
+  exit 1
+fi
+
+conditional_filter_repo="$(make_case conditional-checkout-filter)"
+printf 'candidate.txt filter=unspecified\n' > "$conditional_filter_repo/.gitattributes"
+git -C "$conditional_filter_repo" add .gitattributes
+git -C "$conditional_filter_repo" commit -qm add-conditional-filter-attribute
+conditional_filter_marker="$LAB/conditional-filter.marker"
+conditional_filter_driver="$LAB/conditional-filter-driver"
+conditional_filter_config="$LAB/conditional-filter.config"
+# shellcheck disable=SC2016 # Marker expansion belongs to the hostile driver.
+printf '%s\n' '#!/usr/bin/env bash' 'tee' ': > "$FG223_CONDITIONAL_FILTER_MARKER"' \
+  > "$conditional_filter_driver"
+chmod +x "$conditional_filter_driver"
+git config --file "$conditional_filter_config" filter.unspecified.clean "$conditional_filter_driver"
+git config --file "$conditional_filter_config" filter.unspecified.smudge "$conditional_filter_driver"
+git config --file "$conditional_filter_config" filter.unspecified.required true
+git -C "$conditional_filter_repo" config --local \
+  'includeIf.gitdir:**/worktrees/source.path' "$conditional_filter_config"
+if git -C "$conditional_filter_repo" config \
+  --get-regexp '^filter\..*\.(clean|smudge|process)$' >/dev/null; then
+  echo "FAIL: conditional filter unexpectedly appeared in the publishing checkout"
+  exit 1
+fi
+conditional_control_parent="$(mktemp -d "$LAB/conditional-filter-control.XXXXXX")"
+env FG223_CONDITIONAL_FILTER_MARKER="$conditional_filter_marker" \
+  git -C "$conditional_filter_repo" worktree add --detach \
+  "$conditional_control_parent/source" HEAD >/dev/null
+[ -e "$conditional_filter_marker" ] \
+  || { echo "FAIL: linked-worktree conditional filter control did not execute"; exit 1; }
+git -C "$conditional_filter_repo" worktree remove --force "$conditional_control_parent/source"
+rmdir "$conditional_control_parent"
+rm "$conditional_filter_marker"
+conditional_filter_rc=0
+(
+  cd "$conditional_filter_repo"
+  env PATH="$conditional_filter_repo/fakebin:$PATH" \
+    FG223_CONDITIONAL_FILTER_MARKER="$conditional_filter_marker" \
+    FAKE_BUILD_MARKER="$LAB/conditional-filter-build.marker" \
+    ./scripts/seal-evidence.sh FG-223-PROOF
+) > "$LAB/conditional-checkout-filter.log" 2>&1 || conditional_filter_rc=$?
+[ "$conditional_filter_rc" -ne 0 ] \
+  || { echo "FAIL: linked-worktree conditional filter was accepted"; exit 1; }
+rg -q 'materialized worktree has configured Git content filters' \
+  "$LAB/conditional-checkout-filter.log" \
+  || { echo "FAIL: linked-worktree conditional filter was not diagnosed"; cat "$LAB/conditional-checkout-filter.log"; exit 1; }
+[ ! -e "$conditional_filter_marker" ] \
+  || { echo "FAIL: conditional filter executed before linked-worktree refusal"; exit 1; }
+[ ! -e "$LAB/conditional-filter-build.marker" ] \
+  || { echo "FAIL: build ran before linked-worktree conditional-filter refusal"; exit 1; }
+if find "$conditional_filter_repo/evidence" -type f -name SHA256SUMS -print -quit 2>/dev/null | rg -q .; then
+  echo "FAIL: linked-worktree conditional filter published a manifest"
+  exit 1
+fi
+
+ident_repo="$(make_case checkout-ident-transform)"
+# shellcheck disable=SC2016 # The fixture must contain the literal ident marker.
+printf '$Id$\n' > "$ident_repo/ident.txt"
+printf 'ident.txt ident\n' > "$ident_repo/.gitattributes"
+(
+  cd "$ident_repo"
+  git add ident.txt .gitattributes
+  git commit -qm add-ident-transform
+)
+ident_control_parent="$LAB/ident-control"
+mkdir "$ident_control_parent"
+git -C "$ident_repo" worktree add --detach "$ident_control_parent/source" HEAD \
+  > "$LAB/ident-control.log" 2>&1
+rg -q '^\$Id: [0-9a-f]+ \$$' "$ident_control_parent/source/ident.txt" \
+  || { echo "FAIL: ident checkout control did not alter physical bytes"; cat "$ident_control_parent/source/ident.txt"; exit 1; }
+[ -z "$(git -C "$ident_control_parent/source" status --short)" ] \
+  || { echo "FAIL: ident checkout control was not Git-clean"; exit 1; }
+git -C "$ident_repo" worktree remove --force "$ident_control_parent/source"
+rmdir "$ident_control_parent"
+ident_log="$LAB/checkout-ident-transform.log"
+ident_build_marker="$LAB/ident-build-started"
+ident_rc=0
+(
+  cd "$ident_repo"
+  env PATH="$ident_repo/fakebin:$PATH" FAKE_BUILD_MARKER="$ident_build_marker" \
+    ./scripts/seal-evidence.sh FG-223-PROOF
+) > "$ident_log" 2>&1 || ident_rc=$?
+[ "$ident_rc" -ne 0 ] || { echo "FAIL: Git-clean raw checkout transform was accepted"; exit 1; }
+rg -q "materialized candidate raw tracked bytes do not match the candidate index: ident.txt" "$ident_log" \
+  || { echo "FAIL: raw checkout transform was not diagnosed"; cat "$ident_log"; exit 1; }
+[ ! -e "$ident_build_marker" ] \
+  || { echo "FAIL: raw checkout transform reached the build before refusal"; exit 1; }
+if find "$ident_repo/evidence" -type f -name SHA256SUMS -print -quit 2>/dev/null | rg -q .; then
+  echo "FAIL: raw checkout transform published a manifest"
+  exit 1
+fi
+
 unsafe_repo="$(make_case unsafe-ticket)"
 unsafe_log="$LAB/unsafe-ticket.log"
 unsafe_rc=0
@@ -559,6 +756,61 @@ rg -q '^ABSENT: candidate.txt$' "$staged_bundle/build.log" \
 rg -q '^SYMLINK: broken.link$' "$staged_bundle/build.log" \
   || { echo "FAIL: materialized build did not observe the staged broken symlink"; cat "$staged_bundle/build.log"; exit 1; }
 
+external_symlink_repo="$(make_case external-symlink)"
+external_target="$LAB/external-source.txt"
+printf 'mutable external input\n' > "$external_target"
+ln -s "$external_target" "$external_symlink_repo/escape.link"
+(
+  cd "$external_symlink_repo"
+  git add escape.link
+  set +e
+  env PATH="$external_symlink_repo/fakebin:$PATH" \
+    FAKE_BUILD_MARKER="$LAB/external-symlink-build.marker" \
+    ./scripts/seal-evidence.sh FG-223-PROOF \
+    > "$LAB/external-symlink.log" 2>&1
+  external_symlink_rc=$?
+  set -e
+  [ "$external_symlink_rc" -ne 0 ] \
+    || { echo "FAIL: a tracked external symlink was accepted"; exit 1; }
+)
+rg -q 'tracked symlink has an absolute target: escape.link' "$LAB/external-symlink.log" \
+  || { echo "FAIL: external symlink refusal diagnostic was not specific"; cat "$LAB/external-symlink.log"; exit 1; }
+[ ! -e "$LAB/external-symlink-build.marker" ] \
+  || { echo "FAIL: prerequisites ran before the external symlink refusal"; exit 1; }
+if find "$external_symlink_repo/evidence" -type f -name SHA256SUMS -print -quit 2>/dev/null | rg -q .; then
+  echo "FAIL: external symlink refusal published a bundle"
+  exit 1
+fi
+
+gitmeta_repo="$(make_case git-admin-symlink)"
+ln -s .git "$gitmeta_repo/gitmeta.link"
+git -C "$gitmeta_repo" add gitmeta.link
+git -C "$gitmeta_repo" commit -qm add-git-admin-symlink
+gitmeta_control_parent="$(mktemp -d "$LAB/git-admin-control.XXXXXX")"
+git -C "$gitmeta_repo" worktree add --detach "$gitmeta_control_parent/source" HEAD >/dev/null
+rg -q '^gitdir: ' "$gitmeta_control_parent/source/gitmeta.link" \
+  || { echo "FAIL: Git-admin symlink control did not expose linked-worktree metadata"; exit 1; }
+git -C "$gitmeta_repo" worktree remove --force "$gitmeta_control_parent/source"
+rmdir "$gitmeta_control_parent"
+gitmeta_rc=0
+(
+  cd "$gitmeta_repo"
+  env PATH="$gitmeta_repo/fakebin:$PATH" \
+    FAKE_BUILD_MARKER="$LAB/git-admin-symlink-build.marker" \
+    ./scripts/seal-evidence.sh FG-223-PROOF
+) > "$LAB/git-admin-symlink.log" 2>&1 || gitmeta_rc=$?
+[ "$gitmeta_rc" -ne 0 ] \
+  || { echo "FAIL: a tracked Git-admin symlink was accepted"; exit 1; }
+rg -q 'tracked symlink enters the Git administrative namespace: gitmeta.link' \
+  "$LAB/git-admin-symlink.log" \
+  || { echo "FAIL: Git-admin symlink refusal diagnostic was not specific"; cat "$LAB/git-admin-symlink.log"; exit 1; }
+[ ! -e "$LAB/git-admin-symlink-build.marker" ] \
+  || { echo "FAIL: prerequisites ran before the Git-admin symlink refusal"; exit 1; }
+if find "$gitmeta_repo/evidence" -type f -name SHA256SUMS -print -quit 2>/dev/null | rg -q .; then
+  echo "FAIL: Git-admin symlink refusal published a bundle"
+  exit 1
+fi
+
 success_repo="$(make_case success)"
 (
   cd "$success_repo"
@@ -582,4 +834,4 @@ fi
 [ "$build_pwd" != "$success_repo" ] \
   || { echo "FAIL: prerequisites executed from the publishing checkout"; exit 1; }
 
-echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty-inventory, input-boundary, late-untracked, tracked, staging-state, HEAD and atomic-move failures publish no manifest; every tracked tests/**/*.fsproj runs; dirty text, binary bytes, unstaged/staged deletions, staged additions, and a broken symlink reach/reconstruct from one isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)"
+echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty-inventory, input-boundary, late-untracked, post-checkout-hook, executable-filter, raw-transform, external/Git-admin-symlink, tracked, staging-state, HEAD and atomic-move failures publish no manifest; every tracked tests/**/*.fsproj runs; dirty text, binary bytes, unstaged/staged deletions, staged additions, and a confined broken symlink reach/reconstruct from one hook-free raw-identity-audited isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)"

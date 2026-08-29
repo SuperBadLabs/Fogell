@@ -4,6 +4,13 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ROOT="$PWD"
+root_git () {
+  git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
+}
+fail () {
+  echo "REFUSING TO SEAL: $*" >&2
+  exit 1
+}
 # Preserve the caller's historical relative-corpus semantics after prerequisite
 # execution moves into the isolated candidate worktree.
 if [ -n "${FOGELL_CORPUS:-}" ] && [[ "$FOGELL_CORPUS" != /* ]]; then
@@ -13,13 +20,70 @@ fi
 TICKET="${1:?usage: seal-evidence.sh <TICKET-ID> [files...]}"; shift || true
 [[ "$TICKET" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
   || { echo "REFUSING TO SEAL: ticket id contains unsafe path characters: $TICKET" >&2; exit 1; }
-STAMP="$(git log -1 --format=%cd --date=format:%Y%m%dT%H%M%SZ)"
+STAMP="$(root_git log -1 --format=%cd --date=format:%Y%m%dT%H%M%SZ)"
 DIR="evidence/${STAMP}-${TICKET,,}"
 
-fail () {
-  echo "REFUSING TO SEAL: $*" >&2
-  exit 1
+assert_no_configured_content_filters () {
+  local label="$1"
+  shift
+  local config_rc
+  # Attribute values named `unset`/`unspecified` are textually ambiguous with
+  # check-attr's special states. Refusing every configured executable driver
+  # first closes that ambiguity and prevents even an unused driver from running.
+  if "$@" config --get-regexp '^filter\..*\.(clean|smudge|process)$' \
+    > /dev/null; then
+    fail "$label has configured Git content filters, which evidence sealing does not support"
+  else
+    config_rc=$?
+    [ "$config_rc" -eq 1 ] \
+      || fail "$label Git content-filter configuration could not be audited"
+  fi
 }
+
+assert_no_effective_content_filters () {
+  local -a attributes=()
+  local listing_pid i value
+  assert_no_configured_content_filters "publishing checkout" root_git
+  # check-attr only resolves policy; it does not execute the named driver. Refuse
+  # filters in the publishing candidate before a diff can invoke a clean driver.
+  mapfile -d '' attributes < <(
+    root_git ls-files -z | root_git check-attr -z --stdin filter
+  )
+  listing_pid=$!
+  wait "$listing_pid" || fail "effective Git content-filter attributes could not be audited"
+  (( ${#attributes[@]} % 3 == 0 )) \
+    || fail "effective Git content-filter audit returned malformed output"
+  for ((i = 0; i < ${#attributes[@]}; i += 3)); do
+    value="${attributes[i + 2]}"
+    case "$value" in
+      unspecified|unset) ;;
+      *) fail "effective Git content filter is unsupported: ${attributes[i]} ($value)" ;;
+    esac
+  done
+
+  # Worktree creation checks out the base before candidate.diff is applied. A
+  # dirty candidate may remove both an attribute and its target, so audit the
+  # exact base independently or its smudge driver could execute without leaving
+  # a post-apply raw-identity witness.
+  attributes=()
+  mapfile -d '' attributes < <(
+    root_git ls-tree -rz --name-only HEAD \
+      | root_git check-attr -z --source=HEAD --stdin filter
+  )
+  listing_pid=$!
+  wait "$listing_pid" || fail "base Git content-filter attributes could not be audited"
+  (( ${#attributes[@]} % 3 == 0 )) \
+    || fail "base Git content-filter audit returned malformed output"
+  for ((i = 0; i < ${#attributes[@]}; i += 3)); do
+    value="${attributes[i + 2]}"
+    case "$value" in
+      unspecified|unset) ;;
+      *) fail "base Git content filter is unsupported: ${attributes[i]} ($value)" ;;
+    esac
+  done
+}
+
+assert_no_effective_content_filters
 
 # Validate caller-owned inputs before starting the transactional bundle. A missing
 # extra used to be silently skipped, so a manifest could verify while omitting a
@@ -59,7 +123,7 @@ assert_no_untracked_source () {
   local -a untracked_source=()
   local listing_pid
   local untracked_path
-  mapfile -d '' all_untracked < <(git ls-files --others --exclude-standard -z)
+  mapfile -d '' all_untracked < <(root_git ls-files --others --exclude-standard -z)
   listing_pid=$!
   wait "$listing_pid" || fail "untracked source inventory could not be read"
   for untracked_path in "${all_untracked[@]}"; do
@@ -89,7 +153,7 @@ SOURCE_PARENT=""
 SOURCE_SNAPSHOT=""
 cleanup () {
   if [ -n "${SOURCE_SNAPSHOT:-}" ]; then
-    git worktree remove --force "$SOURCE_SNAPSHOT" >/dev/null 2>&1 || true
+    root_git worktree remove --force "$SOURCE_SNAPSHOT" >/dev/null 2>&1 || true
   fi
   if [ -n "${SOURCE_PARENT:-}" ] && [ -d "$SOURCE_PARENT" ]; then
     rm -rf -- "$SOURCE_PARENT"
@@ -100,43 +164,146 @@ cleanup () {
 }
 trap cleanup EXIT
 
+snapshot_git () {
+  # A measured source must not execute repository hooks or a configured
+  # filesystem monitor while Git inspects/materializes it.
+  root_git -C "$SOURCE_SNAPSHOT" "$@"
+}
+
+assert_pristine_materialized_inputs () {
+  local -a unexpected=()
+  local -a ignored=()
+  local listing_pid
+  local unexpected_path
+  mapfile -d '' unexpected < <(
+    snapshot_git ls-files --others --exclude-standard -z
+  )
+  listing_pid=$!
+  wait "$listing_pid" || fail "materialized untracked inventory could not be read"
+  mapfile -d '' ignored < <(
+    snapshot_git ls-files --others --ignored --exclude-standard -z
+  )
+  listing_pid=$!
+  wait "$listing_pid" || fail "materialized ignored inventory could not be read"
+  unexpected+=("${ignored[@]}")
+  if [ "${#unexpected[@]}" -gt 0 ]; then
+    echo "REFUSING TO SEAL: materialized candidate contains unbound input:" >&2
+    for unexpected_path in "${unexpected[@]}"; do
+      printf '  %q\n' "$unexpected_path" >&2
+    done
+    fail "materialized candidate contains untracked or ignored input"
+  fi
+}
+
+assert_raw_index_identity () {
+  local checkout="$1"
+  local entries="$2"
+  local label="$3"
+  local entry metadata mode expected stage tracked_path actual physical_mode
+  local link_target_with_sentinel link_target link_base checkout_root resolved_target
+  while IFS= read -r -d '' entry; do
+    metadata="${entry%%$'\t'*}"
+    [ "$metadata" != "$entry" ] \
+      || fail "$label index entry has an unexpected shape"
+    tracked_path="${entry#*$'\t'}"
+    read -r mode expected stage <<< "$metadata"
+    [ "$stage" = 0 ] || fail "$label index contains a non-stage-0 entry"
+    case "$mode" in
+      100644|100755)
+        if [ ! -f "$checkout/$tracked_path" ] || [ -L "$checkout/$tracked_path" ]; then
+          fail "$label tracked regular file has the wrong physical type: $tracked_path"
+        fi
+        physical_mode="$(stat -c '%a' -- "$checkout/$tracked_path")"
+        if { [ "$mode" = 100755 ] && (( (8#$physical_mode & 0111) == 0 )); } \
+          || { [ "$mode" = 100644 ] && (( (8#$physical_mode & 0111) != 0 )); }; then
+          fail "$label tracked executable mode does not match the candidate index: $tracked_path"
+        fi
+        if ! actual="$(root_git hash-object --no-filters -- "$checkout/$tracked_path")"; then
+          fail "$label tracked regular file could not be hashed raw: $tracked_path"
+        fi
+        ;;
+      120000)
+        [ -L "$checkout/$tracked_path" ] \
+          || fail "$label tracked symlink has the wrong physical type: $tracked_path"
+        if ! link_target_with_sentinel="$(readlink -n -- "$checkout/$tracked_path"; printf .)"; then
+          fail "$label tracked symlink target could not be read: $tracked_path"
+        fi
+        link_target="${link_target_with_sentinel%.}"
+        [[ "$link_target" != /* ]] \
+          || fail "$label tracked symlink has an absolute target: $tracked_path"
+        if [[ "$tracked_path" == */* ]]; then
+          link_base="$checkout/${tracked_path%/*}"
+        else
+          link_base="$checkout"
+        fi
+        checkout_root="$(realpath -m -- "$checkout")"
+        if ! resolved_target="$(realpath -m -- "$link_base/$link_target")"; then
+          fail "$label tracked symlink target could not be resolved: $tracked_path"
+        fi
+        case "$resolved_target" in
+          "$checkout_root"|"$checkout_root"/*) ;;
+          *) fail "$label tracked symlink escapes the candidate root: $tracked_path" ;;
+        esac
+        case "$resolved_target" in
+          "$checkout_root/.git"|"$checkout_root/.git"/*)
+            fail "$label tracked symlink enters the Git administrative namespace: $tracked_path" ;;
+        esac
+        if ! actual="$(readlink -n -- "$checkout/$tracked_path" | root_git hash-object --stdin)"; then
+          fail "$label tracked symlink could not be hashed raw: $tracked_path"
+        fi
+        ;;
+      160000)
+        fail "$label contains an unsupported gitlink: $tracked_path" ;;
+      *)
+        fail "$label index contains an unsupported mode $mode: $tracked_path" ;;
+    esac
+    [ "$actual" = "$expected" ] \
+      || fail "$label raw tracked bytes do not match the candidate index: $tracked_path"
+  done < "$entries"
+}
+
 capture_tracked_inventory () {
   local destination="$1"
   local candidate_index="$destination/.candidate-index"
   # Derive the inventory represented by HEAD + candidate.diff in a private
   # index. The publishing index alone still names unstaged deletions and thus
   # does not describe the candidate that the prerequisites will consume.
-  GIT_INDEX_FILE="$candidate_index" git read-tree HEAD
+  GIT_INDEX_FILE="$candidate_index" root_git read-tree HEAD
   if [ -s "$destination/candidate.diff" ]; then
     if ! GIT_INDEX_FILE="$candidate_index" \
-      git apply --cached --binary "$destination/candidate.diff"; then
+      root_git apply --cached --binary "$destination/candidate.diff"; then
       fail "captured candidate tracked inventory could not be derived"
     fi
   fi
-  GIT_INDEX_FILE="$candidate_index" git ls-files > "$destination/tree.txt"
-  rm "$candidate_index"
+  GIT_INDEX_FILE="$candidate_index" root_git ls-files > "$destination/tree.txt"
+  GIT_INDEX_FILE="$candidate_index" root_git ls-files --stage -z \
+    > "$destination/.candidate-index-entries"
+  assert_raw_index_identity "$ROOT" "$destination/.candidate-index-entries" \
+    "publishing candidate"
+  rm "$candidate_index" "$destination/.candidate-index-entries"
 }
 
 capture_candidate () {
   local destination="$1"
   # Bookend the capture itself. A stable file created after the early preflight
   # must never survive merely as an unbound `??` status record.
+  assert_no_effective_content_filters
   assert_no_untracked_source
-  git diff --no-ext-diff --no-textconv HEAD --stat \
+  root_git diff --no-ext-diff --no-textconv HEAD --stat \
                                              > "$destination/diffstat.txt"
-  git diff --no-ext-diff --no-textconv --binary --full-index HEAD \
+  root_git diff --no-ext-diff --no-textconv --binary --full-index HEAD \
                                              > "$destination/candidate.diff"
   # Untracked evidence/ paths are command output, not candidate source. Filter
   # only those `??` records while retaining tracked evidence changes and every
   # other non-ignored untracked path. This also keeps concurrent sealers from
   # treating each other's private staging directory as source drift.
-  git status --short --untracked-files=all | while IFS= read -r status_line; do
+  root_git status --short --untracked-files=all | while IFS= read -r status_line; do
     case "$status_line" in
       "?? evidence/"*) continue ;;
     esac
     printf '%s\n' "$status_line"
   done                              > "$destination/status-before-commit.txt"
-  git rev-parse HEAD                  > "$destination/base-commit.txt"
+  root_git rev-parse HEAD             > "$destination/base-commit.txt"
   capture_tracked_inventory "$destination"
   assert_no_untracked_source
 }
@@ -156,28 +323,42 @@ capture_candidate "$STAGING"
 # boundary against an actor that deliberately attacks the temporary worktree.
 SOURCE_PARENT="$(mktemp -d /tmp/fogell-evidence-source.XXXXXX)"
 SOURCE_SNAPSHOT="$SOURCE_PARENT/source"
-if ! git worktree add --detach "$SOURCE_SNAPSHOT" "$(cat "$STAGING/base-commit.txt")" \
+assert_no_effective_content_filters
+if ! root_git worktree add --no-checkout --detach "$SOURCE_SNAPSHOT" "$(cat "$STAGING/base-commit.txt")" \
   > "$STAGING/.materialization.log" 2>&1; then
+  cat "$STAGING/.materialization.log" >&2
+  fail "captured candidate worktree could not be established"
+fi
+# Conditional includes can produce a different effective configuration for a
+# linked worktree than for its publishing checkout. Establish only its Git admin
+# context first, then refuse executable drivers before any checkout can run one.
+assert_no_configured_content_filters "materialized worktree" snapshot_git
+if ! snapshot_git reset --hard "$(cat "$STAGING/base-commit.txt")" \
+  >> "$STAGING/.materialization.log" 2>&1; then
   cat "$STAGING/.materialization.log" >&2
   fail "captured candidate base could not be materialized"
 fi
 if [ -s "$STAGING/candidate.diff" ]; then
-  if ! git -C "$SOURCE_SNAPSHOT" apply --binary --index "$STAGING/candidate.diff" \
+  if ! snapshot_git apply --binary --index "$STAGING/candidate.diff" \
     >> "$STAGING/.materialization.log" 2>&1; then
     cat "$STAGING/.materialization.log" >&2
     fail "captured candidate patch could not be materialized"
   fi
 fi
-git -C "$SOURCE_SNAPSHOT" diff --no-ext-diff --no-textconv --binary --full-index HEAD \
+snapshot_git ls-files --stage -z > "$SOURCE_PARENT/index.initial"
+assert_raw_index_identity "$SOURCE_SNAPSHOT" "$SOURCE_PARENT/index.initial" \
+  "materialized candidate"
+snapshot_git diff --no-ext-diff --no-textconv --binary --full-index HEAD \
   > "$STAGING/.materialized-candidate.diff"
 cmp -s "$STAGING/candidate.diff" "$STAGING/.materialized-candidate.diff" \
   || fail "captured candidate could not be materialized exactly"
-git -C "$SOURCE_SNAPSHOT" ls-files > "$STAGING/.materialized-tree.txt"
+snapshot_git ls-files > "$STAGING/.materialized-tree.txt"
 cmp -s "$STAGING/tree.txt" "$STAGING/.materialized-tree.txt" \
   || fail "captured tracked inventory could not be materialized exactly"
 rm "$STAGING/.materialization.log" "$STAGING/.materialized-candidate.diff" \
   "$STAGING/.materialized-tree.txt"
-git -C "$SOURCE_SNAPSHOT" status --short --untracked-files=all \
+assert_pristine_materialized_inputs
+snapshot_git status --short --untracked-files=all \
   > "$SOURCE_PARENT/status.initial"
 
 if ! (cd "$SOURCE_SNAPSHOT" && ./scripts/verify-corpus.sh) > "$STAGING/corpus-gate.log" 2>&1; then
@@ -191,7 +372,7 @@ if ! (cd "$SOURCE_SNAPSHOT" && dotnet build -c Release --nologo) > "$STAGING/bui
 fi
 
 mapfile -d '' test_projects < <(
-  git -C "$SOURCE_SNAPSHOT" ls-files -z -- ':(glob)tests/**/*.fsproj'
+  snapshot_git ls-files -z -- ':(glob)tests/**/*.fsproj'
 )
 [ "${#test_projects[@]}" -gt 0 ] || fail "no test projects were discovered"
 for t in "${test_projects[@]}"; do
@@ -217,17 +398,22 @@ done
 # any lasting tracked, staging-state, HEAD, inventory, or non-ignored mutation
 # they leave behind. Ignored build outputs are expected and deliberately absent
 # from this audit.
-git -C "$SOURCE_SNAPSHOT" diff --no-ext-diff --no-textconv --binary --full-index HEAD \
+snapshot_git ls-files --stage -z > "$SOURCE_PARENT/index.final"
+cmp -s "$SOURCE_PARENT/index.initial" "$SOURCE_PARENT/index.final" \
+  || fail "materialized candidate changed while prerequisites ran: index"
+assert_raw_index_identity "$SOURCE_SNAPSHOT" "$SOURCE_PARENT/index.final" \
+  "materialized candidate changed while prerequisites ran:"
+snapshot_git diff --no-ext-diff --no-textconv --binary --full-index HEAD \
   > "$SOURCE_PARENT/candidate.final"
 cmp -s "$STAGING/candidate.diff" "$SOURCE_PARENT/candidate.final" \
   || fail "materialized candidate changed while prerequisites ran: candidate.diff"
-git -C "$SOURCE_SNAPSHOT" status --short --untracked-files=all \
+snapshot_git status --short --untracked-files=all \
   > "$SOURCE_PARENT/status.final"
 cmp -s "$SOURCE_PARENT/status.initial" "$SOURCE_PARENT/status.final" \
   || fail "materialized candidate changed while prerequisites ran: status"
-[ "$(git -C "$SOURCE_SNAPSHOT" rev-parse HEAD)" = "$(cat "$STAGING/base-commit.txt")" ] \
+[ "$(snapshot_git rev-parse HEAD)" = "$(cat "$STAGING/base-commit.txt")" ] \
   || fail "materialized candidate changed while prerequisites ran: HEAD"
-git -C "$SOURCE_SNAPSHOT" ls-files > "$SOURCE_PARENT/tree.final"
+snapshot_git ls-files > "$SOURCE_PARENT/tree.final"
 cmp -s "$STAGING/tree.txt" "$SOURCE_PARENT/tree.final" \
   || fail "materialized candidate changed while prerequisites ran: tracked inventory"
 
@@ -244,7 +430,7 @@ for candidate_file in diffstat.txt candidate.diff status-before-commit.txt base-
 done
 rm -rf -- "$FINAL_SNAPSHOT"
 
-git worktree remove --force "$SOURCE_SNAPSHOT"
+root_git worktree remove --force "$SOURCE_SNAPSHOT"
 SOURCE_SNAPSHOT=""
 rm -rf -- "$SOURCE_PARENT"
 SOURCE_PARENT=""
