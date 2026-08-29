@@ -3046,12 +3046,23 @@ let effectCheckpoints =
               use cmd = conn.CreateCommand()
               cmd.CommandText <-
                   "SELECT current_setting('server_version_num')::int,
-                          EXISTS (SELECT 1 FROM schema_migrations WHERE version = '0003')"
+                          EXISTS (SELECT 1 FROM schema_migrations WHERE version = '0003'),
+                          EXISTS (SELECT 1 FROM schema_migrations WHERE version = '0005'),
+                          EXISTS (SELECT 1 FROM schema_migrations WHERE version = '0007'),
+                          c.relrowsecurity,
+                          c.relforcerowsecurity
+                     FROM pg_class c
+                     JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'public' AND c.relname = 'effect_checkpoints'"
               use reader = cmd.ExecuteReader()
               Expect.isTrue (reader.Read()) "live PostgreSQL returned one marker row"
               Expect.isGreaterThan (reader.GetInt32 0) 0 "real server version"
               Expect.isTrue (reader.GetBoolean 1) "migration 0003 installed"
-              printfn "FG026_LIVE_PG=1 FG026_SCHEMA=0003 FG026_CONCURRENCY=16"
+              Expect.isTrue (reader.GetBoolean 2) "migration 0005 installed"
+              Expect.isTrue (reader.GetBoolean 3) "migration 0007 installed"
+              Expect.isTrue (reader.GetBoolean 4) "effect checkpoints have row security enabled"
+              Expect.isTrue (reader.GetBoolean 5) "effect checkpoints force row security"
+              printfn "FG026_LIVE_PG=1 FG026_SCHEMA=0003/0005/0007 FG026_CONCURRENCY=16"
           }
 
           test "prepare hashes exact payload bytes and stores no payload column" {
