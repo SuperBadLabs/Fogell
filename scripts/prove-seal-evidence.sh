@@ -202,6 +202,42 @@ existing_rc=0
 rg -q "evidence destination already exists" "$existing_log" || { cat "$existing_log"; exit 1; }
 [ "$(cat "$existing_dir/marker")" = owner ] || { echo "FAIL: existing destination marker changed"; exit 1; }
 
+mv_failure_repo="$(make_case atomic-move-failure)"
+# shellcheck disable=SC2016 # Expansion belongs to the generated fake, not this proof.
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'if [ "${1:-}" = --help ]; then echo "  -T, --no-target-directory"; exit 0; fi' \
+  '[ "$#" -eq 4 ] && [ "$1" = -T ] && [ "$2" = -n ] || exit 97' \
+  '[ -d "$3" ] && [ ! -e "$4" ] || exit 98' \
+  'echo "planted atomic move failure" >&2' \
+  'exit 74' > "$mv_failure_repo/fakebin/mv"
+chmod +x "$mv_failure_repo/fakebin/mv"
+(
+  cd "$mv_failure_repo"
+  git add fakebin/mv
+  git commit -qm add-failing-mv
+)
+mv_failure_log="$LAB/atomic-move-failure.log"
+mv_failure_rc=0
+(
+  cd "$mv_failure_repo"
+  env PATH="$mv_failure_repo/fakebin:$PATH" ./scripts/seal-evidence.sh FG-223-PROOF
+) > "$mv_failure_log" 2>&1 || mv_failure_rc=$?
+[ "$mv_failure_rc" -ne 0 ] || { echo "FAIL: failed atomic move was accepted"; exit 1; }
+rg -q "planted atomic move failure" "$mv_failure_log" \
+  || { echo "FAIL: atomic move failure control did not reach the intended branch"; cat "$mv_failure_log"; exit 1; }
+rg -q "atomic evidence publication failed" "$mv_failure_log" \
+  || { echo "FAIL: failed atomic move was misdiagnosed"; cat "$mv_failure_log"; exit 1; }
+if rg -q "evidence destination appeared during sealing" "$mv_failure_log"; then
+  echo "FAIL: ordinary atomic move failure was diagnosed as a destination race"
+  cat "$mv_failure_log"
+  exit 1
+fi
+if find "$mv_failure_repo/evidence" -type f -name SHA256SUMS -print -quit 2>/dev/null | rg -q .; then
+  echo "FAIL: failed atomic move published a manifest"
+  exit 1
+fi
+
 empty_race_repo="$(make_case empty-destination-race)"
 empty_race_stamp="$(git -C "$empty_race_repo" log -1 --format=%cd --date=format:%Y%m%dT%H%M%SZ)"
 empty_race_dir="$empty_race_repo/evidence/${empty_race_stamp}-fg-223-proof"
@@ -225,6 +261,11 @@ wait "$empty_race_pid" || empty_race_rc=$?
 [ "$empty_race_rc" -ne 0 ] || { echo "FAIL: empty race-created destination was replaced"; exit 1; }
 rg -q "evidence destination appeared during sealing" "$empty_race_log" \
   || { echo "FAIL: empty destination race was not diagnosed"; cat "$empty_race_log"; exit 1; }
+if rg -q "atomic evidence publication failed" "$empty_race_log"; then
+  echo "FAIL: empty destination race was diagnosed as an ordinary atomic move failure"
+  cat "$empty_race_log"
+  exit 1
+fi
 if [ ! -d "$empty_race_dir" ] \
   || [ -n "$(find "$empty_race_dir" -mindepth 1 -print -quit)" ]; then
   echo "FAIL: empty race-created destination was not preserved"
@@ -431,4 +472,4 @@ fi
 [ "$build_pwd" != "$success_repo" ] \
   || { echo "FAIL: prerequisites executed from the publishing checkout"; exit 1; }
 
-echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty-inventory, input-boundary, tracked, staging-state and HEAD drift failures publish no manifest; every tracked tests/**/*.fsproj runs; dirty text and binary bytes reach/reconstruct from one isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)"
+echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty-inventory, input-boundary, tracked, staging-state, HEAD and atomic-move failures publish no manifest; every tracked tests/**/*.fsproj runs; dirty text and binary bytes reach/reconstruct from one isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)"

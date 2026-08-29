@@ -226,10 +226,11 @@ SOURCE_PARENT=""
 if mv --help 2>&1 | rg -q -- '--no-target-directory'; then
   # HeMan and the hosted Linux gate use GNU mv. `-T` refuses a destination that
   # appears during the run instead of moving the staging directory inside it;
-  # `-n` additionally preserves an empty destination. GNU mv reports success
-  # when no-clobber skips, so the source must also have disappeared.
+  # `-n` additionally preserves an empty destination. A race may be reported as
+  # failure or as a successful no-clobber skip, so inspect both destination and
+  # source state.
   if ! mv -T -n "$STAGING" "$DIR"; then
-    [ ! -e "$STAGING" ] || fail "evidence destination appeared during sealing: $DIR"
+    [ ! -e "$DIR" ] || fail "evidence destination appeared during sealing: $DIR"
     fail "atomic evidence publication failed: $DIR"
   fi
   [ ! -e "$STAGING" ] || fail "evidence destination appeared during sealing: $DIR"
