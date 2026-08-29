@@ -14,6 +14,27 @@ let private tempRoot () =
 
 let private key () = "attempt-" + Guid.NewGuid().ToString("N").Substring(0, 8)
 
+let private runSecretUmaskChild reportFile =
+    let root = tempRoot ()
+
+    try
+        let binding = Secrets.bind root "TOKEN" "SUPERSECRET123"
+        let mode = File.GetUnixFileMode binding.FilePath
+        let content = File.ReadAllText binding.FilePath
+        File.WriteAllText(reportFile, $"{int mode}|{content}")
+        Secrets.revoke [ binding ]
+
+        if
+            mode = (UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
+            && content = "SUPERSECRET123"
+        then
+            0
+        else
+            91
+    with ex ->
+        File.WriteAllText(reportFile, ex.ToString())
+        92
+
 /// A step request against a freshly created workspace. Creation is an
 /// attempt-level concern (FG-030); steps run inside what already exists.
 let private request root script =
@@ -1971,18 +1992,106 @@ let secrets =
               Secrets.revoke [ binding ]
           }
 
-          test "a binary file credential reports no phantom literal leak" {
+          test "a binary file credential masks base64, detects hex, and reports no phantom literal leak" {
               // REVIEW FIX (Codex, PR #15 round 5): `bindBytes` stores an empty Value for a
               // non-UTF-8 credential, and every string contains the empty string — so a
               // literal leak was reported on EVERY line of output inside the block. A
               // warning that always fires trains the reader to ignore the channel.
               let root = tempRoot ()
-              let bytes = [| 0uy; 159uy; 146uy; 150uy; 255uy |] // invalid UTF-8
+              let bytes = [| 0uy; 159uy; 146uy; 150uy; 255uy; 1uy; 2uy; 3uy |] // invalid UTF-8
               let binding = Secrets.bindBytes root "CERT" bytes
+              let base64 = Convert.ToBase64String bytes
+              let hexLower = Convert.ToHexString(bytes).ToLowerInvariant()
+              let hexUpper = Convert.ToHexString bytes
+              Array.fill bytes 0 bytes.Length 0uy
 
               Expect.isEmpty (Secrets.detectLeaks [ binding ] "ordinary build output") "no phantom leak"
               Expect.equal (Secrets.mask [ binding ] "ordinary build output") "ordinary build output" "output untouched"
+              Expect.equal (Secrets.mask [ binding ] $"encoded={base64}") "encoded=****" "raw-byte base64 is masked"
+
+              let leaks = Secrets.detectLeaks [ binding ] $"lower={hexLower} upper={hexUpper}"
+              Expect.equal
+                  (leaks |> List.map (fun leak -> leak.Encoding))
+                  [ "hex"; "hex-upper" ]
+                  "both common raw-byte hex forms are reported"
+
               Secrets.revoke [ binding ]
+          }
+
+          test "short binary encodings cannot false-refuse ordinary output" {
+              let root = tempRoot ()
+              let bytes = [| 0xDEuy; 0xADuy |]
+              let binding = Secrets.bindBytes root "CERT" bytes
+              let base64 = Convert.ToBase64String bytes
+              let sevenBytes = [| 0uy; 159uy; 146uy; 150uy; 255uy; 1uy; 2uy |]
+              let sevenByteBinding = Secrets.bindBytes root "CERT_SEVEN" sevenBytes
+              let sevenByteBase64 = Convert.ToBase64String sevenBytes
+              let sevenByteHex = Convert.ToHexString sevenBytes
+
+              Expect.equal
+                  (Secrets.mask [ binding ] $"word=dead upper=DEAD encoded={base64}")
+                  $"word=dead upper=DEAD encoded={base64}"
+                  "low-entropy binary forms below eight bytes are not registered"
+
+              Expect.isEmpty
+                  (Secrets.detectLeaks [ binding ] "word=dead upper=DEAD")
+                  "ordinary four-letter words do not become credential-leak proof"
+
+              Expect.equal
+                  (Secrets.mask [ sevenByteBinding ] $"encoded={sevenByteBase64}")
+                  $"encoded={sevenByteBase64}"
+                  "the byte-derived floor excludes a seven-byte value"
+
+              Expect.isEmpty
+                  (Secrets.detectLeaks [ sevenByteBinding ] $"encoded={sevenByteHex}")
+                  "the exact byte-derived floor excludes seven-byte hex"
+
+              Secrets.revoke [ binding; sevenByteBinding ]
+          }
+
+          test "repeated binary bindings share one prepared form object" {
+              let root = tempRoot ()
+              let bytes = [| 0uy; 159uy; 146uy; 150uy; 255uy; 1uy; 2uy; 3uy |]
+              let credential = Secrets.prepareFileCredential "secret.dat" bytes
+              let first = Secrets.bindPreparedFile root "CERT_A" credential
+              let second = Secrets.bindPreparedFile root "CERT_B" credential
+
+              Expect.isTrue
+                  (Object.ReferenceEquals(first.Forms, second.Forms))
+                  "lexical bindings share the source credential's immutable encodings"
+
+              Secrets.revoke [ first; second ]
+          }
+
+          test "prepared file credentials snapshot caller bytes with their forms" {
+              let root = tempRoot ()
+              let original = [| 0uy; 159uy; 146uy; 150uy; 255uy; 1uy; 2uy; 3uy |]
+              let expected = Array.copy original
+              let credential = Credentials.secretFile "secret.dat" original
+              Array.fill original 0 original.Length 0x41uy
+
+              match credential with
+              | SecretFile prepared ->
+                  let binding = Secrets.bindPreparedFile root "CERT" prepared
+                  let base64 = Convert.ToBase64String expected
+                  let hexUpper = Convert.ToHexString expected
+
+                  Expect.sequenceEqual
+                      (File.ReadAllBytes binding.FilePath)
+                      expected
+                      "the materialized file uses the constructor snapshot"
+
+                  Expect.stringContains
+                      (Secrets.mask [ binding ] $"encoded={base64}")
+                      "encoded=****"
+                      "masking forms describe the same snapshot"
+
+                  Expect.isNonEmpty
+                      (Secrets.detectLeaks [ binding ] $"encoded={hexUpper}")
+                      "detection forms describe the same snapshot"
+
+                  Secrets.revoke [ binding ]
+              | other -> failtestf "file factory produced %A" other
           }
 
           test "an explicitly requested variable is never overridden by a companion" {
@@ -2098,19 +2207,109 @@ let secrets =
               Secrets.revoke [ binding ]
           }
 
-          test "the secret file is readable by its owner and nobody else" {
+          test "text and binary secret files are created at their final owner-only mode" {
               let root = tempRoot ()
               let ws = match Workspace.createFresh root (key ()) with
                        | Result.Ok p -> p
                        | Result.Error e -> failtestf "%s" e.Describe
 
-              let binding = Secrets.bind ws "TOKEN" "SUPERSECRET123"
-              let mode = File.GetUnixFileMode binding.FilePath
+              let text = Secrets.bind ws "TOKEN" "SUPERSECRET123"
+              let binaryBytes = [| 0uy; 255uy; 13uy; 10uy |]
+              let binary = Secrets.bindBytes ws "CERT" binaryBytes
 
-              Expect.isTrue (mode.HasFlag UnixFileMode.UserRead) "owner may read"
-              Expect.isFalse (mode.HasFlag UnixFileMode.GroupRead) "group may not"
-              Expect.isFalse (mode.HasFlag UnixFileMode.OtherRead) "others may not"
-              Secrets.revoke [ binding ]
+              for label, binding in [ "text", text; "binary", binary ] do
+                  let mode = File.GetUnixFileMode binding.FilePath
+                  Expect.equal
+                      mode
+                      (UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
+                      $"{label}: exact final mode is 0600"
+
+              Expect.equal (File.ReadAllText text.FilePath) "SUPERSECRET123" "text bytes are exact"
+              Expect.equal (File.ReadAllBytes binary.FilePath) binaryBytes "binary bytes are exact"
+              Secrets.revoke [ text; binary ]
+          }
+
+          test "secret files are mode 0600 and empty before the first byte is written" {
+              let root = tempRoot ()
+              let observations = Collections.Generic.List<_>()
+
+              let path =
+                  Secrets.createSecretFileWithObserver
+                      root
+                      "TOKEN"
+                      (Text.Encoding.UTF8.GetBytes "SUPERSECRET123")
+                      (fun phase path ->
+                          observations.Add(phase, File.GetUnixFileMode path, FileInfo(path).Length))
+
+              Expect.sequenceEqual
+                  (observations |> Seq.map (fun (phase, _, _) -> phase))
+                  [ Secrets.SecretFilePhase.Opened; Secrets.SecretFilePhase.ReadyToWrite ]
+                  "the descriptor is tightened before the write boundary"
+
+              let _, readyMode, readyLength = observations.[1]
+              Expect.equal
+                  readyMode
+                  (UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
+                  "the descriptor is exactly 0600 at the pre-write boundary"
+              Expect.equal readyLength 0L "no secret byte exists before the descriptor is tightened"
+              Expect.equal (File.ReadAllText path) "SUPERSECRET123" "the write follows the observed boundary"
+              File.Delete path
+          }
+
+          test "secret creation refuses an existing path without truncating it" {
+              let root = tempRoot ()
+              let path = Path.Combine(root, ".secret-planted-collision")
+              let canary = "existing-secret-canary"
+              File.WriteAllText(path, canary)
+              let mutable observed = false
+
+              Expect.throwsT<IOException>
+                  (fun () ->
+                      Secrets.writeSecretFileAtPathWithObserver
+                          path
+                          (Text.Encoding.UTF8.GetBytes "replacement-secret")
+                          (fun _ _ -> observed <- true)
+                      |> ignore)
+                  "CreateNew refuses to overwrite a stale or colliding secret path"
+
+              Expect.isFalse observed "creation failed before exposing an opened descriptor"
+              Expect.equal (File.ReadAllText path) canary "the existing file was not truncated or replaced"
+              File.Delete path
+          }
+
+          test "a restrictive umask cannot remove owner readability from a secret" {
+              let report = Path.Combine(tempRoot (), "secret-umask.report")
+              // Pre-create the diagnostic outside the child's restrictive umask;
+              // WriteAllText then truncates without changing its mode.
+              File.WriteAllText(report, "")
+              let start = ProcessStartInfo("/bin/sh")
+              start.ArgumentList.Add "-c"
+              start.ArgumentList.Add "umask 0400; exec \"$@\""
+              start.ArgumentList.Add "fogell-secret-umask"
+              start.ArgumentList.Add Environment.ProcessPath
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              start.ArgumentList.Add "--secret-umask-child"
+              start.ArgumentList.Add report
+              start.UseShellExecute <- false
+              start.RedirectStandardOutput <- true
+              start.RedirectStandardError <- true
+              use child = Process.Start start
+              let stdout = child.StandardOutput.ReadToEnd()
+              let stderr = child.StandardError.ReadToEnd()
+              child.WaitForExit()
+              let reportText = if File.Exists report then File.ReadAllText report else "<missing>"
+
+              Expect.equal
+                  child.ExitCode
+                  0
+                  $"restrictive-umask child succeeds; stdout={stdout}; stderr={stderr}; report={reportText}"
+              Expect.equal
+                  (File.ReadAllText report)
+                  "384|SUPERSECRET123"
+                  "the child observed exact 0600 and readable content"
           }
 
           test "a script can still use the secret via its file" {
@@ -4069,6 +4268,8 @@ let maskingOnOutputPath =
 [<EntryPoint>]
 let main argv =
     match argv with
+    | [| "--secret-umask-child"; reportFile |] ->
+        runSecretUmaskChild reportFile
     | [| "--containment-child"; registry; pidFile; readyFile |] ->
         runContainmentChild registry pidFile readyFile
     | [| "--containment-exited-leader-child"; registry; pidFile; readyFile |] ->

@@ -19,6 +19,9 @@ them with per-step durability.
 - No scalar compatibility percentage is ever published. Parse acceptance,
   controller acceptance, execution, and semantic parity are four claims.
 - Incomplete pattern matches are build errors (FS0025/FS0026).
+- Security and deployment claims must remain within the implemented controls,
+  residuals, and hard non-claims in the
+  [current-tree threat model](../THREAT_MODEL.md).
 
 ## Compatibility contract
 
