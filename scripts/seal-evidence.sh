@@ -156,7 +156,9 @@ if ! (cd "$SOURCE_SNAPSHOT" && dotnet build -c Release --nologo) > "$STAGING/bui
   fail "Release build failed"
 fi
 
-mapfile -d '' test_projects < <(git -C "$SOURCE_SNAPSHOT" ls-files -z -- 'tests/**/*.fsproj')
+mapfile -d '' test_projects < <(
+  git -C "$SOURCE_SNAPSHOT" ls-files -z -- ':(glob)tests/**/*.fsproj'
+)
 [ "${#test_projects[@]}" -gt 0 ] || fail "no test projects were discovered"
 for t in "${test_projects[@]}"; do
   n="$(basename -- "${t%.fsproj}")"

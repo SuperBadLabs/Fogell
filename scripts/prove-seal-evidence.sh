@@ -127,18 +127,21 @@ rg -q "no test projects were discovered" "$no_tests_log" || { cat "$no_tests_log
 partial_inventory_repo="$(make_case partial-test-inventory)"
 mkdir -p "$partial_inventory_repo/tests/Hidden"
 printf '<Project Sdk="Microsoft.NET.Sdk" />\n' > "$partial_inventory_repo/tests/Hidden/Other.fsproj"
+printf '<Project Sdk="Microsoft.NET.Sdk" />\n' > "$partial_inventory_repo/tests/Root.fsproj"
 (
   cd "$partial_inventory_repo"
-  git add tests/Hidden/Other.fsproj
+  git add tests/Hidden/Other.fsproj tests/Root.fsproj
   git commit -qm add-nonconforming-test-project
   env PATH="$partial_inventory_repo/fakebin:$PATH" \
     ./scripts/seal-evidence.sh FG-223-PROOF > "$LAB/partial-test-inventory.log"
 )
 partial_inventory_bundle="$(find "$partial_inventory_repo/evidence" -mindepth 1 -maxdepth 1 -type d -name '*-fg-223-proof' -print -quit)"
-[ "$(find "$partial_inventory_bundle" -maxdepth 1 -type f -name 'tests-*.log' | wc -l)" -eq 2 ] \
+[ "$(find "$partial_inventory_bundle" -maxdepth 1 -type f -name 'tests-*.log' | wc -l)" -eq 3 ] \
   || { echo "FAIL: sealer omitted a tracked nonconforming test project"; exit 1; }
 rg -l -F 'project: tests/Hidden/Other.fsproj' "$partial_inventory_bundle"/tests-*.log >/dev/null \
   || { echo "FAIL: nonconforming test project identity was not sealed"; exit 1; }
+rg -l -F 'project: tests/Root.fsproj' "$partial_inventory_bundle"/tests-*.log >/dev/null \
+  || { echo "FAIL: root-level test project identity was not sealed"; exit 1; }
 
 missing_repo="$(make_case missing-extra)"
 missing_log="$LAB/missing-extra.log"
