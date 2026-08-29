@@ -964,6 +964,10 @@ fi
 binary_repo="$(make_case binary-candidate)"
 printf '\0changed binary candidate\376\n' > "$binary_repo/candidate.bin"
 binary_expected="$(sha256sum "$binary_repo/candidate.bin" | cut -d' ' -f1)"
+binary_fixture_oid="$(git -C "$binary_repo" hash-object candidate.bin)"
+[[ "$binary_fixture_oid" =~ ^[0-9a-f]+$ ]] \
+  || { echo "FAIL: binary fixture returned a malformed Git object id"; exit 1; }
+binary_oid_length="${#binary_fixture_oid}"
 (
   cd "$binary_repo"
   env PATH="$binary_repo/fakebin:$PATH" ./scripts/seal-evidence.sh FG-223-PROOF > "$LAB/binary-candidate.log"
@@ -972,7 +976,8 @@ binary_bundle="$(find "$binary_repo/evidence" -mindepth 1 -maxdepth 1 -type d -n
 [ -n "$binary_bundle" ] || { echo "FAIL: binary candidate published no bundle"; exit 1; }
 rg -q '^GIT binary patch$' "$binary_bundle/candidate.diff" \
   || { echo "FAIL: candidate diff did not bind dirty binary bytes"; exit 1; }
-rg -q '^index [0-9a-f]{40}\.\.[0-9a-f]{40}( |$)' "$binary_bundle/candidate.diff" \
+rg -q "^index [0-9a-f]{$binary_oid_length}\\.\\.[0-9a-f]{$binary_oid_length}( |$)" \
+  "$binary_bundle/candidate.diff" \
   || { echo "FAIL: candidate diff did not bind full binary object identities"; exit 1; }
 binary_replay="$LAB/binary-candidate-replay"
 git clone -q "$binary_repo" "$binary_replay"
@@ -1152,4 +1157,4 @@ fi
 [ "$build_pwd" != "$success_repo" ] \
   || { echo "FAIL: prerequisites executed from the publishing checkout"; exit 1; }
 
-echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty/test-inventory, input-boundary, late-untracked, post-checkout-hook, active/conditional-filter, raw-transform, external/Git-admin-symlink, tracked, staging-state, HEAD and atomic-move failures publish no manifest; caller Git repository/index overrides, configured core.worktree, and forced Git color cannot redirect or corrupt machine-parsed snapshot operations; an unused configured filter remains inert; every tracked tests/**/*.fsproj runs; dirty text, binary bytes, unstaged/staged deletions, staged additions, and confined broken/trailing-dot symlinks reach/reconstruct from one hook-free raw-identity-audited isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)"
+echo "FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty/test-inventory, input-boundary, late-untracked, post-checkout-hook, active/conditional-filter, raw-transform, external/Git-admin-symlink, tracked, staging-state, HEAD and atomic-move failures publish no manifest; caller Git repository/index overrides, configured core.worktree, and forced Git color cannot redirect or corrupt machine-parsed snapshot operations; binary full-index identity follows the fixture object format; an unused configured filter remains inert; every tracked tests/**/*.fsproj runs; dirty text, binary bytes, unstaged/staged deletions, staged additions, and confined broken/trailing-dot symlinks reach/reconstruct from one hook-free raw-identity-audited isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)"
