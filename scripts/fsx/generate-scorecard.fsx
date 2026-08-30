@@ -117,11 +117,17 @@ let main argv =
               Steps = nth p 4
               Detail = nth p 5 })
 
-    // MIRRORS THE WRITER, deliberately. `Compare.fs` builds the receipt name as
-    // `r.File.Replace("/", "_").Replace(".Jenkinsfile", "")` — a GLOBAL replace —
-    // so `foo.Jenkinsfile.Jenkinsfile` becomes `foo.receipt.txt`. An ANCHORED
-    // regex would make the reader disagree with the writer for exactly that name.
-    let stemOf (n: string) = n.Replace("/", "_").Replace(".Jenkinsfile", "")
+    // FG-163. MIRRORS THE WRITER, deliberately: normalize separators, then strip
+    // exactly one TERMINAL extension. A global replacement made
+    // `foo.Jenkinsfile.Jenkinsfile` collide with `foo.Jenkinsfile`; changing only
+    // this reader would instead make it disagree with the receipt writer.
+    let stemOf (n: string) =
+        let normalized = n.Replace("/", "_")
+        let suffix = ".Jenkinsfile"
+        if normalized.EndsWith(suffix, StringComparison.Ordinal) then
+            normalized.Substring(0, normalized.Length - suffix.Length)
+        else
+            normalized
 
     // THE EXPECTED RECEIPT SET, DERIVED FROM THE CASES THEMSELVES. A case
     // containing `//// NEXT BUILD ////` separators is a SEQUENCE and emits
@@ -183,7 +189,7 @@ let main argv =
     // when it ran; if the CURRENT engine cannot parse the file, "proven
     // compatible" is a claim about a binary that no longer exists.
     let tierOf (r: Row) =
-        let stem = orEmpty(r.File).Replace(".Jenkinsfile", "")
+        let stem = stemOf (orEmpty r.File)
         if r.Verdict = "err" || r.Verdict = "scripted-err" then Tier3
         elif receipts.TryFind stem = Some Proven then Tier1
         else Admitted
@@ -194,7 +200,7 @@ let main argv =
             let t = tierOf r
             let evidence =
                 match t with
-                | Tier1 -> "receipt:" + orEmpty(r.File).Replace(".Jenkinsfile", "")
+                | Tier1 -> "receipt:" + stemOf (orEmpty r.File)
                 | Tier3 -> orEmpty r.Code + " " + orEmpty r.Detail
                 | Admitted -> "parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2"
             (r, t, evidence))

@@ -1895,6 +1895,37 @@ let stringModel =
 /// verdict — and the scorecard published the suite as fully proven with the changed case
 /// never re-run. The generator's mtime check was a stated smoke alarm for this; these
 /// tests are what let it be replaced by evidence rather than a timestamp.
+let receiptFileNaming =
+    testList
+        "FG-163 receipt filenames strip one terminal extension"
+        [ test "an embedded Jenkinsfile segment is preserved" {
+              Expect.equal
+                  (Compare.receiptFileName "foo.Jenkinsfile.Jenkinsfile")
+                  "foo.Jenkinsfile.receipt.txt"
+                  "only the terminal extension belongs to the writer"
+          }
+
+          test "a case without the terminal extension is unchanged" {
+              Expect.equal
+                  (Compare.receiptFileName "foo.Jenkinsfile.backup")
+                  "foo.Jenkinsfile.backup.receipt.txt"
+                  "an embedded segment is content, not an extension"
+          }
+
+          test "extension matching is ordinal and case-sensitive" {
+              Expect.equal
+                  (Compare.receiptFileName "foo.jenkinsfile")
+                  "foo.jenkinsfile.receipt.txt"
+                  "a differently-cased suffix is part of the case name"
+          }
+
+          test "path separators are normalized before the terminal strip" {
+              Expect.equal
+                  (Compare.receiptFileName "nested/foo.Jenkinsfile.Jenkinsfile")
+                  "nested_foo.Jenkinsfile.receipt.txt"
+                  "the existing nested-case filename contract remains intact"
+          } ]
+
 let sealBindsCaseSource =
     let mkTrace output =
         { Disposition = ExecutedOrRuntime
@@ -8280,6 +8311,7 @@ let main argv =
               spreadAssignmentPreflight
               userOutputSurvives
               stringModel
+              receiptFileNaming
               sealBindsCaseSource
               caseSnapshotIsOneRead
               silenceIsPerEngine
