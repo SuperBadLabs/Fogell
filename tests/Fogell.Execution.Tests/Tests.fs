@@ -1783,6 +1783,50 @@ let credentialKeyBoundaries =
                   "idsOf returns exactly the modeled ids"
           }
 
+          test "credential trivia uses Groovy's exact ASCII whitespace set" {
+              let groovyWhitespace c =
+                  c = ' ' || c = '\t' || c = '\r' || c = '\n' || c = '\u000C'
+
+              for trivia in [ " "; "\t"; "\r"; "\n"; "\u000C"; " \t\r\n\u000C" ] do
+                  let source =
+                      $"{trivia}string{trivia}({trivia}credentialsId{trivia}:{trivia}'text-id'{trivia},{trivia}variable{trivia}:{trivia}'TOKEN'{trivia}){trivia}"
+
+                  Expect.equal
+                      (Credentials.parseRequests source)
+                      [ BindText("text-id", "TOKEN") ]
+                      "every Groovy WS code point remains valid between structural tokens"
+
+              let unicodeSurplus =
+                  [ for code in 0 .. 0xFFFF do
+                        let c = char code
+
+                        if Char.IsWhiteSpace c && not (groovyWhitespace c) then
+                            yield c ]
+
+              Expect.contains unicodeSurplus '\u00A0' "the exhaustive surplus includes NBSP"
+
+              for invalid in unicodeSurplus do
+                  let token = string invalid
+
+                  for position, source in
+                      [ "leading", token + "string(credentialsId: 'text-id', variable: 'TOKEN')"
+                        "kind/call", "string" + token + "(credentialsId: 'text-id', variable: 'TOKEN')"
+                        "argument/key", "string(" + token + "credentialsId: 'text-id', variable: 'TOKEN')"
+                        "key/colon", "string(credentialsId" + token + ": 'text-id', variable: 'TOKEN')"
+                        "colon/value", "string(credentialsId:" + token + "'text-id', variable: 'TOKEN')"
+                        "value/comma", "string(credentialsId: 'text-id'" + token + ", variable: 'TOKEN')"
+                        "call/trailing", "string(credentialsId: 'text-id', variable: 'TOKEN')" + token ] do
+                      let requests = Credentials.parseRequests source
+
+                      Expect.isTrue
+                          (requests |> List.forall (function BindUnmodelled _ -> true | _ -> false))
+                          $"U+{int invalid:X4}/{position}: non-Groovy trivia fails the complete request closed"
+
+                      Expect.isEmpty
+                          (Credentials.idsOf requests)
+                          $"U+{int invalid:X4}/{position}: invalid trivia cannot expose credential authority"
+          }
+
           test "key spelling remains case-sensitive" {
               for source in
                   [ "string(CredentialsId: 'text-id', variable: 'TOKEN')"
@@ -1797,26 +1841,99 @@ let credentialKeyBoundaries =
                   Expect.isEmpty (Credentials.idsOf requests) "wrong-case keys invent no ids"
           }
 
-          test "non-Java number and enclosing-mark categories remain separators" {
-              for label, separator in
+          test "non-identifier prefixes are not discarded to reveal a supported suffix" {
+              for label, prefix in
                   [ "other number", "\u00B2"
                     "enclosing mark", "\u20DD" ] do
-                  let single = $"string({separator}credentialsId: 'text-id', variable: 'TOKEN')"
+                  let single = $"string({prefix}credentialsId: 'text-id', variable: 'TOKEN')"
 
                   for quoteLabel, source in
                       [ "single quoted", single
                         "double quoted", single.Replace("'", "\"") ] do
                       let requests = Credentials.parseRequests source
 
-                      Expect.equal
-                          requests
-                          [ BindText("text-id", "TOKEN") ]
-                          $"{label}/{quoteLabel}: a non-identifier category does not hide the exact key"
+                      Expect.isTrue
+                          (requests |> List.forall (function BindUnmodelled _ -> true | _ -> false))
+                          $"{label}/{quoteLabel}: invalid leading syntax fails the complete call closed"
 
-                      Expect.equal
+                      Expect.isEmpty
                           (Credentials.idsOf requests)
-                          [ "text-id" ]
-                          $"{label}/{quoteLabel}: the exact supported id remains observable"
+                          $"{label}/{quoteLabel}: no supported suffix becomes a credential id"
+          }
+
+          test "quoted commented and whole-item decoys never materialize requests" {
+              let decoys =
+                  [ "string(note: \"credentialsId: 'decoy'\", variable: 'TOKEN')"
+                    "string(note: 'credentialsId: \"decoy\"', variable: 'TOKEN')"
+                    "string(/* credentialsId: 'decoy', */ variable: 'TOKEN')"
+                    "string(// credentialsId: 'decoy'\n variable: 'TOKEN')"
+                    "[\"string(credentialsId: 'decoy', variable: 'TOKEN')\"]"
+                    "[/* string(credentialsId: 'decoy', variable: 'TOKEN') */ bogus()]" ]
+
+              for source in decoys do
+                  let requests = Credentials.parseRequests source
+                  Expect.isNonEmpty requests $"decoy source is an explicit refusal: {source}"
+                  Expect.isTrue
+                      (requests |> List.forall (function BindUnmodelled _ -> true | _ -> false))
+                      $"decoy source cannot materialize a supported binding: {source}"
+          }
+
+          test "malformed segments and trailing source fail the complete request closed" {
+              let valid = "string(credentialsId: 'text-id', variable: 'TOKEN')"
+
+              for source in
+                  [ valid + ", ignored"
+                    valid + ","
+                    valid + " trailing"
+                    "[" + valid + ",,file(credentialsId: 'file-id', variable: 'CERT')]"
+                    "string(credentialsId: 'text-id', variable: 'TOKEN', junk: helper('x'))"
+                    "string(credentialsId: 'text-id', variable: 'TOKEN', junk: [1, 2])"
+                    "string(credentialsId: 'text-id', variable: 'TOKEN', junk: { -> 1 })"
+                    "string(credentialsId: 'text-id', variable: 'TOKEN', junk: 'literal')" ] do
+                  let requests = Credentials.parseRequests source
+                  Expect.isNonEmpty requests $"malformed source is an explicit refusal: {source}"
+                  Expect.isTrue
+                      (requests |> List.exists (function BindUnmodelled _ -> true | _ -> false))
+                      $"the complete request retains a refusal beside any valid sibling: {source}"
+          }
+
+          test "unknown literal keys retain Jenkins warning metadata" {
+              let requests =
+                  Credentials.parseRequests
+                      "string(credentialsId: 'text-id', notvariable: 'TOKEN', another: 'x')"
+
+              match requests with
+              | [ request ] ->
+                  Expect.equal
+                      (Credentials.unknownParameterWarning request)
+                      (Some(
+                          "org.jenkinsci.plugins.credentialsbinding.impl.StringBinding",
+                          [ "notvariable"; "another" ]))
+                      "class and unknown keys retain source order"
+              | other -> failtestf "unknown-key call was not one explicit refusal: %A" other
+          }
+
+          test "duplicate keys and unsupported quoted forms fail closed" {
+              for source in
+                  [ "string(credentialsId: 'first', credentialsId: 'second', variable: 'TOKEN')"
+                    "string(credentialsId: 'text-id', variable: 'FIRST', variable: 'SECOND')"
+                    "string(credentialsId: \"$ID\", variable: 'TOKEN')"
+                    "string(credentialsId: \"${ID}\", variable: 'TOKEN')"
+                    "string(credentialsId: 'text-id', variable: \"TOKEN_${SUFFIX}\")"
+                    "string(credentialsId: \"\\u0024{ID}\", variable: 'TOKEN')"
+                    "string(credentialsId: 'fogell\\u002dtoken', variable: 'TOKEN')"
+                    "string(credentialsId: \"fogell\\u002dtoken\", variable: 'TOKEN')"
+                    "string(credentialsId: '''text-id''', variable: 'TOKEN')"
+                    "string(credentialsId: \"\"\"text,id)\"\"\", variable: 'TOKEN')"
+                    "string(note: '''file(credentialsId: 'decoy', variable: 'CERT'),''', credentialsId: 'text-id', variable: 'TOKEN')"
+                    "string(credentialsId: 'live\ntext,)', variable: 'TOKEN')"
+                    "string(credentialsId: \"live\rtext,)\", variable: 'TOKEN')"
+                    "string(credentialsId: 'text-id', variable: 'TOKEN\r\nNEXT')" ] do
+                  let requests = Credentials.parseRequests source
+                  Expect.isNonEmpty requests $"unsupported source is an explicit refusal: {source}"
+                  Expect.isTrue
+                      (requests |> List.forall (function BindUnmodelled _ -> true | _ -> false))
+                      $"unsupported source cannot materialize a credential: {source}"
           } ]
 
 /// FG-044b(d). Jenkins stash uses Ant's default excludes unless the exact

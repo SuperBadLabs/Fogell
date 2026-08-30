@@ -202,6 +202,22 @@ type OrchestrationDeps =
 /// stash bookkeeping, and the process environment for PATH augmentation.
 module WalkerOrchestration =
 
+    /// Operator-facing refusal diagnostics derived from structurally unmodelled
+    /// credential requests. Kept pure so the wording/classification is pinned even
+    /// though ERROR narration is deliberately excluded from differential output.
+    let internal credentialRefusalErrors unmodelledKinds =
+        [ if unmodelledKinds |> List.contains "malformed" then
+              yield "ERROR: malformed withCredentials request; refusing to bind credentials"
+
+          let unsupportedKinds =
+              unmodelledKinds
+              |> List.filter ((<>) "malformed")
+              |> List.distinct
+
+          if not (List.isEmpty unsupportedKinds) then
+              yield
+                  $"""ERROR: unsupported or malformed credential binding request(s) for kind(s) {String.concat ", " unsupportedKinds}; refusing to bind credentials""" ]
+
     /// Returns (runStage, runPostWithDeadline) — the two entry points run()
     /// drives: one per top-level stage, one for the pipeline-level post.
     let makeRunners (deps: OrchestrationDeps) =
@@ -1253,12 +1269,14 @@ module WalkerOrchestration =
                     | SecretFile _ -> "secret-file"
 
                 let requests = Credentials.parseRequests (String.concat " " step.Positional)
-                let store = credentialStore ()
+                // Syntax refusal must not force credential resolution. A malformed
+                // request has no authority to touch even the controller-side store.
+                let store = lazy (credentialStore ())
 
                 let unmodelled =
                     requests
                     |> List.choose (function
-                        | BindUnmodelled(kind, _) -> Some kind
+                        | BindUnmodelled _ as request -> Some request
                         | _ -> None)
 
                 // REVIEW FIX (Copilot, PR #15): if nothing parsed, the block used to
@@ -1269,17 +1287,38 @@ module WalkerOrchestration =
                 let parsedNothing = List.isEmpty requests
 
                 let missing =
-                    Credentials.idsOf requests |> List.filter (fun id -> not (store.ContainsKey id))
+                    if parsedNothing || not (List.isEmpty unmodelled) then
+                        []
+                    else
+                        Credentials.idsOf requests
+                        |> List.filter (fun id -> not (store.Value.ContainsKey id))
 
                 if parsedNothing then
                     emit $"""ERROR: withCredentials bound nothing — could not parse any binding from '{String.concat " " step.Positional}'"""
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
                 elif not (List.isEmpty unmodelled) then
+                    for request in unmodelled do
+                        match Credentials.unknownParameterWarning request with
+                        | Some(bindingClass, unknownKeys) ->
+                            let keys = String.concat ", " unknownKeys
+                            emit
+                                $"WARNING: Unknown parameter(s) found for class type '{bindingClass}': {keys}"
+                        | None -> ()
+
                     // Fail CLOSED by name. A binding kind we do not model must not
                     // yield an empty variable: the build would go green while the
-                    // deploy authenticated as nobody.
-                    emit $"""ERROR: unsupported credential binding kind(s) {String.concat ", " unmodelled}; refusing to bind an empty credential"""
+                    // deploy authenticated as nobody. Whole-request structural
+                    // damage is kept distinct from an unsupported plugin binding so
+                    // operators are not sent looking for a kind literally named
+                    // "malformed".
+                    let unmodelledKinds =
+                        unmodelled
+                        |> List.choose (function BindUnmodelled(kind, _) -> Some kind | _ -> None)
+
+                    for diagnostic in credentialRefusalErrors unmodelledKinds do
+                        emit diagnostic
+
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
                 elif not (List.isEmpty missing) then
@@ -1287,6 +1326,7 @@ module WalkerOrchestration =
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
                 else
+                    let store = store.Value
                     let secretDir = Path.Combine(workspaceRoot, "_secrets", jobName)
 
                     // REVIEW FIX (Codex, PR #15): a type mismatch used to be COERCED —

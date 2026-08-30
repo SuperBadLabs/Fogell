@@ -1428,6 +1428,19 @@ module FogellSide =
         with ex ->
             Result.Error ex.Message
 
+    /// Test-only authority boundary for proving syntactically refused credential
+    /// requests do not force controller-side credential resolution.
+    let internal runWithCredentialFactory
+        (credentials: unit -> Map<string, Credential>)
+        (workspaceRoot: string)
+        (jobName: string)
+        (script: string)
+        =
+        try
+            runWithCredentialStore credentials None [] workspaceRoot jobName 1 None true None None script
+        with ex ->
+            Result.Error ex.Message
+
     /// Test/internal entrypoint for exercising credential lexical cleanup when
     /// persisted-host callbacks fail. Production hosts use runPersisted with the
     /// same hook path; keeping the credential store explicit avoids process-global
