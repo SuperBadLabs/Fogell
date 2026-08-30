@@ -175,17 +175,23 @@ bound to Run.Host liveness and the controller's outer-plus-registered-inner
 cleanup then provide two bounded descendant-reaping paths, including when the
 inner leader has already exited.
 
-FG-224 currently keeps this process-lifecycle boundary PARTIAL. Registration is
-birth-identity checked, but every later inner cleanup signal does not yet
-revalidate the stored start ticks before using the numeric pid or process group.
-Run only single-tenant, trusted workloads under the service identity until that
-signal-authority gap closes. The host also requires an environment whose pid 1
-reaps adopted children. In particular, a Docker Desktop LinuxKit container
-without an init/reaper can retain a zombie-only process group: the journal may
-record successful execution while the API reports `reconciliation_required`
-with `process_extinction_unconfirmed`, and artifact reads then return 409. Use a
-native supported Linux service or a container init/reaper; treat that
-reconciliation result as unresolved rather than overriding it.
+Every managed cleanup path now re-observes the recorded leader or stopped anchor
+start ticks and process-group membership before each TERM, CONT, or KILL. A
+same-number group without either recorded identity is not signal authority; the
+controller retains reconciliation evidence instead. Final Z/X/x remnants with
+one thread are logically extinct even if an unreaping container pid 1 keeps them
+visible to `kill(-pgid, 0)`. A zombie thread-group leader with more than one
+thread remains active, and unreadable or malformed `/proc` state remains
+uncertain. The production proof supports both a native Linux service and a
+controller running as container PID 1; Run.Host accepts that parent identity for
+its parent-death signal contract.
+
+This is a trusted single-tenant Linux boundary. The fresh `/proc` observation
+and following `kill(2)` are not one atomic pidfd/cgroup operation, so a hostile
+same-UID actor deliberately racing process replacement is outside the claim.
+Do not use this local worker as a multi-tenant OS sandbox. Such deployments need
+stronger isolation (for example delegated cgroups/pidfds or separate VMs), not an
+operator override of `reconciliation_required`.
 
 ### Submit and follow one build
 

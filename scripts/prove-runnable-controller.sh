@@ -15,13 +15,19 @@ token_file="$scratch/token"
 weak_token_file="$scratch/weak-token"
 host_log="$scratch/controller.log"
 host_pid=""
+controller_container=""
+controller_serial=0
+controller_image=${FOGELL_FG224_CONTROLLER_IMAGE:-}
 
 admin() {
   docker exec "$container" psql -U fogell -d "$1" -v ON_ERROR_STOP=1 "${@:2}"
 }
 
 cleanup() {
-  if [[ -n "$host_pid" ]] && kill -0 "$host_pid" 2>/dev/null; then
+  if [[ -n "$controller_container" ]]; then
+    docker stop --time 10 "$controller_container" >/dev/null 2>&1 || true
+    [[ -z "$host_pid" ]] || wait "$host_pid" 2>/dev/null || true
+  elif [[ -n "$host_pid" ]] && kill -0 "$host_pid" 2>/dev/null; then
     kill -TERM "$host_pid" 2>/dev/null || true
     wait "$host_pid" 2>/dev/null || true
   fi
@@ -30,10 +36,14 @@ cleanup() {
     -c "DROP DATABASE IF EXISTS $database" >/dev/null 2>&1 || true
   docker exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
     -c "DROP OWNED BY $role" -c "DROP ROLE IF EXISTS $role" >/dev/null 2>&1 || true
-  case "$scratch" in
-    /tmp/fogell-fg224-proof.*) rm -rf -- "$scratch" ;;
-    *) echo "FG-224 REFUSED: unsafe cleanup path" >&2 ;;
-  esac
+  if [[ ${FOGELL_KEEP_FG224_PROOF:-0} = 1 ]]; then
+    echo "FG-224 proof scratch retained: $scratch" >&2
+  else
+    case "$scratch" in
+      /tmp/fogell-fg224-proof.*) rm -rf -- "$scratch" ;;
+      *) echo "FG-224 REFUSED: unsafe cleanup path" >&2 ;;
+    esac
+  fi
 }
 trap cleanup EXIT
 
@@ -64,6 +74,45 @@ common_env=(
   "FOGELL_WORKER_POLL_MS=50"
   "FOGELL_WORKER_LEASE_SECONDS=60"
 )
+
+launch_controller() {
+  local poll_ms="$1"
+
+  if [[ -n "$controller_image" ]]; then
+    controller_serial=$((controller_serial + 1))
+    controller_container="fogell-fg224-proof-$$_$controller_serial"
+    local docker_env=()
+    local entry
+    for entry in "${common_env[@]}"; do
+      case "$entry" in
+        FOGELL_WORKER_POLL_MS=*) ;;
+        *) docker_env+=(--env "$entry") ;;
+      esac
+    done
+    docker_env+=(--env "FOGELL_API_TOKEN_FILE=$token_file" --env "FOGELL_WORKER_POLL_MS=$poll_ms")
+    docker run --rm --name "$controller_container" --network host \
+      --user "$(id -u):$(id -g)" \
+      --volume "$repo:$repo:ro" --volume "$scratch:$scratch" \
+      "${docker_env[@]}" "$controller_image" "$controller" >>"$host_log" 2>&1 &
+  else
+    controller_container=""
+    env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" \
+      "FOGELL_WORKER_POLL_MS=$poll_ms" "$controller" >>"$host_log" 2>&1 &
+  fi
+  host_pid=$!
+}
+
+stop_controller() {
+  if [[ -n "$controller_container" ]]; then
+    docker stop --time 10 "$controller_container" >/dev/null
+    wait "$host_pid"
+    controller_container=""
+  else
+    kill -TERM "$host_pid"
+    wait "$host_pid"
+  fi
+  host_pid=""
+}
 
 set +e
 env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$weak_token_file" "$controller" \
@@ -118,9 +167,8 @@ admin "$database" \
 # Hold the first worker scan long enough to admit and stop deterministically.
 # The second process uses the production poll setting and must discover the
 # queued build from durable state rather than process memory.
-env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" "FOGELL_WORKER_POLL_MS=10000" \
-  "$controller" >"$host_log" 2>&1 &
-host_pid=$!
+: >"$host_log"
+launch_controller 10000
 
 ready=0
 for _ in $(seq 1 200); do
@@ -135,6 +183,27 @@ done
 
 builds_url="$base_url/api/v1/organizations/$organization/projects/$project/builds"
 auth="authorization: Bearer fg224-proof-token-0123456789abcdef"
+
+capture_reconciliation() {
+  local failed_build_id="$1"
+  local label="$2"
+  curl -fsS -H "$auth" "$builds_url/$failed_build_id/logs" >"$scratch/$label-logs.json" || true
+  admin "$database" -Atc \
+    "SELECT a.state || '|' || COALESCE(e.payload->>'reason', '') || '|' || COALESCE(o.body->>'reason', '')
+       FROM attempts a
+       JOIN nodes n ON n.organization_id=a.organization_id AND n.id=a.node_id
+       LEFT JOIN events e ON e.organization_id=a.organization_id
+                         AND e.attempt_id=a.id
+                         AND e.kind='attempt.reconciliation_required'
+       LEFT JOIN outbox o ON o.organization_id=a.organization_id
+                          AND o.topic='build.reconciliation_required'
+                          AND o.body->>'attempt'=a.id::text
+      WHERE a.organization_id='$organization' AND n.build_id='$failed_build_id'" \
+    >"$scratch/$label-reconciliation.txt" || true
+
+  [[ ! -s "$scratch/$label-reconciliation.txt" ]] \
+    || { echo "FG-224 reconciliation evidence:" >&2; sed 's/^/  /' "$scratch/$label-reconciliation.txt" >&2; }
+}
 
 # No Content-Length: Router's decoded-byte reader is the sole size authority.
 # First prove the exact decoded boundary through the production Kestrel host —
@@ -235,9 +304,7 @@ queued_state=$(admin "$database" -Atc \
   "SELECT a.state FROM attempts a JOIN nodes n ON n.id=a.node_id AND n.organization_id=a.organization_id WHERE n.build_id='$build_id'")
 [[ "$queued_state" = queued ]] || { echo "FG-224 REFUSED: deterministic restart fixture was not queued" >&2; exit 1; }
 
-kill -TERM "$host_pid"
-wait "$host_pid"
-host_pid=""
+stop_controller
 ! curl -fsS --max-time 1 "$base_url/health/live" >/dev/null 2>&1 \
   || { echo "FG-224 REFUSED: stopped controller still served requests" >&2; exit 1; }
 
@@ -247,8 +314,7 @@ poison_definition="$state_root/definitions/$organization_key/$poison_build_key/J
 mkdir -p "$(dirname "$poison_definition")"
 printf '%s' 'pipeline { agent none }' >"$poison_definition"
 
-env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" "$controller" >>"$host_log" 2>&1 &
-host_pid=$!
+launch_controller 50
 
 ready=0
 for _ in $(seq 1 200); do
@@ -303,7 +369,7 @@ poison_chunk_count=$(admin "$database" -Atc \
 # -> HTTP path before the build reaches terminal state. A terminal replay could
 # satisfy a post-build grep but cannot satisfy this assertion.
 progressive=0
-for _ in $(seq 1 200); do
+for _ in $(seq 1 600); do
   live_logs=$(curl -fsS -H "$auth" "$builds_url/$build_id/logs")
   if grep -q 'hello-controller-before' <<<"$live_logs"; then
     live_state=$(curl -fsS -H "$auth" "$builds_url/$build_id")
@@ -316,13 +382,19 @@ for _ in $(seq 1 200); do
   fi
   sleep 0.05
 done
-[[ $progressive -eq 1 ]] || { echo "FG-224 REFUSED: console did not stream before terminal state" >&2; exit 1; }
+if [[ $progressive -ne 1 ]]; then
+  stalled_state=$(curl -fsS -H "$auth" "$builds_url/$build_id" || true)
+  capture_reconciliation "$build_id" main-build
+  echo "FG-224 REFUSED: console did not stream before terminal state: ${stalled_state:-unavailable}" >&2
+  exit 1
+fi
 
 terminal=""
 for _ in $(seq 1 300); do
   terminal=$(curl -fsS -H "$auth" "$builds_url/$build_id")
   grep -q '"status":"success"' <<<"$terminal" && break
   grep -q '"status":"\(failure\|aborted\|reconciliation_required\)"' <<<"$terminal" && {
+    capture_reconciliation "$build_id" main-build
     echo "FG-224 REFUSED: build reached $terminal" >&2
     exit 1
   }
@@ -541,13 +613,9 @@ grep -Fq 'already-terminal: success' "$scratch/retry-child-restart.log" \
 # terminal success therefore requires draining a post-exit remainder above the
 # old ceiling. Uniform payload cardinality and unique sentinels detect either
 # loss or replay across every bounded slice.
-kill -TERM "$host_pid"
-wait "$host_pid"
-host_pid=""
+stop_controller
 
-env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" "FOGELL_WORKER_POLL_MS=10000" \
-  "$controller" >>"$host_log" 2>&1 &
-host_pid=$!
+launch_controller 10000
 
 ready=0
 for _ in $(seq 1 200); do
@@ -618,13 +686,9 @@ tail_event_file="$state_root/events/$organization_key/${tail_attempt//-/}-$tail_
 # A graceful controller stop is not terminal truth. Start a build that has
 # already emitted a frame, stop the controller, and bind all three recovery
 # records: reason event, outbox, and byte-exact retained fence file.
-kill -TERM "$host_pid"
-wait "$host_pid"
-host_pid=""
+stop_controller
 
-env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" "FOGELL_WORKER_POLL_MS=50" \
-  "$controller" >>"$host_log" 2>&1 &
-host_pid=$!
+launch_controller 50
 
 ready=0
 for _ in $(seq 1 200); do
@@ -669,9 +733,7 @@ done
   || { echo "FG-224 REFUSED: shutdown proof never reached its running pre-sleep event frame" >&2; exit 1; }
 shutdown_sum_before=$(sha256sum "$shutdown_event_file" | cut -d' ' -f1)
 
-kill -TERM "$host_pid"
-wait "$host_pid"
-host_pid=""
+stop_controller
 
 shutdown_truth=$(admin "$database" -Atc \
   "SELECT a.state,

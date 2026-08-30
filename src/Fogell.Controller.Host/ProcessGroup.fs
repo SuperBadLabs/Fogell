@@ -36,6 +36,19 @@ type internal ProcessIdentity =
       StartTime: string }
 
 [<RequireQualifiedAccess>]
+type internal ProcessMemberObservation =
+    | Observed of state: char * processGroupId: int * threadCount: int
+    | Absent
+    | Uncertain
+
+[<RequireQualifiedAccess>]
+type internal ProcessGroupPopulation =
+    | Empty
+    | DefunctOnly
+    | Active
+    | Uncertain
+
+[<RequireQualifiedAccess>]
 type internal RecordedProcessState =
     | SameIdentity of processGroupId: int
     | Absent
@@ -97,13 +110,6 @@ module internal ProcessGroup =
             ChildHandoff.NaturalTerminalAllowed
         | _ -> ChildHandoff.ReconciliationRequired
 
-    let probeGroup processGroupId =
-        if not (OperatingSystem.IsLinux()) then
-            ProcessPresence.Uncertain
-        else
-            let result = kill(-processGroupId, 0)
-            classifyProbe result (Marshal.GetLastWin32Error())
-
     let signalGroup processGroupId signal =
         if not (OperatingSystem.IsLinux()) then
             ProcessSignalResult.Uncertain
@@ -130,6 +136,89 @@ module internal ProcessGroup =
 
             if fields.Length <= 19 then None else Some fields
 
+    /// A zombie cannot execute code, write a journal, or perform an external
+    /// effect. LinuxKit may retain it indefinitely when container pid 1 does
+    /// not reap, so kill(-pgid, 0) is not an extinction oracle. Any unreadable
+    /// proc entry remains fail-closed because it could hide a live member.
+    let internal classifyGroupMembers processGroupId observations =
+        let mutable live = false
+        let mutable defunct = false
+        let mutable uncertain = false
+
+        for observation in observations do
+            match observation with
+            | ProcessMemberObservation.Observed(state, group, threads) when group = processGroupId ->
+                if (state = 'Z' || state = 'X' || state = 'x') && threads <= 1 then
+                    defunct <- true
+                else
+                    // Linux may report a dead thread-group leader as Z while
+                    // num_threads still proves executable sibling threads.
+                    live <- true
+            | ProcessMemberObservation.Uncertain -> uncertain <- true
+            | _ -> ()
+
+        if live then
+            ProcessGroupPopulation.Active
+        elif uncertain then
+            ProcessGroupPopulation.Uncertain
+        elif defunct then
+            ProcessGroupPopulation.DefunctOnly
+        else
+            ProcessGroupPopulation.Empty
+
+    let private observeGroupPopulation processGroupId =
+        IO.Directory.GetDirectories "/proc"
+        |> Array.choose (fun directory ->
+            match Int32.TryParse(IO.Path.GetFileName directory) with
+            | true, pid -> Some pid
+            | _ -> None)
+        |> Array.map (fun pid ->
+            try
+                match readProcessStat pid with
+                | Some fields when fields[0].Length = 1 ->
+                    match Int32.TryParse fields[2], Int32.TryParse fields[17] with
+                    | (true, group), (true, threads) ->
+                        ProcessMemberObservation.Observed(fields[0].[0], group, threads)
+                    | _ -> ProcessMemberObservation.Uncertain
+                | _ -> ProcessMemberObservation.Uncertain
+            with
+            | :? IO.FileNotFoundException
+            | :? IO.DirectoryNotFoundException -> ProcessMemberObservation.Absent
+            | _ -> ProcessMemberObservation.Uncertain)
+        |> classifyGroupMembers processGroupId
+
+    let internal probeKernelGroup processGroupId =
+        if not (OperatingSystem.IsLinux()) || processGroupId <= 1 then
+            ProcessPresence.Uncertain
+        else
+            let result = kill(-processGroupId, 0)
+            classifyProbe result (Marshal.GetLastWin32Error())
+
+    let probeGroup processGroupId =
+        if not (OperatingSystem.IsLinux()) || processGroupId <= 1 then
+            ProcessPresence.Uncertain
+        else
+            let kernelProbe () = probeKernelGroup processGroupId
+
+            match kernelProbe () with
+            | ProcessPresence.Absent -> ProcessPresence.Absent
+            | ProcessPresence.Uncertain -> ProcessPresence.Uncertain
+            | ProcessPresence.Present ->
+                try
+                    match observeGroupPopulation processGroupId with
+                    | ProcessGroupPopulation.Active -> ProcessPresence.Present
+                    | ProcessGroupPopulation.DefunctOnly -> ProcessPresence.Absent
+                    | ProcessGroupPopulation.Uncertain -> ProcessPresence.Uncertain
+                    | ProcessGroupPopulation.Empty ->
+                        // A group can disappear during the scan. Only a second
+                        // ESRCH proves that an empty observation was that race;
+                        // otherwise a hidden/reused numeric PGID is uncertain.
+                        match kernelProbe () with
+                        | ProcessPresence.Absent -> ProcessPresence.Absent
+                        | _ -> ProcessPresence.Uncertain
+                with _ ->
+                    ProcessPresence.Uncertain
+
     /// Capture the Linux process birth identity immediately after Start. The
     /// launcher may not have called setsid yet, so PGID is deliberately not
     /// part of the capture; every later observation returns its current PGID.
@@ -154,8 +243,12 @@ module internal ProcessGroup =
                 // gone but grants no authority over the replacement.
                 RecordedProcessState.Changed
             | Some fields ->
-                match Int32.TryParse fields[2] with
-                | true, processGroup -> RecordedProcessState.SameIdentity processGroup
+                match Int32.TryParse fields[2], Int32.TryParse fields[17] with
+                | (true, processGroup), (true, threads)
+                    when (fields[0] = "Z" || fields[0] = "X" || fields[0] = "x")
+                         && threads <= 1 ->
+                    RecordedProcessState.Absent
+                | (true, processGroup), (true, _) -> RecordedProcessState.SameIdentity processGroup
                 | _ -> RecordedProcessState.Uncertain
         with
         | :? IO.FileNotFoundException
@@ -289,6 +382,7 @@ module internal ProcessGroup =
     type private RecordedIdentity =
         | IdentityMatches
         | IdentityAbsent
+        | IdentityChanged
         | IdentityUncertain
 
     let private recordedIdentity pid expectedStartTime expectedProcessGroup =
@@ -300,13 +394,81 @@ module internal ProcessGroup =
         | RecordedProcessState.SameIdentity processGroup when processGroup = expectedProcessGroup ->
             IdentityMatches
         | RecordedProcessState.Absent -> IdentityAbsent
+        | RecordedProcessState.Changed -> IdentityChanged
         | RecordedProcessState.SameIdentity _
-        | RecordedProcessState.Changed
         | RecordedProcessState.Uncertain -> IdentityUncertain
 
+    /// Registered inner groups have two independently recorded birth
+    /// identities: the original leader and the stopped anchor. Re-observe both
+    /// immediately before every probe and signal; a prior match is evidence,
+    /// never reusable authority for a later numeric PID/PGID operation.
+    let internal ensureRegisteredGroupExtinguished
+        termChecks
+        killChecks
+        processGroupId
+        (observeLeader: unit -> RecordedProcessState)
+        (observeAnchor: unit -> RecordedProcessState)
+        (probeProcessGroup: unit -> ProcessPresence)
+        (sendProcessGroupSignal: int -> ProcessSignalResult)
+        (sendLeaderSignal: int -> ProcessSignalResult)
+        (sendAnchorSignal: int -> ProcessSignalResult)
+        (pause: unit -> unit)
+        =
+        let isMatch = function
+            | RecordedProcessState.SameIdentity group when group = processGroupId -> true
+            | _ -> false
+
+        let classifyIdentities leader anchor =
+            if isMatch leader || isMatch anchor then
+                ProcessPresence.Present
+            else
+                match leader, anchor with
+                | (RecordedProcessState.Absent | RecordedProcessState.Changed),
+                  (RecordedProcessState.Absent | RecordedProcessState.Changed) -> ProcessPresence.Absent
+                | _ -> ProcessPresence.Uncertain
+
+        let probeRecorded () = classifyIdentities (observeLeader ()) (observeAnchor ())
+
+        let probeBoundGroup () =
+            match probeRecorded () with
+            | ProcessPresence.Present -> probeProcessGroup ()
+            | ProcessPresence.Absent ->
+                match probeProcessGroup () with
+                | ProcessPresence.Absent -> ProcessPresence.Absent
+                | _ -> ProcessPresence.Uncertain
+            | ProcessPresence.Uncertain -> ProcessPresence.Uncertain
+
+        let signalBoundGroup signal =
+            if isMatch (observeAnchor ()) || isMatch (observeLeader ()) then
+                sendProcessGroupSignal signal
+            else
+                match probeProcessGroup () with
+                | ProcessPresence.Absent -> ProcessSignalResult.TargetAbsent
+                | _ -> ProcessSignalResult.Uncertain
+
+        let signalBoundMember signal =
+            if isMatch (observeAnchor ()) then
+                sendAnchorSignal signal
+            elif isMatch (observeLeader ()) then
+                sendLeaderSignal signal
+            else
+                match probeProcessGroup () with
+                | ProcessPresence.Absent -> ProcessSignalResult.TargetAbsent
+                | _ -> ProcessSignalResult.Uncertain
+
+        ensureExtinguished
+            termChecks
+            killChecks
+            probeRecorded
+            probeBoundGroup
+            signalBoundGroup
+            signalBoundMember
+            pause
+
     /// Stop every inner setsid group durably registered before its user code was
-    /// released. Records include Linux process start time, so a stale record can
-    /// never authorize signalling a reused numeric pid/process-group id.
+    /// released. Records include Linux process start time, and each in-scope
+    /// signal is preceded by a fresh identity/group observation rather than by
+    /// bare numeric-PID authority.
     let stopRegisteredGroups termChecks killChecks (directory: string) pause =
         if not (OperatingSystem.IsLinux()) then
             ProcessGroupStopResult.StatusUncertain
@@ -325,19 +487,25 @@ module internal ProcessGroup =
                     | [| rawPid; leaderStartTime; rawAnchor; anchorStartTime |] ->
                         match Int32.TryParse rawPid, Int32.TryParse rawAnchor with
                         | (true, pid), (true, anchor) when pid > 1 && anchor > 1 ->
-                            let stopThrough identityPid identityStartTime =
+                            let observeRecorded identityPid identityStartTime () =
+                                match recordedIdentity identityPid identityStartTime pid with
+                                | IdentityMatches -> RecordedProcessState.SameIdentity pid
+                                | IdentityAbsent -> RecordedProcessState.Absent
+                                | IdentityChanged -> RecordedProcessState.Changed
+                                | IdentityUncertain -> RecordedProcessState.Uncertain
+
+                            let stopThrough () =
                                 let result =
-                                    ensureExtinguished
+                                    ensureRegisteredGroupExtinguished
                                         termChecks
                                         killChecks
-                                        (fun () ->
-                                            match recordedIdentity identityPid identityStartTime pid with
-                                            | IdentityMatches -> ProcessPresence.Present
-                                            | IdentityAbsent -> ProcessPresence.Absent
-                                            | IdentityUncertain -> ProcessPresence.Uncertain)
+                                        pid
+                                        (observeRecorded pid leaderStartTime)
+                                        (observeRecorded anchor anchorStartTime)
                                         (fun () -> probeGroup pid)
                                         (signalGroup pid)
-                                        (signalLeader identityPid)
+                                        (signalLeader pid)
+                                        (signalLeader anchor)
                                         pause
 
                                 if result = ProcessGroupStopResult.Extinguished then
@@ -345,23 +513,7 @@ module internal ProcessGroup =
 
                                 result
 
-                            match recordedIdentity anchor anchorStartTime pid with
-                            | IdentityMatches -> stopThrough anchor anchorStartTime
-                            | IdentityAbsent ->
-                                // Before leader exit its own identity remains a
-                                // safe fallback. After leader exit the anchor is
-                                // the only continuous provenance; without either,
-                                // a populated numeric group is ambiguous with reuse.
-                                match recordedIdentity pid leaderStartTime pid with
-                                | IdentityMatches -> stopThrough pid leaderStartTime
-                                | IdentityAbsent ->
-                                    match probeGroup pid with
-                                    | ProcessPresence.Absent ->
-                                        try IO.File.Delete record with _ -> ()
-                                        ProcessGroupStopResult.Extinguished
-                                    | _ -> ProcessGroupStopResult.StatusUncertain
-                                | IdentityUncertain -> ProcessGroupStopResult.StatusUncertain
-                            | IdentityUncertain -> ProcessGroupStopResult.StatusUncertain
+                            stopThrough ()
                         | _ -> ProcessGroupStopResult.StatusUncertain
                     | _ -> ProcessGroupStopResult.StatusUncertain
                 with _ ->

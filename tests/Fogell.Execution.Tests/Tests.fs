@@ -163,6 +163,20 @@ let private runHostilePathContainmentChild registry pidFile readyFile hostilePat
     |> ignore
     0
 
+let private runWatchdogRevalidationChild registry pidFile readyFile termFile killReleaseFile =
+    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
+    Environment.SetEnvironmentVariable("FOGELL_TEST_WATCHDOG_TERM_FILE", termFile)
+    Environment.SetEnvironmentVariable("FOGELL_TEST_WATCHDOG_KILL_RELEASE_FILE", killReleaseFile)
+
+    let script =
+        $"/bin/sh -c 'trap \"\" TERM; exec /bin/sleep 600' & fogell_effect=$!; printf '%%s' \"$fogell_effect\" > '{pidFile}'; printf ready > '{readyFile}'; exit 0"
+
+    ProcessGroup.run
+        { RunRequest.create (script, tempRoot ()) with
+            ReapGroup = false }
+    |> ignore
+    0
+
 let private runPreSetsidContainmentChild
     registry
     effectFile
@@ -678,6 +692,104 @@ let containment =
               Expect.equal pauses 2 "the timeout has no hidden extra sleep"
           }
 
+          test "registered cleanup binds every signal and ignores only defunct group members" {
+              let fields = Array.create 20 "0"
+              fields[0] <- "S"
+              fields[2] <- "42"
+              fields[17] <- "1"
+              fields[19] <- "9001"
+              let parsed =
+                  ProcessGroup.parseLinuxProcessStat(
+                      "123 (a command ) with parens) " + String.concat " " fields)
+                  |> Option.defaultWith (fun () -> failtest "valid proc stat did not parse")
+
+              Expect.equal parsed.State 'S' "state is parsed after the final comm parenthesis"
+              Expect.equal parsed.ProcessGroupId 42 "pgrp uses proc stat field 5"
+              Expect.equal parsed.ThreadCount 1 "thread count uses proc stat field 20"
+              Expect.equal parsed.StartTime "9001" "start ticks use proc stat field 22"
+
+              let stat state group threads start =
+                  ProcessGroup.LinuxProcessObservation.Present
+                      { State = state
+                        ProcessGroupId = group
+                        ThreadCount = threads
+                        StartTime = start }
+
+              Expect.equal
+                  (ProcessGroup.classifyLiveGroupMembers
+                      42
+                      None
+                      [ 1, stat 'Z' 42 1 "1"; 2, stat 'X' 42 1 "2" ])
+                  0
+                  "zombie and dead remnants are logically extinct"
+              Expect.equal
+                  (ProcessGroup.classifyLiveGroupMembers
+                      42
+                      None
+                      [ 1, stat 'Z' 42 1 "1"; 2, stat 'D' 42 1 "2" ])
+                  1
+                  "an uninterruptible live member remains a survivor"
+              Expect.equal
+                  (ProcessGroup.classifyLiveGroupMembers
+                      42
+                      None
+                      [ 1, stat 'Z' 42 2 "1" ])
+                  1
+                  "a defunct leader with sibling threads remains live"
+              Expect.equal
+                  (ProcessGroup.classifyLiveGroupMembers
+                      42
+                      (Some 2)
+                      [ 1, stat 'Z' 42 1 "1"; 2, stat 'S' 42 1 "2" ])
+                  0
+                  "the explicit anchor exclusion removes only its own TGID"
+              Expect.equal
+                  (ProcessGroup.classifyLiveGroupMembers
+                      42
+                      None
+                      [ 1, ProcessGroup.LinuxProcessObservation.Uncertain ])
+                  -1
+                  "an unreadable proc entry cannot become a clean zero"
+
+              let identity: ProcessGroup.RegisteredGroupIdentity =
+                  { GroupId = 42
+                    LeaderStartTime = "leader"
+                    AnchorPid = 84
+                    AnchorStartTime = "anchor" }
+              let absent () = ProcessGroup.LinuxProcessObservation.Absent
+              let mutable anchor = stat 'T' 42 1 "anchor"
+              let mutable groupSignals = []
+
+              let sendGroup signal =
+                  groupSignals <- groupSignals @ [ signal ]
+                  anchor <- stat 'T' 42 1 "replacement"
+                  true
+
+              Expect.isTrue
+                  (ProcessGroup.signalRegisteredGroup identity absent (fun () -> anchor) sendGroup Native.SIGTERM)
+                  "a fresh matching anchor authorizes TERM"
+              Expect.isFalse
+                  (ProcessGroup.signalRegisteredGroup identity absent (fun () -> anchor) sendGroup Native.SIGKILL)
+                  "start-tick drift before KILL revokes authority"
+              Expect.equal groupSignals [ Native.SIGTERM ] "the replacement group never receives KILL"
+
+              let mutable anchorSignals = []
+              let mutable directAnchor = stat 'T' 42 1 "anchor"
+
+              let sendAnchor signal =
+                  anchorSignals <- anchorSignals @ [ signal ]
+                  directAnchor <- stat 'T' 42 1 "replacement"
+                  true
+
+              Expect.isTrue
+                  (ProcessGroup.signalRegisteredAnchor identity (fun () -> directAnchor) sendAnchor Native.SIGTERM)
+                  "the exact anchor receives pending TERM"
+              Expect.isFalse
+                  (ProcessGroup.signalRegisteredAnchor identity (fun () -> directAnchor) sendAnchor Native.SIGCONT)
+                  "the same numeric PID with changed birth ticks cannot receive CONT"
+              Expect.equal anchorSignals [ Native.SIGTERM ] "anchor identity is checked separately for every signal"
+          }
+
           test "leader identity drift refuses release immediately" {
               let states =
                   Collections.Generic.Queue(
@@ -1110,6 +1222,73 @@ let containment =
                   "the still-armed EOF watchdog reaped descendants across the leader-exit boundary"
               Expect.isTrue (waitForReap anchorPid) "the anchor was reaped with the original group"
               Directory.Delete(root, true)
+          }
+
+          test "EOF watchdog revalidates provenance between TERM and KILL" {
+              let root = tempRoot ()
+              let registry = Path.Combine(root, "registry")
+              let pidFile = Path.Combine(root, "effect.pid")
+              let readyFile = Path.Combine(root, "effect.ready")
+              let termFile = Path.Combine(root, "watchdog.term")
+              let killRelease = Path.Combine(root, "watchdog.kill.release")
+              Directory.CreateDirectory registry |> ignore
+
+              let start = ProcessStartInfo(Environment.ProcessPath)
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              start.ArgumentList.Add "--containment-watchdog-revalidation-child"
+              start.ArgumentList.Add registry
+              start.ArgumentList.Add pidFile
+              start.ArgumentList.Add readyFile
+              start.ArgumentList.Add termFile
+              start.ArgumentList.Add killRelease
+              start.UseShellExecute <- false
+              start.RedirectStandardOutput <- true
+              start.RedirectStandardError <- true
+              use host = Process.Start start
+              let mutable effectPid = 0
+              let mutable anchorPid = 0
+
+              try
+                  let clock = Stopwatch.StartNew()
+
+                  while ((not (File.Exists readyFile)
+                          || (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty))
+                         && clock.ElapsedMilliseconds < 5_000L) do
+                      Threading.Thread.Sleep 10
+
+                  effectPid <-
+                      match waitForPidFile pidFile with
+                      | Some pid -> pid
+                      | None -> failtest "TERM-resistant effect never established its pid"
+
+                  let record = Directory.EnumerateFiles(registry, "*.group") |> Seq.exactlyOne
+                  let fields = File.ReadAllText(record).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                  anchorPid <- Int32.Parse fields.[2]
+
+                  Expect.isTrue (pidAlive effectPid) "the background effect survived its exited leader"
+                  Expect.isTrue (pidAlive anchorPid) "the stopped anchor held continuous group provenance"
+                  host.Kill()
+                  host.WaitForExit 3_000 |> ignore
+                  Expect.isTrue (waitForFile termFile 3_000) "the watchdog delivered its authorized TERM"
+                  Expect.isTrue (pidAlive effectPid) "the effect deliberately ignored TERM"
+
+                  Native.signalProcess anchorPid Native.SIGKILL |> ignore
+                  Expect.isTrue (waitForReap anchorPid) "the test removed provenance before escalation"
+                  File.WriteAllText(killRelease, "release")
+                  Threading.Thread.Sleep 500
+                  Expect.isTrue
+                      (pidAlive effectPid)
+                      "fresh identity loss withheld the watchdog's otherwise lethal group KILL"
+              finally
+                  if not host.HasExited then host.Kill(true)
+                  if effectPid > 1 then Native.signalProcess effectPid Native.SIGKILL |> ignore
+                  if anchorPid > 1 then Native.signalProcess anchorPid Native.SIGKILL |> ignore
+                  if effectPid > 1 then waitForReap effectPid |> ignore
+                  if anchorPid > 1 then waitForReap anchorPid |> ignore
+                  Directory.Delete(root, true)
           }
 
           test "the step leads its own process group" {
@@ -4477,6 +4656,13 @@ let main argv =
         runTermGraceContainmentChild registry pidFile termFile
     | [| "--containment-hostile-path-child"; registry; pidFile; readyFile; hostilePath |] ->
         runHostilePathContainmentChild registry pidFile readyFile hostilePath
+    | [| "--containment-watchdog-revalidation-child";
+          registry;
+          pidFile;
+          readyFile;
+          termFile;
+          killReleaseFile |] ->
+        runWatchdogRevalidationChild registry pidFile readyFile termFile killReleaseFile
     | [| "--containment-pre-setsid-child";
           registry;
           effectFile;

@@ -56,11 +56,14 @@ let main argv =
     | "" -> ()
     | raw when OperatingSystem.IsLinux() ->
         match Int32.TryParse raw with
-        | true, expected when expected > 1 ->
+        | true, expected when expected > 0 ->
             // PR_SET_PDEATHSIG=1, SIGKILL=9.  Set the signal first, then close
             // the fork-to-prctl race by proving the configured parent still
-            // owns us.  This is opt-in so the standalone restart harness keeps
-            // its established process contract.
+            // owns us. PID 1 is valid here: a controller running as the
+            // container's init is still the direct parent, and Linux tears
+            // down the remaining PID namespace if that init exits. This is
+            // opt-in so the standalone restart harness keeps its established
+            // process contract.
             if prctl(1, unativeint 9, unativeint 0, unativeint 0, unativeint 0) <> 0 || getppid() <> expected then
                 eprintfn "controller parent identity changed before supervision was established; refusing"
                 exit 2

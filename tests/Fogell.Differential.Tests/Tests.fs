@@ -1108,6 +1108,282 @@ let controllerProcessGroupExtinction =
                   "unexpected errno cannot authorize a handoff"
           }
 
+          test "proc membership treats zombie-only groups as extinct without weakening uncertainty" {
+              let observed state group = ProcessMemberObservation.Observed(state, group, 1)
+
+              Expect.equal
+                  (ProcessGroup.classifyGroupMembers 42 Seq.empty)
+                  ProcessGroupPopulation.Empty
+                  "an empty group is extinct"
+              Expect.equal
+                  (ProcessGroup.classifyGroupMembers 42 [ observed 'Z' 42; observed 'Z' 42 ])
+                  ProcessGroupPopulation.DefunctOnly
+                  "zombies cannot execute effects and do not keep a group live"
+              Expect.equal
+                  (ProcessGroup.classifyGroupMembers 42 [ observed 'S' 42 ])
+                  ProcessGroupPopulation.Active
+                  "one sleeping executable member keeps the group live"
+              Expect.equal
+                  (ProcessGroup.classifyGroupMembers 42 [ observed 'Z' 42; observed 'R' 42 ])
+                  ProcessGroupPopulation.Active
+                  "a zombie cannot hide a live member"
+              Expect.equal
+                  (ProcessGroup.classifyGroupMembers 42 [ ProcessMemberObservation.Uncertain ])
+                  ProcessGroupPopulation.Uncertain
+                  "an unreadable stat remains fail-closed"
+              Expect.equal
+                  (ProcessGroup.classifyGroupMembers 42 [ observed 'Z' 42; observed 'S' 7 ])
+                  ProcessGroupPopulation.DefunctOnly
+                  "members of another group are irrelevant"
+
+              Expect.equal
+                  (ProcessGroup.classifyGroupMembers
+                      42
+                      [ ProcessMemberObservation.Observed('Z', 42, 2) ])
+                  ProcessGroupPopulation.Active
+                  "a defunct thread-group leader cannot hide its executable sibling threads"
+
+              let zombieStop =
+                  match ProcessGroup.classifyGroupMembers 42 [ observed 'Z' 42 ] with
+                  | ProcessGroupPopulation.DefunctOnly -> ProcessGroupStopResult.Extinguished
+                  | ProcessGroupPopulation.Active -> ProcessGroupStopResult.Persisted
+                  | ProcessGroupPopulation.Empty -> ProcessGroupStopResult.Extinguished
+                  | ProcessGroupPopulation.Uncertain -> ProcessGroupStopResult.StatusUncertain
+
+              Expect.equal
+                  (ProcessGroup.handoff ChildExitKind.Natural zombieStop)
+                  ChildHandoff.NaturalTerminalAllowed
+                  "zombie-only LinuxKit residue cannot turn natural success into reconciliation"
+          }
+
+          test "a real unreaped zombie group is logically extinct before waitpid" {
+              if not (OperatingSystem.IsLinux()) then
+                  Tests.skiptest "the zombie extinction regression is Linux-only"
+
+              // Keep the child parent alive without waitpid, but retain a
+              // second handshake that makes the parent reap before teardown.
+              // Starting the target directly through Process would let the
+              // runtime's exit watcher reap it before the zombie assertion.
+              let start = Diagnostics.ProcessStartInfo("/usr/bin/python3")
+              start.ArgumentList.Add "-c"
+              start.ArgumentList.Add
+                  "import os,sys; release_r,release_w=os.pipe(); ready_r,ready_w=os.pipe(); pid=os.fork(); (os.close(release_w),os.close(ready_r),os.setsid(),os.write(ready_w,b'1'),os.read(release_r,1),os._exit(0)) if pid == 0 else (os.close(release_r),os.close(ready_w),os.read(ready_r,1),print(pid,flush=True),sys.stdin.buffer.read(1),os.write(release_w,b'1'),sys.stdin.buffer.read(1),os.waitpid(pid,0))"
+              start.UseShellExecute <- false
+              start.RedirectStandardInput <- true
+              start.RedirectStandardOutput <- true
+              start.RedirectStandardError <- true
+              use holder = Diagnostics.Process.Start start
+              let registry =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg224-registry-" + Guid.NewGuid().ToString("N"))
+
+              try
+                  let zombiePid =
+                      match Int32.TryParse(holder.StandardOutput.ReadLine()) with
+                      | true, pid when pid > 1 -> pid
+                      | _ -> failtest "the zombie holder did not publish its child pid"
+
+                  let identity =
+                      ProcessGroup.tryCaptureIdentity zombiePid
+                      |> Option.defaultWith (fun () -> failtest "could not capture the real child birth identity")
+
+                  Expect.equal
+                      (ProcessGroup.probeGroup zombiePid)
+                      ProcessPresence.Present
+                      "the captured birth identity begins as a live isolated group"
+
+                  IO.Directory.CreateDirectory registry |> ignore
+                  let record = IO.Path.Combine(registry, $"{zombiePid}.group")
+                  IO.File.WriteAllText(record, $"{zombiePid} stale {zombiePid} stale\n")
+
+                  Expect.equal
+                      (ProcessGroup.stopRegisteredGroups 0 0 registry noPause)
+                      ProcessGroupStopResult.StatusUncertain
+                      "a stale durable record cannot authorize a signal"
+                  Expect.isTrue (IO.File.Exists record) "uncertain evidence is retained for recovery"
+                  Expect.equal
+                      (ProcessGroup.probeGroup zombiePid)
+                      ProcessPresence.Present
+                      "the stale-record pass sent no signal to the live group"
+
+                  IO.File.WriteAllText(
+                      record,
+                      $"{zombiePid} {identity.StartTime} {zombiePid} {identity.StartTime}\n")
+                  holder.StandardInput.Write "1"
+                  holder.StandardInput.Flush()
+
+                  let statPath = $"/proc/{zombiePid}/stat"
+                  let zombieClock = Diagnostics.Stopwatch.StartNew()
+                  let mutable state = '?'
+
+                  while state <> 'Z' && zombieClock.ElapsedMilliseconds < 2_000L do
+                      if IO.File.Exists statPath then
+                          let value = IO.File.ReadAllText statPath
+                          let close = value.LastIndexOf ')'
+
+                          if close >= 0 && close + 2 < value.Length then
+                              state <- value[close + 2]
+
+                      if state <> 'Z' then Threading.Thread.Sleep 10
+
+                  Expect.equal state 'Z' "the child is observably unreaped, not merely absent"
+                  Expect.isTrue (IO.File.Exists statPath) "the zombie still owns a proc entry"
+                  Expect.equal
+                      (ProcessGroup.probeKernelGroup zombiePid)
+                      ProcessPresence.Present
+                      "raw kill(0) still sees the zombie-only group"
+                  Expect.equal
+                      (ProcessGroup.stopRegisteredGroups 0 0 registry noPause)
+                      ProcessGroupStopResult.Extinguished
+                      "the production durable-record path accepts zombie-only extinction"
+                  Expect.isFalse (IO.File.Exists record) "proved-extinct durable evidence is removed"
+              finally
+                  if not holder.HasExited then
+                      try
+                          holder.StandardInput.Write "11"
+                          holder.StandardInput.Flush()
+                          holder.StandardInput.Close()
+                      with _ -> ()
+
+                  if not (holder.WaitForExit 2_000) then holder.Kill()
+                  holder.WaitForExit()
+                  if IO.Directory.Exists registry then IO.Directory.Delete(registry, true)
+          }
+
+          test "registered inner cleanup refuses a changed identity before every signal" {
+              let mutable groupSignals = []
+              let mutable memberSignals = []
+
+              let result =
+                  ProcessGroup.ensureRegisteredGroupExtinguished
+                      0
+                      0
+                      4242
+                      (fun () -> RecordedProcessState.Absent)
+                      (fun () -> RecordedProcessState.Changed)
+                      (fun () -> ProcessPresence.Present)
+                      (fun signal ->
+                          groupSignals <- groupSignals @ [ signal ]
+                          ProcessSignalResult.Delivered)
+                      (fun signal ->
+                          memberSignals <- memberSignals @ [ "leader", signal ]
+                          ProcessSignalResult.Delivered)
+                      (fun signal ->
+                          memberSignals <- memberSignals @ [ "anchor", signal ]
+                          ProcessSignalResult.Delivered)
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.StatusUncertain "numeric PGID reuse fails closed"
+              Expect.isEmpty groupSignals "neither TERM nor KILL reaches the unbound group"
+              Expect.isEmpty memberSignals "no replacement PID is signalled"
+          }
+
+          test "registered inner cleanup discards a probe match before TERM when identity drifts" {
+              let mutable anchorObservations = 0
+              let mutable groupSignals = []
+              let mutable memberSignals = []
+
+              let observeAnchor () =
+                  anchorObservations <- anchorObservations + 1
+
+                  if anchorObservations <= 2 then
+                      RecordedProcessState.SameIdentity 4242
+                  else
+                      RecordedProcessState.Changed
+
+              let signalGroup signal =
+                  groupSignals <- groupSignals @ [ signal ]
+                  ProcessSignalResult.Delivered
+
+              let signalMember signal =
+                  memberSignals <- memberSignals @ [ signal ]
+                  ProcessSignalResult.Delivered
+
+              let result =
+                  ProcessGroup.ensureRegisteredGroupExtinguished
+                      0
+                      0
+                      4242
+                      (fun () -> RecordedProcessState.Absent)
+                      observeAnchor
+                      (fun () -> ProcessPresence.Present)
+                      signalGroup
+                      signalMember
+                      signalMember
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.StatusUncertain "the initial match is not reusable authority"
+              Expect.isGreaterThan anchorObservations 2 "the identity was observed again at the TERM boundary"
+              Expect.isEmpty groupSignals "fresh drift withholds both TERM and KILL from the group"
+              Expect.isEmpty memberSignals "fresh drift withholds direct member signals too"
+          }
+
+          test "registered inner cleanup revalidates identity between TERM and KILL" {
+              let mutable anchor = RecordedProcessState.SameIdentity 4242
+              let mutable group = ProcessPresence.Present
+              let mutable groupSignals = []
+
+              let signalGroup signal =
+                  groupSignals <- groupSignals @ [ signal ]
+
+                  if signal = 15 then
+                      anchor <- RecordedProcessState.Changed
+
+                  ProcessSignalResult.Delivered
+
+              let result =
+                  ProcessGroup.ensureRegisteredGroupExtinguished
+                      0
+                      0
+                      4242
+                      (fun () -> RecordedProcessState.Absent)
+                      (fun () -> anchor)
+                      (fun () -> group)
+                      signalGroup
+                      delivered
+                      delivered
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.StatusUncertain "identity loss after TERM is not extinction"
+              Expect.equal groupSignals [ 15 ] "the stale authority cannot authorize KILL"
+          }
+
+          test "registered inner cleanup may fall back to a freshly matching leader" {
+              let mutable group = ProcessPresence.Present
+              let mutable leader = RecordedProcessState.SameIdentity 4242
+              let mutable groupSignals = []
+              let mutable leaderSignals = []
+
+              let signalGroup signal =
+                  groupSignals <- groupSignals @ [ signal ]
+                  ProcessSignalResult.Delivered
+
+              let signalLeader signal =
+                  leaderSignals <- leaderSignals @ [ signal ]
+
+                  if signal = 15 then
+                      leader <- RecordedProcessState.Absent
+                      group <- ProcessPresence.Absent
+
+                  ProcessSignalResult.Delivered
+
+              let result =
+                  ProcessGroup.ensureRegisteredGroupExtinguished
+                      1
+                      1
+                      4242
+                      (fun () -> leader)
+                      (fun () -> RecordedProcessState.Absent)
+                      (fun () -> group)
+                      signalGroup
+                      signalLeader
+                      delivered
+                      noPause
+
+              Expect.equal result ProcessGroupStopResult.Extinguished "the original leader remains valid authority"
+              Expect.equal groupSignals [ 15 ] "one freshly authorized TERM extinguishes the group"
+              Expect.equal leaderSignals [ 15 ] "the same fresh identity authorizes the direct fallback"
+          }
+
           test "an already absent leader and group need no signals" {
               let mutable signals = 0
               let signal _ = signals <- signals + 1; ProcessSignalResult.Delivered
