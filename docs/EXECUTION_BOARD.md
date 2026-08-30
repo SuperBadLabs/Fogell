@@ -260,7 +260,7 @@ of trusting the row.
 
 ## Live queue — the reference point for the execution cycle
 
-**BOARD ACCOUNTING (derived): rows=213; DONE=144; open=69; open P0–P3=1 / 22 / 35 / 11.**
+**BOARD ACCOUNTING (derived): rows=213; DONE=145; open=68; open P0–P3=1 / 22 / 34 / 11.**
 
 **WHY THIS SECTION EXISTS.** The derived accounting above is the single live source for
 ticket totals and priority distribution. (Was "187 rows … open 84 … 4 / 34 / 36 / 10"
@@ -771,7 +771,7 @@ before their no-effect validation refusal. Compatibility counts are unchanged.
 | FG-082 | P1 | TODO | Crash / kill / reboot campaign: running + queued builds reconcile, no escaped child | integrity check clean; one recovery event per build |
 | FG-083 | P2 | TODO | Saturation: bounded queue, explicit HTTP 503 with `Retry-After`, no unbounded executor | N-trigger lanes admit exactly the configured capacity |
 | FG-084 | P2 | TODO | Soak: ≥ 10 min sustained, memory and FD bounded, zero restarts | RSS ceiling and FD range recorded |
-| FG-085 | P2 | TODO | Backup / restore with byte-verified restore | restored DB hash matches source |
+| FG-085 | P2 | **DONE** | Backup / restore with byte-verified canonical PostgreSQL state | A server-major-matched custom archive restores the full migrated non-empty fixture into a clean database; canonical schema, sorted data, and sequence inventories are byte-identical and hash-equal; archive rehash, empty/contaminated/truncated/tool-mismatch controls, 15 direct mutants, namespace confinement, and exact cleanup all reject — [→ detail](tickets/FG-085.md) |
 
 ## Wave 8 — Release gates and differential evidence
 
