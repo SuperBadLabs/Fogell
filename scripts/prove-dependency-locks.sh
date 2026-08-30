@@ -21,8 +21,41 @@ cat >"$source_cleared_config" <<'CONFIG'
 </configuration>
 CONFIG
 
+check_embedded_repositories() {
+  local root="$1"
+  local embedded="$scratch/embedded-repositories"
+
+  if ! git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    return
+  fi
+
+  # An outer `git ls-files --others` deliberately does not descend into an
+  # embedded repository. Reject that ambiguous boundary before trusting the
+  # Git inventory. The named Codex worktree area is an explicit exception and
+  # is already outside this repository's dependency boundary.
+  find "$root" \
+    \( -path "$root/.git" -o -path "$root/.claude/worktrees" \) -prune \
+    -o -name .git -print \
+    | sed "s|^$root/||" | LC_ALL=C sort >"$embedded"
+  if [ -s "$embedded" ]; then
+    echo "dependency-lock inventory: embedded Git repositories are not permitted:" >&2
+    cat "$embedded" >&2
+    return 1
+  fi
+}
+
 list_projects() {
   local root="$1"
+  if git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    # Audit the repository-visible tree, including non-ignored untracked
+    # projects, after embedded repositories have been rejected explicitly.
+    git -C "$root" ls-files --cached --others \
+      --exclude-per-directory=.gitignore -- \
+      ':(glob)**/*.fsproj' ':(glob)**/*.csproj' ':(glob)**/*.vbproj' \
+      ':(exclude,glob).claude/worktrees/**' \
+      | LC_ALL=C sort
+    return
+  fi
   (
     cd "$root"
     find . \
@@ -37,6 +70,13 @@ list_projects() {
 
 list_locks() {
   local root="$1"
+  if git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "$root" ls-files --cached --others \
+      --exclude-per-directory=.gitignore -- \
+      ':(glob)**/packages.lock.json' \
+      ':(exclude,glob).claude/worktrees/**' | LC_ALL=C sort
+    return
+  fi
   (
     cd "$root"
     find . \
@@ -60,6 +100,7 @@ check_lock_inventory() {
   actual="$(mktemp "$scratch/actual-locks.XXXXXX")"
   duplicate_dirs="$(mktemp "$scratch/duplicate-project-dirs.XXXXXX")"
 
+  check_embedded_repositories "$root" || return 1
   list_projects "$root" >"$projects"
   if [ ! -s "$projects" ]; then
     echo "dependency-lock inventory: no projects found" >&2
@@ -87,6 +128,7 @@ check_solution_inventory() {
   local declared="$scratch/solution-projects"
   local actual="$scratch/filesystem-projects"
 
+  check_embedded_repositories "$root" || return 1
   sed -n 's|.*<Project Path="\([^"]*\.[fcv][sb]proj\)".*|\1|p' "$root/Fogell.slnx" \
     | LC_ALL=C sort >"$declared"
   list_projects "$root" >"$actual"
@@ -276,6 +318,57 @@ fi
 grep -Fq "Fogell.slnx and project files disagree" "$scratch/solution-inventory-drift.log" \
   || { cat "$scratch/solution-inventory-drift.log" >&2; exit 1; }
 echo "mutation rejected: repo-wide project omitted from Fogell.slnx"
+
+ignored_nested="$scratch/ignored-nested-worktree"
+cp -a "$fixture" "$ignored_nested"
+cat >"$ignored_nested/Fogell.slnx" <<'SLNX'
+<Solution>
+  <Project Path="src/Fogell.Domain/Fogell.Domain.fsproj" />
+  <Project Path="src/Fogell.Store/Fogell.Store.fsproj" />
+</Solution>
+SLNX
+cat >"$ignored_nested/.gitignore" <<'IGNORE'
+.claude/worktrees/
+IGNORE
+mkdir -p "$ignored_nested/.claude/worktrees/other/src/Nested"
+git init -q "$ignored_nested/.claude/worktrees/other"
+cp "$fixture/src/Fogell.Domain/Fogell.Domain.fsproj" \
+  "$ignored_nested/.claude/worktrees/other/src/Nested/Nested.fsproj"
+cp "$fixture/src/Fogell.Domain/packages.lock.json" \
+  "$ignored_nested/.claude/worktrees/other/src/Nested/packages.lock.json"
+git -C "$ignored_nested" init -q
+printf 'src/Fogell.Store/\n' >"$ignored_nested/hostile-global-ignore"
+git -C "$ignored_nested" config core.excludesFile \
+  "$ignored_nested/hostile-global-ignore"
+check_solution_inventory "$ignored_nested"
+check_lock_inventory "$ignored_nested"
+echo "control passed: ignored nested worktree is outside repository inventory; operator-global ignores cannot hide projects or locks"
+
+embedded_repo="$scratch/embedded-repository"
+cp -a "$fixture" "$embedded_repo"
+cat >"$embedded_repo/Fogell.slnx" <<'SLNX'
+<Solution>
+  <Project Path="src/Fogell.Domain/Fogell.Domain.fsproj" />
+  <Project Path="src/Fogell.Store/Fogell.Store.fsproj" />
+</Solution>
+SLNX
+git -C "$embedded_repo" init -q
+mkdir -p "$embedded_repo/vendor/Hidden"
+git init -q "$embedded_repo/vendor/Hidden"
+cat >"$embedded_repo/vendor/Hidden/Hidden.fsproj" <<'PROJECT'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+</Project>
+PROJECT
+if check_solution_inventory "$embedded_repo" \
+  >"$scratch/embedded-repository.log" 2>&1; then
+  echo "dependency-lock mutation unexpectedly passed: embedded repository" >&2
+  exit 1
+fi
+grep -Fq "embedded Git repositories are not permitted" \
+  "$scratch/embedded-repository.log" \
+  || { cat "$scratch/embedded-repository.log" >&2; exit 1; }
+echo "mutation rejected: embedded repository cannot hide projects from the outer inventory"
 
 missing="$scratch/missing-lock"
 cp -a "$fixture" "$missing"
