@@ -76,11 +76,28 @@ database_role() {
   fi
 }
 
+has_psql_command_arg() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      -c|--command|--command=*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 case "$tool" in
   psql)
     args="$*"
     database="$(database_from_args "$@")"
-    input="$(cat || true)"
+    # docker exec -i preserves the caller's stdin.  Argument-only psql calls
+    # must not wait for EOF from an operator's terminal or agent pipe; consume
+    # stdin only for the migration/fixture/inventory calls that use it as the
+    # SQL protocol.
+    input=""
+    if [[ "$args" != "--version" ]] && ! has_psql_command_arg "$@"; then
+      input="$(cat || true)"
+    fi
     if [[ "$args" == "--version" ]]; then
       printf 'psql (PostgreSQL) 16.4\n'
     elif [[ "$args" == *"SHOW server_version_num"* ]]; then

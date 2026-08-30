@@ -173,8 +173,19 @@ engine-created inner `setsid` step may execute user code, Run.Host records its
 pid and Linux start ticks and observes the same process stopped. An EOF watchdog
 bound to Run.Host liveness and the controller's outer-plus-registered-inner
 cleanup then provide two bounded descendant-reaping paths, including when the
-inner leader has already exited. Start-time validation prevents a stale record
-from authorizing a signal to a reused pid.
+inner leader has already exited.
+
+FG-224 currently keeps this process-lifecycle boundary PARTIAL. Registration is
+birth-identity checked, but every later inner cleanup signal does not yet
+revalidate the stored start ticks before using the numeric pid or process group.
+Run only single-tenant, trusted workloads under the service identity until that
+signal-authority gap closes. The host also requires an environment whose pid 1
+reaps adopted children. In particular, a Docker Desktop LinuxKit container
+without an init/reaper can retain a zombie-only process group: the journal may
+record successful execution while the API reports `reconciliation_required`
+with `process_extinction_unconfirmed`, and artifact reads then return 409. Use a
+native supported Linux service or a container init/reaper; treat that
+reconciliation result as unresolved rather than overriding it.
 
 ### Submit and follow one build
 

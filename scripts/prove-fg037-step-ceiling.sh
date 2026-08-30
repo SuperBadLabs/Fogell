@@ -617,7 +617,10 @@ mv "$proof_output_dir" "$proof_output_dir-swapped" 2>/dev/null
 proof_output_swap_rc=$?
 (printf hostile >"$proof_assembly") 2>/dev/null
 proof_assembly_write_rc=$?
-rm "$proof_assembly" 2>/dev/null
+# This is an expected-to-fail permission probe. GNU rm otherwise prompts for a
+# write-protected file when the gate inherits a terminal, hanging an operator
+# run and turning a "no" answer into a misleading zero exit status.
+/bin/rm -f -- "$proof_assembly" 2>/dev/null
 proof_assembly_unlink_rc=$?
 set -e
 if [ "$proof_output_chmod_rc" -eq 0 ] \
