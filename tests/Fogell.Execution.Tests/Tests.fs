@@ -773,6 +773,24 @@ let containment =
                   "start-tick drift before KILL revokes authority"
               Expect.equal groupSignals [ Native.SIGTERM ] "the replacement group never receives KILL"
 
+              let mutable waitedAfterKill = false
+
+              Expect.isFalse
+                  (ProcessGroup.attemptEscalation
+                      false
+                      (fun () -> false)
+                      (fun () -> waitedAfterKill <- true))
+                  "withheld KILL is not reported as an escalation"
+              Expect.isFalse waitedAfterKill "withheld KILL has no post-signal wait"
+
+              Expect.isTrue
+                  (ProcessGroup.attemptEscalation
+                      false
+                      (fun () -> true)
+                      (fun () -> waitedAfterKill <- true))
+                  "delivered KILL is reported as an escalation"
+              Expect.isTrue waitedAfterKill "delivered KILL runs the post-signal wait"
+
               let mutable anchorSignals = []
               let mutable directAnchor = stat 'T' 42 1 "anchor"
 

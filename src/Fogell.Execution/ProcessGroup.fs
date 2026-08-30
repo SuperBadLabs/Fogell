@@ -386,6 +386,17 @@ module ProcessGroup =
             sendAnchor signal
         | _ -> false
 
+    let internal attemptEscalation exitedOnTerm sendKill waitAfterKill =
+        if exitedOnTerm then
+            false
+        else
+            let delivered = sendKill ()
+
+            if delivered then
+                waitAfterKill ()
+
+            delivered
+
     /// The marker write happens before the child stops itself. A SIGCONT sent
     /// merely because the marker arrived can therefore be lost while the child
     /// is still running, after which it executes SIGSTOP and wedges forever.
@@ -525,12 +536,10 @@ module ProcessGroup =
         let exitedOnTerm = usersExited && releaseIdentityAnchor identity
 
         let escalated =
-            if exitedOnTerm then
-                false
-            else
-                if sendGroup Native.SIGKILL then
-                    waitForGroupExit identity.GroupId 2_000 |> ignore
-                true
+            attemptEscalation
+                exitedOnTerm
+                (fun () -> sendGroup Native.SIGKILL)
+                (fun () -> waitForGroupExit identity.GroupId 2_000 |> ignore)
 
         { GracefulExit = exitedOnTerm
           Escalated = escalated
