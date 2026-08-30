@@ -567,11 +567,20 @@ module Compare =
     /// writer picks the path and the verifier must check the file it found is the one that
     /// name would have produced.
     ///
-    /// (The global `Replace` is FG-163's defect — `foo.Jenkinsfile.Jenkinsfile` strips every
-    /// occurrence, not the extension. No such case exists; kept verbatim here so writer and
-    /// reader agree, and FG-163 fixes both together or neither.)
+    /// FG-163. Strip exactly one terminal extension. A global replacement made
+    /// `foo.Jenkinsfile.Jenkinsfile` collide with `foo.Jenkinsfile`, and fixing only the
+    /// verifier or writer makes valid receipts fail their on-disk identity check.
     let receiptFileName (file: string) =
-        file.Replace("/", "_").Replace(".Jenkinsfile", "") + ".receipt.txt"
+        let normalized = file.Replace("/", "_")
+        let suffix = ".Jenkinsfile"
+
+        let stem =
+            if normalized.EndsWith(suffix, StringComparison.Ordinal) then
+                normalized.Substring(0, normalized.Length - suffix.Length)
+            else
+                normalized
+
+        stem + ".receipt.txt"
 
     /// FG-161. One side of a comparison, reduced to exactly the facts the seal binds.
     type SealedSide =

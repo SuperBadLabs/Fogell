@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# FG-166. Proves that scorecard freshness carries the originating case forward
+# FG-163/FG-166. Proves that scorecard naming strips exactly one terminal
+# `.Jenkinsfile` extension and that freshness carries the originating case forward
 # to every exact receipt name the writer can emit. In particular, a singleton
 # case literally named `literal.b1.Jenkinsfile` is not the same thing as build 1
 # of `literal.Jenkinsfile`, while every receipt of a real multi-build case maps
@@ -85,6 +86,16 @@ if [ "$scorer_rc" -eq 0 ] \
   exit 1
 fi
 
+# The doubled-suffix row exercises the scorecard's corpus promotion and ledger
+# evidence derivations as well as its expected-case mapping. All three must use
+# the same terminal-only rule as the writer.
+cat > "$root/bin/dotnet" <<'EOF'
+#!/bin/sh
+printf 'file\tverdict\tcode\tstages\tsteps\tdetail\n'
+printf 'embedded.Jenkinsfile.Jenkinsfile\tok\t\t1\t1\t\n'
+EOF
+chmod +x "$root/bin/dotnet"
+
 # A literal `.b1` singleton is the reported defect. The two multi-build fixtures
 # hold both directions: every receipt can be stale independently, and two stale
 # receipts from one case must produce two warnings rather than one case warning.
@@ -114,15 +125,33 @@ write_receipt "$root" plain
 touch -t "$OLDER" "$root/differential/cases/plain.Jenkinsfile"
 touch -t "$NEWER" "$root/differential/receipts/plain.receipt.txt"
 
+# FG-163's exact collision shape. The physical case ends in two occurrences;
+# the writer and generator must remove only the terminal one.
+write_case "$root" embedded.Jenkinsfile 1
+write_receipt "$root" embedded.Jenkinsfile
+cat >> "$root/differential/receipts/embedded.Jenkinsfile.receipt.txt" <<'EOF'
+jenkins-core: 2.568.1
+VERDICT: PROVEN (tier 1)
+EOF
+touch -t "$OLDER" "$root/differential/cases/embedded.Jenkinsfile.Jenkinsfile"
+touch -t "$NEWER" "$root/differential/receipts/embedded.Jenkinsfile.receipt.txt"
+
 if ! output=$(run_generator "$root"); then
   echo "FAIL: compliant forward mapping did not generate"
   printf '%s\n' "$output" | sed 's/^/  | /'
   exit 1
 fi
 
-grep -Fqx '| 6 | 6 | 0 of 6 |' "$root/docs/COMPATIBILITY-SCORECARD.md" || {
-  echo "FAIL: forward mapping did not retain all six exact expected receipt names"
+grep -Fqx '| 7 | 7 | 1 of 7 |' "$root/docs/COMPATIBILITY-SCORECARD.md" || {
+  echo "FAIL: terminal suffix and forward mapping did not retain all seven exact expected receipt names"
   sed 's/^/  | /' "$root/docs/COMPATIBILITY-SCORECARD.md"
+  exit 1
+}
+
+grep -Fqx $'embedded.Jenkinsfile.Jenkinsfile\t1\t-\treceipt:embedded.Jenkinsfile' \
+  "$root/docs/COMPATIBILITY-LEDGER.tsv" || {
+  echo "FAIL: doubled terminal suffix did not retain its exact corpus promotion and evidence name"
+  sed 's/^/  | /' "$root/docs/COMPATIBILITY-LEDGER.tsv"
   exit 1
 }
 
@@ -168,4 +197,4 @@ if find "$collision/docs" -mindepth 1 -type f -print -quit | grep -q .; then
   exit 1
 fi
 
-echo "SCORECARD RECEIPT-MAPPING PROOF: literal .b1, independent and repeated multi-build warnings, fresh singleton controls, exact sorting, pre-map collision refusal, and scorer stdout diagnostics all hold"
+echo "SCORECARD RECEIPT-MAPPING PROOF: one terminal Jenkinsfile suffix, literal .b1, independent and repeated multi-build warnings, fresh singleton controls, exact sorting, pre-map collision refusal, and scorer stdout diagnostics all hold"
