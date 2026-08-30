@@ -7602,6 +7602,39 @@ let credentialStoreDecoding =
                   "malformed base64, arity, kinds and user/password payloads never create empty credentials"
           } ]
 
+/// FG-044b(a). Keep the load-bearing echo path alive in the ordinary suite: the
+/// live Jenkins receipt proves parity, while this test fails immediately if echo
+/// stops interpolating or routing its rendered text through the credential masker.
+let credentialEchoMasking =
+    testList
+        "FG-044b(a) echo credential masking"
+        [ test "secret GStrings are masked while ordinary and literal strings retain their semantics" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-credential-echo-" + Guid.NewGuid().ToString("N"))
+
+              let credentials = Map.ofList [ "live-text", SecretText "load-bearing-secret" ]
+              let source =
+                  "pipeline { agent any environment { GREETING = 'hello' } stages { stage('echo') { steps { "
+                  + "withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN')]) { "
+                  + "echo \"token is ${TOKEN}\"; echo \"greeting is ${GREETING}\" }; "
+                  + "echo 'literal ${GREETING}' } } } }"
+
+              try
+                  match FogellSide.runWithCredentials credentials [] root "job" source with
+                  | Error why -> failtestf "echo masking pipeline refused outside execution: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the echo sequence completes"
+                      Expect.equal
+                          trace.Output
+                          [ "token is ****"; "greeting is hello"; "literal ${GREETING}" ]
+                          "secret, ordinary GString, and literal rendering all stay distinct"
+                      Expect.isFalse
+                          (trace.Output |> List.exists (fun line -> line.Contains "load-bearing-secret"))
+                          "the raw secret is absent from every compared line"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          } ]
+
 /// FG-044b(c). A suffix-shaped nested credential key is an unsupported request,
 /// and one unsupported sibling refuses the entire wrapper before any binding effect.
 let credentialKeyBoundaryRefusal =
@@ -7678,6 +7711,64 @@ let credentialKeyBoundaryRefusal =
                         Expect.isFalse
                             (IO.File.Exists(IO.Path.Combine(workspace, $"{label}-{order}-successor.txt")))
                             $"{label}/{order}: later effects did not run")
+
+            let historicalInvalid =
+                String.concat
+                    ", "
+                    [ "string(credentialsId: 'live-text', variable: 'GOOD')"
+                      "string(notcredentialsId: 'live-text', variable: 'BAD_ID')"
+                      "string(credentialsId: 'live-text', notvariable: 'BAD_VARIABLE')" ]
+
+            run (pipeline historicalInvalid "touch historical-body.txt" "touch historical-successor.txt") (fun _ _ trace ->
+                let warnings =
+                    trace.Output
+                    |> List.filter (fun line -> line.StartsWith("WARNING: Unknown parameter(s)", StringComparison.Ordinal))
+
+                Expect.equal
+                    warnings
+                    [ "WARNING: Unknown parameter(s) found for class type 'org.jenkinsci.plugins.credentialsbinding.impl.StringBinding': notcredentialsId"
+                      "WARNING: Unknown parameter(s) found for class type 'org.jenkinsci.plugins.credentialsbinding.impl.StringBinding': notvariable" ]
+                    "the public runtime emits Jenkins' exact class and ordered historical keys")
+
+            let mutable storeResolutions = 0
+            let refusedRoot = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-credential-lazy-" + Guid.NewGuid().ToString("N"))
+
+            try
+                for label, slug, source in
+                    [ "suffix key", "suffix-key", "string(notcredentialsId: 'live-text', variable: 'BAD')"
+                      "trailing comma", "trailing-comma", "string(credentialsId: 'live-text', variable: 'BAD'),"
+                      "triple quote", "triple-quote", "string(credentialsId: '''live-text''', variable: 'BAD')"
+                      "ordinary newline", "ordinary-newline", "string(credentialsId: 'live\ntext,)', variable: 'BAD')"
+                      "ordinary carriage return", "ordinary-carriage-return", "string(credentialsId: \"live\rtext,)\", variable: 'BAD')"
+                      "non-Groovy NBSP trivia", "nbsp-trivia", "string\u00A0(credentialsId: 'live-text', variable: 'BAD')" ] do
+                    let refused =
+                        FogellSide.runWithCredentialFactory
+                            (fun () ->
+                                storeResolutions <- storeResolutions + 1
+                                failwith "credential store must remain lazy")
+                            refusedRoot
+                            "job"
+                            (pipeline source $"touch lazy-{slug}-body.txt" $"touch lazy-{slug}-successor.txt")
+
+                    match refused with
+                    | Error why -> failtestf "%s refusal forced credential authority: %s" label why
+                    | Ok trace ->
+                        Expect.equal trace.Result "failure" $"{label}: invalid syntax still fails the wrapper"
+
+                Expect.equal storeResolutions 0 "syntax rejection precedes controller credential resolution"
+
+                Expect.equal
+                    (WalkerOrchestration.credentialRefusalErrors [ "malformed" ])
+                    [ "ERROR: malformed withCredentials request; refusing to bind credentials" ]
+                    "whole-request syntax damage is not reported as a nonexistent binding kind"
+
+                Expect.equal
+                    (WalkerOrchestration.credentialRefusalErrors [ "string"; "malformed"; "string" ])
+                    [ "ERROR: malformed withCredentials request; refusing to bind credentials"
+                      "ERROR: unsupported or malformed credential binding request(s) for kind(s) string; refusing to bind credentials" ]
+                    "mixed structural and descriptor refusals are classified once and in operator order"
+            finally
+                if IO.Directory.Exists refusedRoot then IO.Directory.Delete(refusedRoot, true)
 
             let validBindings =
                 String.concat
@@ -8323,6 +8414,7 @@ let main argv =
               timestampCoverageUsesComparedSurvivors
               compileRefusalDisposition
               credentialStoreDecoding
+              credentialEchoMasking
               credentialKeyBoundaryRefusal
               credentialExceptionalCleanup
               credentialCompanionPreservation
