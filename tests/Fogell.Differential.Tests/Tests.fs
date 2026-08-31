@@ -678,6 +678,40 @@ let controllerWorkerTiming =
                   "the exact operational cause is durable before diagnostics"
           }
 
+          test "an unbound outer identity cleans up and records its cause before diagnostics" {
+              let order = ResizeArray<string>()
+              let mutable cleanupCalls = 0
+              let mutable durableReason = None
+              let cleanup =
+                  ProcessGroup.once (fun () ->
+                      cleanupCalls <- cleanupCalls + 1
+                      order.Add "cleanup"
+                      raise (InvalidOperationException "partial cleanup failure"))
+
+              Expect.throws
+                  (fun () ->
+                      WorkerControl.reconcileUnboundOuterIdentity
+                          cleanup
+                          (fun reason ->
+                              order.Add "durable"
+                              durableReason <- Some reason)
+                          (fun cleanupFailure ->
+                              order.Add "diagnostic"
+                              Expect.isSome cleanupFailure "the diagnostic receives sticky cleanup failure data"
+                              raise (InvalidOperationException "logger failed")))
+                  "a hostile identity-capture diagnostic remains observable"
+
+              Expect.equal
+                  durableReason
+                  (Some "outer_identity_unbound")
+                  "the exact identity-capture cause is durable"
+              Expect.equal
+                  (List.ofSeq order)
+                  [ "cleanup"; "durable"; "diagnostic" ]
+                  "identity-bound cleanup and durable state precede fallible logging"
+              Expect.equal cleanupCalls 1 "the cleanup side effects remain single-shot"
+          }
+
           test "a throwing materialization diagnostic preserves the classified quarantine" {
               let order = ResizeArray<string>()
               let mutable durableReason = None
@@ -1344,30 +1378,34 @@ let controllerProcessGroupExtinction =
                   "a defunct thread-group leader cannot hide its executable sibling threads"
 
               let mutable reapCalls = 0
-              let reap candidatePid parentPid state group threads =
+              let reap dedicatedReaperPid candidatePid parentPid state group threads =
                   ProcessGroup.reapAdoptedGroupMember
                       42
+                      dedicatedReaperPid
                       candidatePid
                       Environment.ProcessId
                       (fun () -> Some(parentPid, state, group, threads))
                       (fun () -> reapCalls <- reapCalls + 1)
 
               Expect.isTrue
-                  (reap 43 Environment.ProcessId 'Z' 42 1)
+                  (reap None 43 Environment.ProcessId 'Z' 42 1)
                   "an inert non-leader adopted by the controller is eligible for waitpid"
+              Expect.isTrue
+                  (reap None 42 Environment.ProcessId 'Z' 42 1)
+                  "an adopted group leader is reaped after its wrapper owner is gone"
               Expect.isFalse
-                  (reap 42 Environment.ProcessId 'Z' 42 1)
-                  "the Process-owned group leader is left to its dedicated reaper"
+                  (reap (Some 42) 42 Environment.ProcessId 'Z' 42 1)
+                  "the still-Process-owned outer leader is left to its dedicated reaper"
               Expect.isFalse
-                  (reap 43 (Environment.ProcessId + 1) 'Z' 42 1)
+                  (reap None 43 (Environment.ProcessId + 1) 'Z' 42 1)
                   "a wrapper-shell-owned group member is not harvested before adoption"
               Expect.isFalse
-                  (reap 43 Environment.ProcessId 'S' 42 1)
+                  (reap None 43 Environment.ProcessId 'S' 42 1)
                   "a live adopted group member is not passed to waitpid"
               Expect.isFalse
-                  (reap 43 Environment.ProcessId 'Z' 7 1)
+                  (reap None 43 Environment.ProcessId 'Z' 7 1)
                   "an adopted zombie that moved groups is not harvested"
-              Expect.equal reapCalls 1 "only the exact adopted inert non-leader reached waitpid"
+              Expect.equal reapCalls 2 "adopted inert members reap; dedicated, shell-owned, live, and foreign candidates do not"
 
               let zombieStop =
                   match ProcessGroup.classifyGroupMembers 42 [ observed 'Z' 42 ] with

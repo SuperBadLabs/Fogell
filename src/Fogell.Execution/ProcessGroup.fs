@@ -366,8 +366,7 @@ module ProcessGroup =
         lock registeredChildReapLock (fun () ->
             match observe () with
             | LinuxProcessObservation.Present stat
-                when candidatePid <> pgid
-                     && stat.ProcessGroupId = pgid
+                when stat.ProcessGroupId = pgid
                      && stat.ParentProcessId = requiredParentPid
                      && (expectedStartTime
                          |> Option.forall (fun expected -> stat.StartTime = expected))

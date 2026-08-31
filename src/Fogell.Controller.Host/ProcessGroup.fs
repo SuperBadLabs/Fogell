@@ -295,6 +295,7 @@ module internal ProcessGroup =
 
     let internal reapAdoptedGroupMember
         processGroupId
+        dedicatedReaperPid
         candidatePid
         requiredParentPid
         observe
@@ -303,7 +304,7 @@ module internal ProcessGroup =
         lock adoptedChildReapLock (fun () ->
             match observe () with
             | Some(parentPid, state, observedGroup, threads)
-                when candidatePid <> processGroupId
+                when (dedicatedReaperPid |> Option.contains candidatePid |> not)
                      && parentPid = requiredParentPid
                      && observedGroup = processGroupId
                      && (state = 'Z' || state = 'X' || state = 'x')
@@ -312,7 +313,7 @@ module internal ProcessGroup =
                 true
             | _ -> false)
 
-    let private reapAdoptedGroupChildren processGroupId =
+    let private reapAdoptedGroupChildren processGroupId dedicatedReaperPid =
         try
             IO.Directory.GetDirectories "/proc"
             |> Array.iter (fun directory ->
@@ -322,6 +323,7 @@ module internal ProcessGroup =
                     | ProcessGroupQuery.Found group when group = processGroupId ->
                         reapAdoptedGroupMember
                             processGroupId
+                            dedicatedReaperPid
                             pid
                             Environment.ProcessId
                             (fun () ->
@@ -356,7 +358,7 @@ module internal ProcessGroup =
             let result = kill(-processGroupId, 0)
             classifyProbe result (Marshal.GetLastWin32Error())
 
-    let probeGroup processGroupId =
+    let private probeGroupWithDedicatedReaper processGroupId dedicatedReaperPid =
         if not (OperatingSystem.IsLinux()) || processGroupId <= 1 then
             ProcessPresence.Uncertain
         else
@@ -366,7 +368,7 @@ module internal ProcessGroup =
             // adopted by this controller (also a subreaper). Harvest only
             // members of the group currently being reconciled so Process-owned
             // children from another attempt cannot be consumed.
-            reapAdoptedGroupChildren processGroupId
+            reapAdoptedGroupChildren processGroupId dedicatedReaperPid
 
             match kernelProbe () with
             | ProcessPresence.Absent -> ProcessPresence.Absent
@@ -393,6 +395,9 @@ module internal ProcessGroup =
                         | _ -> ProcessPresence.Uncertain
                 with _ ->
                     ProcessPresence.Uncertain
+
+    let probeGroup processGroupId =
+        probeGroupWithDedicatedReaper processGroupId None
 
     /// Capture the Linux process birth identity immediately after Start. The
     /// launcher may not have called setsid yet, so PGID is deliberately not
@@ -549,7 +554,10 @@ module internal ProcessGroup =
             killChecks
             identity.ProcessId
             (fun () -> observeIdentity identity)
-            (fun () -> probeGroup identity.ProcessId)
+            (fun () ->
+                probeGroupWithDedicatedReaper
+                    identity.ProcessId
+                    (Some identity.ProcessId))
             (signalGroup identity.ProcessId)
             (signalLeader identity.ProcessId)
             pause

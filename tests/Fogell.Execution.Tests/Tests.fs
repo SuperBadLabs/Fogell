@@ -877,7 +877,7 @@ let containment =
               Expect.isFalse
                   (reap shellOwned (Some "anchor"))
                   "a wrapper-shell-owned zombie is not harvested before adoption"
-              Expect.isFalse
+              Expect.isTrue
                   (ProcessGroup.reapObservedRegisteredMember
                       42
                       42
@@ -885,8 +885,8 @@ let containment =
                       Environment.ProcessId
                       (fun () -> stat 'Z' 42 1 "leader")
                       (fun () -> reapCalls <- reapCalls + 1))
-                  "the shell-owned registered leader is never harvested by the adopted-child scanner"
-              Expect.equal reapCalls 1 "every identity, ownership, membership, and state mismatch withholds waitpid"
+                  "an adopted registered leader is harvested once its wrapper owner is gone"
+              Expect.equal reapCalls 2 "adopted inert members reap; every identity, ownership, membership, and state mismatch withholds waitpid"
               Expect.equal
                   (ProcessGroup.classifyLiveGroupMembers
                       42

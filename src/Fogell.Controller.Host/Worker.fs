@@ -87,6 +87,18 @@ module internal WorkerControl =
         requireReconciliation reason
         diagnose ()
 
+    let reconcileUnboundOuterIdentity cleanup requireReconciliation diagnose =
+        // A launched child without a captured birth identity cannot be safely
+        // signalled by numeric PID. Stop every identity-bound inner group first,
+        // then make the classified uncertainty durable before any provider code
+        // can throw while describing it.
+        let cleanupFailure = tryCleanupForReconciliation cleanup
+
+        reconcileBeforeDiagnostic
+            "outer_identity_unbound"
+            requireReconciliation
+            (fun () -> diagnose cleanupFailure)
+
     let reconcileMaterializationFailure requireReconciliation diagnose =
         // Definition quarantine is the same durable-before-diagnostic boundary.
         // Return the Store authority result to the diagnostic callback only
@@ -596,11 +608,6 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             with _ ->
                                 None
 
-                        if Option.isNone captured then
-                            logger.LogError(
-                                "FG-224 could not bind outer process {ProcessId} to its Linux birth identity; cleanup will fail closed",
-                                child.Id)
-
                         captured
                     else
                         None
@@ -649,6 +656,23 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             recorded |> ignore
 
                     try
+                        if Option.isNone outerIdentity then
+                            WorkerControl.reconcileUnboundOuterIdentity
+                                cleanupExecution
+                                requireReconciliation
+                                (fun cleanupFailure ->
+                                    logger.LogError(
+                                        "FG-224 could not bind outer process {ProcessId} to its Linux birth identity; cleanup completed before durable reconciliation",
+                                        child.Id)
+
+                                    cleanupFailure
+                                    |> Option.iter (fun cleanupError ->
+                                        logger.LogError(
+                                            cleanupError,
+                                            "FG-224 identity-bound cleanup failed for unbound outer process {ProcessId}; durable reconciliation was recorded",
+                                            child.Id)))
+                            return ()
+
                         // Run.Host publishes protocol logs through FOGELL_EVENT_FILE.
                         // Its inherited stdout/stderr are diagnostic only and are
                         // deliberately discarded. CopyToAsync uses a fixed transfer
