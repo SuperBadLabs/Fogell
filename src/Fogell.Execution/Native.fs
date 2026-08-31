@@ -3,14 +3,29 @@ namespace Fogell.Execution
 open System.Runtime.InteropServices
 
 /// Fogell.Execution's DllImport surface (ADR 0006). Every entry point is
-/// documented, and nothing here allocates or returns a pointer — these are
-/// signal and process-group primitives only.
+/// documented, and nothing here allocates or returns a pointer. Besides signal
+/// and process-group primitives, the containment anchor uses Linux subreaper
+/// ownership plus nonblocking waitpid so a zombie cannot keep a joinable group
+/// alive after useful execution is extinct.
 module internal Native =
 
     [<RequireQualifiedAccess>]
     type ProcessGroupQuery =
         | Found of int
         | Absent
+        | Uncertain
+
+    [<RequireQualifiedAccess>]
+    type ProcessGroupPresence =
+        | Present
+        | Absent
+        | Uncertain
+
+    [<RequireQualifiedAccess>]
+    type ChildReapResult =
+        | Reaped
+        | Running
+        | NotChild
         | Uncertain
 
     /// POSIX signals Fogell uses. Values are the Linux/glibc numbers.
@@ -26,6 +41,15 @@ module internal Native =
     [<Literal>]
     let ESRCH = 3 // no such process
 
+    [<Literal>]
+    let private ECHILD = 10
+
+    [<Literal>]
+    let private WNOHANG = 1
+
+    [<Literal>]
+    let private PR_SET_CHILD_SUBREAPER = 36
+
     /// `kill(2)`. A negative pid targets the whole process group, which is how
     /// a step's descendants are signalled together rather than orphaned.
     [<DllImport("libc", SetLastError = true)>]
@@ -35,6 +59,16 @@ module internal Native =
     /// so the tests assert the mechanism rather than trusting it.
     [<DllImport("libc", SetLastError = true)>]
     extern int private getpgid(int pid)
+
+    /// `prctl(PR_SET_CHILD_SUBREAPER)`. Registered anchors orphaned by their
+    /// session leader are reparented to Run.Host instead of an arbitrary PID 1.
+    [<DllImport("libc", SetLastError = true)>]
+    extern int private prctl(int option, nativeint arg2, nativeint arg3, nativeint arg4, nativeint arg5)
+
+    /// `waitpid(2)` with a null status pointer. Only a recorded anchor PID is
+    /// passed; this never harvests another concurrently running step's child.
+    [<DllImport("libc", SetLastError = true)>]
+    extern int private waitpid(int pid, nativeint status, int options)
 
     /// Signal a single process. Returns false when it no longer exists.
     let signalProcess (pid: int) (signum: int) : bool =
@@ -65,6 +99,38 @@ module internal Native =
             false
         else
             kill (-pgid, signum) = 0
+
+    let probeProcessGroup (pgid: int) =
+        if pgid <= 1 then
+            ProcessGroupPresence.Uncertain
+        else
+            let result = kill (-pgid, 0)
+
+            if result = 0 then
+                ProcessGroupPresence.Present
+            else
+                match Marshal.GetLastWin32Error() with
+                | ESRCH -> ProcessGroupPresence.Absent
+                | 1 -> ProcessGroupPresence.Present
+                | _ -> ProcessGroupPresence.Uncertain
+
+    let enableChildSubreaper () =
+        prctl(PR_SET_CHILD_SUBREAPER, nativeint 1, nativeint 0, nativeint 0, nativeint 0) = 0
+
+    let tryReapChild pid =
+        if pid <= 1 then
+            ChildReapResult.Uncertain
+        else
+            let result = waitpid(pid, nativeint 0, WNOHANG)
+
+            if result = pid then
+                ChildReapResult.Reaped
+            elif result = 0 then
+                ChildReapResult.Running
+            elif Marshal.GetLastWin32Error() = ECHILD then
+                ChildReapResult.NotChild
+            else
+                ChildReapResult.Uncertain
 
     /// True when the process (or group leader) is still present.
     let processExists (pid: int) : bool = pid > 0 && kill (pid, 0) = 0

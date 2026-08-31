@@ -181,16 +181,20 @@ same-number group without either recorded identity is not signal authority; the
 pre-`setsid` launcher publishes its own PID and start ticks before it may launch
 user code, and a missing or mismatched handshake refuses without numeric signals;
 survivor scans exclude the stopped anchor only when that scan observes its
-recorded PID and start ticks, so PID reuse cannot hide a live group member;
-cleanup failure is durably reconciled before its diagnostic is emitted, so a
-fallible logging provider cannot strand an attempt;
-controller retains reconciliation evidence instead. Final Z/X/x remnants with
-one thread are logically extinct even if an unreaping container pid 1 keeps them
-visible to `kill(-pgid, 0)`. A zombie thread-group leader with more than one
-thread remains active, and unreadable or malformed `/proc` state remains
-uncertain. If `getpgid` first identifies a candidate but its following stat read
-reports a different group, cleanup also remains uncertain rather than accepting
-that PID-reuse race as extinction. The production proof supports both a native
+recorded PID and start ticks, so PID reuse cannot hide a live group member. The
+classified reconciliation cause is persisted before every fallible diagnostic,
+including cleanup failure, so a logging provider cannot strand the attempt or
+replace its operational cause with a generic fallback. Final one-thread Z/X/x
+remnants are inert but do not themselves prove extinction: while their numeric
+group exists it remains joinable. Run.Host and Controller.Host establish Linux
+child-subreaper ownership, reap only adopted members of the registered group,
+and disarm/delete its record only after the kernel reports ESRCH for that group.
+A zombie leader with more than one thread remains active, and unreadable or
+malformed `/proc` state remains uncertain. If `getpgid` first identifies a
+candidate but its following stat read reports a different group, cleanup also
+remains uncertain rather than accepting that PID-reuse race as extinction. The
+foreign-candidate boundary recheck narrows observation races but is not the
+certificate; kernel group disappearance is. The production proof supports both a native
 Linux service and a controller running as container PID 1. Its container lane
 overrides the image
 entrypoint and verifies `/proc/1/exe` is the exact controller apphost before it

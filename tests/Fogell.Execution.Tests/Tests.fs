@@ -243,8 +243,13 @@ let private waitForReap (pid: int) =
     let clock = Diagnostics.Stopwatch.StartNew()
 
     while pidAlive pid && clock.ElapsedMilliseconds < 3_000L do
+        // Containment enables PR_SET_CHILD_SUBREAPER for production anchor
+        // ownership. The test process therefore adopts orphaned fixtures too;
+        // harvest only the exact PID this assertion already owns.
+        Native.tryReapChild pid |> ignore
         Threading.Thread.Sleep 25
 
+    Native.tryReapChild pid |> ignore
     not (pidAlive pid)
 
 let private waitForFile path budgetMs =

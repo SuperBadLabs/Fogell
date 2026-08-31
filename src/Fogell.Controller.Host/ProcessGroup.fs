@@ -70,11 +70,30 @@ module internal ProcessGroup =
     [<Literal>]
     let private noSuchProcess = 3
 
+    [<Literal>]
+    let private noChild = 10
+
+    [<Literal>]
+    let private noHang = 1
+
+    [<Literal>]
+    let private setChildSubreaper = 36
+
     [<DllImport("libc", SetLastError = true)>]
     extern int private kill(int pid, int signal)
 
     [<DllImport("libc", SetLastError = true)>]
     extern int private getpgid(int pid)
+
+    [<DllImport("libc", SetLastError = true)>]
+    extern int private prctl(int option, nativeint arg2, nativeint arg3, nativeint arg4, nativeint arg5)
+
+    [<DllImport("libc", SetLastError = true)>]
+    extern int private waitpid(int pid, nativeint status, int options)
+
+    let enableChildSubreaper () =
+        OperatingSystem.IsLinux()
+        && prctl(setChildSubreaper, nativeint 1, nativeint 0, nativeint 0, nativeint 0) = 0
 
     let internal classifyProbe result errorNumber =
         if result = 0 || errorNumber = permissionDenied then
@@ -272,6 +291,22 @@ module internal ProcessGroup =
                 | _ -> ProcessMemberObservation.Uncertain)
         |> classifyGroupMembers processGroupId
 
+    let private reapAdoptedGroupChildren processGroupId =
+        try
+            IO.Directory.GetDirectories "/proc"
+            |> Array.iter (fun directory ->
+                match Int32.TryParse(IO.Path.GetFileName directory) with
+                | true, pid ->
+                    match queryProcessGroup pid with
+                    | ProcessGroupQuery.Found group when group = processGroupId ->
+                        let result = waitpid(pid, nativeint 0, noHang)
+
+                        if result < 0 && Marshal.GetLastWin32Error() <> noChild then
+                            ()
+                    | _ -> ()
+                | _ -> ())
+        with _ -> ()
+
     let internal probeKernelGroup processGroupId =
         if not (OperatingSystem.IsLinux()) || processGroupId <= 1 then
             ProcessPresence.Uncertain
@@ -285,6 +320,12 @@ module internal ProcessGroup =
         else
             let kernelProbe () = probeKernelGroup processGroupId
 
+            // When Run.Host dies, its subreaper-owned inner descendants are
+            // adopted by this controller (also a subreaper). Harvest only
+            // members of the group currently being reconciled so Process-owned
+            // children from another attempt cannot be consumed.
+            reapAdoptedGroupChildren processGroupId
+
             match kernelProbe () with
             | ProcessPresence.Absent -> ProcessPresence.Absent
             | ProcessPresence.Uncertain -> ProcessPresence.Uncertain
@@ -292,7 +333,14 @@ module internal ProcessGroup =
                 try
                     match observeGroupPopulation processGroupId with
                     | ProcessGroupPopulation.Active -> ProcessPresence.Present
-                    | ProcessGroupPopulation.DefunctOnly -> ProcessPresence.Absent
+                    | ProcessGroupPopulation.DefunctOnly ->
+                        // Inert zombies cannot execute effects, but their
+                        // numeric group is still joinable by a same-session
+                        // process. Only kernel ESRCH closes that membership
+                        // boundary and permits durable-record deletion.
+                        match kernelProbe () with
+                        | ProcessPresence.Absent -> ProcessPresence.Absent
+                        | _ -> ProcessPresence.Uncertain
                     | ProcessGroupPopulation.Uncertain -> ProcessPresence.Uncertain
                     | ProcessGroupPopulation.Empty ->
                         // A group can disappear during the scan. Only a second

@@ -562,14 +562,60 @@ module ProcessGroup =
 
         gone
 
+    let private waitForRegisteredGroupExit identity budgetMs =
+        let sw = Stopwatch.StartNew()
+
+        let reapKnownGroupChildren () =
+            try
+                IO.Directory.GetDirectories "/proc"
+                |> Array.iter (fun directory ->
+                    match Int32.TryParse(IO.Path.GetFileName directory) with
+                    | true, pid ->
+                        match Native.queryProcessGroup pid with
+                        | Native.ProcessGroupQuery.Found group when group = identity.GroupId ->
+                            // PR_SET_CHILD_SUBREAPER makes orphaned group
+                            // members our children. waitpid is specific, so a
+                            // concurrent step's direct child cannot be stolen.
+                            Native.tryReapChild pid |> ignore
+                        | _ -> ()
+                    | _ -> ())
+            with _ -> ()
+
+        let rec wait () =
+            // Once the session leader exits, PR_SET_CHILD_SUBREAPER reparents
+            // its stopped anchor to Run.Host. Reap only that recorded PID. The
+            // following group ESRCH is the atomic boundary: while the numeric
+            // group exists, a same-session process can still join it.
+            reapKnownGroupChildren ()
+
+            match Native.probeProcessGroup identity.GroupId with
+            | Native.ProcessGroupPresence.Absent -> true
+            | _ when sw.ElapsedMilliseconds < int64 budgetMs ->
+                Thread.Sleep 20
+                wait ()
+            | _ -> false
+
+        wait ()
+
+    let private registeredGroupLeakCount identity =
+        match Native.probeProcessGroup identity.GroupId with
+        | Native.ProcessGroupPresence.Absent -> 0
+        | _ ->
+            match survivorsIn identity.GroupId with
+            | count when count > 0 -> count
+            | _ -> -1
+
     let private releaseIdentityAnchor identity =
         // The anchor is SIGSTOPped before registration. TERM remains pending
         // while stopped, so CONT lets it take the default TERM action without
         // introducing another long-lived helper or inherited descriptor.
-        if survivorsIn identity.GroupId = 0 then
+        Native.tryReapChild identity.AnchorPid |> ignore
+
+        if Native.probeProcessGroup identity.GroupId = Native.ProcessGroupPresence.Absent then
             true
         else
-            let extinct () = survivorsIn identity.GroupId = 0
+            let extinct () =
+                Native.probeProcessGroup identity.GroupId = Native.ProcessGroupPresence.Absent
 
             let termDeliveredOrGone =
                 deliverOrObserveExtinction
@@ -594,7 +640,7 @@ module ProcessGroup =
                             (fun signal -> Native.signalProcess identity.AnchorPid signal)
                             Native.SIGCONT)
                     extinct
-                && waitForGroupExit identity.GroupId 2_000
+                && waitForRegisteredGroupExit identity 2_000
 
     let private terminateGroupWithAnchor identity graceMs =
         let sendGroup signal =
@@ -614,11 +660,11 @@ module ProcessGroup =
             attemptEscalation
                 exitedOnTerm
                 (fun () -> sendGroup Native.SIGKILL)
-                (fun () -> waitForGroupExit identity.GroupId 2_000 |> ignore)
+                (fun () -> waitForRegisteredGroupExit identity 2_000 |> ignore)
 
         { GracefulExit = exitedOnTerm
           Escalated = escalated
-          LeakedProcesses = survivorsIn identity.GroupId }
+          LeakedProcesses = registeredGroupLeakCount identity }
 
     let private reapWithAnchor identity graceMs =
         if survivorsInExceptAnchor identity = 0
@@ -736,7 +782,7 @@ module ProcessGroup =
                 IO.File.Move(temporary, target)
 
         let forgetExtinguishedGroup pgid =
-            if survivorsIn pgid = 0 then
+            if Native.probeProcessGroup pgid = Native.ProcessGroupPresence.Absent then
                 groupRecordPath pgid
                 |> Option.iter (fun path ->
                     try IO.File.Delete path with _ -> ())
@@ -1022,6 +1068,11 @@ module ProcessGroup =
         psi.UseShellExecute <- false
 
         LaunchEnvironment.applyBuildTo psi request.Environment
+
+        match containmentDirectory with
+        | Some _ when not (Native.enableChildSubreaper ()) ->
+            invalidOp "could not establish Linux child-subreaper ownership for process-group anchors"
+        | _ -> ()
 
         use proc = new Process()
         proc.StartInfo <- psi
@@ -1535,7 +1586,8 @@ module ProcessGroup =
         let mayDisarmGuard =
             match containmentDirectory, pgid with
             | None, _ -> true
-            | Some _, Some group -> survivorsIn group = 0
+            | Some _, Some group ->
+                Native.probeProcessGroup group = Native.ProcessGroupPresence.Absent
             | Some _, None -> false
 
         let mutable guardDisarmed = false

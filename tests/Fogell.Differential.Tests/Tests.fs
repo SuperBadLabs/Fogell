@@ -641,6 +641,23 @@ let controllerWorkerTiming =
               Expect.equal cleanupCalls 1 "diagnostic failure does not repeat sticky cleanup"
           }
 
+          test "a throwing reconciliation diagnostic preserves the classified cause" {
+              let mutable durableReason = None
+
+              Expect.throws
+                  (fun () ->
+                      WorkerControl.reconcileBeforeDiagnostic
+                          "controller_shutdown"
+                          (fun reason -> durableReason <- Some reason)
+                          (fun () -> raise (InvalidOperationException "logger failed")))
+                  "the hostile logger failure remains observable"
+
+              Expect.equal
+                  durableReason
+                  (Some "controller_shutdown")
+                  "the exact operational cause is durable before diagnostics"
+          }
+
           test "late cancellation delegates natural terminal arbitration to the Store" {
               let decide cancelled interrupted leaseLost =
                   WorkerControl.naturalExitFinalAction cancelled interrupted leaseLost
@@ -1281,18 +1298,18 @@ let controllerProcessGroupExtinction =
 
               let zombieStop =
                   match ProcessGroup.classifyGroupMembers 42 [ observed 'Z' 42 ] with
-                  | ProcessGroupPopulation.DefunctOnly -> ProcessGroupStopResult.Extinguished
+                  | ProcessGroupPopulation.DefunctOnly -> ProcessGroupStopResult.StatusUncertain
                   | ProcessGroupPopulation.Active -> ProcessGroupStopResult.Persisted
                   | ProcessGroupPopulation.Empty -> ProcessGroupStopResult.Extinguished
                   | ProcessGroupPopulation.Uncertain -> ProcessGroupStopResult.StatusUncertain
 
               Expect.equal
                   (ProcessGroup.handoff ChildExitKind.Natural zombieStop)
-                  ChildHandoff.NaturalTerminalAllowed
-                  "zombie-only LinuxKit residue cannot turn natural success into reconciliation"
+                  ChildHandoff.ReconciliationRequired
+                  "an inert but still joinable numeric group cannot authorize terminal publication"
           }
 
-          test "a real unreaped zombie group is logically extinct before waitpid" {
+          test "a real unreaped zombie group remains uncertain until kernel ESRCH" {
               if not (OperatingSystem.IsLinux()) then
                   Tests.skiptest "the zombie extinction regression is Linux-only"
 
@@ -1370,8 +1387,29 @@ let controllerProcessGroupExtinction =
                       "raw kill(0) still sees the zombie-only group"
                   Expect.equal
                       (ProcessGroup.stopRegisteredGroups 0 0 registry noPause)
+                      ProcessGroupStopResult.StatusUncertain
+                      "inert zombie bytes do not prove the numeric group is no longer joinable"
+                  Expect.isTrue (IO.File.Exists record) "joinable-group evidence remains durable"
+
+                  holder.StandardInput.Write "1"
+                  holder.StandardInput.Flush()
+
+                  let absentClock = Diagnostics.Stopwatch.StartNew()
+
+                  while
+                      ProcessGroup.probeKernelGroup zombiePid <> ProcessPresence.Absent
+                      && absentClock.ElapsedMilliseconds < 2_000L
+                      do
+                      Threading.Thread.Sleep 10
+
+                  Expect.equal
+                      (ProcessGroup.probeKernelGroup zombiePid)
+                      ProcessPresence.Absent
+                      "waitpid removes the numeric group and closes later membership"
+                  Expect.equal
+                      (ProcessGroup.stopRegisteredGroups 0 0 registry noPause)
                       ProcessGroupStopResult.Extinguished
-                      "the production durable-record path accepts zombie-only extinction"
+                      "kernel ESRCH authorizes durable cleanup"
                   Expect.isFalse (IO.File.Exists record) "proved-extinct durable evidence is removed"
               finally
                   if not holder.HasExited then

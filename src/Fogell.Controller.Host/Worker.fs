@@ -80,6 +80,13 @@ module internal WorkerControl =
         requireReconciliation ()
         cleanupFailure |> Option.iter diagnose
 
+    let reconcileBeforeDiagnostic reason requireReconciliation diagnose =
+        // The reason-bearing durable write is ordered before ILogger just as
+        // sticky cleanup is above. Keeping this seam pure lets the hostile-
+        // provider regression observe both the cause and the ordering.
+        requireReconciliation reason
+        diagnose ()
+
     let waitForActivePoll (pollMilliseconds: int) (stoppingToken: CancellationToken) =
         task {
             try
@@ -488,7 +495,11 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                 let launchResult =
                     WorkerLaunch.tryStart
                         (fun () -> stoppingToken.IsCancellationRequested)
-                        child.Start
+                        (fun () ->
+                            if not (ProcessGroup.enableChildSubreaper ()) then
+                                invalidOp "could not establish Linux child-subreaper ownership for Run.Host descendants"
+
+                            child.Start())
 
                 let launched =
                     match launchResult with
@@ -761,12 +772,20 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
 
                         match ProcessGroup.handoff finalExitKind groupStop with
                         | ChildHandoff.ReconciliationRequired ->
-                            logger.LogError(
-                                "FG-224 execution for {AttemptId} requires reconciliation after {ExitKind} exit and outer cleanup {StopResult}",
-                                claim.AttemptId.Value,
-                                finalExitKind,
-                                groupStop)
-                            requireReconciliation (currentReconciliationReason ())
+                            let reason = currentReconciliationReason ()
+                            // Persist the classified cause before invoking an
+                            // external logging provider. If diagnostics throw,
+                            // finally observes the same durable disposition
+                            // instead of substituting worker_exception.
+                            WorkerControl.reconcileBeforeDiagnostic
+                                reason
+                                requireReconciliation
+                                (fun () ->
+                                    logger.LogError(
+                                        "FG-224 execution for {AttemptId} requires reconciliation after {ExitKind} exit and outer cleanup {StopResult}",
+                                        claim.AttemptId.Value,
+                                        finalExitKind,
+                                        groupStop))
                         | ChildHandoff.NaturalTerminalAllowed ->
                             // Close the drain-to-terminal race with a fresh lease.
                             refreshControl true
@@ -793,19 +812,27 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                             claim.AttemptId.Value
                                     with
                                     | Error error ->
-                                        logger.LogError(
-                                            "FG-042b artifact snapshot failed for {AttemptId}: {Reason}",
-                                            claim.AttemptId.Value,
-                                            error)
-                                        requireReconciliation "artifact_snapshot_failed"
+                                        WorkerControl.reconcileBeforeDiagnostic
+                                            "artifact_snapshot_failed"
+                                            requireReconciliation
+                                            (fun () ->
+                                                logger.LogError(
+                                                    "FG-042b artifact snapshot failed for {AttemptId}: {Reason}",
+                                                    claim.AttemptId.Value,
+                                                    error))
                                     | Ok _ ->
                                         match store.PublishTerminal(claim.OrganizationId, claim.AttemptId, claim.Fence, owner, status) with
                                         | Ok _ ->
                                             dispositionRecorded <- true
                                             terminalPublished <- true
                                         | Error _ ->
-                                            logger.LogError("FG-224 terminal publication was refused for {AttemptId}", claim.AttemptId.Value)
-                                            requireReconciliation "terminal_publication_refused"
+                                            WorkerControl.reconcileBeforeDiagnostic
+                                                "terminal_publication_refused"
+                                                requireReconciliation
+                                                (fun () ->
+                                                    logger.LogError(
+                                                        "FG-224 terminal publication was refused for {AttemptId}",
+                                                        claim.AttemptId.Value))
                                 | None ->
                                     requireReconciliation "terminal_journal_missing"
                     finally
