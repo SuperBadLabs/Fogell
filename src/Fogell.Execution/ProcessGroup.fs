@@ -320,12 +320,18 @@ module ProcessGroup =
         | :? IO.DirectoryNotFoundException -> LinuxProcessObservation.Absent
         | _ -> LinuxProcessObservation.Uncertain
 
-    let internal classifyLiveGroupMembers pgid excludedPid observations =
+    let internal classifyLiveGroupMembers pgid excludedIdentity observations =
         let mutable live = 0
         let mutable uncertain = false
 
         for pid, observation in observations do
-            if Some pid <> excludedPid then
+            let isExcludedIdentity =
+                match excludedIdentity, observation with
+                | Some(excludedPid, excludedStartTime), LinuxProcessObservation.Present stat ->
+                    pid = excludedPid && stat.StartTime = excludedStartTime
+                | _ -> false
+
+            if not isExcludedIdentity then
                 match observation with
                 | LinuxProcessObservation.Present stat when stat.ProcessGroupId = pgid ->
                     if (stat.State = 'Z' || stat.State = 'X' || stat.State = 'x')
@@ -356,7 +362,7 @@ module ProcessGroup =
         | Native.ProcessGroupQuery.Uncertain ->
             Some(pid, LinuxProcessObservation.Uncertain)
 
-    let private scanLiveGroupMembers pgid excludedPid =
+    let private scanLiveGroupMembers pgid excludedIdentity =
         try
             // The wait loops call this repeatedly. Use getpgid as the cheap
             // candidate filter and read stat only for possible members; ESRCH
@@ -365,11 +371,10 @@ module ProcessGroup =
             IO.Directory.GetDirectories "/proc"
             |> Array.choose (fun directory ->
                 match Int32.TryParse(IO.Path.GetFileName directory) with
-                | true, pid when Some pid = excludedPid -> None
                 | true, pid ->
                     observeLiveGroupCandidate pgid pid Native.queryProcessGroup observeLinuxProcess
                 | _ -> None)
-            |> classifyLiveGroupMembers pgid excludedPid
+            |> classifyLiveGroupMembers pgid excludedIdentity
         with _ ->
             -1
 
@@ -508,16 +513,18 @@ module ProcessGroup =
 
         gone
 
-    let private survivorsInExcept (pgid: int) (excludedPid: int) : int =
-        scanLiveGroupMembers pgid (Some excludedPid)
+    let private survivorsInExceptAnchor (identity: RegisteredGroupIdentity) : int =
+        scanLiveGroupMembers
+            identity.GroupId
+            (Some(identity.AnchorPid, identity.AnchorStartTime))
 
-    let private waitForGroupExitExcept pgid excludedPid budgetMs =
+    let private waitForGroupExitExceptAnchor identity budgetMs =
         let sw = Stopwatch.StartNew()
-        let mutable gone = survivorsInExcept pgid excludedPid = 0
+        let mutable gone = survivorsInExceptAnchor identity = 0
 
         while not gone && sw.ElapsedMilliseconds < int64 budgetMs do
             Thread.Sleep 20
-            gone <- survivorsInExcept pgid excludedPid = 0
+            gone <- survivorsInExceptAnchor identity = 0
 
         gone
 
@@ -566,7 +573,7 @@ module ProcessGroup =
 
         let termDelivered = sendGroup Native.SIGTERM
         let usersExited =
-            termDelivered && waitForGroupExitExcept identity.GroupId identity.AnchorPid graceMs
+            termDelivered && waitForGroupExitExceptAnchor identity graceMs
         let exitedOnTerm = usersExited && releaseIdentityAnchor identity
 
         let escalated =
@@ -580,7 +587,7 @@ module ProcessGroup =
           LeakedProcesses = survivorsIn identity.GroupId }
 
     let private reapWithAnchor identity graceMs =
-        if survivorsInExcept identity.GroupId identity.AnchorPid = 0
+        if survivorsInExceptAnchor identity = 0
            && releaseIdentityAnchor identity then
             { GracefulExit = true
               Escalated = false

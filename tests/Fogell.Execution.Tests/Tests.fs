@@ -767,10 +767,17 @@ let containment =
               Expect.equal
                   (ProcessGroup.classifyLiveGroupMembers
                       42
-                      (Some 2)
+                      (Some(2, "2"))
                       [ 1, stat 'Z' 42 1 "1"; 2, stat 'S' 42 1 "2" ])
                   0
-                  "the explicit anchor exclusion removes only its own TGID"
+                  "the explicit anchor exclusion removes only its recorded birth identity"
+              Expect.equal
+                  (ProcessGroup.classifyLiveGroupMembers
+                      42
+                      (Some(2, "2"))
+                      [ 1, stat 'Z' 42 1 "1"; 2, stat 'S' 42 1 "replacement" ])
+                  1
+                  "a reused anchor PID in the target group remains a live survivor"
               Expect.equal
                   (ProcessGroup.classifyLiveGroupMembers
                       42
