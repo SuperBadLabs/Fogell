@@ -186,14 +186,15 @@ uncertain. The production proof supports both a native Linux service and a
 controller running as container PID 1. Its container lane overrides the image
 entrypoint and verifies `/proc/1/exe` is the exact controller apphost before it
 accepts any HTTP result. It also admits a real long-running nested step, maps
-that step's namespace pid to its host-visible process, kills controller PID 1
-non-cooperatively, and requires both Run.Host and the recorded nested process to
-disappear without the post-sleep effect. Run.Host is bound to a private
-controller-owned stdin liveness pipe: controller exit closes the writer
-regardless of which native thread launched the child, and EOF fails Run.Host
-closed so its per-step
-watchdog pipes also close. This deliberately avoids the creating-thread semantics
-of Linux `PR_SET_PDEATHSIG` and works when the controller is PID 1.
+the step shell and its sleep child's namespace pids to host-visible processes,
+then runs a complementary boundary beneath a surviving container init: only the
+controller is killed, and Run.Host, the shell, and the sleep child must disappear
+while init remains alive and the post-sleep effect remains absent. Run.Host is
+bound to a private controller-owned stdin liveness pipe: controller exit closes
+the writer regardless of which native thread launched the child, and EOF fails
+Run.Host closed so its per-step watchdog pipes also close. This deliberately
+avoids the creating-thread semantics of Linux `PR_SET_PDEATHSIG` and works when
+the controller is PID 1.
 
 This is a trusted single-tenant Linux boundary. The fresh `/proc` observation
 and following `kill(2)` are not one atomic pidfd/cgroup operation, so a hostile

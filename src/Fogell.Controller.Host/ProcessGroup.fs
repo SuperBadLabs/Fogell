@@ -1,6 +1,7 @@
 namespace Fogell.Controller.Host
 
 open System
+open System.Runtime.ExceptionServices
 open System.Runtime.InteropServices
 
 [<RequireQualifiedAccess>]
@@ -104,15 +105,24 @@ module internal ProcessGroup =
         classifyGroupQuery result (Marshal.GetLastWin32Error())
 
     let once (action: unit -> 'value) =
-        let mutable cached = None
+        let mutable cached: Result<'value, ExceptionDispatchInfo> option = None
 
         fun () ->
             match cached with
-            | Some value -> value
+            | Some(Ok value) -> value
+            | Some(Error error) ->
+                error.Throw()
+                Unchecked.defaultof<'value>
             | None ->
-                let value = action ()
-                cached <- Some value
-                value
+                try
+                    let value = action ()
+                    cached <- Some(Ok value)
+                    value
+                with error ->
+                    let captured = ExceptionDispatchInfo.Capture error
+                    cached <- Some(Error captured)
+                    captured.Throw()
+                    Unchecked.defaultof<'value>
 
     let combineStopResults results =
         // Cleanup sequences are side-effecting. Materialize once so an

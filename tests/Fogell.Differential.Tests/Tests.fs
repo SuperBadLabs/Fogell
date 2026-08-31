@@ -1474,6 +1474,22 @@ let controllerProcessGroupExtinction =
               Expect.equal cleanups 1 "a reused numeric process-group id is never signalled twice"
           }
 
+          test "a partially executed cleanup exception is cached and rethrown" {
+              let mutable cleanups = 0
+              let cleanup =
+                  ProcessGroup.once (fun () ->
+                      cleanups <- cleanups + 1
+                      raise (InvalidOperationException "cleanup failed after signalling"))
+
+              Expect.throws
+                  (fun () -> cleanup () |> ignore)
+                  "the initial cleanup failure escapes"
+              Expect.throws
+                  (fun () -> cleanup () |> ignore)
+                  "finally observes the same cached failure"
+              Expect.equal cleanups 1 "a partial cleanup pass is never repeated after an exception"
+          }
+
           test "the pre-setsid race terminates the leader even before its group exists" {
               let mutable identity = RecordedProcessState.SameIdentity 17
               let mutable leaderSignals = []

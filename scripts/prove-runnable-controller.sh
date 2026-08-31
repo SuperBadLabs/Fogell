@@ -18,12 +18,29 @@ host_pid=""
 controller_container=""
 controller_serial=0
 controller_image=${FOGELL_FG224_CONTROLLER_IMAGE:-}
-pid1_death_receipt=""
+controller_death_receipt=""
 liveness_writer_pid=""
 liveness_host_pid=""
 
 admin() {
   docker exec "$container" psql -U fogell -d "$1" -v ON_ERROR_STOP=1 "${@:2}"
+}
+
+host_pid_for_namespace() {
+  local process_table="$1"
+  local namespace_pid="$2"
+  local candidate_pid
+  local observed_namespace_pid
+
+  while read -r candidate_pid _; do
+    [[ "$candidate_pid" =~ ^[0-9]+$ && -r "/proc/$candidate_pid/status" ]] || continue
+    observed_namespace_pid=$(awk '/^NSpid:/ { print $NF }' "/proc/$candidate_pid/status")
+    if [[ "$observed_namespace_pid" = "$namespace_pid" ]]; then
+      printf '%s\n' "$candidate_pid"
+      return 0
+    fi
+  done <"$process_table"
+  return 1
 }
 
 cleanup() {
@@ -78,10 +95,11 @@ liveness_journal="$scratch/controller-liveness.journal"
 liveness_started="$scratch/controller-liveness.started"
 liveness_leaked="$scratch/controller-liveness.leaked"
 liveness_step_pid_file="$scratch/controller-liveness-step.pid"
+liveness_sleep_pid_file="$scratch/controller-liveness-sleep.pid"
 mkdir -p "$liveness_workspace"
 mkfifo "$liveness_pipe"
 printf '%s\n' \
-  "pipeline { agent any stages { stage('Liveness') { steps { sh 'echo \$\$ > $liveness_step_pid_file; echo started > $liveness_started; sleep 30; echo leaked > $liveness_leaked' } } } }" \
+  "pipeline { agent any stages { stage('Liveness') { steps { sh 'echo \$\$ > $liveness_step_pid_file; sleep 30 & echo \$! > $liveness_sleep_pid_file; echo started > $liveness_started; wait \$!; echo leaked > $liveness_leaked' } } } }" \
   >"$liveness_definition"
 /bin/sleep 60 >"$liveness_pipe" &
 liveness_writer_pid=$!
@@ -93,14 +111,15 @@ liveness_writer_pid=$!
 liveness_host_pid=$!
 
 for _ in $(seq 1 200); do
-  [[ -s "$liveness_started" && -s "$liveness_step_pid_file" ]] && break
+  [[ -s "$liveness_started" && -s "$liveness_step_pid_file" && -s "$liveness_sleep_pid_file" ]] && break
   kill -0 "$liveness_host_pid" 2>/dev/null \
     || { echo "FG-224 REFUSED: liveness-pipe Run.Host exited before its step started" >&2; exit 1; }
   sleep 0.05
 done
-[[ -s "$liveness_started" && -s "$liveness_step_pid_file" ]] \
-  || { echo "FG-224 REFUSED: liveness-pipe proof never reached its running step" >&2; exit 1; }
+[[ -s "$liveness_started" && -s "$liveness_step_pid_file" && -s "$liveness_sleep_pid_file" ]] \
+  || { echo "FG-224 REFUSED: liveness-pipe proof never reached its running shell and sleep child" >&2; exit 1; }
 liveness_step_pid=$(tr -d '[:space:]' <"$liveness_step_pid_file")
+liveness_sleep_pid=$(tr -d '[:space:]' <"$liveness_sleep_pid_file")
 kill -TERM "$liveness_writer_pid"
 wait "$liveness_writer_pid" 2>/dev/null || true
 liveness_writer_pid=""
@@ -120,11 +139,16 @@ liveness_host_pid=""
   || { echo "FG-224 REFUSED: controller liveness-pipe EOF reported clean Run.Host success" >&2; exit 1; }
 
 for _ in $(seq 1 200); do
-  kill -0 "$liveness_step_pid" 2>/dev/null || break
+  if ! kill -0 "$liveness_step_pid" 2>/dev/null \
+      && ! kill -0 "$liveness_sleep_pid" 2>/dev/null; then
+    break
+  fi
   sleep 0.05
 done
 ! kill -0 "$liveness_step_pid" 2>/dev/null \
-  || { echo "FG-224 REFUSED: liveness-pipe EOF left the nested step alive" >&2; exit 1; }
+  || { echo "FG-224 REFUSED: liveness-pipe EOF left the nested step shell alive" >&2; exit 1; }
+! kill -0 "$liveness_sleep_pid" 2>/dev/null \
+  || { echo "FG-224 REFUSED: liveness-pipe EOF left the sleep child alive" >&2; exit 1; }
 [[ ! -e "$liveness_leaked" ]] \
   || { echo "FG-224 REFUSED: liveness-pipe EOF allowed the post-sleep effect" >&2; exit 1; }
 
@@ -185,6 +209,40 @@ launch_controller() {
     [[ "$pid1_executable" = "$controller" ]] \
       || { echo "FG-224 REFUSED: container PID1 was ${pid1_executable:-unreadable}, expected $controller" >&2; exit 1; }
   fi
+}
+
+launch_controller_under_surviving_init() {
+  controller_serial=$((controller_serial + 1))
+  controller_container="fogell-fg224-proof-$$_$controller_serial"
+  local docker_env=()
+  local entry
+  local controller_pid_file="$1"
+  local controller_stopped_file="$2"
+  for entry in "${common_env[@]}"; do
+    case "$entry" in
+      FOGELL_WORKER_POLL_MS=*) ;;
+      *) docker_env+=(--env "$entry") ;;
+    esac
+  done
+  docker_env+=(--env "FOGELL_API_TOKEN_FILE=$token_file" --env "FOGELL_WORKER_POLL_MS=50")
+
+  docker run --rm --name "$controller_container" --network host \
+    --user "$(id -u):$(id -g)" \
+    --volume "$repo:$repo:ro" --volume "$scratch:$scratch" \
+    "${docker_env[@]}" --entrypoint /bin/sh "$controller_image" -c \
+    'trap '\''exit 0'\'' TERM INT; "$1" & controller_pid=$!; printf '\''%s'\'' "$controller_pid" >"$2"; wait "$controller_pid"; printf stopped >"$3"; while :; do /bin/sleep 1; done' \
+    fogell-controller-surviving-init "$controller" "$controller_pid_file" "$controller_stopped_file" \
+    >>"$host_log" 2>&1 &
+  host_pid=$!
+
+  for _ in $(seq 1 200); do
+    [[ -s "$controller_pid_file" ]] && break
+    kill -0 "$host_pid" 2>/dev/null \
+      || { echo "FG-224 REFUSED: surviving-init container exited before controller launch" >&2; exit 1; }
+    sleep 0.05
+  done
+  [[ -s "$controller_pid_file" ]] \
+    || { echo "FG-224 REFUSED: surviving init did not publish the controller pid" >&2; exit 1; }
 }
 
 stop_controller() {
@@ -856,14 +914,17 @@ shutdown_sum_stable=$(sha256sum "$shutdown_event_file" | cut -d' ' -f1)
 [[ "$shutdown_sum_stable" = "$shutdown_sum_after" ]] \
   || { echo "FG-224 REFUSED: retained event bytes changed after producer extinction" >&2; exit 1; }
 
-# The digest-pinned lane must exercise the controller-to-Run.Host liveness pipe
-# at the boundary it claims: the real controller is container PID 1, owns the
-# pipe writer, and dies non-cooperatively while a nested step is running. Map
-# the container step PID to Docker's host-visible PID before the kill so the
-# proof can require both Run.Host and the exact recorded nested process to
-# disappear, with no delayed effect landing through the host-mounted scratch.
+# Controller-as-PID1 exercises the supported service shape above, but killing a
+# PID namespace's init makes the kernel kill every process in that namespace and
+# cannot prove the controller-owned liveness pipe. Keep a container init alive
+# for this complementary boundary, kill only the real controller during a live
+# nested step, and require Run.Host, the step shell, and its actual sleep child
+# to disappear while the namespace and init remain alive.
 if [[ -n "$controller_image" ]]; then
-  launch_controller 50
+  controller_pid_file="$scratch/controller-death.pid"
+  controller_stopped_file="$scratch/controller-death.stopped"
+  launch_controller_under_surviving_init "$controller_pid_file" "$controller_stopped_file"
+  controller_namespace_pid=$(tr -d '[:space:]' <"$controller_pid_file")
 
   ready=0
   for _ in $(seq 1 200); do
@@ -871,70 +932,73 @@ if [[ -n "$controller_image" ]]; then
       ready=1
       break
     fi
-    kill -0 "$host_pid" 2>/dev/null \
-      || { echo "FG-224 REFUSED: PID1 death-proof controller exited during startup" >&2; exit 1; }
+    docker exec "$controller_container" /bin/kill -0 "$controller_namespace_pid" 2>/dev/null \
+      || { echo "FG-224 REFUSED: surviving-init controller exited during startup" >&2; exit 1; }
     sleep 0.05
   done
   [[ $ready -eq 1 ]] \
-    || { echo "FG-224 REFUSED: PID1 death-proof controller never became ready" >&2; exit 1; }
+    || { echo "FG-224 REFUSED: surviving-init controller never became ready" >&2; exit 1; }
 
-  pid1_started="$scratch/pid1-death.started"
-  pid1_leaked="$scratch/pid1-death.leaked"
-  pid1_step_pid_file="$scratch/pid1-death-step.pid"
-  pid1_pipeline="pipeline { agent any stages { stage('PID1Death') { steps { sh 'echo \$\$ > $pid1_step_pid_file; echo started > $pid1_started; sleep 30; echo leaked > $pid1_leaked' } } } }"
-  pid1_response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-pid1-death' \
-    -H 'content-type: application/x-jenkinsfile' --data-binary "$pid1_pipeline" "$builds_url")
-  pid1_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$pid1_response")
-  [[ -n "$pid1_build_id" ]] \
-    || { echo "FG-224 REFUSED: PID1 death proof admission returned no build id" >&2; exit 1; }
+  controller_death_started="$scratch/controller-death.started"
+  controller_death_leaked="$scratch/controller-death.leaked"
+  controller_death_shell_pid_file="$scratch/controller-death-shell.pid"
+  controller_death_sleep_pid_file="$scratch/controller-death-sleep.pid"
+  controller_death_pipeline="pipeline { agent any stages { stage('ControllerDeath') { steps { sh 'echo \$\$ > $controller_death_shell_pid_file; sleep 30 & echo \$! > $controller_death_sleep_pid_file; echo started > $controller_death_started; wait \$!; echo leaked > $controller_death_leaked' } } } }"
+  controller_death_response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-controller-death' \
+    -H 'content-type: application/x-jenkinsfile' --data-binary "$controller_death_pipeline" "$builds_url")
+  controller_death_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$controller_death_response")
+  [[ -n "$controller_death_build_id" ]] \
+    || { echo "FG-224 REFUSED: controller-death proof admission returned no build id" >&2; exit 1; }
 
   for _ in $(seq 1 400); do
-    [[ -s "$pid1_started" && -s "$pid1_step_pid_file" ]] && break
-    kill -0 "$host_pid" 2>/dev/null \
-      || { echo "FG-224 REFUSED: PID1 death-proof controller exited before its nested step started" >&2; exit 1; }
+    [[ -s "$controller_death_started" && -s "$controller_death_shell_pid_file" && -s "$controller_death_sleep_pid_file" ]] && break
+    docker exec "$controller_container" /bin/kill -0 "$controller_namespace_pid" 2>/dev/null \
+      || { echo "FG-224 REFUSED: controller exited before its nested step and sleep child started" >&2; exit 1; }
     sleep 0.05
   done
-  [[ -s "$pid1_started" && -s "$pid1_step_pid_file" ]] \
-    || { echo "FG-224 REFUSED: PID1 death proof never reached its running nested step" >&2; exit 1; }
+  [[ -s "$controller_death_started" && -s "$controller_death_shell_pid_file" && -s "$controller_death_sleep_pid_file" ]] \
+    || { echo "FG-224 REFUSED: controller-death proof never reached its running shell and sleep child" >&2; exit 1; }
 
-  docker top "$controller_container" -eo pid,ppid,pgid,args >"$scratch/pid1-death-processes.txt"
-  pid1_run_host_pid=$(awk -v app="$run_host" 'index($0, app) { print $1; exit }' "$scratch/pid1-death-processes.txt")
-  pid1_step_namespace_pid=$(tr -d '[:space:]' <"$pid1_step_pid_file")
-  pid1_step_host_pid=""
-  while read -r pid1_candidate_pid _; do
-    [[ "$pid1_candidate_pid" =~ ^[0-9]+$ && -r "/proc/$pid1_candidate_pid/status" ]] || continue
-    pid1_candidate_namespace_pid=$(awk '/^NSpid:/ { print $NF }' "/proc/$pid1_candidate_pid/status")
-    if [[ "$pid1_candidate_namespace_pid" = "$pid1_step_namespace_pid" ]]; then
-      pid1_step_host_pid="$pid1_candidate_pid"
-      break
-    fi
-  done <"$scratch/pid1-death-processes.txt"
-  [[ "$pid1_run_host_pid" =~ ^[0-9]+$ ]] \
-    || { echo "FG-224 REFUSED: PID1 death proof could not identify Run.Host" >&2; exit 1; }
-  [[ "$pid1_step_host_pid" =~ ^[0-9]+$ ]] \
-    || { echo "FG-224 REFUSED: PID1 death proof could not identify its nested step" >&2; exit 1; }
+  docker top "$controller_container" -eo pid,ppid,pgid,args >"$scratch/controller-death-processes.txt"
+  container_init_host_pid=$(docker inspect --format '{{.State.Pid}}' "$controller_container")
+  controller_host_pid=$(host_pid_for_namespace "$scratch/controller-death-processes.txt" "$controller_namespace_pid") \
+    || controller_host_pid=""
+  controller_death_run_host_pid=$(awk -v app="$run_host" 'index($0, app) { print $1; exit }' "$scratch/controller-death-processes.txt")
+  controller_death_shell_namespace_pid=$(tr -d '[:space:]' <"$controller_death_shell_pid_file")
+  controller_death_sleep_namespace_pid=$(tr -d '[:space:]' <"$controller_death_sleep_pid_file")
+  controller_death_shell_host_pid=$(host_pid_for_namespace "$scratch/controller-death-processes.txt" "$controller_death_shell_namespace_pid") \
+    || controller_death_shell_host_pid=""
+  controller_death_sleep_host_pid=$(host_pid_for_namespace "$scratch/controller-death-processes.txt" "$controller_death_sleep_namespace_pid") \
+    || controller_death_sleep_host_pid=""
+  [[ "$container_init_host_pid" =~ ^[0-9]+$ && "$controller_host_pid" =~ ^[0-9]+$ && "$container_init_host_pid" != "$controller_host_pid" ]] \
+    || { echo "FG-224 REFUSED: controller-death proof did not separate container init from controller" >&2; exit 1; }
+  [[ "$controller_death_run_host_pid" =~ ^[0-9]+$ ]] \
+    || { echo "FG-224 REFUSED: controller-death proof could not identify Run.Host" >&2; exit 1; }
+  [[ "$controller_death_shell_host_pid" =~ ^[0-9]+$ && "$controller_death_sleep_host_pid" =~ ^[0-9]+$ ]] \
+    || { echo "FG-224 REFUSED: controller-death proof could not bind both step shell and sleep child" >&2; exit 1; }
 
-  docker kill --signal KILL "$controller_container" >"$scratch/docker-pid1-kill.stdout"
-  set +e
-  wait "$host_pid"
-  pid1_container_rc=$?
-  set -e
-  controller_container=""
-  host_pid=""
-  [[ $pid1_container_rc -ne 0 ]] \
-    || { echo "FG-224 REFUSED: non-cooperative PID1 death reported clean container success" >&2; exit 1; }
+  docker exec "$controller_container" /bin/kill -KILL "$controller_namespace_pid"
 
   for _ in $(seq 1 200); do
-    [[ ! -e "/proc/$pid1_run_host_pid" && ! -e "/proc/$pid1_step_host_pid" ]] && break
+    if [[ -s "$controller_stopped_file" \
+          && ! -e "/proc/$controller_host_pid" \
+          && ! -e "/proc/$controller_death_run_host_pid" \
+          && ! -e "/proc/$controller_death_shell_host_pid" \
+          && ! -e "/proc/$controller_death_sleep_host_pid" ]]; then
+      break
+    fi
     sleep 0.05
   done
-  [[ ! -e "/proc/$pid1_run_host_pid" ]] \
-    || { echo "FG-224 REFUSED: Run.Host survived non-cooperative controller PID1 death" >&2; exit 1; }
-  [[ ! -e "/proc/$pid1_step_host_pid" ]] \
-    || { echo "FG-224 REFUSED: recorded nested step survived non-cooperative controller PID1 death" >&2; exit 1; }
-  [[ ! -e "$pid1_leaked" ]] \
-    || { echo "FG-224 REFUSED: controller PID1 death allowed the post-sleep effect" >&2; exit 1; }
-  pid1_death_receipt="; digest-pinned controller PID1 death reaps Run.Host and its recorded nested step without a post-sleep effect"
+  [[ -s "$controller_stopped_file" && -e "/proc/$container_init_host_pid" ]] \
+    || { echo "FG-224 REFUSED: container init did not survive isolated controller death" >&2; exit 1; }
+  [[ ! -e "/proc/$controller_host_pid" && ! -e "/proc/$controller_death_run_host_pid" ]] \
+    || { echo "FG-224 REFUSED: controller or Run.Host survived isolated controller death" >&2; exit 1; }
+  [[ ! -e "/proc/$controller_death_shell_host_pid" && ! -e "/proc/$controller_death_sleep_host_pid" ]] \
+    || { echo "FG-224 REFUSED: step shell or its sleep child survived isolated controller death" >&2; exit 1; }
+  [[ ! -e "$controller_death_leaked" ]] \
+    || { echo "FG-224 REFUSED: isolated controller death allowed the post-sleep effect" >&2; exit 1; }
+  stop_controller
+  controller_death_receipt="; digest-pinned surviving-init controller death closes the real liveness pipe and reaps Run.Host, the step shell, and its sleep child without a post-sleep effect"
 fi
 
 set +e
@@ -948,4 +1012,4 @@ if grep -Fq 'fg224-proof-token-0123456789abcdef' "$host_log" || grep -Fq 'Passwo
   exit 1
 fi
 
-echo "FG-224/FG-042b PROOF PASS: controller-lifetime EOF supervision and nested-step reap${pid1_death_receipt}; safe timing refusal; exact execution-preflight admission and idempotency boundary; restart-discovered durable admission; authenticated byte-exact artifact retrieval; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; attempt-keyed retry journals with same-child deterministic resume; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; terminal event-file cleanup; graceful-shutdown reason event, outbox, and byte-exact recovery file; atomic terminal roll-up"
+echo "FG-224/FG-042b PROOF PASS: controller-lifetime EOF supervision reaps the nested shell and its sleep child${controller_death_receipt}; safe timing refusal; exact execution-preflight admission and idempotency boundary; restart-discovered durable admission; authenticated byte-exact artifact retrieval; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; attempt-keyed retry journals with same-child deterministic resume; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; terminal event-file cleanup; graceful-shutdown reason event, outbox, and byte-exact recovery file; atomic terminal roll-up"
