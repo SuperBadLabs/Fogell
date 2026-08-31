@@ -177,6 +177,28 @@ let private runWatchdogRevalidationChild registry pidFile readyFile termFile kil
     |> ignore
     0
 
+let private runZombieLeaderContainmentChild registry pidFile readyFile effectFile =
+    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
+
+    // pthread_exit leaves the process-group leader defunct while the Python
+    // worker thread can still execute. This is the real `/proc/<pid>/stat`
+    // shape whose field-20 expansion the generated POSIX watchdog must read.
+    let python =
+        "import ctypes,os,pathlib,sys,threading,time; "
+        + "threading.Thread(target=lambda: (time.sleep(2), pathlib.Path(sys.argv[3]).write_text('escaped'))).start(); "
+        + "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); "
+        + "pathlib.Path(sys.argv[2]).write_text('ready'); "
+        + "ctypes.CDLL(None).pthread_exit(None)"
+
+    let script =
+        $"exec /usr/bin/env python3 -c {shellQuote python} {shellQuote pidFile} {shellQuote readyFile} {shellQuote effectFile}"
+
+    ProcessGroup.run
+        { RunRequest.create (script, tempRoot ()) with
+            ReapGroup = false }
+    |> ignore
+    0
+
 let private runPreSetsidContainmentChild
     registry
     effectFile
@@ -1222,6 +1244,114 @@ let containment =
                   if group > 1 then
                       Native.signalGroup group Native.SIGKILL |> ignore
 
+                  Directory.Delete(root, true)
+          }
+
+          test "EOF watchdog authorizes a zombie leader that still has live threads" {
+              if not (OperatingSystem.IsLinux()) then
+                  Tests.skiptest "the multi-threaded zombie watchdog regression is Linux-only"
+
+              let root = tempRoot ()
+              let registry = Path.Combine(root, "registry")
+              let pidFile = Path.Combine(root, "leader.pid")
+              let readyFile = Path.Combine(root, "leader.ready")
+              let effectFile = Path.Combine(root, "escaped.effect")
+              Directory.CreateDirectory registry |> ignore
+
+              let start = ProcessStartInfo(Environment.ProcessPath)
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              start.ArgumentList.Add "--containment-zombie-leader-child"
+              start.ArgumentList.Add registry
+              start.ArgumentList.Add pidFile
+              start.ArgumentList.Add readyFile
+              start.ArgumentList.Add effectFile
+              start.UseShellExecute <- false
+              start.RedirectStandardOutput <- true
+              start.RedirectStandardError <- true
+              use host = Process.Start start
+              let mutable group = 0
+              let mutable anchor = 0
+
+              let readStat pid =
+                  try
+                      File.ReadAllText($"/proc/{pid}/stat")
+                      |> ProcessGroup.parseLinuxProcessStat
+                  with _ ->
+                      None
+
+              try
+                  let registrationClock = Stopwatch.StartNew()
+
+                  while ((not (File.Exists readyFile)
+                          || (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty))
+                         && registrationClock.ElapsedMilliseconds < 5_000L) do
+                      Threading.Thread.Sleep 10
+
+                  let leader =
+                      match waitForPidFile pidFile with
+                      | Some pid -> pid
+                      | None -> failtest "the threaded leader did not publish its pid"
+
+                  let record = Directory.EnumerateFiles(registry, "*.group") |> Seq.exactlyOne
+                  let fields = File.ReadAllText(record).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                  group <- Int32.Parse fields.[0]
+                  anchor <- Int32.Parse fields.[2]
+                  Expect.equal leader group "the Python thread-group leader owns the registered process group"
+
+                  let zombieClock = Stopwatch.StartNew()
+                  let mutable leaderStat = readStat leader
+
+                  while
+                      (leaderStat
+                       |> Option.exists (fun stat -> stat.State = 'Z' && stat.ThreadCount > 1)
+                       |> not)
+                      && zombieClock.ElapsedMilliseconds < 3_000L
+                      do
+                      Threading.Thread.Sleep 10
+                      leaderStat <- readStat leader
+
+                  match leaderStat with
+                  | Some stat ->
+                      Expect.equal stat.State 'Z' "the registered leader is genuinely defunct"
+                      Expect.isGreaterThan stat.ThreadCount 1 "a sibling thread can still execute effects"
+                  | None -> failtest "the threaded zombie leader vanished before owner death"
+
+                  Native.signalProcess anchor Native.SIGKILL |> ignore
+                  let anchorClock = Stopwatch.StartNew()
+                  let mutable anchorStat = readStat anchor
+
+                  while
+                      (anchorStat
+                       |> Option.exists (fun stat ->
+                           (stat.State = 'Z' || stat.State = 'X' || stat.State = 'x')
+                           && stat.ThreadCount <= 1)
+                       |> not)
+                      && anchorClock.ElapsedMilliseconds < 3_000L
+                      do
+                      Threading.Thread.Sleep 10
+                      anchorStat <- readStat anchor
+
+                  Expect.isTrue
+                      (anchorStat
+                       |> Option.exists (fun stat ->
+                           (stat.State = 'Z' || stat.State = 'X' || stat.State = 'x')
+                           && stat.ThreadCount <= 1))
+                      "the inert anchor cannot authorize cleanup; the threaded leader must do so"
+
+                  host.Kill()
+                  host.WaitForExit 3_000 |> ignore
+                  Expect.isTrue
+                      (waitForReap leader)
+                      "the watchdog read field 20 as ${18} and killed the executable sibling thread"
+                  Threading.Thread.Sleep 2_100
+                  Expect.isFalse (File.Exists effectFile) "the live sibling never reached its delayed effect"
+              finally
+                  if not host.HasExited then host.Kill(true)
+                  if group > 1 then Native.signalGroup group Native.SIGKILL |> ignore
+                  if anchor > 1 then Native.signalProcess anchor Native.SIGKILL |> ignore
                   Directory.Delete(root, true)
           }
 
@@ -4771,6 +4901,8 @@ let main argv =
           termFile;
           killReleaseFile |] ->
         runWatchdogRevalidationChild registry pidFile readyFile termFile killReleaseFile
+    | [| "--containment-zombie-leader-child"; registry; pidFile; readyFile; effectFile |] ->
+        runZombieLeaderContainmentChild registry pidFile readyFile effectFile
     | [| "--containment-pre-setsid-child";
           registry;
           effectFile;

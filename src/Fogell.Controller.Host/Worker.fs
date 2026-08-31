@@ -87,6 +87,13 @@ module internal WorkerControl =
         requireReconciliation reason
         diagnose ()
 
+    let reconcileMaterializationFailure requireReconciliation diagnose =
+        // Definition quarantine is the same durable-before-diagnostic boundary.
+        // Return the Store authority result to the diagnostic callback only
+        // after the classified cause has been attempted exactly once.
+        let quarantined = requireReconciliation "materialization_failed"
+        diagnose quarantined
+
     let waitForActivePoll (pollMilliseconds: int) (stoppingToken: CancellationToken) =
         task {
             try
@@ -372,23 +379,24 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                 Directory.CreateDirectory containmentPath |> ignore
                 materialized <- true
             with ex ->
-                logger.LogError(
-                    ex,
-                    "FG-224 definition materialization failed for {AttemptId}; reconciliation is required",
-                    claim.AttemptId.Value)
-
-                if
-                    not
-                        (store.RequireReconciliation(
+                WorkerControl.reconcileMaterializationFailure
+                    (fun reason ->
+                        store.RequireReconciliation(
                             claim.OrganizationId,
                             claim.AttemptId,
                             claim.Fence,
                             owner,
-                            "materialization_failed"))
-                then
-                    logger.LogWarning(
-                        "FG-224 materialization quarantine lost authority for {AttemptId}",
-                        claim.AttemptId.Value)
+                            reason))
+                    (fun quarantined ->
+                        logger.LogError(
+                            ex,
+                            "FG-224 definition materialization failed for {AttemptId}; reconciliation is required",
+                            claim.AttemptId.Value)
+
+                        if not quarantined then
+                            logger.LogWarning(
+                                "FG-224 materialization quarantine lost authority for {AttemptId}",
+                                claim.AttemptId.Value))
 
             if not materialized then
                 return ()

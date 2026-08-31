@@ -891,7 +891,10 @@ module ProcessGroup =
             + "fogell_check_stat=$(/bin/cat \"/proc/$fogell_check_pid/stat\" 2>/dev/null) || return 1; "
             + "fogell_check_tail=${fogell_check_stat##*) }; set -- $fogell_check_tail; "
             + "[ \"$#\" -gt 19 ] && [ \"$3\" = \"$fogell_inner\" ] || return 1; "
-            + "fogell_check_state=$1; fogell_check_threads=$18; shift 19; "
+            // POSIX shells parse `$18` as `${1}8`. Braces are required here:
+            // field 20 is the thread count, and a Z/X/x group leader with live
+            // sibling threads must remain signal-authorizing evidence.
+            + "fogell_check_state=$1; fogell_check_threads=${18}; shift 19; "
             + "[ \"$1\" = \"$fogell_check_start\" ] "
             + "&& { [ \"$fogell_check_state\" != Z ] && [ \"$fogell_check_state\" != X ] "
             + "&& [ \"$fogell_check_state\" != x ] || [ \"$fogell_check_threads\" -gt 1 ] 2>/dev/null; }; "

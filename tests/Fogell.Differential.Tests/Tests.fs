@@ -658,6 +658,33 @@ let controllerWorkerTiming =
                   "the exact operational cause is durable before diagnostics"
           }
 
+          test "a throwing materialization diagnostic preserves the classified quarantine" {
+              let order = ResizeArray<string>()
+              let mutable durableReason = None
+
+              Expect.throws
+                  (fun () ->
+                      WorkerControl.reconcileMaterializationFailure
+                          (fun reason ->
+                              order.Add "quarantine"
+                              durableReason <- Some reason
+                              true)
+                          (fun quarantined ->
+                              order.Add "diagnostic"
+                              Expect.isTrue quarantined "the diagnostic observes the Store result"
+                              raise (InvalidOperationException "logger failed")))
+                  "the hostile materialization logger remains observable"
+
+              Expect.equal
+                  durableReason
+                  (Some "materialization_failed")
+                  "the exact poison-definition cause is durable before diagnostics"
+              Expect.equal
+                  (List.ofSeq order)
+                  [ "quarantine"; "diagnostic" ]
+                  "definition quarantine is attempted exactly once before fallible logging"
+          }
+
           test "late cancellation delegates natural terminal arbitration to the Store" {
               let decide cancelled interrupted leaseLost =
                   WorkerControl.naturalExitFinalAction cancelled interrupted leaseLost
