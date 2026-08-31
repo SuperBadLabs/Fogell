@@ -1343,6 +1343,32 @@ let controllerProcessGroupExtinction =
                   ProcessGroupPopulation.Active
                   "a defunct thread-group leader cannot hide its executable sibling threads"
 
+              let mutable reapCalls = 0
+              let reap candidatePid parentPid state group threads =
+                  ProcessGroup.reapAdoptedGroupMember
+                      42
+                      candidatePid
+                      Environment.ProcessId
+                      (fun () -> Some(parentPid, state, group, threads))
+                      (fun () -> reapCalls <- reapCalls + 1)
+
+              Expect.isTrue
+                  (reap 43 Environment.ProcessId 'Z' 42 1)
+                  "an inert non-leader adopted by the controller is eligible for waitpid"
+              Expect.isFalse
+                  (reap 42 Environment.ProcessId 'Z' 42 1)
+                  "the Process-owned group leader is left to its dedicated reaper"
+              Expect.isFalse
+                  (reap 43 (Environment.ProcessId + 1) 'Z' 42 1)
+                  "a wrapper-shell-owned group member is not harvested before adoption"
+              Expect.isFalse
+                  (reap 43 Environment.ProcessId 'S' 42 1)
+                  "a live adopted group member is not passed to waitpid"
+              Expect.isFalse
+                  (reap 43 Environment.ProcessId 'Z' 7 1)
+                  "an adopted zombie that moved groups is not harvested"
+              Expect.equal reapCalls 1 "only the exact adopted inert non-leader reached waitpid"
+
               let zombieStop =
                   match ProcessGroup.classifyGroupMembers 42 [ observed 'Z' 42 ] with
                   | ProcessGroupPopulation.DefunctOnly -> ProcessGroupStopResult.StatusUncertain

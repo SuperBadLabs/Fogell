@@ -191,11 +191,12 @@ extinction: while their numeric group exists it remains joinable. A zombie
 leader with live sibling threads remains active; the generated POSIX watchdog
 reads the proc thread-count field with the required braced `${18}` expansion.
 Run.Host and Controller.Host establish Linux child-subreaper ownership, reap
-only adopted members of the registered group, and serialize group/state
-revalidation with each PID-specific waitpid. Anchor reaping also matches its
-recorded start ticks, so another step's reused PID cannot be harvested. The
-durable record is disarmed/deleted only after the kernel reports ESRCH for that
-group.
+only adopted non-leader members of the registered group, and serialize parent,
+group, and inert-state revalidation with each PID-specific waitpid. Registered
+leaders remain owned by their dedicated shell/Process reapers. Anchor reaping
+also matches its recorded start ticks, so another step's reused or still-shell-
+owned PID cannot be harvested. The durable record is disarmed/deleted only after
+the kernel reports ESRCH for that group.
 A zombie leader with more than one thread remains active, and unreadable or
 malformed `/proc` state remains uncertain. If `getpgid` first identifies a
 candidate but its following stat read reports a different group, cleanup also

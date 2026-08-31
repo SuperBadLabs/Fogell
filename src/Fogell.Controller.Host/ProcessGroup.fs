@@ -291,6 +291,27 @@ module internal ProcessGroup =
                 | _ -> ProcessMemberObservation.Uncertain)
         |> classifyGroupMembers processGroupId
 
+    let private adoptedChildReapLock = obj ()
+
+    let internal reapAdoptedGroupMember
+        processGroupId
+        candidatePid
+        requiredParentPid
+        observe
+        reap
+        =
+        lock adoptedChildReapLock (fun () ->
+            match observe () with
+            | Some(parentPid, state, observedGroup, threads)
+                when candidatePid <> processGroupId
+                     && parentPid = requiredParentPid
+                     && observedGroup = processGroupId
+                     && (state = 'Z' || state = 'X' || state = 'x')
+                     && threads <= 1 ->
+                reap ()
+                true
+            | _ -> false)
+
     let private reapAdoptedGroupChildren processGroupId =
         try
             IO.Directory.GetDirectories "/proc"
@@ -299,10 +320,31 @@ module internal ProcessGroup =
                 | true, pid ->
                     match queryProcessGroup pid with
                     | ProcessGroupQuery.Found group when group = processGroupId ->
-                        let result = waitpid(pid, nativeint 0, noHang)
+                        reapAdoptedGroupMember
+                            processGroupId
+                            pid
+                            Environment.ProcessId
+                            (fun () ->
+                                try
+                                    match readProcessStat pid with
+                                    | Some fields when fields[0].Length = 1 ->
+                                        match
+                                            Int32.TryParse fields[1],
+                                            Int32.TryParse fields[2],
+                                            Int32.TryParse fields[17]
+                                        with
+                                        | (true, parentPid), (true, observedGroup), (true, threads) ->
+                                            Some(parentPid, fields[0].[0], observedGroup, threads)
+                                        | _ -> None
+                                    | _ -> None
+                                with _ ->
+                                    None)
+                            (fun () ->
+                                let result = waitpid(pid, nativeint 0, noHang)
 
-                        if result < 0 && Marshal.GetLastWin32Error() <> noChild then
-                            ()
+                                if result < 0 && Marshal.GetLastWin32Error() <> noChild then
+                                    ())
+                        |> ignore
                     | _ -> ()
                 | _ -> ())
         with _ -> ()

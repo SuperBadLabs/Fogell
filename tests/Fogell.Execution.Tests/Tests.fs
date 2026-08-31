@@ -735,6 +735,7 @@ let containment =
 
               let fields = Array.create 20 "0"
               fields[0] <- "S"
+              fields[1] <- "7"
               fields[2] <- "42"
               fields[17] <- "1"
               fields[19] <- "9001"
@@ -744,6 +745,7 @@ let containment =
                   |> Option.defaultWith (fun () -> failtest "valid proc stat did not parse")
 
               Expect.equal parsed.State 'S' "state is parsed after the final comm parenthesis"
+              Expect.equal parsed.ParentProcessId 7 "ppid uses proc stat field 4"
               Expect.equal parsed.ProcessGroupId 42 "pgrp uses proc stat field 5"
               Expect.equal parsed.ThreadCount 1 "thread count uses proc stat field 20"
               Expect.equal parsed.StartTime "9001" "start ticks use proc stat field 22"
@@ -751,6 +753,7 @@ let containment =
               let stat state group threads start =
                   ProcessGroup.LinuxProcessObservation.Present
                       { State = state
+                        ParentProcessId = Environment.ProcessId
                         ProcessGroupId = group
                         ThreadCount = threads
                         StartTime = start }
@@ -845,7 +848,9 @@ let containment =
               let reap observation expectedStart =
                   ProcessGroup.reapObservedRegisteredMember
                       42
+                      43
                       expectedStart
+                      Environment.ProcessId
                       (fun () -> observation)
                       (fun () -> reapCalls <- reapCalls + 1)
 
@@ -862,7 +867,26 @@ let containment =
               Expect.isFalse
                   (reap (stat 'S' 42 1 "anchor") (Some "anchor"))
                   "a live group member is never passed to nonblocking waitpid"
-              Expect.equal reapCalls 1 "every identity, membership, and state mismatch withholds waitpid"
+              let shellOwned =
+                  ProcessGroup.LinuxProcessObservation.Present
+                      { State = 'Z'
+                        ParentProcessId = Environment.ProcessId + 1
+                        ProcessGroupId = 42
+                        ThreadCount = 1
+                        StartTime = "anchor" }
+              Expect.isFalse
+                  (reap shellOwned (Some "anchor"))
+                  "a wrapper-shell-owned zombie is not harvested before adoption"
+              Expect.isFalse
+                  (ProcessGroup.reapObservedRegisteredMember
+                      42
+                      42
+                      None
+                      Environment.ProcessId
+                      (fun () -> stat 'Z' 42 1 "leader")
+                      (fun () -> reapCalls <- reapCalls + 1))
+                  "the shell-owned registered leader is never harvested by the adopted-child scanner"
+              Expect.equal reapCalls 1 "every identity, ownership, membership, and state mismatch withholds waitpid"
               Expect.equal
                   (ProcessGroup.classifyLiveGroupMembers
                       42

@@ -273,6 +273,7 @@ module ProcessGroup =
 
     type internal LinuxProcessStat =
         { State: char
+          ParentProcessId: int
           ProcessGroupId: int
           ThreadCount: int
           StartTime: string }
@@ -300,10 +301,11 @@ module ProcessGroup =
 
             match fields with
             | fields when fields.Length > 19 && fields[0].Length = 1 ->
-                match Int32.TryParse fields[2], Int32.TryParse fields[17] with
-                | (true, processGroupId), (true, threadCount) ->
+                match Int32.TryParse fields[1], Int32.TryParse fields[2], Int32.TryParse fields[17] with
+                | (true, parentProcessId), (true, processGroupId), (true, threadCount) ->
                     Some
                         { State = fields[0].[0]
+                          ParentProcessId = parentProcessId
                           ProcessGroupId = processGroupId
                           ThreadCount = threadCount
                           StartTime = fields[19] }
@@ -355,14 +357,18 @@ module ProcessGroup =
 
     let internal reapObservedRegisteredMember
         pgid
+        candidatePid
         expectedStartTime
+        requiredParentPid
         observe
         reap
         =
         lock registeredChildReapLock (fun () ->
             match observe () with
             | LinuxProcessObservation.Present stat
-                when stat.ProcessGroupId = pgid
+                when candidatePid <> pgid
+                     && stat.ProcessGroupId = pgid
+                     && stat.ParentProcessId = requiredParentPid
                      && (expectedStartTime
                          |> Option.forall (fun expected -> stat.StartTime = expected))
                      && (stat.State = 'Z' || stat.State = 'X' || stat.State = 'x')
@@ -604,7 +610,9 @@ module ProcessGroup =
                             // step cannot have its exit status stolen.
                             reapObservedRegisteredMember
                                 identity.GroupId
+                                pid
                                 None
+                                Environment.ProcessId
                                 (fun () -> observeLinuxProcess pid)
                                 (fun () -> Native.tryReapChild pid |> ignore)
                             |> ignore
@@ -644,7 +652,9 @@ module ProcessGroup =
         // introducing another long-lived helper or inherited descriptor.
         reapObservedRegisteredMember
             identity.GroupId
+            identity.AnchorPid
             (Some identity.AnchorStartTime)
+            Environment.ProcessId
             (fun () -> observeLinuxProcess identity.AnchorPid)
             (fun () -> Native.tryReapChild identity.AnchorPid |> ignore)
         |> ignore
