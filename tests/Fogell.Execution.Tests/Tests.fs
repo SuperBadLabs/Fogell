@@ -840,6 +840,29 @@ let containment =
                       [ 1, stat 'Z' 42 1 "1"; 2, stat 'S' 42 1 "replacement" ])
                   1
                   "a reused anchor PID in the target group remains a live survivor"
+
+              let mutable reapCalls = 0
+              let reap observation expectedStart =
+                  ProcessGroup.reapObservedRegisteredMember
+                      42
+                      expectedStart
+                      (fun () -> observation)
+                      (fun () -> reapCalls <- reapCalls + 1)
+
+              Expect.isTrue
+                  (reap (stat 'Z' 42 1 "anchor") (Some "anchor"))
+                  "the exact inert registered anchor is eligible for PID-specific waitpid"
+              Expect.equal reapCalls 1 "the exact anchor is reaped once"
+              Expect.isFalse
+                  (reap (stat 'Z' 42 1 "replacement") (Some "anchor"))
+                  "a reused anchor PID is not harvested"
+              Expect.isFalse
+                  (reap (stat 'Z' 7 1 "anchor") (Some "anchor"))
+                  "a process that moved to another group is not harvested"
+              Expect.isFalse
+                  (reap (stat 'S' 42 1 "anchor") (Some "anchor"))
+                  "a live group member is never passed to nonblocking waitpid"
+              Expect.equal reapCalls 1 "every identity, membership, and state mismatch withholds waitpid"
               Expect.equal
                   (ProcessGroup.classifyLiveGroupMembers
                       42

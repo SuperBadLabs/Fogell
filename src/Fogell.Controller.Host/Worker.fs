@@ -94,6 +94,11 @@ module internal WorkerControl =
         let quarantined = requireReconciliation "materialization_failed"
         diagnose quarantined
 
+    let finalDrainReconciliationReason = function
+        | StreamChangedAfterExtinction -> Some "event_stream_changed"
+        | IncompleteFrameAtEndOfStream -> Some "incomplete_event_frame"
+        | _ -> None
+
     let waitForActivePoll (pollMilliseconds: int) (stoppingToken: CancellationToken) =
         task {
             try
@@ -719,6 +724,8 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
 
                         do! completeDiagnosticDrains child drainCancellation drains
 
+                        let mutable finalDrainDiagnostic : (unit -> unit) option = None
+
                         if
                             ProcessGroup.handoff exitKind groupStop = ChildHandoff.NaturalTerminalAllowed
                             && not leaseLost
@@ -752,15 +759,23 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                 reconciliationReason <- "lease_lost"
                             | ControlStopped -> ()
                             | StreamChangedAfterExtinction ->
-                                reconciliationReason <- "event_stream_changed"
-                                logger.LogError(
-                                    "FG-224 event stream changed after producer extinction for {AttemptId}; reconciliation is required",
-                                    claim.AttemptId.Value)
+                                reconciliationReason <-
+                                    WorkerControl.finalDrainReconciliationReason completion.Stop
+                                    |> Option.get
+                                finalDrainDiagnostic <-
+                                    Some(fun () ->
+                                        logger.LogError(
+                                            "FG-224 event stream changed after producer extinction for {AttemptId}; reconciliation is required",
+                                            claim.AttemptId.Value))
                             | IncompleteFrameAtEndOfStream ->
-                                reconciliationReason <- "incomplete_event_frame"
-                                logger.LogError(
-                                    "FG-224 event stream ended with an incomplete frame for {AttemptId}; reconciliation is required",
-                                    claim.AttemptId.Value)
+                                reconciliationReason <-
+                                    WorkerControl.finalDrainReconciliationReason completion.Stop
+                                    |> Option.get
+                                finalDrainDiagnostic <-
+                                    Some(fun () ->
+                                        logger.LogError(
+                                            "FG-224 event stream ended with an incomplete frame for {AttemptId}; reconciliation is required",
+                                            claim.AttemptId.Value))
 
                         let finalExitKind =
                             WorkerControl.finalExitKind
@@ -789,6 +804,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                 reason
                                 requireReconciliation
                                 (fun () ->
+                                    finalDrainDiagnostic |> Option.iter (fun diagnose -> diagnose ())
                                     logger.LogError(
                                         "FG-224 execution for {AttemptId} requires reconciliation after {ExitKind} exit and outer cleanup {StopResult}",
                                         claim.AttemptId.Value,

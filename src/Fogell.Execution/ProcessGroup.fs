@@ -347,6 +347,30 @@ module ProcessGroup =
 
         if uncertain then -1 else live
 
+    // All adopted-child waitpid calls share this lock. A PID cannot be reused
+    // until its zombie has been reaped; serializing our only reapers therefore
+    // keeps the identity/group observation adjacent to the PID-specific wait.
+    // Never use waitpid(-1): another concurrent step owns its direct children.
+    let private registeredChildReapLock = obj ()
+
+    let internal reapObservedRegisteredMember
+        pgid
+        expectedStartTime
+        observe
+        reap
+        =
+        lock registeredChildReapLock (fun () ->
+            match observe () with
+            | LinuxProcessObservation.Present stat
+                when stat.ProcessGroupId = pgid
+                     && (expectedStartTime
+                         |> Option.forall (fun expected -> stat.StartTime = expected))
+                     && (stat.State = 'Z' || stat.State = 'X' || stat.State = 'x')
+                     && stat.ThreadCount <= 1 ->
+                reap ()
+                true
+            | _ -> false)
+
     let internal observeLiveGroupCandidate pgid pid queryGroup observe =
         match queryGroup pid with
         | Native.ProcessGroupQuery.Found group when group = pgid ->
@@ -574,9 +598,16 @@ module ProcessGroup =
                         match Native.queryProcessGroup pid with
                         | Native.ProcessGroupQuery.Found group when group = identity.GroupId ->
                             // PR_SET_CHILD_SUBREAPER makes orphaned group
-                            // members our children. waitpid is specific, so a
-                            // concurrent step's direct child cannot be stolen.
-                            Native.tryReapChild pid |> ignore
+                            // members our children. Revalidate membership under
+                            // the shared reaper lock before PID-specific waitpid,
+                            // so an already-reaped/reused PID from a concurrent
+                            // step cannot have its exit status stolen.
+                            reapObservedRegisteredMember
+                                identity.GroupId
+                                None
+                                (fun () -> observeLinuxProcess pid)
+                                (fun () -> Native.tryReapChild pid |> ignore)
+                            |> ignore
                         | _ -> ()
                     | _ -> ())
             with _ -> ()
@@ -611,7 +642,12 @@ module ProcessGroup =
         // The anchor is SIGSTOPped before registration. TERM remains pending
         // while stopped, so CONT lets it take the default TERM action without
         // introducing another long-lived helper or inherited descriptor.
-        Native.tryReapChild identity.AnchorPid |> ignore
+        reapObservedRegisteredMember
+            identity.GroupId
+            (Some identity.AnchorStartTime)
+            (fun () -> observeLinuxProcess identity.AnchorPid)
+            (fun () -> Native.tryReapChild identity.AnchorPid |> ignore)
+        |> ignore
 
         if Native.probeProcessGroup identity.GroupId = Native.ProcessGroupPresence.Absent then
             true

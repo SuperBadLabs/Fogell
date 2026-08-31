@@ -484,6 +484,26 @@ let controllerEventDrainBudgets =
 
               Expect.equal completion.Stop IncompleteFrameAtEndOfStream "unterminated evidence is named"
               Expect.isFalse (EventStream.terminalPublicationAllowed completion) "truncated evidence cannot authorize terminal truth"
+
+              for stop, expectedReason in
+                  [ StreamChangedAfterExtinction, "event_stream_changed"
+                    IncompleteFrameAtEndOfStream, "incomplete_event_frame" ] do
+                  let mutable durableReason = None
+                  let reason =
+                      WorkerControl.finalDrainReconciliationReason stop
+                      |> Option.defaultWith (fun () -> failtest "the unsafe final drain had no classified cause")
+
+                  Expect.throws
+                      (fun () ->
+                          WorkerControl.reconcileBeforeDiagnostic
+                              reason
+                              (fun persisted -> durableReason <- Some persisted)
+                              (fun () -> raise (InvalidOperationException "logger failed")))
+                      $"{expectedReason}: a hostile drain diagnostic remains observable"
+                  Expect.equal
+                      durableReason
+                      (Some expectedReason)
+                      $"{expectedReason}: the exact final-drain cause is durable before logging"
           } ]
 
 let controllerWorkerScheduling =
