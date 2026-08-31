@@ -163,6 +163,42 @@ let private runHostilePathContainmentChild registry pidFile readyFile hostilePat
     |> ignore
     0
 
+let private runWatchdogRevalidationChild registry pidFile readyFile termFile killReleaseFile =
+    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
+    Environment.SetEnvironmentVariable("FOGELL_TEST_WATCHDOG_TERM_FILE", termFile)
+    Environment.SetEnvironmentVariable("FOGELL_TEST_WATCHDOG_KILL_RELEASE_FILE", killReleaseFile)
+
+    let script =
+        $"/bin/sh -c 'trap \"\" TERM; exec /bin/sleep 600' & fogell_effect=$!; printf '%%s' \"$fogell_effect\" > '{pidFile}'; printf ready > '{readyFile}'; exit 0"
+
+    ProcessGroup.run
+        { RunRequest.create (script, tempRoot ()) with
+            ReapGroup = false }
+    |> ignore
+    0
+
+let private runZombieLeaderContainmentChild registry pidFile readyFile effectFile =
+    Environment.SetEnvironmentVariable("FOGELL_PROCESS_GROUP_REGISTRY", registry)
+
+    // pthread_exit leaves the process-group leader defunct while the Python
+    // worker thread can still execute. This is the real `/proc/<pid>/stat`
+    // shape whose field-20 expansion the generated POSIX watchdog must read.
+    let python =
+        "import ctypes,os,pathlib,sys,threading,time; "
+        + "threading.Thread(target=lambda: (time.sleep(2), pathlib.Path(sys.argv[3]).write_text('escaped'))).start(); "
+        + "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); "
+        + "pathlib.Path(sys.argv[2]).write_text('ready'); "
+        + "ctypes.CDLL(None).pthread_exit(None)"
+
+    let script =
+        $"exec /usr/bin/env python3 -c {shellQuote python} {shellQuote pidFile} {shellQuote readyFile} {shellQuote effectFile}"
+
+    ProcessGroup.run
+        { RunRequest.create (script, tempRoot ()) with
+            ReapGroup = false }
+    |> ignore
+    0
+
 let private runPreSetsidContainmentChild
     registry
     effectFile
@@ -229,8 +265,13 @@ let private waitForReap (pid: int) =
     let clock = Diagnostics.Stopwatch.StartNew()
 
     while pidAlive pid && clock.ElapsedMilliseconds < 3_000L do
+        // Containment enables PR_SET_CHILD_SUBREAPER for production anchor
+        // ownership. The test process therefore adopts orphaned fixtures too;
+        // harvest only the exact PID this assertion already owns.
+        Native.tryReapChild pid |> ignore
         Threading.Thread.Sleep 25
 
+    Native.tryReapChild pid |> ignore
     not (pidAlive pid)
 
 let private waitForFile path budgetMs =
@@ -678,6 +719,254 @@ let containment =
               Expect.equal pauses 2 "the timeout has no hidden extra sleep"
           }
 
+          test "registered cleanup binds every signal and ignores only defunct group members" {
+              Expect.equal
+                  (Native.classifyProcessGroupQuery 42 0)
+                  (Native.ProcessGroupQuery.Found 42)
+                  "getpgid success yields the candidate group"
+              Expect.equal
+                  (Native.classifyProcessGroupQuery -1 Native.ESRCH)
+                  Native.ProcessGroupQuery.Absent
+                  "a vanished candidate is not an uncertain host-wide blocker"
+              Expect.equal
+                  (Native.classifyProcessGroupQuery -1 1)
+                  Native.ProcessGroupQuery.Uncertain
+                  "permission or kernel uncertainty remains fail-closed"
+
+              let fields = Array.create 20 "0"
+              fields[0] <- "S"
+              fields[1] <- "7"
+              fields[2] <- "42"
+              fields[17] <- "1"
+              fields[19] <- "9001"
+              let parsed =
+                  ProcessGroup.parseLinuxProcessStat(
+                      "123 (a command ) with parens) " + String.concat " " fields)
+                  |> Option.defaultWith (fun () -> failtest "valid proc stat did not parse")
+
+              Expect.equal parsed.State 'S' "state is parsed after the final comm parenthesis"
+              Expect.equal parsed.ParentProcessId 7 "ppid uses proc stat field 4"
+              Expect.equal parsed.ProcessGroupId 42 "pgrp uses proc stat field 5"
+              Expect.equal parsed.ThreadCount 1 "thread count uses proc stat field 20"
+              Expect.equal parsed.StartTime "9001" "start ticks use proc stat field 22"
+
+              let stat state group threads start =
+                  ProcessGroup.LinuxProcessObservation.Present
+                      { State = state
+                        ParentProcessId = Environment.ProcessId
+                        ProcessGroupId = group
+                        ThreadCount = threads
+                        StartTime = start }
+
+              let mutable candidateReads = []
+              let observe pid =
+                  candidateReads <- pid :: candidateReads
+                  stat 'S' 7 1 "replacement"
+
+              Expect.equal
+                  (ProcessGroup.observeLiveGroupCandidate
+                      42
+                      123
+                      (fun _ -> Native.ProcessGroupQuery.Found 42)
+                      observe)
+                  (Some(123, ProcessGroup.LinuxProcessObservation.Uncertain))
+                  "a PID whose group changes between getpgid and stat is fail-closed"
+              Expect.equal candidateReads [ 123 ] "the matched candidate was read exactly once"
+
+              candidateReads <- []
+              let mutable movingQueries =
+                  [ Native.ProcessGroupQuery.Found 7
+                    Native.ProcessGroupQuery.Found 42 ]
+              let movingQuery _ =
+                  match movingQueries with
+                  | next :: rest ->
+                      movingQueries <- rest
+                      next
+                  | [] -> failtest "foreign candidate was queried more than twice"
+
+              Expect.equal
+                  (ProcessGroup.scanLiveGroupCandidates
+                      42
+                      [ 124 ]
+                      movingQuery
+                      (fun pid ->
+                          candidateReads <- pid :: candidateReads
+                          stat 'S' 42 1 "joined"))
+                  [ 124, stat 'S' 42 1 "joined" ]
+                  "a process joining the group during the scan is retained"
+              Expect.equal candidateReads [ 124 ] "the newly joined candidate was read exactly once"
+
+              candidateReads <- []
+              let mutable stableForeignQueries = 0
+              let stableForeign _ =
+                  stableForeignQueries <- stableForeignQueries + 1
+                  Native.ProcessGroupQuery.Found 7
+
+              Expect.isEmpty
+                  (ProcessGroup.scanLiveGroupCandidates 42 [ 125 ] stableForeign observe)
+                  "a process outside the group at both observations is ignored"
+              Expect.equal stableForeignQueries 2 "stable foreign candidates are checked at the boundary"
+              Expect.isEmpty candidateReads "stable foreign candidates still avoid proc stat reads"
+
+              Expect.equal
+                  (ProcessGroup.classifyLiveGroupMembers
+                      42
+                      None
+                      [ 1, stat 'Z' 42 1 "1"; 2, stat 'X' 42 1 "2" ])
+                  0
+                  "zombie and dead remnants are logically extinct"
+              Expect.equal
+                  (ProcessGroup.classifyLiveGroupMembers
+                      42
+                      None
+                      [ 1, stat 'Z' 42 1 "1"; 2, stat 'D' 42 1 "2" ])
+                  1
+                  "an uninterruptible live member remains a survivor"
+              Expect.equal
+                  (ProcessGroup.classifyLiveGroupMembers
+                      42
+                      None
+                      [ 1, stat 'Z' 42 2 "1" ])
+                  1
+                  "a defunct leader with sibling threads remains live"
+              Expect.equal
+                  (ProcessGroup.classifyLiveGroupMembers
+                      42
+                      (Some(2, "2"))
+                      [ 1, stat 'Z' 42 1 "1"; 2, stat 'S' 42 1 "2" ])
+                  0
+                  "the explicit anchor exclusion removes only its recorded birth identity"
+              Expect.equal
+                  (ProcessGroup.classifyLiveGroupMembers
+                      42
+                      (Some(2, "2"))
+                      [ 1, stat 'Z' 42 1 "1"; 2, stat 'S' 42 1 "replacement" ])
+                  1
+                  "a reused anchor PID in the target group remains a live survivor"
+
+              let mutable reapCalls = 0
+              let reap observation expectedStart =
+                  ProcessGroup.reapObservedRegisteredMember
+                      42
+                      43
+                      expectedStart
+                      Environment.ProcessId
+                      (fun () -> observation)
+                      (fun () -> reapCalls <- reapCalls + 1)
+
+              Expect.isTrue
+                  (reap (stat 'Z' 42 1 "anchor") (Some "anchor"))
+                  "the exact inert registered anchor is eligible for PID-specific waitpid"
+              Expect.equal reapCalls 1 "the exact anchor is reaped once"
+              Expect.isFalse
+                  (reap (stat 'Z' 42 1 "replacement") (Some "anchor"))
+                  "a reused anchor PID is not harvested"
+              Expect.isFalse
+                  (reap (stat 'Z' 7 1 "anchor") (Some "anchor"))
+                  "a process that moved to another group is not harvested"
+              Expect.isFalse
+                  (reap (stat 'S' 42 1 "anchor") (Some "anchor"))
+                  "a live group member is never passed to nonblocking waitpid"
+              let shellOwned =
+                  ProcessGroup.LinuxProcessObservation.Present
+                      { State = 'Z'
+                        ParentProcessId = Environment.ProcessId + 1
+                        ProcessGroupId = 42
+                        ThreadCount = 1
+                        StartTime = "anchor" }
+              Expect.isFalse
+                  (reap shellOwned (Some "anchor"))
+                  "a wrapper-shell-owned zombie is not harvested before adoption"
+              Expect.isTrue
+                  (ProcessGroup.reapObservedRegisteredMember
+                      42
+                      42
+                      None
+                      Environment.ProcessId
+                      (fun () -> stat 'Z' 42 1 "leader")
+                      (fun () -> reapCalls <- reapCalls + 1))
+                  "an adopted registered leader is harvested once its wrapper owner is gone"
+              Expect.equal reapCalls 2 "adopted inert members reap; every identity, ownership, membership, and state mismatch withholds waitpid"
+              Expect.equal
+                  (ProcessGroup.classifyLiveGroupMembers
+                      42
+                      None
+                      [ 1, ProcessGroup.LinuxProcessObservation.Uncertain ])
+                  -1
+                  "an unreadable proc entry cannot become a clean zero"
+
+              let identity: ProcessGroup.RegisteredGroupIdentity =
+                  { GroupId = 42
+                    LeaderStartTime = "leader"
+                    AnchorPid = 84
+                    AnchorStartTime = "anchor" }
+              let absent () = ProcessGroup.LinuxProcessObservation.Absent
+              let mutable anchor = stat 'T' 42 1 "anchor"
+              let mutable groupSignals = []
+
+              let sendGroup signal =
+                  groupSignals <- groupSignals @ [ signal ]
+                  anchor <- stat 'T' 42 1 "replacement"
+                  true
+
+              Expect.isTrue
+                  (ProcessGroup.signalRegisteredGroup identity absent (fun () -> anchor) sendGroup Native.SIGTERM)
+                  "a fresh matching anchor authorizes TERM"
+              Expect.isFalse
+                  (ProcessGroup.signalRegisteredGroup identity absent (fun () -> anchor) sendGroup Native.SIGKILL)
+                  "start-tick drift before KILL revokes authority"
+              Expect.equal groupSignals [ Native.SIGTERM ] "the replacement group never receives KILL"
+
+              let mutable waitedAfterKill = false
+
+              Expect.isFalse
+                  (ProcessGroup.attemptEscalation
+                      false
+                      (fun () -> false)
+                      (fun () -> waitedAfterKill <- true))
+                  "withheld KILL is not reported as an escalation"
+              Expect.isFalse waitedAfterKill "withheld KILL has no post-signal wait"
+
+              Expect.isTrue
+                  (ProcessGroup.attemptEscalation
+                      false
+                      (fun () -> true)
+                      (fun () -> waitedAfterKill <- true))
+                  "delivered KILL is reported as an escalation"
+              Expect.isTrue waitedAfterKill "delivered KILL runs the post-signal wait"
+
+              Expect.isTrue
+                  (ProcessGroup.deliverOrObserveExtinction (fun () -> false) (fun () -> true))
+                  "an ESRCH-shaped delivery race is clean only after fresh extinction proof"
+              Expect.isFalse
+                  (ProcessGroup.deliverOrObserveExtinction (fun () -> false) (fun () -> false))
+                  "failed delivery with live or uncertain survivors remains fail-closed"
+
+              Expect.equal
+                  ProcessGroup.preCaptureFallbackScript
+                  "wait \"$fogell_inner\" 2>/dev/null || true; exit 125; "
+                  "missing birth identity refuses without any numeric signal"
+              Expect.isFalse
+                  (ProcessGroup.preCaptureFallbackScript.Contains "/bin/kill")
+                  "a capture failure cannot signal a reused PID or group"
+
+              let mutable anchorSignals = []
+              let mutable directAnchor = stat 'T' 42 1 "anchor"
+
+              let sendAnchor signal =
+                  anchorSignals <- anchorSignals @ [ signal ]
+                  directAnchor <- stat 'T' 42 1 "replacement"
+                  true
+
+              Expect.isTrue
+                  (ProcessGroup.signalRegisteredAnchor identity (fun () -> directAnchor) sendAnchor Native.SIGTERM)
+                  "the exact anchor receives pending TERM"
+              Expect.isFalse
+                  (ProcessGroup.signalRegisteredAnchor identity (fun () -> directAnchor) sendAnchor Native.SIGCONT)
+                  "the same numeric PID with changed birth ticks cannot receive CONT"
+              Expect.equal anchorSignals [ Native.SIGTERM ] "anchor identity is checked separately for every signal"
+          }
+
           test "leader identity drift refuses release immediately" {
               let states =
                   Collections.Generic.Queue(
@@ -1005,6 +1294,114 @@ let containment =
                   Directory.Delete(root, true)
           }
 
+          test "EOF watchdog authorizes a zombie leader that still has live threads" {
+              if not (OperatingSystem.IsLinux()) then
+                  Tests.skiptest "the multi-threaded zombie watchdog regression is Linux-only"
+
+              let root = tempRoot ()
+              let registry = Path.Combine(root, "registry")
+              let pidFile = Path.Combine(root, "leader.pid")
+              let readyFile = Path.Combine(root, "leader.ready")
+              let effectFile = Path.Combine(root, "escaped.effect")
+              Directory.CreateDirectory registry |> ignore
+
+              let start = ProcessStartInfo(Environment.ProcessPath)
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              start.ArgumentList.Add "--containment-zombie-leader-child"
+              start.ArgumentList.Add registry
+              start.ArgumentList.Add pidFile
+              start.ArgumentList.Add readyFile
+              start.ArgumentList.Add effectFile
+              start.UseShellExecute <- false
+              start.RedirectStandardOutput <- true
+              start.RedirectStandardError <- true
+              use host = Process.Start start
+              let mutable group = 0
+              let mutable anchor = 0
+
+              let readStat pid =
+                  try
+                      File.ReadAllText($"/proc/{pid}/stat")
+                      |> ProcessGroup.parseLinuxProcessStat
+                  with _ ->
+                      None
+
+              try
+                  let registrationClock = Stopwatch.StartNew()
+
+                  while ((not (File.Exists readyFile)
+                          || (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty))
+                         && registrationClock.ElapsedMilliseconds < 5_000L) do
+                      Threading.Thread.Sleep 10
+
+                  let leader =
+                      match waitForPidFile pidFile with
+                      | Some pid -> pid
+                      | None -> failtest "the threaded leader did not publish its pid"
+
+                  let record = Directory.EnumerateFiles(registry, "*.group") |> Seq.exactlyOne
+                  let fields = File.ReadAllText(record).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                  group <- Int32.Parse fields.[0]
+                  anchor <- Int32.Parse fields.[2]
+                  Expect.equal leader group "the Python thread-group leader owns the registered process group"
+
+                  let zombieClock = Stopwatch.StartNew()
+                  let mutable leaderStat = readStat leader
+
+                  while
+                      (leaderStat
+                       |> Option.exists (fun stat -> stat.State = 'Z' && stat.ThreadCount > 1)
+                       |> not)
+                      && zombieClock.ElapsedMilliseconds < 3_000L
+                      do
+                      Threading.Thread.Sleep 10
+                      leaderStat <- readStat leader
+
+                  match leaderStat with
+                  | Some stat ->
+                      Expect.equal stat.State 'Z' "the registered leader is genuinely defunct"
+                      Expect.isGreaterThan stat.ThreadCount 1 "a sibling thread can still execute effects"
+                  | None -> failtest "the threaded zombie leader vanished before owner death"
+
+                  Native.signalProcess anchor Native.SIGKILL |> ignore
+                  let anchorClock = Stopwatch.StartNew()
+                  let mutable anchorStat = readStat anchor
+
+                  while
+                      (anchorStat
+                       |> Option.exists (fun stat ->
+                           (stat.State = 'Z' || stat.State = 'X' || stat.State = 'x')
+                           && stat.ThreadCount <= 1)
+                       |> not)
+                      && anchorClock.ElapsedMilliseconds < 3_000L
+                      do
+                      Threading.Thread.Sleep 10
+                      anchorStat <- readStat anchor
+
+                  Expect.isTrue
+                      (anchorStat
+                       |> Option.exists (fun stat ->
+                           (stat.State = 'Z' || stat.State = 'X' || stat.State = 'x')
+                           && stat.ThreadCount <= 1))
+                      "the inert anchor cannot authorize cleanup; the threaded leader must do so"
+
+                  host.Kill()
+                  host.WaitForExit 3_000 |> ignore
+                  Expect.isTrue
+                      (waitForReap leader)
+                      "the watchdog read field 20 as ${18} and killed the executable sibling thread"
+                  Threading.Thread.Sleep 2_100
+                  Expect.isFalse (File.Exists effectFile) "the live sibling never reached its delayed effect"
+              finally
+                  if not host.HasExited then host.Kill(true)
+                  if group > 1 then Native.signalGroup group Native.SIGKILL |> ignore
+                  if anchor > 1 then Native.signalProcess anchor Native.SIGKILL |> ignore
+                  Directory.Delete(root, true)
+          }
+
           test "owner death during TERM grace retains anchor provenance through KILL" {
               let root = tempRoot ()
               let registry = Path.Combine(root, "registry")
@@ -1110,6 +1507,73 @@ let containment =
                   "the still-armed EOF watchdog reaped descendants across the leader-exit boundary"
               Expect.isTrue (waitForReap anchorPid) "the anchor was reaped with the original group"
               Directory.Delete(root, true)
+          }
+
+          test "EOF watchdog revalidates provenance between TERM and KILL" {
+              let root = tempRoot ()
+              let registry = Path.Combine(root, "registry")
+              let pidFile = Path.Combine(root, "effect.pid")
+              let readyFile = Path.Combine(root, "effect.ready")
+              let termFile = Path.Combine(root, "watchdog.term")
+              let killRelease = Path.Combine(root, "watchdog.kill.release")
+              Directory.CreateDirectory registry |> ignore
+
+              let start = ProcessStartInfo(Environment.ProcessPath)
+
+              if Path.GetFileNameWithoutExtension(Environment.ProcessPath) = "dotnet" then
+                  start.ArgumentList.Add(Reflection.Assembly.GetExecutingAssembly().Location)
+
+              start.ArgumentList.Add "--containment-watchdog-revalidation-child"
+              start.ArgumentList.Add registry
+              start.ArgumentList.Add pidFile
+              start.ArgumentList.Add readyFile
+              start.ArgumentList.Add termFile
+              start.ArgumentList.Add killRelease
+              start.UseShellExecute <- false
+              start.RedirectStandardOutput <- true
+              start.RedirectStandardError <- true
+              use host = Process.Start start
+              let mutable effectPid = 0
+              let mutable anchorPid = 0
+
+              try
+                  let clock = Stopwatch.StartNew()
+
+                  while ((not (File.Exists readyFile)
+                          || (Directory.EnumerateFiles(registry, "*.group") |> Seq.isEmpty))
+                         && clock.ElapsedMilliseconds < 5_000L) do
+                      Threading.Thread.Sleep 10
+
+                  effectPid <-
+                      match waitForPidFile pidFile with
+                      | Some pid -> pid
+                      | None -> failtest "TERM-resistant effect never established its pid"
+
+                  let record = Directory.EnumerateFiles(registry, "*.group") |> Seq.exactlyOne
+                  let fields = File.ReadAllText(record).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                  anchorPid <- Int32.Parse fields.[2]
+
+                  Expect.isTrue (pidAlive effectPid) "the background effect survived its exited leader"
+                  Expect.isTrue (pidAlive anchorPid) "the stopped anchor held continuous group provenance"
+                  host.Kill()
+                  host.WaitForExit 3_000 |> ignore
+                  Expect.isTrue (waitForFile termFile 3_000) "the watchdog delivered its authorized TERM"
+                  Expect.isTrue (pidAlive effectPid) "the effect deliberately ignored TERM"
+
+                  Native.signalProcess anchorPid Native.SIGKILL |> ignore
+                  Expect.isTrue (waitForReap anchorPid) "the test removed provenance before escalation"
+                  File.WriteAllText(killRelease, "release")
+                  Threading.Thread.Sleep 500
+                  Expect.isTrue
+                      (pidAlive effectPid)
+                      "fresh identity loss withheld the watchdog's otherwise lethal group KILL"
+              finally
+                  if not host.HasExited then host.Kill(true)
+                  if effectPid > 1 then Native.signalProcess effectPid Native.SIGKILL |> ignore
+                  if anchorPid > 1 then Native.signalProcess anchorPid Native.SIGKILL |> ignore
+                  if effectPid > 1 then waitForReap effectPid |> ignore
+                  if anchorPid > 1 then waitForReap anchorPid |> ignore
+                  Directory.Delete(root, true)
           }
 
           test "the step leads its own process group" {
@@ -4477,6 +4941,15 @@ let main argv =
         runTermGraceContainmentChild registry pidFile termFile
     | [| "--containment-hostile-path-child"; registry; pidFile; readyFile; hostilePath |] ->
         runHostilePathContainmentChild registry pidFile readyFile hostilePath
+    | [| "--containment-watchdog-revalidation-child";
+          registry;
+          pidFile;
+          readyFile;
+          termFile;
+          killReleaseFile |] ->
+        runWatchdogRevalidationChild registry pidFile readyFile termFile killReleaseFile
+    | [| "--containment-zombie-leader-child"; registry; pidFile; readyFile; effectFile |] ->
+        runZombieLeaderContainmentChild registry pidFile readyFile effectFile
     | [| "--containment-pre-setsid-child";
           registry;
           effectFile;

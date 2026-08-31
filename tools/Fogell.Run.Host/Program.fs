@@ -2,17 +2,11 @@ module Fogell.Run.Host.Program
 
 open System
 open System.IO
-open System.Runtime.InteropServices
 open System.Text
+open System.Threading
 open Fogell.Domain
 open Fogell.Differential
 open Fogell.Journal
-
-[<DllImport("libc", SetLastError = true)>]
-extern int private prctl(int option, unativeint arg2, unativeint arg3, unativeint arg4, unativeint arg5)
-
-[<DllImport("libc")>]
-extern int private getppid()
 
 /// FG-112. The restart lane's HOST: runs a real Jenkinsfile through the real
 /// walker with the FG-025 journal wired in, as a separate killable process —
@@ -51,24 +45,43 @@ extern int private getppid()
 /// usage: fogell-run-host <jenkinsfile> <workspace-root> <job-name> <journal> [approvals-dir]
 [<EntryPoint>]
 let main argv =
-    match Environment.GetEnvironmentVariable "FOGELL_EXPECTED_PARENT_PID" with
+    match Environment.GetEnvironmentVariable "FOGELL_CONTROLLER_LIVENESS_PIPE" with
     | null
     | "" -> ()
-    | raw when OperatingSystem.IsLinux() ->
-        match Int32.TryParse raw with
-        | true, expected when expected > 1 ->
-            // PR_SET_PDEATHSIG=1, SIGKILL=9.  Set the signal first, then close
-            // the fork-to-prctl race by proving the configured parent still
-            // owns us.  This is opt-in so the standalone restart harness keeps
-            // its established process contract.
-            if prctl(1, unativeint 9, unativeint 0, unativeint 0, unativeint 0) <> 0 || getppid() <> expected then
-                eprintfn "controller parent identity changed before supervision was established; refusing"
-                exit 2
-        | _ ->
-            eprintfn "FOGELL_EXPECTED_PARENT_PID must be a positive process id"
-            exit 2
+    | "1" when OperatingSystem.IsLinux() ->
+        // PDEATHSIG follows the particular native thread that forked this
+        // process, not the controller process lifetime. A controller-owned pipe
+        // is process-scoped instead: every exit shape closes its writer. Run the
+        // blocking read on a dedicated background thread; any byte is a protocol
+        // violation, and EOF terminates Run.Host so its own step-watchdog pipes
+        // close and reap nested groups.
+        let monitor =
+            Thread(
+                ThreadStart(fun () ->
+                    let refuse reason =
+                        eprintfn "controller liveness supervision refused: %s" reason
+                        Environment.Exit 70
+
+                    try
+                        use input = Console.OpenStandardInput()
+                        let probe = Array.zeroCreate<byte> 1
+                        let read = input.Read(probe, 0, probe.Length)
+
+                        if read = 0 then
+                            refuse "controller liveness pipe closed"
+                        else
+                            refuse "controller liveness pipe carried unexpected data"
+                    with error ->
+                        refuse $"controller liveness pipe failed: {error.GetType().Name}"))
+
+        monitor.IsBackground <- true
+        monitor.Name <- "fogell-controller-liveness"
+        monitor.Start()
+    | "1" ->
+        eprintfn "controller liveness-pipe supervision is supported only on Linux"
+        exit 2
     | _ ->
-        eprintfn "controller parent-death supervision is supported only on Linux"
+        eprintfn "FOGELL_CONTROLLER_LIVENESS_PIPE must be exactly 1 when set"
         exit 2
 
     let eventPath =

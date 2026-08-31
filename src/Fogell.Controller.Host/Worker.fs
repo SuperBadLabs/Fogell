@@ -63,6 +63,54 @@ module internal WorkerControl =
             diagnose setupError disposition
             None
 
+    let tryCleanupForReconciliation cleanup =
+        try
+            cleanup () |> ignore
+            None
+        with cleanupError ->
+            // Cleanup is sticky and single-shot. Convert its cached failure to
+            // data here so the caller still records durable reconciliation.
+            Some cleanupError
+
+    let reconcileAfterCleanup cleanup requireReconciliation diagnose =
+        let cleanupFailure = tryCleanupForReconciliation cleanup
+
+        // Durable state is the product boundary. Diagnostics are intentionally
+        // later because ILogger providers are external code and may throw.
+        requireReconciliation ()
+        cleanupFailure |> Option.iter diagnose
+
+    let reconcileBeforeDiagnostic reason requireReconciliation diagnose =
+        // The reason-bearing durable write is ordered before ILogger just as
+        // sticky cleanup is above. Keeping this seam pure lets the hostile-
+        // provider regression observe both the cause and the ordering.
+        requireReconciliation reason
+        diagnose ()
+
+    let reconcileUnboundOuterIdentity cleanup requireReconciliation diagnose =
+        // A launched child without a captured birth identity cannot be safely
+        // signalled by numeric PID. Stop every identity-bound inner group first,
+        // then make the classified uncertainty durable before any provider code
+        // can throw while describing it.
+        let cleanupFailure = tryCleanupForReconciliation cleanup
+
+        reconcileBeforeDiagnostic
+            "outer_identity_unbound"
+            requireReconciliation
+            (fun () -> diagnose cleanupFailure)
+
+    let reconcileMaterializationFailure requireReconciliation diagnose =
+        // Definition quarantine is the same durable-before-diagnostic boundary.
+        // Return the Store authority result to the diagnostic callback only
+        // after the classified cause has been attempted exactly once.
+        let quarantined = requireReconciliation "materialization_failed"
+        diagnose quarantined
+
+    let finalDrainReconciliationReason = function
+        | StreamChangedAfterExtinction -> Some "event_stream_changed"
+        | IncompleteFrameAtEndOfStream -> Some "incomplete_event_frame"
+        | _ -> None
+
     let waitForActivePoll (pollMilliseconds: int) (stoppingToken: CancellationToken) =
         task {
             try
@@ -348,23 +396,24 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                 Directory.CreateDirectory containmentPath |> ignore
                 materialized <- true
             with ex ->
-                logger.LogError(
-                    ex,
-                    "FG-224 definition materialization failed for {AttemptId}; reconciliation is required",
-                    claim.AttemptId.Value)
-
-                if
-                    not
-                        (store.RequireReconciliation(
+                WorkerControl.reconcileMaterializationFailure
+                    (fun reason ->
+                        store.RequireReconciliation(
                             claim.OrganizationId,
                             claim.AttemptId,
                             claim.Fence,
                             owner,
-                            "materialization_failed"))
-                then
-                    logger.LogWarning(
-                        "FG-224 materialization quarantine lost authority for {AttemptId}",
-                        claim.AttemptId.Value)
+                            reason))
+                    (fun quarantined ->
+                        logger.LogError(
+                            ex,
+                            "FG-224 definition materialization failed for {AttemptId}; reconciliation is required",
+                            claim.AttemptId.Value)
+
+                        if not quarantined then
+                            logger.LogWarning(
+                                "FG-224 materialization quarantine lost authority for {AttemptId}",
+                                claim.AttemptId.Value))
 
             if not materialized then
                 return ()
@@ -403,6 +452,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             start.ArgumentList.Add buildKey
                             start.ArgumentList.Add journalPath
                             start.UseShellExecute <- false
+                            start.RedirectStandardInput <- true
                             start.RedirectStandardOutput <- true
                             start.RedirectStandardError <- true
                             start.CreateNoWindow <- true
@@ -411,7 +461,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             start.Environment["HOME"] <- neutralHome
                             start.Environment["TMPDIR"] <- tempRoot
                             start.Environment["FOGELL_EVENT_FILE"] <- eventPath
-                            start.Environment["FOGELL_EXPECTED_PARENT_PID"] <- string Environment.ProcessId
+                            start.Environment["FOGELL_CONTROLLER_LIVENESS_PIPE"] <- "1"
                             start.Environment["FOGELL_PROCESS_GROUP_REGISTRY"] <- containmentPath
                             // Project-scoped numbering is durable admission truth. Passing
                             // only the build UUID made the child fall back to build 1 for
@@ -470,7 +520,11 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                 let launchResult =
                     WorkerLaunch.tryStart
                         (fun () -> stoppingToken.IsCancellationRequested)
-                        child.Start
+                        (fun () ->
+                            if not (ProcessGroup.enableChildSubreaper ()) then
+                                invalidOp "could not establish Linux child-subreaper ownership for Run.Host descendants"
+
+                            child.Start())
 
                 let launched =
                     match launchResult with
@@ -554,11 +608,6 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             with _ ->
                                 None
 
-                        if Option.isNone captured then
-                            logger.LogError(
-                                "FG-224 could not bind outer process {ProcessId} to its Linux birth identity; cleanup will fail closed",
-                                child.Id)
-
                         captured
                     else
                         None
@@ -607,6 +656,23 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             recorded |> ignore
 
                     try
+                        if Option.isNone outerIdentity then
+                            WorkerControl.reconcileUnboundOuterIdentity
+                                cleanupExecution
+                                requireReconciliation
+                                (fun cleanupFailure ->
+                                    logger.LogError(
+                                        "FG-224 could not bind outer process {ProcessId} to its Linux birth identity; cleanup completed before durable reconciliation",
+                                        child.Id)
+
+                                    cleanupFailure
+                                    |> Option.iter (fun cleanupError ->
+                                        logger.LogError(
+                                            cleanupError,
+                                            "FG-224 identity-bound cleanup failed for unbound outer process {ProcessId}; durable reconciliation was recorded",
+                                            child.Id)))
+                            return ()
+
                         // Run.Host publishes protocol logs through FOGELL_EVENT_FILE.
                         // Its inherited stdout/stderr are diagnostic only and are
                         // deliberately discarded. CopyToAsync uses a fixed transfer
@@ -682,6 +748,8 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
 
                         do! completeDiagnosticDrains child drainCancellation drains
 
+                        let mutable finalDrainDiagnostic : (unit -> unit) option = None
+
                         if
                             ProcessGroup.handoff exitKind groupStop = ChildHandoff.NaturalTerminalAllowed
                             && not leaseLost
@@ -715,15 +783,23 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                 reconciliationReason <- "lease_lost"
                             | ControlStopped -> ()
                             | StreamChangedAfterExtinction ->
-                                reconciliationReason <- "event_stream_changed"
-                                logger.LogError(
-                                    "FG-224 event stream changed after producer extinction for {AttemptId}; reconciliation is required",
-                                    claim.AttemptId.Value)
+                                reconciliationReason <-
+                                    WorkerControl.finalDrainReconciliationReason completion.Stop
+                                    |> Option.get
+                                finalDrainDiagnostic <-
+                                    Some(fun () ->
+                                        logger.LogError(
+                                            "FG-224 event stream changed after producer extinction for {AttemptId}; reconciliation is required",
+                                            claim.AttemptId.Value))
                             | IncompleteFrameAtEndOfStream ->
-                                reconciliationReason <- "incomplete_event_frame"
-                                logger.LogError(
-                                    "FG-224 event stream ended with an incomplete frame for {AttemptId}; reconciliation is required",
-                                    claim.AttemptId.Value)
+                                reconciliationReason <-
+                                    WorkerControl.finalDrainReconciliationReason completion.Stop
+                                    |> Option.get
+                                finalDrainDiagnostic <-
+                                    Some(fun () ->
+                                        logger.LogError(
+                                            "FG-224 event stream ended with an incomplete frame for {AttemptId}; reconciliation is required",
+                                            claim.AttemptId.Value))
 
                         let finalExitKind =
                             WorkerControl.finalExitKind
@@ -743,12 +819,21 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
 
                         match ProcessGroup.handoff finalExitKind groupStop with
                         | ChildHandoff.ReconciliationRequired ->
-                            logger.LogError(
-                                "FG-224 execution for {AttemptId} requires reconciliation after {ExitKind} exit and outer cleanup {StopResult}",
-                                claim.AttemptId.Value,
-                                finalExitKind,
-                                groupStop)
-                            requireReconciliation (currentReconciliationReason ())
+                            let reason = currentReconciliationReason ()
+                            // Persist the classified cause before invoking an
+                            // external logging provider. If diagnostics throw,
+                            // finally observes the same durable disposition
+                            // instead of substituting worker_exception.
+                            WorkerControl.reconcileBeforeDiagnostic
+                                reason
+                                requireReconciliation
+                                (fun () ->
+                                    finalDrainDiagnostic |> Option.iter (fun diagnose -> diagnose ())
+                                    logger.LogError(
+                                        "FG-224 execution for {AttemptId} requires reconciliation after {ExitKind} exit and outer cleanup {StopResult}",
+                                        claim.AttemptId.Value,
+                                        finalExitKind,
+                                        groupStop))
                         | ChildHandoff.NaturalTerminalAllowed ->
                             // Close the drain-to-terminal race with a fresh lease.
                             refreshControl true
@@ -775,27 +860,43 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                             claim.AttemptId.Value
                                     with
                                     | Error error ->
-                                        logger.LogError(
-                                            "FG-042b artifact snapshot failed for {AttemptId}: {Reason}",
-                                            claim.AttemptId.Value,
-                                            error)
-                                        requireReconciliation "artifact_snapshot_failed"
+                                        WorkerControl.reconcileBeforeDiagnostic
+                                            "artifact_snapshot_failed"
+                                            requireReconciliation
+                                            (fun () ->
+                                                logger.LogError(
+                                                    "FG-042b artifact snapshot failed for {AttemptId}: {Reason}",
+                                                    claim.AttemptId.Value,
+                                                    error))
                                     | Ok _ ->
                                         match store.PublishTerminal(claim.OrganizationId, claim.AttemptId, claim.Fence, owner, status) with
                                         | Ok _ ->
                                             dispositionRecorded <- true
                                             terminalPublished <- true
                                         | Error _ ->
-                                            logger.LogError("FG-224 terminal publication was refused for {AttemptId}", claim.AttemptId.Value)
-                                            requireReconciliation "terminal_publication_refused"
+                                            WorkerControl.reconcileBeforeDiagnostic
+                                                "terminal_publication_refused"
+                                                requireReconciliation
+                                                (fun () ->
+                                                    logger.LogError(
+                                                        "FG-224 terminal publication was refused for {AttemptId}",
+                                                        claim.AttemptId.Value))
                                 | None ->
                                     requireReconciliation "terminal_journal_missing"
                     finally
                         if not dispositionRecorded then
                             // Exceptions after child start are forced stops. The
-                            // memoized cleanup prevents a second signal pass.
-                            cleanupExecution () |> ignore
-                            requireReconciliation reconciliationReason
+                            // memoized cleanup prevents a second signal pass. A
+                            // cached failure or fallible logger cannot prevent
+                            // durable disposition.
+                            WorkerControl.reconcileAfterCleanup
+                                cleanupExecution
+                                (fun () -> requireReconciliation reconciliationReason)
+                                (fun cleanupError ->
+                                    logger.LogError(
+                                        cleanupError,
+                                        "FG-224 cleanup failed for {AttemptId}; durable reconciliation was recorded",
+                                        claim.AttemptId.Value))
         }
 
     let requeueUnstartedClaim dependency (claim: ExecutionClaim) =

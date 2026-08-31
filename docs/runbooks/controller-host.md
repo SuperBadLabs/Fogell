@@ -175,17 +175,59 @@ bound to Run.Host liveness and the controller's outer-plus-registered-inner
 cleanup then provide two bounded descendant-reaping paths, including when the
 inner leader has already exited.
 
-FG-224 currently keeps this process-lifecycle boundary PARTIAL. Registration is
-birth-identity checked, but every later inner cleanup signal does not yet
-revalidate the stored start ticks before using the numeric pid or process group.
-Run only single-tenant, trusted workloads under the service identity until that
-signal-authority gap closes. The host also requires an environment whose pid 1
-reaps adopted children. In particular, a Docker Desktop LinuxKit container
-without an init/reaper can retain a zombie-only process group: the journal may
-record successful execution while the API reports `reconciliation_required`
-with `process_extinction_unconfirmed`, and artifact reads then return 409. Use a
-native supported Linux service or a container init/reaper; treat that
-reconciliation result as unresolved rather than overriding it.
+Every managed cleanup path now re-observes the recorded leader or stopped anchor
+start ticks and process-group membership before each TERM, CONT, or KILL. A
+same-number group without either recorded identity is not signal authority; the
+pre-`setsid` launcher publishes its own PID and start ticks before it may launch
+user code, and a missing or mismatched handshake refuses without numeric signals;
+survivor scans exclude the stopped anchor only when that scan observes its
+recorded PID and start ticks, so PID reuse cannot hide a live group member. The
+classified reconciliation cause is persisted before every fallible diagnostic,
+including cleanup and definition-materialization failure, so a logging provider
+cannot strand the attempt or replace its operational cause with a generic
+fallback. The same ordering covers final-drain stream-change and incomplete-
+frame causes. Final one-thread Z/X/x remnants are inert but do not themselves prove
+extinction: while their numeric group exists it remains joinable. A zombie
+leader with live sibling threads remains active; the generated POSIX watchdog
+reads the proc thread-count field with the required braced `${18}` expansion.
+Run.Host and Controller.Host establish Linux child-subreaper ownership, reap
+adopted members of the registered group, and serialize parent, group, and
+inert-state revalidation with each PID-specific waitpid. An adopted registered
+leader is eligible after its wrapper owner is gone; Controller.Host reserves
+only its outer Run.Host leader while the dedicated `Process` reaper owns it. Anchor reaping
+also matches its recorded start ticks, so another step's reused or still-shell-
+owned PID cannot be harvested. The durable record is disarmed/deleted only after
+the kernel reports ESRCH for that group.
+If Controller.Host cannot capture a launched outer process's Linux birth
+identity, it performs memoized identity-bound inner cleanup, records
+`outer_identity_unbound`, and only then emits diagnostics. It never signals the
+unbound numeric PID, and a logging failure cannot precede the durable cause.
+A zombie leader with more than one thread remains active, and unreadable or
+malformed `/proc` state remains uncertain. If `getpgid` first identifies a
+candidate but its following stat read reports a different group, cleanup also
+remains uncertain rather than accepting that PID-reuse race as extinction. The
+foreign-candidate boundary recheck narrows observation races but is not the
+certificate; kernel group disappearance is. The production proof supports both a native
+Linux service and a controller running as container PID 1. Its container lane
+overrides the image
+entrypoint and verifies `/proc/1/exe` is the exact controller apphost before it
+accepts any HTTP result. It also admits a real long-running nested step, maps
+the step shell and its sleep child's namespace pids to host-visible processes,
+then runs a complementary boundary beneath a surviving container init: only the
+controller is killed, and Run.Host, the shell, and the sleep child must disappear
+while init remains alive and the post-sleep effect remains absent. Run.Host is
+bound to a private controller-owned stdin liveness pipe: controller exit closes
+the writer regardless of which native thread launched the child, and EOF fails
+Run.Host closed so its per-step watchdog pipes also close. This deliberately
+avoids the creating-thread semantics of Linux `PR_SET_PDEATHSIG` and works when
+the controller is PID 1.
+
+This is a trusted single-tenant Linux boundary. The fresh `/proc` observation
+and following `kill(2)` are not one atomic pidfd/cgroup operation, so a hostile
+same-UID actor deliberately racing process replacement is outside the claim.
+Do not use this local worker as a multi-tenant OS sandbox. Such deployments need
+stronger isolation (for example delegated cgroups/pidfds or separate VMs), not an
+operator override of `reconciliation_required`.
 
 ### Submit and follow one build
 
@@ -413,9 +455,15 @@ FOGELL_PG_CONTAINER=fogell-fg060a \
 FOGELL_PG_PORT=55445 \
 FOGELL_BUILD_CONFIGURATION=Release \
 ./scripts/prove-runnable-controller.sh
+
+FOGELL_PG_CONTAINER=fogell-fg060a \
+FOGELL_PG_PORT=55445 \
+FOGELL_BUILD_CONFIGURATION=Release \
+FOGELL_FG224_CONTROLLER_IMAGE=mcr.microsoft.com/dotnet/sdk@sha256:ea8bde36c11b6e7eec2656d0e59101d4462f6bd630730f2c8201ed0572b295d5 \
+./scripts/prove-runnable-controller.sh
 ```
 
-Expected final line begins `FG-224 PROOF PASS`. The script owns a uniquely named
+Expected final line begins `FG-224/FG-042b PROOF PASS`. The script owns a uniquely named
 scratch database, role, state directory, and listener, and removes them on exit.
 If progressive event publication fails, Run.Host emits no terminal journal
 record; the failure remains infrastructure truth and the controller requires

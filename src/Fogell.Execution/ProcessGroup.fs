@@ -271,6 +271,224 @@ module ProcessGroup =
         | Changed
         | Uncertain
 
+    type internal LinuxProcessStat =
+        { State: char
+          ParentProcessId: int
+          ProcessGroupId: int
+          ThreadCount: int
+          StartTime: string }
+
+    [<RequireQualifiedAccess>]
+    type internal LinuxProcessObservation =
+        | Present of LinuxProcessStat
+        | Absent
+        | Uncertain
+
+    type internal RegisteredGroupIdentity =
+        { GroupId: int
+          LeaderStartTime: string
+          AnchorPid: int
+          AnchorStartTime: string }
+
+    let internal parseLinuxProcessStat (value: string) =
+        let close = value.LastIndexOf ')'
+
+        if close < 0 || close + 2 >= value.Length then
+            None
+        else
+            let fields =
+                value.Substring(close + 2).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+
+            match fields with
+            | fields when fields.Length > 19 && fields[0].Length = 1 ->
+                match Int32.TryParse fields[1], Int32.TryParse fields[2], Int32.TryParse fields[17] with
+                | (true, parentProcessId), (true, processGroupId), (true, threadCount) ->
+                    Some
+                        { State = fields[0].[0]
+                          ParentProcessId = parentProcessId
+                          ProcessGroupId = processGroupId
+                          ThreadCount = threadCount
+                          StartTime = fields[19] }
+                | _ -> None
+            | _ -> None
+
+    let private observeLinuxProcess pid =
+        try
+            match IO.File.ReadAllText($"/proc/{pid}/stat") |> parseLinuxProcessStat with
+            | Some stat -> LinuxProcessObservation.Present stat
+            | None -> LinuxProcessObservation.Uncertain
+        with
+        | :? IO.FileNotFoundException
+        | :? IO.DirectoryNotFoundException -> LinuxProcessObservation.Absent
+        | _ -> LinuxProcessObservation.Uncertain
+
+    let internal classifyLiveGroupMembers pgid excludedIdentity observations =
+        let mutable live = 0
+        let mutable uncertain = false
+
+        for pid, observation in observations do
+            let isExcludedIdentity =
+                match excludedIdentity, observation with
+                | Some(excludedPid, excludedStartTime), LinuxProcessObservation.Present stat ->
+                    pid = excludedPid && stat.StartTime = excludedStartTime
+                | _ -> false
+
+            if not isExcludedIdentity then
+                match observation with
+                | LinuxProcessObservation.Present stat when stat.ProcessGroupId = pgid ->
+                    if (stat.State = 'Z' || stat.State = 'X' || stat.State = 'x')
+                       && stat.ThreadCount <= 1 then
+                        ()
+                    else
+                        // A thread-group leader may be defunct while sibling
+                        // threads remain executable; num_threads distinguishes
+                        // that live group from a final zombie remnant.
+                        live <- live + 1
+                | LinuxProcessObservation.Uncertain -> uncertain <- true
+                | _ -> ()
+
+        if uncertain then -1 else live
+
+    // All adopted-child waitpid calls share this lock. A PID cannot be reused
+    // until its zombie has been reaped; serializing our only reapers therefore
+    // keeps the identity/group observation adjacent to the PID-specific wait.
+    // Never use waitpid(-1): another concurrent step owns its direct children.
+    let private registeredChildReapLock = obj ()
+
+    let internal reapObservedRegisteredMember
+        pgid
+        candidatePid
+        expectedStartTime
+        requiredParentPid
+        observe
+        reap
+        =
+        lock registeredChildReapLock (fun () ->
+            match observe () with
+            | LinuxProcessObservation.Present stat
+                when stat.ProcessGroupId = pgid
+                     && stat.ParentProcessId = requiredParentPid
+                     && (expectedStartTime
+                         |> Option.forall (fun expected -> stat.StartTime = expected))
+                     && (stat.State = 'Z' || stat.State = 'X' || stat.State = 'x')
+                     && stat.ThreadCount <= 1 ->
+                reap ()
+                true
+            | _ -> false)
+
+    let internal observeLiveGroupCandidate pgid pid queryGroup observe =
+        match queryGroup pid with
+        | Native.ProcessGroupQuery.Found group when group = pgid ->
+            match observe pid with
+            | LinuxProcessObservation.Present stat when stat.ProcessGroupId <> pgid ->
+                // Membership changed between getpgid and the stat read. The
+                // numeric PID may have been reused, so this scan cannot prove
+                // that the original group is empty.
+                Some(pid, LinuxProcessObservation.Uncertain)
+            | observation -> Some(pid, observation)
+        | Native.ProcessGroupQuery.Found _
+        | Native.ProcessGroupQuery.Absent -> None
+        | Native.ProcessGroupQuery.Uncertain ->
+            Some(pid, LinuxProcessObservation.Uncertain)
+
+    let internal scanLiveGroupCandidates pgid pids queryGroup observe =
+        let observations = ResizeArray<int * LinuxProcessObservation>()
+        let initiallyForeign = ResizeArray<int>()
+
+        let observeMatched pid =
+            match observe pid with
+            | LinuxProcessObservation.Present stat when stat.ProcessGroupId <> pgid ->
+                pid, LinuxProcessObservation.Uncertain
+            | observation -> pid, observation
+
+        for pid in pids do
+            match queryGroup pid with
+            | Native.ProcessGroupQuery.Found group when group = pgid ->
+                observations.Add(observeMatched pid)
+            | Native.ProcessGroupQuery.Found _ ->
+                // A process may join this group after the candidate filter
+                // first sees it. Re-query these misses at the scan boundary.
+                initiallyForeign.Add pid
+            | Native.ProcessGroupQuery.Absent -> ()
+            | Native.ProcessGroupQuery.Uncertain ->
+                observations.Add(pid, LinuxProcessObservation.Uncertain)
+
+        for pid in initiallyForeign do
+            match queryGroup pid with
+            | Native.ProcessGroupQuery.Found group when group = pgid ->
+                observations.Add(observeMatched pid)
+            | Native.ProcessGroupQuery.Found _
+            | Native.ProcessGroupQuery.Absent -> ()
+            | Native.ProcessGroupQuery.Uncertain ->
+                observations.Add(pid, LinuxProcessObservation.Uncertain)
+
+        observations |> Seq.toList
+
+    let private scanLiveGroupMembers pgid excludedIdentity =
+        try
+            // The wait loops call this repeatedly. Use getpgid as the cheap
+            // candidate filter and read stat only for possible members; ESRCH
+            // is an ordinary exit race, while every other query failure keeps
+            // the whole observation fail-closed.
+            IO.Directory.GetDirectories "/proc"
+            |> Array.choose (fun directory ->
+                match Int32.TryParse(IO.Path.GetFileName directory) with
+                | true, pid -> Some pid
+                | _ -> None)
+            |> fun pids ->
+                scanLiveGroupCandidates pgid pids Native.queryProcessGroup observeLinuxProcess
+            |> classifyLiveGroupMembers pgid excludedIdentity
+        with _ ->
+            -1
+
+    let internal signalRegisteredGroup
+        (identity: RegisteredGroupIdentity)
+        observeLeader
+        observeAnchor
+        sendGroup
+        signal
+        =
+        let matches expectedStartTime = function
+            | LinuxProcessObservation.Present stat ->
+                stat.StartTime = expectedStartTime
+                && stat.ProcessGroupId = identity.GroupId
+                && not ((stat.State = 'Z' || stat.State = 'X' || stat.State = 'x') && stat.ThreadCount <= 1)
+            | _ -> false
+
+        if matches identity.AnchorStartTime (observeAnchor ())
+           || matches identity.LeaderStartTime (observeLeader ()) then
+            sendGroup signal
+        else
+            false
+
+    let internal signalRegisteredAnchor
+        (identity: RegisteredGroupIdentity)
+        observeAnchor
+        sendAnchor
+        signal
+        =
+        match observeAnchor () with
+        | LinuxProcessObservation.Present stat
+            when stat.StartTime = identity.AnchorStartTime
+                 && stat.ProcessGroupId = identity.GroupId
+                 && not ((stat.State = 'Z' || stat.State = 'X' || stat.State = 'x') && stat.ThreadCount <= 1) ->
+            sendAnchor signal
+        | _ -> false
+
+    let internal attemptEscalation exitedOnTerm sendKill waitAfterKill =
+        if exitedOnTerm then
+            false
+        else
+            let delivered = sendKill ()
+
+            if delivered then
+                waitAfterKill ()
+
+            delivered
+
+    let internal deliverOrObserveExtinction sendSignal observeExtinct =
+        sendSignal () || observeExtinct ()
+
     /// The marker write happens before the child stops itself. A SIGCONT sent
     /// merely because the marker arrived can therefore be lost while the child
     /// is still running, after which it executes SIGSTOP and wedges forever.
@@ -345,20 +563,7 @@ module ProcessGroup =
     /// Unknown fails CLOSED everywhere downstream: the group is treated as still
     /// populated, and the diagnostic says the check was unavailable rather than
     /// inventing a clean bill.
-    let private survivorsIn (pgid: int) : int =
-        try
-            IO.Directory.GetDirectories "/proc"
-            |> Array.choose (fun d ->
-                match Int32.TryParse(IO.Path.GetFileName d) with
-                | true, pid -> Some pid
-                | _ -> None)
-            |> Array.filter (fun pid ->
-                match Native.processGroupOf pid with
-                | Some g -> g = pgid
-                | None -> false)
-            |> Array.length
-        with _ ->
-            -1
+    let private survivorsIn (pgid: int) : int = scanLiveGroupMembers pgid None
 
     /// Wait until the group is EMPTY, up to `budgetMs`.
     let private waitForGroupExit (pgid: int) (budgetMs: int) : bool =
@@ -371,60 +576,151 @@ module ProcessGroup =
 
         gone
 
-    let private survivorsInExcept (pgid: int) (excludedPid: int) : int =
-        try
-            IO.Directory.GetDirectories "/proc"
-            |> Array.choose (fun d ->
-                match Int32.TryParse(IO.Path.GetFileName d) with
-                | true, pid when pid <> excludedPid -> Some pid
-                | _ -> None)
-            |> Array.filter (fun pid -> Native.processGroupOf pid = Some pgid)
-            |> Array.length
-        with _ ->
-            -1
+    let private survivorsInExceptAnchor (identity: RegisteredGroupIdentity) : int =
+        scanLiveGroupMembers
+            identity.GroupId
+            (Some(identity.AnchorPid, identity.AnchorStartTime))
 
-    let private waitForGroupExitExcept pgid excludedPid budgetMs =
+    let private waitForGroupExitExceptAnchor identity budgetMs =
         let sw = Stopwatch.StartNew()
-        let mutable gone = survivorsInExcept pgid excludedPid = 0
+        let mutable gone = survivorsInExceptAnchor identity = 0
 
         while not gone && sw.ElapsedMilliseconds < int64 budgetMs do
             Thread.Sleep 20
-            gone <- survivorsInExcept pgid excludedPid = 0
+            gone <- survivorsInExceptAnchor identity = 0
 
         gone
 
-    let private releaseIdentityAnchor pgid anchor =
+    let private waitForRegisteredGroupExit identity budgetMs =
+        let sw = Stopwatch.StartNew()
+
+        let reapKnownGroupChildren () =
+            try
+                IO.Directory.GetDirectories "/proc"
+                |> Array.iter (fun directory ->
+                    match Int32.TryParse(IO.Path.GetFileName directory) with
+                    | true, pid ->
+                        match Native.queryProcessGroup pid with
+                        | Native.ProcessGroupQuery.Found group when group = identity.GroupId ->
+                            // PR_SET_CHILD_SUBREAPER makes orphaned group
+                            // members our children. Revalidate membership under
+                            // the shared reaper lock before PID-specific waitpid,
+                            // so an already-reaped/reused PID from a concurrent
+                            // step cannot have its exit status stolen.
+                            reapObservedRegisteredMember
+                                identity.GroupId
+                                pid
+                                None
+                                Environment.ProcessId
+                                (fun () -> observeLinuxProcess pid)
+                                (fun () -> Native.tryReapChild pid |> ignore)
+                            |> ignore
+                        | _ -> ()
+                    | _ -> ())
+            with _ -> ()
+
+        let rec wait () =
+            // Once the session leader exits, PR_SET_CHILD_SUBREAPER reparents
+            // its orphaned group members to Run.Host. Reap every adopted PID
+            // observed in this registered group; PID-specific waitpid never
+            // harvests an unrelated step. The following group ESRCH is the
+            // atomic boundary: while the numeric group exists, a same-session
+            // process can still join it.
+            reapKnownGroupChildren ()
+
+            match Native.probeProcessGroup identity.GroupId with
+            | Native.ProcessGroupPresence.Absent -> true
+            | _ when sw.ElapsedMilliseconds < int64 budgetMs ->
+                Thread.Sleep 20
+                wait ()
+            | _ -> false
+
+        wait ()
+
+    let private registeredGroupLeakCount identity =
+        match Native.probeProcessGroup identity.GroupId with
+        | Native.ProcessGroupPresence.Absent -> 0
+        | _ ->
+            match survivorsIn identity.GroupId with
+            | count when count > 0 -> count
+            | _ -> -1
+
+    let private releaseIdentityAnchor identity =
         // The anchor is SIGSTOPped before registration. TERM remains pending
         // while stopped, so CONT lets it take the default TERM action without
         // introducing another long-lived helper or inherited descriptor.
-        Native.signalProcess anchor Native.SIGTERM |> ignore
-        Native.signalProcess anchor Native.SIGCONT |> ignore
-        waitForGroupExit pgid 2_000
+        reapObservedRegisteredMember
+            identity.GroupId
+            identity.AnchorPid
+            (Some identity.AnchorStartTime)
+            Environment.ProcessId
+            (fun () -> observeLinuxProcess identity.AnchorPid)
+            (fun () -> Native.tryReapChild identity.AnchorPid |> ignore)
+        |> ignore
 
-    let private terminateGroupWithAnchor pgid anchor graceMs =
-        let termDelivered = Native.signalGroup pgid Native.SIGTERM
-        let usersExited = termDelivered && waitForGroupExitExcept pgid anchor graceMs
-        let exitedOnTerm = usersExited && releaseIdentityAnchor pgid anchor
+        if Native.probeProcessGroup identity.GroupId = Native.ProcessGroupPresence.Absent then
+            true
+        else
+            let extinct () =
+                Native.probeProcessGroup identity.GroupId = Native.ProcessGroupPresence.Absent
+
+            let termDeliveredOrGone =
+                deliverOrObserveExtinction
+                    (fun () ->
+                        signalRegisteredAnchor
+                            identity
+                            (fun () -> observeLinuxProcess identity.AnchorPid)
+                            (fun signal -> Native.signalProcess identity.AnchorPid signal)
+                            Native.SIGTERM)
+                    extinct
+
+            if not termDeliveredOrGone then
+                false
+            elif extinct () then
+                true
+            else
+                deliverOrObserveExtinction
+                    (fun () ->
+                        signalRegisteredAnchor
+                            identity
+                            (fun () -> observeLinuxProcess identity.AnchorPid)
+                            (fun signal -> Native.signalProcess identity.AnchorPid signal)
+                            Native.SIGCONT)
+                    extinct
+                && waitForRegisteredGroupExit identity 2_000
+
+    let private terminateGroupWithAnchor identity graceMs =
+        let sendGroup signal =
+            signalRegisteredGroup
+                identity
+                (fun () -> observeLinuxProcess identity.GroupId)
+                (fun () -> observeLinuxProcess identity.AnchorPid)
+                (fun signum -> Native.signalGroup identity.GroupId signum)
+                signal
+
+        let termDelivered = sendGroup Native.SIGTERM
+        let usersExited =
+            termDelivered && waitForGroupExitExceptAnchor identity graceMs
+        let exitedOnTerm = usersExited && releaseIdentityAnchor identity
 
         let escalated =
-            if exitedOnTerm then
-                false
-            else
-                Native.signalGroup pgid Native.SIGKILL |> ignore
-                waitForGroupExit pgid 2_000 |> ignore
-                true
+            attemptEscalation
+                exitedOnTerm
+                (fun () -> sendGroup Native.SIGKILL)
+                (fun () -> waitForRegisteredGroupExit identity 2_000 |> ignore)
 
         { GracefulExit = exitedOnTerm
           Escalated = escalated
-          LeakedProcesses = survivorsIn pgid }
+          LeakedProcesses = registeredGroupLeakCount identity }
 
-    let private reapWithAnchor pgid anchor graceMs =
-        if survivorsInExcept pgid anchor = 0 && releaseIdentityAnchor pgid anchor then
+    let private reapWithAnchor identity graceMs =
+        if survivorsInExceptAnchor identity = 0
+           && releaseIdentityAnchor identity then
             { GracefulExit = true
               Escalated = false
               LeakedProcesses = 0 }
         else
-            terminateGroupWithAnchor pgid anchor graceMs
+            terminateGroupWithAnchor identity graceMs
 
     /// SIGTERM the group, wait out the grace period, then SIGKILL. This is the
     /// contract measured on Jenkins (JB-FAIL-003): the interrupt is a trappable
@@ -490,6 +786,9 @@ module ProcessGroup =
 
                 previous <- current
 
+    let internal preCaptureFallbackScript =
+        "wait \"$fogell_inner\" 2>/dev/null || true; exit 125; "
+
     /// Run one command in its own process group.
     let run (request: RunRequest) : RunResult =
         let sw = Stopwatch.StartNew()
@@ -502,27 +801,11 @@ module ProcessGroup =
             | _ -> invalidOp "process-group registry containment is supported only on Linux"
 
         let processStateAndStartTime pid =
-            try
-                let value = IO.File.ReadAllText($"/proc/{pid}/stat")
-                let close = value.LastIndexOf ')'
-
-                if close < 0 || close + 2 >= value.Length then
-                    ProcessIdentityState.Uncertain, None
-                else
-                    let fields =
-                        value.Substring(close + 2).Split(' ', StringSplitOptions.RemoveEmptyEntries)
-
-                    // fields begins at /proc/<pid>/stat field 3 after removing
-                    // the parenthesized comm. State is index 0 and starttime
-                    // (field 22) is index 19.
-                    if fields.Length > 19 && fields[0].Length = 1 then
-                        ProcessIdentityState.Matching fields.[0].[0], Some fields.[19]
-                    else
-                        ProcessIdentityState.Uncertain, None
-            with
-            | :? IO.FileNotFoundException
-            | :? IO.DirectoryNotFoundException -> ProcessIdentityState.Absent, None
-            | _ -> ProcessIdentityState.Uncertain, None
+            match observeLinuxProcess pid with
+            | LinuxProcessObservation.Present stat ->
+                ProcessIdentityState.Matching stat.State, Some stat.StartTime
+            | LinuxProcessObservation.Absent -> ProcessIdentityState.Absent, None
+            | LinuxProcessObservation.Uncertain -> ProcessIdentityState.Uncertain, None
 
         let observeIdentity pid expectedStartTime =
             match processStateAndStartTime pid with
@@ -546,7 +829,7 @@ module ProcessGroup =
                 IO.File.Move(temporary, target)
 
         let forgetExtinguishedGroup pgid =
-            if survivorsIn pgid = 0 then
+            if Native.probeProcessGroup pgid = Native.ProcessGroupPresence.Absent then
                 groupRecordPath pgid
                 |> Option.iter (fun path ->
                     try IO.File.Delete path with _ -> ())
@@ -556,6 +839,15 @@ module ProcessGroup =
         // ours, not the child's. So the session leader reports its own pid on
         // stderr as the first line, and that is the real process-group id.
         let pgidMarker = "__FOGELL_PGID "
+
+        let launcherIdentityPath =
+            IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-launch-{Guid.NewGuid():N}.identity")
+
+        use _launcherIdentityCleanup =
+            { new IDisposable with
+                member _.Dispose() =
+                    for path in [ launcherIdentityPath; launcherIdentityPath + ".tmp" ] do
+                        try IO.File.Delete path with _ -> () }
 
         let psi = ProcessStartInfo("/bin/sh")
         // Keep an explicit wait-status-preserving parent outside the new group.
@@ -569,27 +861,34 @@ module ProcessGroup =
         // only Run.Host can keep the guard armed.
         psi.ArgumentList.Add "-c"
         psi.ArgumentList.Add(
-            "fogell_registry=$4; fogell_launch_gate=$5; fogell_launch_ready=$6; fogell_guard_observed=$7; "
-            + "fogell_guard_stopped=$8; fogell_cleanup_release=$9; exec 9<&0; "
-            + "(if [ -n \"$fogell_launch_gate\" ]; then while [ ! -e \"$fogell_launch_gate\" ]; do /bin/sleep 0.01; done; fi; "
-            + "exec /usr/bin/setsid /bin/sh -c \"$1\" \"$2\" \"$3\" \"$fogell_registry\" 9<&- </dev/null) & "
+            "fogell_payload=$1; fogell_inner_argv0=$2; fogell_inner_argv1=$3; "
+            + "fogell_registry=$4; fogell_launch_gate=$5; fogell_launch_ready=$6; fogell_guard_observed=$7; "
+            + "fogell_guard_stopped=$8; fogell_cleanup_release=$9; "
+            + "fogell_watchdog_term_file=${10}; fogell_watchdog_kill_release=${11}; "
+            + "fogell_launcher_identity=${12}; exec 9<&0; "
+            + "(if ! IFS= read -r fogell_self_stat < /proc/self/stat; then exit 125; fi; "
+            + "fogell_self_pid=${fogell_self_stat%% *}; fogell_self_tail=${fogell_self_stat##*) }; set -- $fogell_self_tail; "
+            + "if [ \"$#\" -le 19 ]; then exit 125; fi; shift 19; fogell_self_start=$1; "
+            + "if ! printf '%s %s\\n' \"$fogell_self_pid\" \"$fogell_self_start\" > \"$fogell_launcher_identity.tmp\" "
+            + "|| ! /bin/mv \"$fogell_launcher_identity.tmp\" \"$fogell_launcher_identity\"; then exit 125; fi; "
+            + "if [ -n \"$fogell_launch_gate\" ]; then while [ ! -e \"$fogell_launch_gate\" ]; do /bin/sleep 0.01; done; fi; "
+            + "exec /usr/bin/setsid /bin/sh -c \"$fogell_payload\" \"$fogell_inner_argv0\" \"$fogell_inner_argv1\" \"$fogell_registry\" 9<&- </dev/null) & "
             + "fogell_inner=$!; "
             + "fogell_launcher_start=; fogell_capture_checks=200; "
             + "while [ -z \"$fogell_launcher_start\" ] && [ \"$fogell_capture_checks\" -ge 0 ]; do "
-            + "if [ -r \"/proc/$fogell_inner/stat\" ] && IFS= read -r fogell_launcher_stat < \"/proc/$fogell_inner/stat\"; then "
-            + "fogell_launcher_tail=${fogell_launcher_stat##*) }; set -- $fogell_launcher_tail; "
-            + "if [ \"$#\" -gt 19 ]; then shift 19; fogell_launcher_start=$1; fi; "
+            + "if [ -r \"$fogell_launcher_identity\" ] "
+            + "&& IFS=' ' read -r fogell_identity_pid fogell_identity_start < \"$fogell_launcher_identity\" "
+            + "&& [ \"$fogell_identity_pid\" = \"$fogell_inner\" ] && [ -n \"$fogell_identity_start\" ]; then "
+            + "fogell_launcher_start=$fogell_identity_start; "
             + "elif [ ! -e \"/proc/$fogell_inner\" ]; then break; fi; "
             + "if [ -z \"$fogell_launcher_start\" ]; then fogell_capture_checks=$((fogell_capture_checks - 1)); /bin/sleep 0.01; fi; "
             + "done; "
-            + "if [ -z \"$fogell_launcher_start\" ] && [ -e \"/proc/$fogell_inner\" ]; then "
-            // The outer shell has not entered wait(1), so its direct child PID
-            // cannot be reaped/reused between these two signals. Killing that
-            // child first prevents a later setsid transition; the negative-pgid
-            // kill then catches a group that formed just before the direct kill.
-            + "/bin/kill -STOP \"$fogell_inner\" 2>/dev/null || true; "
-            + "/bin/kill -KILL \"$fogell_inner\" 2>/dev/null || true; "
-            + "/bin/kill -KILL -- -$fogell_inner 2>/dev/null || true; "
+            + "/bin/rm -f \"$fogell_launcher_identity\" \"$fogell_launcher_identity.tmp\"; "
+            + "if [ -z \"$fogell_launcher_start\" ]; then "
+            // Without the child-published start ticks there is no authority to
+            // signal either the numeric PID or its same-number group. Waiting
+            // through the shell job table cannot hit a reused process.
+            + preCaptureFallbackScript
             + "fi; "
             + "(trap '' HUP INT TERM; "
             + "if ! IFS= read -r fogell_guard_command || [ \"$fogell_guard_command\" != disarm ]; then "
@@ -630,14 +929,45 @@ module ProcessGroup =
             + "fogell_checks=$((fogell_checks - 1)); /bin/sleep 0.01; "
             + "done; "
             + "fi; "
+            + "fogell_identity_matches() { "
+            + "fogell_check_pid=$1; fogell_check_start=$2; "
+            + "[ \"$fogell_check_pid\" -gt 1 ] 2>/dev/null && [ -n \"$fogell_check_start\" ] "
+            + "&& [ -r \"/proc/$fogell_check_pid/stat\" ] || return 1; "
+            + "fogell_check_stat=$(/bin/cat \"/proc/$fogell_check_pid/stat\" 2>/dev/null) || return 1; "
+            + "fogell_check_tail=${fogell_check_stat##*) }; set -- $fogell_check_tail; "
+            + "[ \"$#\" -gt 19 ] && [ \"$3\" = \"$fogell_inner\" ] || return 1; "
+            // POSIX shells parse `$18` as `${1}8`. Braces are required here:
+            // field 20 is the thread count, and a Z/X/x group leader with live
+            // sibling threads must remain signal-authorizing evidence.
+            + "fogell_check_state=$1; fogell_check_threads=${18}; shift 19; "
+            + "[ \"$1\" = \"$fogell_check_start\" ] "
+            + "&& { [ \"$fogell_check_state\" != Z ] && [ \"$fogell_check_state\" != X ] "
+            + "&& [ \"$fogell_check_state\" != x ] || [ \"$fogell_check_threads\" -gt 1 ] 2>/dev/null; }; "
+            + "}; "
+            + "fogell_group_authorized() { "
+            + "fogell_identity_matches \"${fogell_anchor:-0}\" \"${fogell_anchor_start:-}\" "
+            + "|| fogell_identity_matches \"$fogell_inner\" \"${fogell_leader_start:-$fogell_launcher_start}\"; "
+            + "}; "
+            + "fogell_launcher_authorized() { "
+            + "[ \"$fogell_inner\" -gt 1 ] 2>/dev/null && [ -n \"$fogell_launcher_start\" ] "
+            + "&& [ -r \"/proc/$fogell_inner/stat\" ] || return 1; "
+            + "fogell_launcher_stat=$(/bin/cat \"/proc/$fogell_inner/stat\" 2>/dev/null) || return 1; "
+            + "fogell_launcher_tail=${fogell_launcher_stat##*) }; set -- $fogell_launcher_tail; "
+            + "[ \"$#\" -gt 19 ] || return 1; fogell_launcher_state=$1; shift 19; "
+            + "[ \"$1\" = \"$fogell_launcher_start\" ] "
+            + "&& { [ \"$fogell_launcher_state\" = T ] || [ \"$fogell_launcher_state\" = t ]; }; "
+            + "}; "
             // This watchdog inherits the build environment, including PATH.
             // Keep every cleanup executable absolute: if a trusted Linux
             // utility is unavailable the shell advances immediately to the
             // next signal instead of letting build-controlled code delay KILL.
             + "if [ \"$fogell_safe\" -eq 1 ]; then "
-            + "/bin/kill -TERM -- -$fogell_inner 2>/dev/null || true; /bin/sleep 0.2; "
-            + "/bin/kill -KILL -- -$fogell_inner 2>/dev/null || true; /bin/sleep 0.2; "
-            + "elif [ \"$fogell_kill_launcher\" -eq 1 ]; then "
+            + "if fogell_group_authorized; then /bin/kill -TERM -- -$fogell_inner 2>/dev/null || true; "
+            + "if [ -n \"$fogell_watchdog_term_file\" ]; then printf term > \"$fogell_watchdog_term_file\"; fi; "
+            + "if [ -n \"$fogell_watchdog_kill_release\" ]; then while [ ! -e \"$fogell_watchdog_kill_release\" ]; do /bin/sleep 0.01; done; fi; "
+            + "fi; /bin/sleep 0.2; "
+            + "if fogell_group_authorized; then /bin/kill -KILL -- -$fogell_inner 2>/dev/null || true; fi; /bin/sleep 0.2; "
+            + "elif [ \"$fogell_kill_launcher\" -eq 1 ] && fogell_launcher_authorized; then "
             + "/bin/kill -KILL \"$fogell_inner\" 2>/dev/null || true; /bin/sleep 0.2; "
             + "fi; "
             + "fi) <&9 >/dev/null 2>&1 & fogell_guard=$!; "
@@ -771,12 +1101,15 @@ module ProcessGroup =
         psi.ArgumentList.Add(defaultArg containmentDirectory "")
         // Test-only controller seams. They are read before the child environment
         // is cleared and travel positionally, so a build cannot set them through
-        // withEnv/environment. Production leaves both empty.
+        // withEnv/environment. Production leaves all of them empty.
         psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_RELEASE_FILE")) "")
         psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_READY_FILE")) "")
         psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_OBSERVED_FILE")) "")
         psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_STOPPED_FILE")) "")
         psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_CLEANUP_RELEASE_FILE")) "")
+        psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_WATCHDOG_TERM_FILE")) "")
+        psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_WATCHDOG_KILL_RELEASE_FILE")) "")
+        psi.ArgumentList.Add launcherIdentityPath
 
         psi.WorkingDirectory <- request.WorkingDirectory
         psi.RedirectStandardOutput <- true
@@ -785,6 +1118,11 @@ module ProcessGroup =
         psi.UseShellExecute <- false
 
         LaunchEnvironment.applyBuildTo psi request.Environment
+
+        match containmentDirectory with
+        | Some _ when not (Native.enableChildSubreaper ()) ->
+            invalidOp "could not establish Linux child-subreaper ownership for process-group anchors"
+        | _ -> ()
 
         use proc = new Process()
         proc.StartInfo <- psi
@@ -954,7 +1292,7 @@ module ProcessGroup =
             else
                 allReadersCompleted
 
-        let mutable identityAnchor: int option = None
+        let mutable registeredGroup: RegisteredGroupIdentity option = None
 
         // Wait for the leader marker or definitive stderr EOF, with the same
         // two-second upper bound as before. Deriving it from proc.Id is WRONG:
@@ -1001,7 +1339,12 @@ module ProcessGroup =
                         if not anchorStopped then
                             invalidOp $"process-group anchor {anchor} did not reach its identity-bound stopped state"
 
-                        identityAnchor <- Some anchor
+                        registeredGroup <-
+                            Some
+                                { GroupId = group
+                                  LeaderStartTime = startTime
+                                  AnchorPid = anchor
+                                  AnchorStartTime = anchorStartTime }
                     | None -> ()
 
                     let stopped =
@@ -1204,8 +1547,8 @@ module ProcessGroup =
                     if request.ReapGroup then
                         pgid
                         |> Option.map (fun g ->
-                            match identityAnchor with
-                            | Some anchor -> reapWithAnchor g anchor request.GraceMs
+                            match registeredGroup with
+                            | Some identity -> reapWithAnchor identity request.GraceMs
                             | None -> reap g request.GraceMs)
                     else
                         None
@@ -1251,8 +1594,8 @@ module ProcessGroup =
                 let t =
                     pgid
                     |> Option.map (fun g ->
-                        match identityAnchor with
-                        | Some anchor -> terminateGroupWithAnchor g anchor request.GraceMs
+                        match registeredGroup with
+                        | Some identity -> terminateGroupWithAnchor identity request.GraceMs
                         | None -> terminateGroup g request.GraceMs)
                 let completionClock, _, callbackReadersReachedEof = waitForReaderCompletion 300
 
@@ -1293,7 +1636,8 @@ module ProcessGroup =
         let mayDisarmGuard =
             match containmentDirectory, pgid with
             | None, _ -> true
-            | Some _, Some group -> survivorsIn group = 0
+            | Some _, Some group ->
+                Native.probeProcessGroup group = Native.ProcessGroupPresence.Absent
             | Some _, None -> false
 
         let mutable guardDisarmed = false
