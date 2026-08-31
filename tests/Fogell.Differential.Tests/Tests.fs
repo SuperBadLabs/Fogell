@@ -602,6 +602,25 @@ let controllerWorkerTiming =
                   "the non-throwing wake reaches the reason persisted by RequireReconciliation"
           }
 
+          test "a sticky cleanup failure still reaches reconciliation" {
+              let mutable cleanupCalls = 0
+              let cleanup =
+                  ProcessGroup.once (fun () ->
+                      cleanupCalls <- cleanupCalls + 1
+                      raise (InvalidOperationException "partial cleanup failure"))
+              let mutable reconciled = false
+
+              let cleanupFailure = WorkerControl.tryCleanupForReconciliation cleanup
+              reconciled <- true
+
+              Expect.isSome cleanupFailure "the cleanup failure remains available for diagnostics"
+              Expect.isTrue reconciled "cleanup failure is data and cannot skip durable reconciliation"
+              Expect.isSome
+                  (WorkerControl.tryCleanupForReconciliation cleanup)
+                  "a later finally-shaped call observes the cached failure"
+              Expect.equal cleanupCalls 1 "the failed cleanup's side effects are not repeated"
+          }
+
           test "late cancellation delegates natural terminal arbitration to the Store" {
               let decide cancelled interrupted leaseLost =
                   WorkerControl.naturalExitFinalAction cancelled interrupted leaseLost

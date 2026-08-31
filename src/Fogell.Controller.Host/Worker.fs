@@ -63,6 +63,15 @@ module internal WorkerControl =
             diagnose setupError disposition
             None
 
+    let tryCleanupForReconciliation cleanup =
+        try
+            cleanup () |> ignore
+            None
+        with cleanupError ->
+            // Cleanup is sticky and single-shot. Convert its cached failure to
+            // data here so the caller still records durable reconciliation.
+            Some cleanupError
+
     let waitForActivePoll (pollMilliseconds: int) (stoppingToken: CancellationToken) =
         task {
             try
@@ -794,8 +803,16 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                     finally
                         if not dispositionRecorded then
                             // Exceptions after child start are forced stops. The
-                            // memoized cleanup prevents a second signal pass.
-                            cleanupExecution () |> ignore
+                            // memoized cleanup prevents a second signal pass. A
+                            // cached failure cannot prevent durable disposition.
+                            match WorkerControl.tryCleanupForReconciliation cleanupExecution with
+                            | Some cleanupError ->
+                                logger.LogError(
+                                    cleanupError,
+                                    "FG-224 cleanup failed for {AttemptId}; durable reconciliation is still required",
+                                    claim.AttemptId.Value)
+                            | None -> ()
+
                             requireReconciliation reconciliationReason
         }
 
