@@ -403,6 +403,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             start.ArgumentList.Add buildKey
                             start.ArgumentList.Add journalPath
                             start.UseShellExecute <- false
+                            start.RedirectStandardInput <- true
                             start.RedirectStandardOutput <- true
                             start.RedirectStandardError <- true
                             start.CreateNoWindow <- true
@@ -411,7 +412,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             start.Environment["HOME"] <- neutralHome
                             start.Environment["TMPDIR"] <- tempRoot
                             start.Environment["FOGELL_EVENT_FILE"] <- eventPath
-                            start.Environment["FOGELL_EXPECTED_PARENT_PID"] <- string Environment.ProcessId
+                            start.Environment["FOGELL_CONTROLLER_LIVENESS_PIPE"] <- "1"
                             start.Environment["FOGELL_PROCESS_GROUP_REGISTRY"] <- containmentPath
                             // Project-scoped numbering is durable admission truth. Passing
                             // only the build UUID made the child fall back to build 1 for

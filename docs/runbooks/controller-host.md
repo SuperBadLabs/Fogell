@@ -185,8 +185,11 @@ thread remains active, and unreadable or malformed `/proc` state remains
 uncertain. The production proof supports both a native Linux service and a
 controller running as container PID 1. Its container lane overrides the image
 entrypoint and verifies `/proc/1/exe` is the exact controller apphost before it
-accepts any HTTP result; Run.Host accepts that parent identity for its
-parent-death signal contract.
+accepts any HTTP result. Run.Host is bound to a private controller-owned stdin
+liveness pipe: controller exit closes the writer regardless of which native
+thread launched the child, and EOF fails Run.Host closed so its per-step
+watchdog pipes also close. This deliberately avoids the creating-thread semantics
+of Linux `PR_SET_PDEATHSIG` and works when the controller is PID 1.
 
 This is a trusted single-tenant Linux boundary. The fresh `/proc` observation
 and following `kill(2)` are not one atomic pidfd/cgroup operation, so a hostile
@@ -420,6 +423,12 @@ From HeMan, with the PostgreSQL container and host port selected:
 FOGELL_PG_CONTAINER=fogell-fg060a \
 FOGELL_PG_PORT=55445 \
 FOGELL_BUILD_CONFIGURATION=Release \
+./scripts/prove-runnable-controller.sh
+
+FOGELL_PG_CONTAINER=fogell-fg060a \
+FOGELL_PG_PORT=55445 \
+FOGELL_BUILD_CONFIGURATION=Release \
+FOGELL_FG224_CONTROLLER_IMAGE=mcr.microsoft.com/dotnet/sdk@sha256:ea8bde36c11b6e7eec2656d0e59101d4462f6bd630730f2c8201ed0572b295d5 \
 ./scripts/prove-runnable-controller.sh
 ```
 

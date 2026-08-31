@@ -18,12 +18,22 @@ host_pid=""
 controller_container=""
 controller_serial=0
 controller_image=${FOGELL_FG224_CONTROLLER_IMAGE:-}
+liveness_writer_pid=""
+liveness_host_pid=""
 
 admin() {
   docker exec "$container" psql -U fogell -d "$1" -v ON_ERROR_STOP=1 "${@:2}"
 }
 
 cleanup() {
+  if [[ -n "$liveness_writer_pid" ]] && kill -0 "$liveness_writer_pid" 2>/dev/null; then
+    kill -TERM "$liveness_writer_pid" 2>/dev/null || true
+    wait "$liveness_writer_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$liveness_host_pid" ]] && kill -0 "$liveness_host_pid" 2>/dev/null; then
+    kill -KILL "$liveness_host_pid" 2>/dev/null || true
+    wait "$liveness_host_pid" 2>/dev/null || true
+  fi
   if [[ -n "$controller_container" ]]; then
     docker stop --time 10 "$controller_container" >/dev/null 2>&1 || true
     [[ -z "$host_pid" ]] || wait "$host_pid" 2>/dev/null || true
@@ -55,6 +65,67 @@ run_host="$repo/tools/Fogell.Run.Host/bin/$configuration/net10.0/Fogell.Run.Host
 printf '%s' 'fg224-proof-token-0123456789abcdef' >"$token_file"
 printf '%s' 'weak' >"$weak_token_file"
 chmod 400 "$token_file" "$weak_token_file"
+
+# Run.Host supervision must follow the controller process, not the transient
+# native thread that launched it. Hold an otherwise-silent FIFO writer, start a
+# real long-running step with liveness-pipe mode enabled, then close the writer.
+# EOF must terminate Run.Host and its nested step before the post-sleep effect.
+liveness_pipe="$scratch/controller-liveness.pipe"
+liveness_definition="$scratch/controller-liveness.Jenkinsfile"
+liveness_workspace="$scratch/controller-liveness-workspace"
+liveness_journal="$scratch/controller-liveness.journal"
+liveness_started="$scratch/controller-liveness.started"
+liveness_leaked="$scratch/controller-liveness.leaked"
+liveness_step_pid_file="$scratch/controller-liveness-step.pid"
+mkdir -p "$liveness_workspace"
+mkfifo "$liveness_pipe"
+printf '%s\n' \
+  "pipeline { agent any stages { stage('Liveness') { steps { sh 'echo \$\$ > $liveness_step_pid_file; echo started > $liveness_started; sleep 30; echo leaked > $liveness_leaked' } } } }" \
+  >"$liveness_definition"
+/bin/sleep 60 >"$liveness_pipe" &
+liveness_writer_pid=$!
+(
+  env FOGELL_CONTROLLER_LIVENESS_PIPE=1 \
+    /usr/bin/setsid "$run_host" "$liveness_definition" "$liveness_workspace" \
+    liveness "$liveness_journal" <"$liveness_pipe"
+) >"$scratch/controller-liveness.stdout" 2>"$scratch/controller-liveness.stderr" &
+liveness_host_pid=$!
+
+for _ in $(seq 1 200); do
+  [[ -s "$liveness_started" && -s "$liveness_step_pid_file" ]] && break
+  kill -0 "$liveness_host_pid" 2>/dev/null \
+    || { echo "FG-224 REFUSED: liveness-pipe Run.Host exited before its step started" >&2; exit 1; }
+  sleep 0.05
+done
+[[ -s "$liveness_started" && -s "$liveness_step_pid_file" ]] \
+  || { echo "FG-224 REFUSED: liveness-pipe proof never reached its running step" >&2; exit 1; }
+liveness_step_pid=$(tr -d '[:space:]' <"$liveness_step_pid_file")
+kill -TERM "$liveness_writer_pid"
+wait "$liveness_writer_pid" 2>/dev/null || true
+liveness_writer_pid=""
+
+for _ in $(seq 1 200); do
+  kill -0 "$liveness_host_pid" 2>/dev/null || break
+  sleep 0.05
+done
+! kill -0 "$liveness_host_pid" 2>/dev/null \
+  || { echo "FG-224 REFUSED: Run.Host survived controller liveness-pipe EOF" >&2; exit 1; }
+set +e
+wait "$liveness_host_pid"
+liveness_rc=$?
+set -e
+liveness_host_pid=""
+[[ $liveness_rc -ne 0 ]] \
+  || { echo "FG-224 REFUSED: controller liveness-pipe EOF reported clean Run.Host success" >&2; exit 1; }
+
+for _ in $(seq 1 200); do
+  kill -0 "$liveness_step_pid" 2>/dev/null || break
+  sleep 0.05
+done
+! kill -0 "$liveness_step_pid" 2>/dev/null \
+  || { echo "FG-224 REFUSED: liveness-pipe EOF left the nested step alive" >&2; exit 1; }
+[[ ! -e "$liveness_leaked" ]] \
+  || { echo "FG-224 REFUSED: liveness-pipe EOF allowed the post-sleep effect" >&2; exit 1; }
 
 admin postgres -c "CREATE DATABASE $database" >/dev/null
 admin postgres -c "CREATE ROLE $role NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS" >/dev/null
@@ -795,4 +866,4 @@ if grep -Fq 'fg224-proof-token-0123456789abcdef' "$host_log" || grep -Fq 'Passwo
   exit 1
 fi
 
-echo "FG-224/FG-042b PROOF PASS: safe timing refusal; exact execution-preflight admission and idempotency boundary; restart-discovered durable admission; authenticated byte-exact artifact retrieval; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; attempt-keyed retry journals with same-child deterministic resume; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; terminal event-file cleanup; graceful-shutdown reason event, outbox, and byte-exact recovery file; atomic terminal roll-up"
+echo "FG-224/FG-042b PROOF PASS: controller-lifetime EOF supervision and nested-step reap; safe timing refusal; exact execution-preflight admission and idempotency boundary; restart-discovered durable admission; authenticated byte-exact artifact retrieval; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; attempt-keyed retry journals with same-child deterministic resume; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; terminal event-file cleanup; graceful-shutdown reason event, outbox, and byte-exact recovery file; atomic terminal roll-up"

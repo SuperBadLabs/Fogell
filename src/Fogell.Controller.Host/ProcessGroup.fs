@@ -115,9 +115,14 @@ module internal ProcessGroup =
                 value
 
     let combineStopResults results =
-        if results |> Seq.exists ((=) ProcessGroupStopResult.Persisted) then
+        // Cleanup sequences are side-effecting. Materialize once so an
+        // uncertain first pass cannot cause Seq.exists to signal everything a
+        // second time while looking for a lower-precedence result.
+        let observed = results |> Seq.toArray
+
+        if observed |> Seq.exists ((=) ProcessGroupStopResult.Persisted) then
             ProcessGroupStopResult.Persisted
-        elif results |> Seq.exists ((=) ProcessGroupStopResult.StatusUncertain) then
+        elif observed |> Seq.exists ((=) ProcessGroupStopResult.StatusUncertain) then
             ProcessGroupStopResult.StatusUncertain
         else
             ProcessGroupStopResult.Extinguished

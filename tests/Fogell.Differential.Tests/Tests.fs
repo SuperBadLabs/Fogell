@@ -1093,7 +1093,22 @@ let controllerProcessGroupExtinction =
 
     testList
         "FG-224 controller process-group extinction"
-        [ test "Linux probe errno distinguishes absence, presence, and uncertainty" {
+        [ test "side-effecting cleanup results are combined exactly once" {
+              let mutable visits = 0
+              let results =
+                  seq {
+                      visits <- visits + 1
+                      yield ProcessGroupStopResult.StatusUncertain
+                  }
+
+              Expect.equal
+                  (ProcessGroup.combineStopResults results)
+                  ProcessGroupStopResult.StatusUncertain
+                  "uncertainty remains fail-closed"
+              Expect.equal visits 1 "result precedence does not enumerate cleanup twice"
+          }
+
+          test "Linux probe errno distinguishes absence, presence, and uncertainty" {
               Expect.equal
                   (ProcessGroup.classifyProbe -1 3)
                   ProcessPresence.Absent
@@ -1208,7 +1223,8 @@ let controllerProcessGroupExtinction =
               // second handshake that makes the parent reap before teardown.
               // Starting the target directly through Process would let the
               // runtime's exit watcher reap it before the zombie assertion.
-              let start = Diagnostics.ProcessStartInfo("/usr/bin/python3")
+              let start = Diagnostics.ProcessStartInfo("/usr/bin/env")
+              start.ArgumentList.Add "python3"
               start.ArgumentList.Add "-c"
               start.ArgumentList.Add
                   "import os,sys; release_r,release_w=os.pipe(); ready_r,ready_w=os.pipe(); pid=os.fork(); (os.close(release_w),os.close(ready_r),os.setsid(),os.write(ready_w,b'1'),os.read(release_r,1),os._exit(0)) if pid == 0 else (os.close(release_r),os.close(ready_w),os.read(ready_r,1),print(pid,flush=True),sys.stdin.buffer.read(1),os.write(release_w,b'1'),sys.stdin.buffer.read(1),os.waitpid(pid,0))"

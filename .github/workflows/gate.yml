@@ -189,6 +189,17 @@ jobs:
           FOGELL_BUILD_CONFIGURATION: Release
         run: ./scripts/prove-runnable-controller.sh
 
+      - name: runnable controller as container PID 1 (FG-224)
+        # The native lane cannot exercise init-parent semantics. Pin the image
+        # bytes, override its entrypoint in the proof, and require /proc/1/exe
+        # to be the exact controller apphost before accepting any HTTP result.
+        env:
+          FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
+          FOGELL_PG_PORT: 55440
+          FOGELL_BUILD_CONFIGURATION: Release
+          FOGELL_FG224_CONTROLLER_IMAGE: mcr.microsoft.com/dotnet/sdk@sha256:ea8bde36c11b6e7eec2656d0e59101d4462f6bd630730f2c8201ed0572b295d5
+        run: ./scripts/prove-runnable-controller.sh
+
       - name: backup/restore drill and hostile proof (FG-085a)
         # The postgres:16 service is also the client-tool distribution. Keeping
         # pg_dump/pg_restore inside that container gives the drill exact-major
