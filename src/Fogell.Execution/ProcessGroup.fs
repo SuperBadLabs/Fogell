@@ -343,10 +343,22 @@ module ProcessGroup =
 
     let private scanLiveGroupMembers pgid excludedPid =
         try
+            // The wait loops call this repeatedly. Use getpgid as the cheap
+            // candidate filter and read stat only for possible members; ESRCH
+            // is an ordinary exit race, while every other query failure keeps
+            // the whole observation fail-closed.
             IO.Directory.GetDirectories "/proc"
             |> Array.choose (fun directory ->
                 match Int32.TryParse(IO.Path.GetFileName directory) with
-                | true, pid -> Some(pid, observeLinuxProcess pid)
+                | true, pid when Some pid = excludedPid -> None
+                | true, pid ->
+                    match Native.queryProcessGroup pid with
+                    | Native.ProcessGroupQuery.Found group when group = pgid ->
+                        Some(pid, observeLinuxProcess pid)
+                    | Native.ProcessGroupQuery.Found _
+                    | Native.ProcessGroupQuery.Absent -> None
+                    | Native.ProcessGroupQuery.Uncertain ->
+                        Some(pid, LinuxProcessObservation.Uncertain)
                 | _ -> None)
             |> classifyLiveGroupMembers pgid excludedPid
         with _ ->

@@ -693,6 +693,19 @@ let containment =
           }
 
           test "registered cleanup binds every signal and ignores only defunct group members" {
+              Expect.equal
+                  (Native.classifyProcessGroupQuery 42 0)
+                  (Native.ProcessGroupQuery.Found 42)
+                  "getpgid success yields the candidate group"
+              Expect.equal
+                  (Native.classifyProcessGroupQuery -1 Native.ESRCH)
+                  Native.ProcessGroupQuery.Absent
+                  "a vanished candidate is not an uncertain host-wide blocker"
+              Expect.equal
+                  (Native.classifyProcessGroupQuery -1 1)
+                  Native.ProcessGroupQuery.Uncertain
+                  "permission or kernel uncertainty remains fail-closed"
+
               let fields = Array.create 20 "0"
               fields[0] <- "S"
               fields[2] <- "42"

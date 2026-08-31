@@ -93,13 +93,26 @@ launch_controller() {
     docker run --rm --name "$controller_container" --network host \
       --user "$(id -u):$(id -g)" \
       --volume "$repo:$repo:ro" --volume "$scratch:$scratch" \
-      "${docker_env[@]}" "$controller_image" "$controller" >>"$host_log" 2>&1 &
+      "${docker_env[@]}" --entrypoint "$controller" "$controller_image" >>"$host_log" 2>&1 &
   else
     controller_container=""
     env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" \
       "FOGELL_WORKER_POLL_MS=$poll_ms" "$controller" >>"$host_log" 2>&1 &
   fi
   host_pid=$!
+
+  if [[ -n "$controller_image" ]]; then
+    local pid1_executable=""
+    for _ in $(seq 1 200); do
+      pid1_executable=$(docker exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true)
+      [[ "$pid1_executable" = "$controller" ]] && break
+      kill -0 "$host_pid" 2>/dev/null \
+        || { echo "FG-224 REFUSED: controller container exited before PID1 identity was proven" >&2; exit 1; }
+      sleep 0.05
+    done
+    [[ "$pid1_executable" = "$controller" ]] \
+      || { echo "FG-224 REFUSED: container PID1 was ${pid1_executable:-unreadable}, expected $controller" >&2; exit 1; }
+  fi
 }
 
 stop_controller() {

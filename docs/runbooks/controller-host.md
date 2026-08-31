@@ -183,8 +183,10 @@ one thread are logically extinct even if an unreaping container pid 1 keeps them
 visible to `kill(-pgid, 0)`. A zombie thread-group leader with more than one
 thread remains active, and unreadable or malformed `/proc` state remains
 uncertain. The production proof supports both a native Linux service and a
-controller running as container PID 1; Run.Host accepts that parent identity for
-its parent-death signal contract.
+controller running as container PID 1. Its container lane overrides the image
+entrypoint and verifies `/proc/1/exe` is the exact controller apphost before it
+accepts any HTTP result; Run.Host accepts that parent identity for its
+parent-death signal contract.
 
 This is a trusted single-tenant Linux boundary. The fresh `/proc` observation
 and following `kill(2)` are not one atomic pidfd/cgroup operation, so a hostile

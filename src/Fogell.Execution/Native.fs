@@ -7,6 +7,12 @@ open System.Runtime.InteropServices
 /// signal and process-group primitives only.
 module internal Native =
 
+    [<RequireQualifiedAccess>]
+    type ProcessGroupQuery =
+        | Found of int
+        | Absent
+        | Uncertain
+
     /// POSIX signals Fogell uses. Values are the Linux/glibc numbers.
     [<Literal>]
     let SIGTERM = 15
@@ -63,10 +69,23 @@ module internal Native =
     /// True when the process (or group leader) is still present.
     let processExists (pid: int) : bool = pid > 0 && kill (pid, 0) = 0
 
-    let processGroupOf (pid: int) : int option =
-        if pid <= 0 then
-            None
+    let internal classifyProcessGroupQuery result error =
+        if result >= 0 then
+            ProcessGroupQuery.Found result
+        elif error = ESRCH then
+            ProcessGroupQuery.Absent
         else
-            match getpgid pid with
-            | -1 -> None
-            | pgid -> Some pgid
+            ProcessGroupQuery.Uncertain
+
+    let queryProcessGroup (pid: int) =
+        if pid <= 0 then
+            ProcessGroupQuery.Absent
+        else
+            let result = getpgid pid
+            classifyProcessGroupQuery result (Marshal.GetLastWin32Error())
+
+    let processGroupOf (pid: int) : int option =
+        match queryProcessGroup pid with
+        | ProcessGroupQuery.Found pgid -> Some pgid
+        | ProcessGroupQuery.Absent
+        | ProcessGroupQuery.Uncertain -> None
