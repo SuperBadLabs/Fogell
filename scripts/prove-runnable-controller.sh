@@ -116,9 +116,18 @@ launch_controller() {
 }
 
 stop_controller() {
+  local stop_diagnostic=""
+
   if [[ -n "$controller_container" ]]; then
-    docker stop --time 10 "$controller_container" >/dev/null
-    wait "$host_pid"
+    if ! docker stop --time 10 "$controller_container" >"$scratch/docker-stop.stdout" 2>"$scratch/docker-stop.stderr"; then
+      stop_diagnostic=$(tr '\n' ' ' <"$scratch/docker-stop.stderr")
+      echo "FG-224 REFUSED: controller container stop failed: ${stop_diagnostic:-docker stop returned nonzero}" >&2
+      return 1
+    fi
+    if ! wait "$host_pid"; then
+      echo "FG-224 REFUSED: controller container process returned nonzero after docker stop" >&2
+      return 1
+    fi
     controller_container=""
   else
     kill -TERM "$host_pid"

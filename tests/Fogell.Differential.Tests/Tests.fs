@@ -1106,6 +1106,50 @@ let controllerProcessGroupExtinction =
                   (ProcessGroup.classifyProbe -1 22)
                   ProcessPresence.Uncertain
                   "unexpected errno cannot authorize a handoff"
+
+              Expect.equal
+                  (ProcessGroup.classifyGroupQuery 42 0)
+                  (ProcessGroupQuery.Found 42)
+                  "getpgid success returns the candidate's group"
+              Expect.equal
+                  (ProcessGroup.classifyGroupQuery -1 3)
+                  ProcessGroupQuery.Absent
+                  "getpgid ESRCH is an exit race"
+              Expect.equal
+                  (ProcessGroup.classifyGroupQuery -1 1)
+                  ProcessGroupQuery.Uncertain
+                  "other getpgid failures remain fail-closed"
+          }
+
+          test "group scans read stat only for getpgid-matched candidates" {
+              let mutable reads = []
+              let read pid =
+                  reads <- pid :: reads
+                  ProcessMemberObservation.Observed('S', 42, 1)
+
+              Expect.equal
+                  (ProcessGroup.observeGroupCandidate 42 100 (fun _ -> ProcessGroupQuery.Found 7) read)
+                  ProcessMemberObservation.Absent
+                  "an unrelated process is ignored without reading proc stat"
+              Expect.isEmpty reads "the foreign group did not trigger a stat read"
+
+              Expect.equal
+                  (ProcessGroup.observeGroupCandidate 42 101 (fun _ -> ProcessGroupQuery.Absent) read)
+                  ProcessMemberObservation.Absent
+                  "a getpgid exit race is absent"
+              Expect.isEmpty reads "the vanished candidate did not trigger a stat read"
+
+              Expect.equal
+                  (ProcessGroup.observeGroupCandidate 42 102 (fun _ -> ProcessGroupQuery.Uncertain) read)
+                  ProcessMemberObservation.Uncertain
+                  "a getpgid failure remains uncertain"
+              Expect.isEmpty reads "an uncertain candidate is not inspected under guessed membership"
+
+              Expect.equal
+                  (ProcessGroup.observeGroupCandidate 42 103 (fun _ -> ProcessGroupQuery.Found 42) read)
+                  (ProcessMemberObservation.Observed('S', 42, 1))
+                  "a matching candidate is inspected"
+              Expect.equal reads [ 103 ] "only the matching candidate reached stat"
           }
 
           test "proc membership treats zombie-only groups as extinct without weakening uncertainty" {

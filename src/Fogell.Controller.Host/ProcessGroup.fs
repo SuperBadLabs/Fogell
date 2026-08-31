@@ -16,6 +16,12 @@ type internal ProcessSignalResult =
     | Uncertain
 
 [<RequireQualifiedAccess>]
+type internal ProcessGroupQuery =
+    | Found of int
+    | Absent
+    | Uncertain
+
+[<RequireQualifiedAccess>]
 type internal ProcessGroupStopResult =
     | Extinguished
     | Persisted
@@ -66,6 +72,9 @@ module internal ProcessGroup =
     [<DllImport("libc", SetLastError = true)>]
     extern int private kill(int pid, int signal)
 
+    [<DllImport("libc", SetLastError = true)>]
+    extern int private getpgid(int pid)
+
     let internal classifyProbe result errorNumber =
         if result = 0 || errorNumber = permissionDenied then
             ProcessPresence.Present
@@ -81,6 +90,18 @@ module internal ProcessGroup =
             ProcessSignalResult.TargetAbsent
         else
             ProcessSignalResult.Uncertain
+
+    let internal classifyGroupQuery result errorNumber =
+        if result >= 0 then
+            ProcessGroupQuery.Found result
+        elif errorNumber = noSuchProcess then
+            ProcessGroupQuery.Absent
+        else
+            ProcessGroupQuery.Uncertain
+
+    let private queryProcessGroup pid =
+        let result = getpgid pid
+        classifyGroupQuery result (Marshal.GetLastWin32Error())
 
     let once (action: unit -> 'value) =
         let mutable cached = None
@@ -138,8 +159,9 @@ module internal ProcessGroup =
 
     /// A zombie cannot execute code, write a journal, or perform an external
     /// effect. LinuxKit may retain it indefinitely when container pid 1 does
-    /// not reap, so kill(-pgid, 0) is not an extinction oracle. Any unreadable
-    /// proc entry remains fail-closed because it could hide a live member.
+    /// not reap, so kill(-pgid, 0) is not an extinction oracle. getpgid filters
+    /// candidates before stat is read; an uncertain membership query or an
+    /// unreadable target-group stat remains fail-closed.
     let internal classifyGroupMembers processGroupId observations =
         let mutable live = false
         let mutable defunct = false
@@ -166,6 +188,13 @@ module internal ProcessGroup =
         else
             ProcessGroupPopulation.Empty
 
+    let internal observeGroupCandidate processGroupId pid queryGroup readObservation =
+        match queryGroup pid with
+        | ProcessGroupQuery.Found group when group = processGroupId -> readObservation pid
+        | ProcessGroupQuery.Found _
+        | ProcessGroupQuery.Absent -> ProcessMemberObservation.Absent
+        | ProcessGroupQuery.Uncertain -> ProcessMemberObservation.Uncertain
+
     let private observeGroupPopulation processGroupId =
         IO.Directory.GetDirectories "/proc"
         |> Array.choose (fun directory ->
@@ -173,18 +202,19 @@ module internal ProcessGroup =
             | true, pid -> Some pid
             | _ -> None)
         |> Array.map (fun pid ->
-            try
-                match readProcessStat pid with
-                | Some fields when fields[0].Length = 1 ->
-                    match Int32.TryParse fields[2], Int32.TryParse fields[17] with
-                    | (true, group), (true, threads) ->
-                        ProcessMemberObservation.Observed(fields[0].[0], group, threads)
+            observeGroupCandidate processGroupId pid queryProcessGroup (fun candidate ->
+                try
+                    match readProcessStat candidate with
+                    | Some fields when fields[0].Length = 1 ->
+                        match Int32.TryParse fields[2], Int32.TryParse fields[17] with
+                        | (true, group), (true, threads) ->
+                            ProcessMemberObservation.Observed(fields[0].[0], group, threads)
+                        | _ -> ProcessMemberObservation.Uncertain
                     | _ -> ProcessMemberObservation.Uncertain
-                | _ -> ProcessMemberObservation.Uncertain
-            with
-            | :? IO.FileNotFoundException
-            | :? IO.DirectoryNotFoundException -> ProcessMemberObservation.Absent
-            | _ -> ProcessMemberObservation.Uncertain)
+                with
+                | :? IO.FileNotFoundException
+                | :? IO.DirectoryNotFoundException -> ProcessMemberObservation.Absent
+                | _ -> ProcessMemberObservation.Uncertain))
         |> classifyGroupMembers processGroupId
 
     let internal probeKernelGroup processGroupId =
