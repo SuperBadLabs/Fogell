@@ -341,6 +341,21 @@ module ProcessGroup =
 
         if uncertain then -1 else live
 
+    let internal observeLiveGroupCandidate pgid pid queryGroup observe =
+        match queryGroup pid with
+        | Native.ProcessGroupQuery.Found group when group = pgid ->
+            match observe pid with
+            | LinuxProcessObservation.Present stat when stat.ProcessGroupId <> pgid ->
+                // Membership changed between getpgid and the stat read. The
+                // numeric PID may have been reused, so this scan cannot prove
+                // that the original group is empty.
+                Some(pid, LinuxProcessObservation.Uncertain)
+            | observation -> Some(pid, observation)
+        | Native.ProcessGroupQuery.Found _
+        | Native.ProcessGroupQuery.Absent -> None
+        | Native.ProcessGroupQuery.Uncertain ->
+            Some(pid, LinuxProcessObservation.Uncertain)
+
     let private scanLiveGroupMembers pgid excludedPid =
         try
             // The wait loops call this repeatedly. Use getpgid as the cheap
@@ -352,13 +367,7 @@ module ProcessGroup =
                 match Int32.TryParse(IO.Path.GetFileName directory) with
                 | true, pid when Some pid = excludedPid -> None
                 | true, pid ->
-                    match Native.queryProcessGroup pid with
-                    | Native.ProcessGroupQuery.Found group when group = pgid ->
-                        Some(pid, observeLinuxProcess pid)
-                    | Native.ProcessGroupQuery.Found _
-                    | Native.ProcessGroupQuery.Absent -> None
-                    | Native.ProcessGroupQuery.Uncertain ->
-                        Some(pid, LinuxProcessObservation.Uncertain)
+                    observeLiveGroupCandidate pgid pid Native.queryProcessGroup observeLinuxProcess
                 | _ -> None)
             |> classifyLiveGroupMembers pgid excludedPid
         with _ ->

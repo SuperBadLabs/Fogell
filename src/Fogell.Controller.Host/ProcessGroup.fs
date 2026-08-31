@@ -205,7 +205,14 @@ module internal ProcessGroup =
 
     let internal observeGroupCandidate processGroupId pid queryGroup readObservation =
         match queryGroup pid with
-        | ProcessGroupQuery.Found group when group = processGroupId -> readObservation pid
+        | ProcessGroupQuery.Found group when group = processGroupId ->
+            match readObservation pid with
+            | ProcessMemberObservation.Observed(_, observedGroup, _) when observedGroup <> processGroupId ->
+                // Membership changed between getpgid and the stat read. Treat
+                // the PID-reuse race as uncertainty instead of silently
+                // proving the original group empty.
+                ProcessMemberObservation.Uncertain
+            | observation -> observation
         | ProcessGroupQuery.Found _
         | ProcessGroupQuery.Absent -> ProcessMemberObservation.Absent
         | ProcessGroupQuery.Uncertain -> ProcessMemberObservation.Uncertain

@@ -728,6 +728,21 @@ let containment =
                         ThreadCount = threads
                         StartTime = start }
 
+              let mutable candidateReads = []
+              let observe pid =
+                  candidateReads <- pid :: candidateReads
+                  stat 'S' 7 1 "replacement"
+
+              Expect.equal
+                  (ProcessGroup.observeLiveGroupCandidate
+                      42
+                      123
+                      (fun _ -> Native.ProcessGroupQuery.Found 42)
+                      observe)
+                  (Some(123, ProcessGroup.LinuxProcessObservation.Uncertain))
+                  "a PID whose group changes between getpgid and stat is fail-closed"
+              Expect.equal candidateReads [ 123 ] "the matched candidate was read exactly once"
+
               Expect.equal
                   (ProcessGroup.classifyLiveGroupMembers
                       42

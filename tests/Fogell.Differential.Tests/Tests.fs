@@ -1184,6 +1184,15 @@ let controllerProcessGroupExtinction =
                   (ProcessMemberObservation.Observed('S', 42, 1))
                   "a matching candidate is inspected"
               Expect.equal reads [ 103 ] "only the matching candidate reached stat"
+
+              Expect.equal
+                  (ProcessGroup.observeGroupCandidate
+                      42
+                      104
+                      (fun _ -> ProcessGroupQuery.Found 42)
+                      (fun _ -> ProcessMemberObservation.Observed('S', 7, 1)))
+                  ProcessMemberObservation.Uncertain
+                  "a PID whose group changes between getpgid and stat is fail-closed"
           }
 
           test "proc membership treats zombie-only groups as extinct without weakening uncertainty" {
