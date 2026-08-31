@@ -1213,6 +1213,35 @@ let controllerProcessGroupExtinction =
                       (fun _ -> ProcessMemberObservation.Observed('S', 7, 1)))
                   ProcessMemberObservation.Uncertain
                   "a PID whose group changes between getpgid and stat is fail-closed"
+
+              reads <- []
+              let mutable movingQueries =
+                  [ ProcessGroupQuery.Found 7
+                    ProcessGroupQuery.Found 42 ]
+              let movingQuery _ =
+                  match movingQueries with
+                  | next :: rest ->
+                      movingQueries <- rest
+                      next
+                  | [] -> failtest "foreign candidate was queried more than twice"
+
+              Expect.equal
+                  (ProcessGroup.observeGroupCandidates 42 [ 105 ] movingQuery read)
+                  [ ProcessMemberObservation.Observed('S', 42, 1) ]
+                  "a process joining the group during the scan is inspected at the boundary"
+              Expect.equal reads [ 105 ] "the newly joined candidate reached stat exactly once"
+
+              reads <- []
+              let mutable stableForeignQueries = 0
+              let stableForeign _ =
+                  stableForeignQueries <- stableForeignQueries + 1
+                  ProcessGroupQuery.Found 7
+
+              Expect.isEmpty
+                  (ProcessGroup.observeGroupCandidates 42 [ 106 ] stableForeign read)
+                  "a process outside the group at both observations is ignored"
+              Expect.equal stableForeignQueries 2 "stable foreign candidates are checked at the boundary"
+              Expect.isEmpty reads "stable foreign candidates still avoid proc stat reads"
           }
 
           test "proc membership treats zombie-only groups as extinct without weakening uncertainty" {

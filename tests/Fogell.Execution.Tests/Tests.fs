@@ -743,6 +743,41 @@ let containment =
                   "a PID whose group changes between getpgid and stat is fail-closed"
               Expect.equal candidateReads [ 123 ] "the matched candidate was read exactly once"
 
+              candidateReads <- []
+              let mutable movingQueries =
+                  [ Native.ProcessGroupQuery.Found 7
+                    Native.ProcessGroupQuery.Found 42 ]
+              let movingQuery _ =
+                  match movingQueries with
+                  | next :: rest ->
+                      movingQueries <- rest
+                      next
+                  | [] -> failtest "foreign candidate was queried more than twice"
+
+              Expect.equal
+                  (ProcessGroup.scanLiveGroupCandidates
+                      42
+                      [ 124 ]
+                      movingQuery
+                      (fun pid ->
+                          candidateReads <- pid :: candidateReads
+                          stat 'S' 42 1 "joined"))
+                  [ 124, stat 'S' 42 1 "joined" ]
+                  "a process joining the group during the scan is retained"
+              Expect.equal candidateReads [ 124 ] "the newly joined candidate was read exactly once"
+
+              candidateReads <- []
+              let mutable stableForeignQueries = 0
+              let stableForeign _ =
+                  stableForeignQueries <- stableForeignQueries + 1
+                  Native.ProcessGroupQuery.Found 7
+
+              Expect.isEmpty
+                  (ProcessGroup.scanLiveGroupCandidates 42 [ 125 ] stableForeign observe)
+                  "a process outside the group at both observations is ignored"
+              Expect.equal stableForeignQueries 2 "stable foreign candidates are checked at the boundary"
+              Expect.isEmpty candidateReads "stable foreign candidates still avoid proc stat reads"
+
               Expect.equal
                   (ProcessGroup.classifyLiveGroupMembers
                       42

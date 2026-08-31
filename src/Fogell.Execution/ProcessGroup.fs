@@ -362,6 +362,39 @@ module ProcessGroup =
         | Native.ProcessGroupQuery.Uncertain ->
             Some(pid, LinuxProcessObservation.Uncertain)
 
+    let internal scanLiveGroupCandidates pgid pids queryGroup observe =
+        let observations = ResizeArray<int * LinuxProcessObservation>()
+        let initiallyForeign = ResizeArray<int>()
+
+        let observeMatched pid =
+            match observe pid with
+            | LinuxProcessObservation.Present stat when stat.ProcessGroupId <> pgid ->
+                pid, LinuxProcessObservation.Uncertain
+            | observation -> pid, observation
+
+        for pid in pids do
+            match queryGroup pid with
+            | Native.ProcessGroupQuery.Found group when group = pgid ->
+                observations.Add(observeMatched pid)
+            | Native.ProcessGroupQuery.Found _ ->
+                // A process may join this group after the candidate filter
+                // first sees it. Re-query these misses at the scan boundary.
+                initiallyForeign.Add pid
+            | Native.ProcessGroupQuery.Absent -> ()
+            | Native.ProcessGroupQuery.Uncertain ->
+                observations.Add(pid, LinuxProcessObservation.Uncertain)
+
+        for pid in initiallyForeign do
+            match queryGroup pid with
+            | Native.ProcessGroupQuery.Found group when group = pgid ->
+                observations.Add(observeMatched pid)
+            | Native.ProcessGroupQuery.Found _
+            | Native.ProcessGroupQuery.Absent -> ()
+            | Native.ProcessGroupQuery.Uncertain ->
+                observations.Add(pid, LinuxProcessObservation.Uncertain)
+
+        observations |> Seq.toList
+
     let private scanLiveGroupMembers pgid excludedIdentity =
         try
             // The wait loops call this repeatedly. Use getpgid as the cheap
@@ -371,9 +404,10 @@ module ProcessGroup =
             IO.Directory.GetDirectories "/proc"
             |> Array.choose (fun directory ->
                 match Int32.TryParse(IO.Path.GetFileName directory) with
-                | true, pid ->
-                    observeLiveGroupCandidate pgid pid Native.queryProcessGroup observeLinuxProcess
+                | true, pid -> Some pid
                 | _ -> None)
+            |> fun pids ->
+                scanLiveGroupCandidates pgid pids Native.queryProcessGroup observeLinuxProcess
             |> classifyLiveGroupMembers pgid excludedIdentity
         with _ ->
             -1

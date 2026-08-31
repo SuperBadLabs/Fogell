@@ -217,14 +217,47 @@ module internal ProcessGroup =
         | ProcessGroupQuery.Absent -> ProcessMemberObservation.Absent
         | ProcessGroupQuery.Uncertain -> ProcessMemberObservation.Uncertain
 
+    let internal observeGroupCandidates processGroupId pids queryGroup readObservation =
+        let observations = ResizeArray<ProcessMemberObservation>()
+        let initiallyForeign = ResizeArray<int>()
+
+        let observeMatched pid =
+            match readObservation pid with
+            | ProcessMemberObservation.Observed(_, observedGroup, _) when observedGroup <> processGroupId ->
+                ProcessMemberObservation.Uncertain
+            | observation -> observation
+
+        for pid in pids do
+            match queryGroup pid with
+            | ProcessGroupQuery.Found group when group = processGroupId ->
+                observations.Add(observeMatched pid)
+            | ProcessGroupQuery.Found _ ->
+                // A process may enter the target group while /proc is being
+                // scanned. Retain cheap-filter misses for a boundary recheck.
+                initiallyForeign.Add pid
+            | ProcessGroupQuery.Absent -> ()
+            | ProcessGroupQuery.Uncertain ->
+                observations.Add ProcessMemberObservation.Uncertain
+
+        for pid in initiallyForeign do
+            match queryGroup pid with
+            | ProcessGroupQuery.Found group when group = processGroupId ->
+                observations.Add(observeMatched pid)
+            | ProcessGroupQuery.Found _
+            | ProcessGroupQuery.Absent -> ()
+            | ProcessGroupQuery.Uncertain ->
+                observations.Add ProcessMemberObservation.Uncertain
+
+        observations |> Seq.toList
+
     let private observeGroupPopulation processGroupId =
         IO.Directory.GetDirectories "/proc"
         |> Array.choose (fun directory ->
             match Int32.TryParse(IO.Path.GetFileName directory) with
             | true, pid -> Some pid
             | _ -> None)
-        |> Array.map (fun pid ->
-            observeGroupCandidate processGroupId pid queryProcessGroup (fun candidate ->
+        |> fun pids ->
+            observeGroupCandidates processGroupId pids queryProcessGroup (fun candidate ->
                 try
                     match readProcessStat candidate with
                     | Some fields when fields[0].Length = 1 ->
@@ -236,7 +269,7 @@ module internal ProcessGroup =
                 with
                 | :? IO.FileNotFoundException
                 | :? IO.DirectoryNotFoundException -> ProcessMemberObservation.Absent
-                | _ -> ProcessMemberObservation.Uncertain))
+                | _ -> ProcessMemberObservation.Uncertain)
         |> classifyGroupMembers processGroupId
 
     let internal probeKernelGroup processGroupId =
