@@ -18,6 +18,7 @@ host_pid=""
 controller_container=""
 controller_serial=0
 controller_image=${FOGELL_FG224_CONTROLLER_IMAGE:-}
+pid1_death_receipt=""
 liveness_writer_pid=""
 liveness_host_pid=""
 
@@ -855,6 +856,87 @@ shutdown_sum_stable=$(sha256sum "$shutdown_event_file" | cut -d' ' -f1)
 [[ "$shutdown_sum_stable" = "$shutdown_sum_after" ]] \
   || { echo "FG-224 REFUSED: retained event bytes changed after producer extinction" >&2; exit 1; }
 
+# The digest-pinned lane must exercise the controller-to-Run.Host liveness pipe
+# at the boundary it claims: the real controller is container PID 1, owns the
+# pipe writer, and dies non-cooperatively while a nested step is running. Map
+# the container step PID to Docker's host-visible PID before the kill so the
+# proof can require both Run.Host and the exact recorded nested process to
+# disappear, with no delayed effect landing through the host-mounted scratch.
+if [[ -n "$controller_image" ]]; then
+  launch_controller 50
+
+  ready=0
+  for _ in $(seq 1 200); do
+    if curl -fsS "$base_url/health/ready" >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    kill -0 "$host_pid" 2>/dev/null \
+      || { echo "FG-224 REFUSED: PID1 death-proof controller exited during startup" >&2; exit 1; }
+    sleep 0.05
+  done
+  [[ $ready -eq 1 ]] \
+    || { echo "FG-224 REFUSED: PID1 death-proof controller never became ready" >&2; exit 1; }
+
+  pid1_started="$scratch/pid1-death.started"
+  pid1_leaked="$scratch/pid1-death.leaked"
+  pid1_step_pid_file="$scratch/pid1-death-step.pid"
+  pid1_pipeline="pipeline { agent any stages { stage('PID1Death') { steps { sh 'echo \$\$ > $pid1_step_pid_file; echo started > $pid1_started; sleep 30; echo leaked > $pid1_leaked' } } } }"
+  pid1_response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-pid1-death' \
+    -H 'content-type: application/x-jenkinsfile' --data-binary "$pid1_pipeline" "$builds_url")
+  pid1_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$pid1_response")
+  [[ -n "$pid1_build_id" ]] \
+    || { echo "FG-224 REFUSED: PID1 death proof admission returned no build id" >&2; exit 1; }
+
+  for _ in $(seq 1 400); do
+    [[ -s "$pid1_started" && -s "$pid1_step_pid_file" ]] && break
+    kill -0 "$host_pid" 2>/dev/null \
+      || { echo "FG-224 REFUSED: PID1 death-proof controller exited before its nested step started" >&2; exit 1; }
+    sleep 0.05
+  done
+  [[ -s "$pid1_started" && -s "$pid1_step_pid_file" ]] \
+    || { echo "FG-224 REFUSED: PID1 death proof never reached its running nested step" >&2; exit 1; }
+
+  docker top "$controller_container" -eo pid,ppid,pgid,args >"$scratch/pid1-death-processes.txt"
+  pid1_run_host_pid=$(awk -v app="$run_host" 'index($0, app) { print $1; exit }' "$scratch/pid1-death-processes.txt")
+  pid1_step_namespace_pid=$(tr -d '[:space:]' <"$pid1_step_pid_file")
+  pid1_step_host_pid=""
+  while read -r pid1_candidate_pid _; do
+    [[ "$pid1_candidate_pid" =~ ^[0-9]+$ && -r "/proc/$pid1_candidate_pid/status" ]] || continue
+    pid1_candidate_namespace_pid=$(awk '/^NSpid:/ { print $NF }' "/proc/$pid1_candidate_pid/status")
+    if [[ "$pid1_candidate_namespace_pid" = "$pid1_step_namespace_pid" ]]; then
+      pid1_step_host_pid="$pid1_candidate_pid"
+      break
+    fi
+  done <"$scratch/pid1-death-processes.txt"
+  [[ "$pid1_run_host_pid" =~ ^[0-9]+$ ]] \
+    || { echo "FG-224 REFUSED: PID1 death proof could not identify Run.Host" >&2; exit 1; }
+  [[ "$pid1_step_host_pid" =~ ^[0-9]+$ ]] \
+    || { echo "FG-224 REFUSED: PID1 death proof could not identify its nested step" >&2; exit 1; }
+
+  docker kill --signal KILL "$controller_container" >"$scratch/docker-pid1-kill.stdout"
+  set +e
+  wait "$host_pid"
+  pid1_container_rc=$?
+  set -e
+  controller_container=""
+  host_pid=""
+  [[ $pid1_container_rc -ne 0 ]] \
+    || { echo "FG-224 REFUSED: non-cooperative PID1 death reported clean container success" >&2; exit 1; }
+
+  for _ in $(seq 1 200); do
+    [[ ! -e "/proc/$pid1_run_host_pid" && ! -e "/proc/$pid1_step_host_pid" ]] && break
+    sleep 0.05
+  done
+  [[ ! -e "/proc/$pid1_run_host_pid" ]] \
+    || { echo "FG-224 REFUSED: Run.Host survived non-cooperative controller PID1 death" >&2; exit 1; }
+  [[ ! -e "/proc/$pid1_step_host_pid" ]] \
+    || { echo "FG-224 REFUSED: recorded nested step survived non-cooperative controller PID1 death" >&2; exit 1; }
+  [[ ! -e "$pid1_leaked" ]] \
+    || { echo "FG-224 REFUSED: controller PID1 death allowed the post-sleep effect" >&2; exit 1; }
+  pid1_death_receipt="; digest-pinned controller PID1 death reaps Run.Host and its recorded nested step without a post-sleep effect"
+fi
+
 set +e
 admin "$database" -c "UPDATE build_definitions SET source_bytes = decode('00','hex') WHERE build_id='$build_id'" >/dev/null 2>&1
 mutate_rc=$?
@@ -866,4 +948,4 @@ if grep -Fq 'fg224-proof-token-0123456789abcdef' "$host_log" || grep -Fq 'Passwo
   exit 1
 fi
 
-echo "FG-224/FG-042b PROOF PASS: controller-lifetime EOF supervision and nested-step reap; safe timing refusal; exact execution-preflight admission and idempotency boundary; restart-discovered durable admission; authenticated byte-exact artifact retrieval; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; attempt-keyed retry journals with same-child deterministic resume; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; terminal event-file cleanup; graceful-shutdown reason event, outbox, and byte-exact recovery file; atomic terminal roll-up"
+echo "FG-224/FG-042b PROOF PASS: controller-lifetime EOF supervision and nested-step reap${pid1_death_receipt}; safe timing refusal; exact execution-preflight admission and idempotency boundary; restart-discovered durable admission; authenticated byte-exact artifact retrieval; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; attempt-keyed retry journals with same-child deterministic resume; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; terminal event-file cleanup; graceful-shutdown reason event, outbox, and byte-exact recovery file; atomic terminal roll-up"

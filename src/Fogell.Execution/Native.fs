@@ -2,7 +2,7 @@ namespace Fogell.Execution
 
 open System.Runtime.InteropServices
 
-/// The only DllImport surface in the solution (ADR 0006). Every entry point is
+/// Fogell.Execution's DllImport surface (ADR 0006). Every entry point is
 /// documented, and nothing here allocates or returns a pointer — these are
 /// signal and process-group primitives only.
 module internal Native =

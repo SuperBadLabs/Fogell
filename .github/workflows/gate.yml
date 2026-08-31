@@ -193,6 +193,8 @@ jobs:
         # The native lane cannot exercise init-parent semantics. Pin the image
         # bytes, override its entrypoint in the proof, and require /proc/1/exe
         # to be the exact controller apphost before accepting any HTTP result.
+        # Kill that PID 1 during a real nested step and bind the absence of both
+        # Run.Host and the recorded step process before accepting the lane.
         env:
           FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
           FOGELL_PG_PORT: 55440

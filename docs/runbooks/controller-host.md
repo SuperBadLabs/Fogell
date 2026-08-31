@@ -185,9 +185,13 @@ thread remains active, and unreadable or malformed `/proc` state remains
 uncertain. The production proof supports both a native Linux service and a
 controller running as container PID 1. Its container lane overrides the image
 entrypoint and verifies `/proc/1/exe` is the exact controller apphost before it
-accepts any HTTP result. Run.Host is bound to a private controller-owned stdin
-liveness pipe: controller exit closes the writer regardless of which native
-thread launched the child, and EOF fails Run.Host closed so its per-step
+accepts any HTTP result. It also admits a real long-running nested step, maps
+that step's namespace pid to its host-visible process, kills controller PID 1
+non-cooperatively, and requires both Run.Host and the recorded nested process to
+disappear without the post-sleep effect. Run.Host is bound to a private
+controller-owned stdin liveness pipe: controller exit closes the writer
+regardless of which native thread launched the child, and EOF fails Run.Host
+closed so its per-step
 watchdog pipes also close. This deliberately avoids the creating-thread semantics
 of Linux `PR_SET_PDEATHSIG` and works when the controller is PID 1.
 
@@ -432,7 +436,7 @@ FOGELL_FG224_CONTROLLER_IMAGE=mcr.microsoft.com/dotnet/sdk@sha256:ea8bde36c11b6e
 ./scripts/prove-runnable-controller.sh
 ```
 
-Expected final line begins `FG-224 PROOF PASS`. The script owns a uniquely named
+Expected final line begins `FG-224/FG-042b PROOF PASS`. The script owns a uniquely named
 scratch database, role, state directory, and listener, and removes them on exit.
 If progressive event publication fails, Run.Host emits no terminal journal
 record; the failure remains infrastructure truth and the controller requires
