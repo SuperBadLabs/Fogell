@@ -583,9 +583,11 @@ module ProcessGroup =
 
         let rec wait () =
             // Once the session leader exits, PR_SET_CHILD_SUBREAPER reparents
-            // its stopped anchor to Run.Host. Reap only that recorded PID. The
-            // following group ESRCH is the atomic boundary: while the numeric
-            // group exists, a same-session process can still join it.
+            // its orphaned group members to Run.Host. Reap every adopted PID
+            // observed in this registered group; PID-specific waitpid never
+            // harvests an unrelated step. The following group ESRCH is the
+            // atomic boundary: while the numeric group exists, a same-session
+            // process can still join it.
             reapKnownGroupChildren ()
 
             match Native.probeProcessGroup identity.GroupId with

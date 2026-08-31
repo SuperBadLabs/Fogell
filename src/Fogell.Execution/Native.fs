@@ -65,8 +65,9 @@ module internal Native =
     [<DllImport("libc", SetLastError = true)>]
     extern int private prctl(int option, nativeint arg2, nativeint arg3, nativeint arg4, nativeint arg5)
 
-    /// `waitpid(2)` with a null status pointer. Only a recorded anchor PID is
-    /// passed; this never harvests another concurrently running step's child.
+    /// `waitpid(2)` with a null status pointer. Callers pass only a PID observed
+    /// in the registered group currently being reconciled; they never use -1 or
+    /// harvest an unrelated concurrently running step's child.
     [<DllImport("libc", SetLastError = true)>]
     extern int private waitpid(int pid, nativeint status, int options)
 
