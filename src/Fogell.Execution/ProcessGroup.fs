@@ -643,6 +643,11 @@ module ProcessGroup =
 
                 previous <- current
 
+    let internal preCaptureFallbackScript =
+        "if /bin/kill -STOP \"$fogell_inner\" 2>/dev/null; then "
+        + "/bin/kill -KILL -- -$fogell_inner 2>/dev/null || true; "
+        + "/bin/kill -KILL \"$fogell_inner\" 2>/dev/null || true; fi; "
+
     /// Run one command in its own process group.
     let run (request: RunRequest) : RunResult =
         let sw = Stopwatch.StartNew()
@@ -721,13 +726,11 @@ module ProcessGroup =
             + "if [ -z \"$fogell_launcher_start\" ]; then fogell_capture_checks=$((fogell_capture_checks - 1)); /bin/sleep 0.01; fi; "
             + "done; "
             + "if [ -z \"$fogell_launcher_start\" ] && [ -e \"/proc/$fogell_inner\" ]; then "
-            // The direct child still occupies fogell_inner here. Stop it first,
-            // signal a same-number group while that PID cannot have been reused,
-            // then kill the child. Reversing the last two operations would let
-            // the shell reap it before the negative-PGID signal.
-            + "/bin/kill -STOP \"$fogell_inner\" 2>/dev/null || true; "
-            + "/bin/kill -KILL -- -$fogell_inner 2>/dev/null || true; "
-            + "/bin/kill -KILL \"$fogell_inner\" 2>/dev/null || true; "
+            // Only a delivered STOP proves the direct child still occupies
+            // fogell_inner. Keep both numeric signals inside that proof: if
+            // STOP loses an exit/reap race, neither a reused PID nor a reused
+            // same-number process group is touched.
+            + preCaptureFallbackScript
             + "fi; "
             + "(trap '' HUP INT TERM; "
             + "if ! IFS= read -r fogell_guard_command || [ \"$fogell_guard_command\" != disarm ]; then "
