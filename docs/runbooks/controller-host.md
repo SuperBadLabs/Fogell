@@ -182,6 +182,8 @@ pre-`setsid` launcher publishes its own PID and start ticks before it may launch
 user code, and a missing or mismatched handshake refuses without numeric signals;
 survivor scans exclude the stopped anchor only when that scan observes its
 recorded PID and start ticks, so PID reuse cannot hide a live group member;
+cleanup failure is durably reconciled before its diagnostic is emitted, so a
+fallible logging provider cannot strand an attempt;
 controller retains reconciliation evidence instead. Final Z/X/x remnants with
 one thread are logically extinct even if an unreaping container pid 1 keeps them
 visible to `kill(-pgid, 0)`. A zombie thread-group leader with more than one

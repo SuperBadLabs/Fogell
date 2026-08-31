@@ -621,6 +621,26 @@ let controllerWorkerTiming =
               Expect.equal cleanupCalls 1 "the failed cleanup's side effects are not repeated"
           }
 
+          test "a throwing cleanup diagnostic cannot precede durable reconciliation" {
+              let mutable cleanupCalls = 0
+              let cleanup =
+                  ProcessGroup.once (fun () ->
+                      cleanupCalls <- cleanupCalls + 1
+                      raise (InvalidOperationException "partial cleanup failure"))
+              let mutable reconciled = false
+
+              Expect.throws
+                  (fun () ->
+                      WorkerControl.reconcileAfterCleanup
+                          cleanup
+                          (fun () -> reconciled <- true)
+                          (fun _ -> raise (InvalidOperationException "logger failed")))
+                  "a hostile diagnostic failure is still observable"
+
+              Expect.isTrue reconciled "durable reconciliation precedes the fallible diagnostic"
+              Expect.equal cleanupCalls 1 "diagnostic failure does not repeat sticky cleanup"
+          }
+
           test "late cancellation delegates natural terminal arbitration to the Store" {
               let decide cancelled interrupted leaseLost =
                   WorkerControl.naturalExitFinalAction cancelled interrupted leaseLost

@@ -72,6 +72,14 @@ module internal WorkerControl =
             // data here so the caller still records durable reconciliation.
             Some cleanupError
 
+    let reconcileAfterCleanup cleanup requireReconciliation diagnose =
+        let cleanupFailure = tryCleanupForReconciliation cleanup
+
+        // Durable state is the product boundary. Diagnostics are intentionally
+        // later because ILogger providers are external code and may throw.
+        requireReconciliation ()
+        cleanupFailure |> Option.iter diagnose
+
     let waitForActivePoll (pollMilliseconds: int) (stoppingToken: CancellationToken) =
         task {
             try
@@ -804,16 +812,16 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                         if not dispositionRecorded then
                             // Exceptions after child start are forced stops. The
                             // memoized cleanup prevents a second signal pass. A
-                            // cached failure cannot prevent durable disposition.
-                            match WorkerControl.tryCleanupForReconciliation cleanupExecution with
-                            | Some cleanupError ->
-                                logger.LogError(
-                                    cleanupError,
-                                    "FG-224 cleanup failed for {AttemptId}; durable reconciliation is still required",
-                                    claim.AttemptId.Value)
-                            | None -> ()
-
-                            requireReconciliation reconciliationReason
+                            // cached failure or fallible logger cannot prevent
+                            // durable disposition.
+                            WorkerControl.reconcileAfterCleanup
+                                cleanupExecution
+                                (fun () -> requireReconciliation reconciliationReason)
+                                (fun cleanupError ->
+                                    logger.LogError(
+                                        cleanupError,
+                                        "FG-224 cleanup failed for {AttemptId}; durable reconciliation was recorded",
+                                        claim.AttemptId.Value))
         }
 
     let requeueUnstartedClaim dependency (claim: ExecutionClaim) =
