@@ -409,6 +409,9 @@ module ProcessGroup =
 
             delivered
 
+    let internal deliverOrObserveExtinction sendSignal observeExtinct =
+        sendSignal () || observeExtinct ()
+
     /// The marker write happens before the child stops itself. A SIGCONT sent
     /// merely because the marker arrived can therefore be lost while the child
     /// is still running, after which it executes SIGSTOP and wedges forever.
@@ -516,22 +519,32 @@ module ProcessGroup =
         if survivorsIn identity.GroupId = 0 then
             true
         else
-            let termDelivered =
-                signalRegisteredAnchor
-                    identity
-                    (fun () -> observeLinuxProcess identity.AnchorPid)
-                    (fun signal -> Native.signalProcess identity.AnchorPid signal)
-                    Native.SIGTERM
+            let extinct () = survivorsIn identity.GroupId = 0
 
-            let contDelivered =
-                termDelivered
-                && signalRegisteredAnchor
-                    identity
-                    (fun () -> observeLinuxProcess identity.AnchorPid)
-                    (fun signal -> Native.signalProcess identity.AnchorPid signal)
-                    Native.SIGCONT
+            let termDeliveredOrGone =
+                deliverOrObserveExtinction
+                    (fun () ->
+                        signalRegisteredAnchor
+                            identity
+                            (fun () -> observeLinuxProcess identity.AnchorPid)
+                            (fun signal -> Native.signalProcess identity.AnchorPid signal)
+                            Native.SIGTERM)
+                    extinct
 
-            contDelivered && waitForGroupExit identity.GroupId 2_000
+            if not termDeliveredOrGone then
+                false
+            elif extinct () then
+                true
+            else
+                deliverOrObserveExtinction
+                    (fun () ->
+                        signalRegisteredAnchor
+                            identity
+                            (fun () -> observeLinuxProcess identity.AnchorPid)
+                            (fun signal -> Native.signalProcess identity.AnchorPid signal)
+                            Native.SIGCONT)
+                    extinct
+                && waitForGroupExit identity.GroupId 2_000
 
     let private terminateGroupWithAnchor identity graceMs =
         let sendGroup signal =

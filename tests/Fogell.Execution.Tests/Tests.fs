@@ -804,6 +804,13 @@ let containment =
                   "delivered KILL is reported as an escalation"
               Expect.isTrue waitedAfterKill "delivered KILL runs the post-signal wait"
 
+              Expect.isTrue
+                  (ProcessGroup.deliverOrObserveExtinction (fun () -> false) (fun () -> true))
+                  "an ESRCH-shaped delivery race is clean only after fresh extinction proof"
+              Expect.isFalse
+                  (ProcessGroup.deliverOrObserveExtinction (fun () -> false) (fun () -> false))
+                  "failed delivery with live or uncertain survivors remains fail-closed"
+
               let mutable anchorSignals = []
               let mutable directAnchor = stat 'T' 42 1 "anchor"
 
