@@ -653,9 +653,7 @@ module ProcessGroup =
                 previous <- current
 
     let internal preCaptureFallbackScript =
-        "if /bin/kill -STOP \"$fogell_inner\" 2>/dev/null; then "
-        + "/bin/kill -KILL -- -$fogell_inner 2>/dev/null || true; "
-        + "/bin/kill -KILL \"$fogell_inner\" 2>/dev/null || true; fi; "
+        "wait \"$fogell_inner\" 2>/dev/null || true; exit 125; "
 
     /// Run one command in its own process group.
     let run (request: RunRequest) : RunResult =
@@ -708,6 +706,15 @@ module ProcessGroup =
         // stderr as the first line, and that is the real process-group id.
         let pgidMarker = "__FOGELL_PGID "
 
+        let launcherIdentityPath =
+            IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-launch-{Guid.NewGuid():N}.identity")
+
+        use _launcherIdentityCleanup =
+            { new IDisposable with
+                member _.Dispose() =
+                    for path in [ launcherIdentityPath; launcherIdentityPath + ".tmp" ] do
+                        try IO.File.Delete path with _ -> () }
+
         let psi = ProcessStartInfo("/bin/sh")
         // Keep an explicit wait-status-preserving parent outside the new group.
         // This makes marker provenance observable (proc.Id is the outer waiter,
@@ -720,25 +727,33 @@ module ProcessGroup =
         // only Run.Host can keep the guard armed.
         psi.ArgumentList.Add "-c"
         psi.ArgumentList.Add(
-            "fogell_registry=$4; fogell_launch_gate=$5; fogell_launch_ready=$6; fogell_guard_observed=$7; "
+            "fogell_payload=$1; fogell_inner_argv0=$2; fogell_inner_argv1=$3; "
+            + "fogell_registry=$4; fogell_launch_gate=$5; fogell_launch_ready=$6; fogell_guard_observed=$7; "
             + "fogell_guard_stopped=$8; fogell_cleanup_release=$9; "
-            + "fogell_watchdog_term_file=${10}; fogell_watchdog_kill_release=${11}; exec 9<&0; "
-            + "(if [ -n \"$fogell_launch_gate\" ]; then while [ ! -e \"$fogell_launch_gate\" ]; do /bin/sleep 0.01; done; fi; "
-            + "exec /usr/bin/setsid /bin/sh -c \"$1\" \"$2\" \"$3\" \"$fogell_registry\" 9<&- </dev/null) & "
+            + "fogell_watchdog_term_file=${10}; fogell_watchdog_kill_release=${11}; "
+            + "fogell_launcher_identity=${12}; exec 9<&0; "
+            + "(if ! IFS= read -r fogell_self_stat < /proc/self/stat; then exit 125; fi; "
+            + "fogell_self_pid=${fogell_self_stat%% *}; fogell_self_tail=${fogell_self_stat##*) }; set -- $fogell_self_tail; "
+            + "if [ \"$#\" -le 19 ]; then exit 125; fi; shift 19; fogell_self_start=$1; "
+            + "if ! printf '%s %s\\n' \"$fogell_self_pid\" \"$fogell_self_start\" > \"$fogell_launcher_identity.tmp\" "
+            + "|| ! /bin/mv \"$fogell_launcher_identity.tmp\" \"$fogell_launcher_identity\"; then exit 125; fi; "
+            + "if [ -n \"$fogell_launch_gate\" ]; then while [ ! -e \"$fogell_launch_gate\" ]; do /bin/sleep 0.01; done; fi; "
+            + "exec /usr/bin/setsid /bin/sh -c \"$fogell_payload\" \"$fogell_inner_argv0\" \"$fogell_inner_argv1\" \"$fogell_registry\" 9<&- </dev/null) & "
             + "fogell_inner=$!; "
             + "fogell_launcher_start=; fogell_capture_checks=200; "
             + "while [ -z \"$fogell_launcher_start\" ] && [ \"$fogell_capture_checks\" -ge 0 ]; do "
-            + "if [ -r \"/proc/$fogell_inner/stat\" ] && IFS= read -r fogell_launcher_stat < \"/proc/$fogell_inner/stat\"; then "
-            + "fogell_launcher_tail=${fogell_launcher_stat##*) }; set -- $fogell_launcher_tail; "
-            + "if [ \"$#\" -gt 19 ]; then shift 19; fogell_launcher_start=$1; fi; "
+            + "if [ -r \"$fogell_launcher_identity\" ] "
+            + "&& IFS=' ' read -r fogell_identity_pid fogell_identity_start < \"$fogell_launcher_identity\" "
+            + "&& [ \"$fogell_identity_pid\" = \"$fogell_inner\" ] && [ -n \"$fogell_identity_start\" ]; then "
+            + "fogell_launcher_start=$fogell_identity_start; "
             + "elif [ ! -e \"/proc/$fogell_inner\" ]; then break; fi; "
             + "if [ -z \"$fogell_launcher_start\" ]; then fogell_capture_checks=$((fogell_capture_checks - 1)); /bin/sleep 0.01; fi; "
             + "done; "
-            + "if [ -z \"$fogell_launcher_start\" ] && [ -e \"/proc/$fogell_inner\" ]; then "
-            // Only a delivered STOP proves the direct child still occupies
-            // fogell_inner. Keep both numeric signals inside that proof: if
-            // STOP loses an exit/reap race, neither a reused PID nor a reused
-            // same-number process group is touched.
+            + "/bin/rm -f \"$fogell_launcher_identity\" \"$fogell_launcher_identity.tmp\"; "
+            + "if [ -z \"$fogell_launcher_start\" ]; then "
+            // Without the child-published start ticks there is no authority to
+            // signal either the numeric PID or its same-number group. Waiting
+            // through the shell job table cannot hit a reused process.
             + preCaptureFallbackScript
             + "fi; "
             + "(trap '' HUP INT TERM; "
@@ -957,6 +972,7 @@ module ProcessGroup =
         psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_CLEANUP_RELEASE_FILE")) "")
         psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_WATCHDOG_TERM_FILE")) "")
         psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_WATCHDOG_KILL_RELEASE_FILE")) "")
+        psi.ArgumentList.Add launcherIdentityPath
 
         psi.WorkingDirectory <- request.WorkingDirectory
         psi.RedirectStandardOutput <- true

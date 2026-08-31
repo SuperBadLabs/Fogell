@@ -826,18 +826,13 @@ let containment =
                   (ProcessGroup.deliverOrObserveExtinction (fun () -> false) (fun () -> false))
                   "failed delivery with live or uncertain survivors remains fail-closed"
 
-              Expect.stringStarts
+              Expect.equal
                   ProcessGroup.preCaptureFallbackScript
-                  "if /bin/kill -STOP \"$fogell_inner\" 2>/dev/null; then "
-                  "pre-capture numeric signals require a delivered STOP"
-              Expect.stringContains
-                  ProcessGroup.preCaptureFallbackScript
-                  "/bin/kill -KILL -- -$fogell_inner"
-                  "the same-number group kill stays inside the STOP proof"
-              Expect.stringEnds
-                  ProcessGroup.preCaptureFallbackScript
-                  "/bin/kill -KILL \"$fogell_inner\" 2>/dev/null || true; fi; "
-                  "the direct PID kill is also fenced by the STOP proof"
+                  "wait \"$fogell_inner\" 2>/dev/null || true; exit 125; "
+                  "missing birth identity refuses without any numeric signal"
+              Expect.isFalse
+                  (ProcessGroup.preCaptureFallbackScript.Contains "/bin/kill")
+                  "a capture failure cannot signal a reused PID or group"
 
               let mutable anchorSignals = []
               let mutable directAnchor = stat 'T' 42 1 "anchor"

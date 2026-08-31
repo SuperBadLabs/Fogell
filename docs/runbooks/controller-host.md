@@ -178,14 +178,17 @@ inner leader has already exited.
 Every managed cleanup path now re-observes the recorded leader or stopped anchor
 start ticks and process-group membership before each TERM, CONT, or KILL. A
 same-number group without either recorded identity is not signal authority; the
+pre-`setsid` launcher publishes its own PID and start ticks before it may launch
+user code, and a missing or mismatched handshake refuses without numeric signals;
 controller retains reconciliation evidence instead. Final Z/X/x remnants with
 one thread are logically extinct even if an unreaping container pid 1 keeps them
 visible to `kill(-pgid, 0)`. A zombie thread-group leader with more than one
 thread remains active, and unreadable or malformed `/proc` state remains
 uncertain. If `getpgid` first identifies a candidate but its following stat read
 reports a different group, cleanup also remains uncertain rather than accepting
-that PID-reuse race as extinction. The production proof supports both a native Linux service and a
-controller running as container PID 1. Its container lane overrides the image
+that PID-reuse race as extinction. The production proof supports both a native
+Linux service and a controller running as container PID 1. Its container lane
+overrides the image
 entrypoint and verifies `/proc/1/exe` is the exact controller apphost before it
 accepts any HTTP result. It also admits a real long-running nested step, maps
 the step shell and its sleep child's namespace pids to host-visible processes,
