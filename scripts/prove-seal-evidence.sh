@@ -3,6 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="$ROOT/scripts/seal-evidence.sh"
+TEST_RUNNER="$ROOT/scripts/run-project-tests.sh"
 REAL_CP="$(type -P cp || true)"
 case "$REAL_CP" in
   /*) ;;
@@ -33,7 +34,9 @@ make_case () {
   local repo="$LAB/$label"
   mkdir -p "$repo/scripts" "$repo/tests/Sample.Tests" "$repo/fakebin"
   cp "$TARGET" "$repo/scripts/seal-evidence.sh"
+  cp "$TEST_RUNNER" "$repo/scripts/run-project-tests.sh"
   chmod +x "$repo/scripts/seal-evidence.sh"
+  chmod +x "$repo/scripts/run-project-tests.sh"
   printf '\0baseline binary candidate\377\n' > "$repo/candidate.bin"
   printf 'stable candidate\n' > "$repo/candidate.txt"
   printf '<Project Sdk="Microsoft.NET.Sdk" />\n' > "$repo/tests/Sample.Tests/Sample.Tests.fsproj"
@@ -56,7 +59,7 @@ make_case () {
     '    sleep "${FAKE_BUILD_DELAY:-0}"; echo "BUILD_PWD=$PWD"; echo "Build succeeded."; exit "${FAKE_BUILD_RC:-0}" ;;' \
     '  run)' \
     '    if [ "${FAKE_TEST_MODE:-summary}" = summary ]; then' \
-    '      echo "EXPECTO! 1 tests run - 1 passed, 0 failed. Success! TEST_PWD=$PWD"' \
+    '      echo "EXPECTO! 1 test run in 00:00:00 - 1 passed, 0 ignored, 0 failed, 0 errored. Success!"' \
     '    else' \
     '      echo "test process returned without a summary"' \
     '    fi' \
@@ -1149,7 +1152,7 @@ bundle="$(find "$success_repo/evidence" -mindepth 1 -maxdepth 1 -type d -name '*
   || { echo "FAIL: successful seal omitted the test summary"; exit 1; }
 corpus_pwd="$(sed -n 's/^CORPUS_PWD=//p' "$bundle/corpus-gate.log")"
 build_pwd="$(sed -n 's/^BUILD_PWD=//p' "$bundle/build.log")"
-test_pwd="$(sed -n 's/^.*TEST_PWD=//p' "$bundle"/tests-*.log)"
+test_pwd="$(sed -n 's/^working-directory: //p' "$bundle"/tests-*.log)"
 if [ -z "$corpus_pwd" ] || [ "$corpus_pwd" != "$build_pwd" ] || [ "$build_pwd" != "$test_pwd" ]; then
   echo "FAIL: corpus/build/test did not share one materialized candidate: $corpus_pwd | $build_pwd | $test_pwd"
   exit 1

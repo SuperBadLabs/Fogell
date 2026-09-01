@@ -479,30 +479,19 @@ if ! (cd "$SOURCE_SNAPSHOT" && dotnet build -c Release --nologo) > "$STAGING/bui
   fail "Release build failed"
 fi
 
-mapfile -d '' test_projects < <(
-  snapshot_git ls-files -z -- ':(glob)tests/**/*.fsproj'
-)
-test_projects_pid=$!
-wait "$test_projects_pid" || fail "tracked test project inventory could not be read"
-[ "${#test_projects[@]}" -gt 0 ] || fail "no test projects were discovered"
-for t in "${test_projects[@]}"; do
-  n="$(basename -- "${t%.fsproj}")"
-  project_key="$(printf '%s' "$t" | sha256sum | cut -c1-16)"
-  full_log="$STAGING/.tests-$n-$project_key.full.log"
-  if ! (cd "$SOURCE_SNAPSHOT" && dotnet run --project "$t" -c Release --no-build) > "$full_log" 2>&1; then
-    cat "$full_log" >&2
-    fail "test project failed: $t"
-  fi
-
-  summary="$(rg -o 'EXPECTO!.*' "$full_log" | tail -1 || true)"
-  if [ -z "$summary" ]; then
-    cat "$full_log" >&2
-    fail "test project produced no Expecto summary: $t"
-  fi
-
-  printf 'project: %s\n%s\n' "$t" "$summary" > "$STAGING/tests-$n-$project_key.log"
-  rm "$full_log"
-done
+# FG-229. One runner owns the tracked recursive project inventory and the exact
+# success-summary contract for both the gate and evidence sealing. Keep the
+# complete failure output until the runner succeeds; the compact per-project
+# logs it writes are the only test artifacts admitted into the final bundle.
+test_runner_log="$STAGING/.project-tests.full.log"
+if ! (
+  cd "$SOURCE_SNAPSHOT"
+  ./scripts/run-project-tests.sh --log-dir "$STAGING"
+) >"$test_runner_log" 2>&1; then
+  cat "$test_runner_log" >&2
+  fail "project test execution failed"
+fi
+rm "$test_runner_log"
 
 # The prerequisite processes receive the isolated source as their cwd. Refuse
 # any lasting tracked, staging-state, HEAD, inventory, or non-ignored mutation
