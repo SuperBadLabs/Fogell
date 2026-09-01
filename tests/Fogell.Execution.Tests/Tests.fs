@@ -2696,6 +2696,23 @@ let stashSymlinkContainment =
                           "the live child descriptor remains on the checked physical directory"
           }
 
+          test "an absent scan root beneath a dangling link is refused rather than treated as empty" {
+              let root = tempRoot ()
+              let missingTarget = Path.Combine(root, "missing")
+              let linkedAncestor = Path.Combine(root, "link")
+              let workspace = Path.Combine(linkedAncestor, "sub")
+              let store = StashStore.under (Path.Combine(root, "controller"))
+              Directory.CreateSymbolicLink(linkedAncestor, missingTarget) |> ignore
+
+              match Stash.save store "build-1" workspace "empty" [ "**" ] [] true (fun () -> false) with
+              | Ok saved -> failtestf "dangling-ancestor scan was treated as empty: %A" saved
+              | Error problem ->
+                  Expect.stringContains
+                      problem.Describe
+                      "ancestor is linked or unavailable"
+                      "component-wise O_NOFOLLOW distinguishes the dangling ancestor from honest absence"
+          }
+
           test "an opened source descriptor survives pathname replacement while a path-copy mutant follows it" {
               let root = tempRoot ()
               let workspace = Path.Combine(root, "workspace")

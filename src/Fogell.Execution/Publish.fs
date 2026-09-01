@@ -1112,8 +1112,9 @@ module Stash =
         let mutable problem: SaveProblem option = None
         let mutable aborted = abort ()
 
-        match Native.openDirectoryWithoutLinks workspace with
-        | Ok root -> pending.Push(root, "")
+        match Native.openDirectoryIfPresentWithoutLinks workspace with
+        | Ok(Some root) -> pending.Push(root, "")
+        | Ok None -> ()
         | Error why -> problem <- Some(SaveProblem.StorageFailure why)
 
         let explicitlyExcluded relative =

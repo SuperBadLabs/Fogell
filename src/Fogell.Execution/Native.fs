@@ -125,14 +125,67 @@ module internal Native =
             finally
                 free pointer
 
+    let private canonicalDirectoryPath path =
+        path |> Path.GetFullPath |> Path.TrimEndingDirectorySeparator
+
+    /// Distinguish an honestly absent directory from ENOENT caused by a dangling
+    /// symlink ancestor. Walk from the filesystem root through live directory
+    /// descriptors; the first genuinely missing component proves absence, while
+    /// O_NOFOLLOW turns every symlink component into a refusal.
+    let private proveDirectoryMissingWithoutLinks (absoluteRoot: string) =
+        let systemRoot = Path.GetPathRoot absoluteRoot |> canonicalDirectoryPath
+        let flags =
+            OpenReadOnly
+            ||| OpenNonBlocking
+            ||| OpenDirectory
+            ||| OpenNoFollow
+            ||| OpenCloseOnExec
+        let rootDescriptor = openFile(systemRoot, flags)
+
+        if rootDescriptor < 0 then
+            Error $"filesystem root cannot be opened without following a link (errno {Marshal.GetLastPInvokeError()})"
+        else
+            let mutable current = new SafeFileHandle(nativeint rootDescriptor, true)
+
+            try
+                let segments =
+                    Path.GetRelativePath(systemRoot, absoluteRoot)
+                        .Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries)
+                let mutable missing = false
+                let mutable failure: string option = None
+
+                for segment in segments do
+                    if not missing && Option.isNone failure then
+                        let child = openFileAt(current.DangerousGetHandle() |> int, segment, flags, 0)
+
+                        if child >= 0 then
+                            current.Dispose()
+                            current <- new SafeFileHandle(nativeint child, true)
+                        else
+                            let code = Marshal.GetLastPInvokeError()
+                            if code = 2 then
+                                missing <- true
+                            else
+                                failure <-
+                                    Some $"scan root ancestor is linked or unavailable (errno {code})"
+
+                match failure, missing with
+                | Some why, _ -> Error why
+                | None, true -> Ok()
+                | None, false -> Error "scan root changed while absence was being proved"
+            finally
+                current.Dispose()
+
     /// Open the selected scan root itself without following a final link and
     /// require its descriptor to retain the exact physical root identity.
-    let openDirectoryWithoutLinks (root: string) : Result<SafeFileHandle, string> =
+    let openDirectoryIfPresentWithoutLinks
+        (root: string)
+        : Result<SafeFileHandle option, string> =
         if not (OperatingSystem.IsLinux()) then
             Error "stash link containment requires Linux descriptor semantics"
         else
             try
-                let lexicalRoot = Path.GetFullPath root
+                let lexicalRoot = canonicalDirectoryPath root
                 let descriptor =
                     openFile (
                         lexicalRoot,
@@ -143,17 +196,29 @@ module internal Native =
                         ||| OpenCloseOnExec)
 
                 if descriptor < 0 then
-                    Error $"scan root cannot be opened without following a link (errno {Marshal.GetLastPInvokeError()})"
+                    let code = Marshal.GetLastPInvokeError()
+                    if code = 2 then
+                        match proveDirectoryMissingWithoutLinks lexicalRoot with
+                        | Ok() -> Ok None
+                        | Error why -> Error why
+                    else
+                        Error $"scan root cannot be opened without following a link (errno {code})"
                 else
                     let handle = new SafeFileHandle(nativeint descriptor, true)
                     match physicalPath $"/proc/self/fd/{descriptor}" with
                     | Some physicalRoot when String.Equals(physicalRoot, lexicalRoot, StringComparison.Ordinal) ->
-                        Ok handle
+                        Ok(Some handle)
                     | _ ->
                         handle.Dispose()
                         Error "scan root is a symbolic link or escaped object"
             with ex ->
                 Error $"scan root validation failed ({ex.GetType().Name})"
+
+    let openDirectoryWithoutLinks (root: string) : Result<SafeFileHandle, string> =
+        match openDirectoryIfPresentWithoutLinks root with
+        | Ok(Some handle) -> Ok handle
+        | Ok None -> Error "scan root is missing"
+        | Error why -> Error why
 
     /// Open one child directory relative to an already trusted live directory
     /// descriptor. O_NOFOLLOW closes the check/reopen race: replacing the child
@@ -214,7 +279,7 @@ module internal Native =
             Error "selected path is not a strict relative path"
         else
             try
-                let lexicalRoot = Path.GetFullPath root
+                let lexicalRoot = canonicalDirectoryPath root
                 let lexicalCandidate = Path.GetFullPath(Path.Combine(lexicalRoot, relative))
                 let prefix = lexicalRoot.TrimEnd(Path.DirectorySeparatorChar) + string Path.DirectorySeparatorChar
 
@@ -280,7 +345,7 @@ module internal Native =
         then
             Error "restore path is not a strict relative path"
         else
-            let root = Path.GetFullPath workspace
+            let root = canonicalDirectoryPath workspace
             let rootDescriptor =
                 openFile (
                     root,

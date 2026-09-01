@@ -8717,6 +8717,57 @@ let stashDefaultExcludes =
                           "post remains available after success")
           }
 
+          test "allowEmpty stash succeeds inside an absent logical dir without materializing it" {
+              let source =
+                  "pipeline { agent any stages { stage('stash') { steps { "
+                  + "dir('new') { stash name: 'empty', includes: '**', allowEmpty: true; echo 'continued' } "
+                  + "} } } }"
+
+              withRun "absent-logical-dir" source (fun _ workspace trace ->
+                  Expect.equal trace.Result "success" "allowEmpty preserves the missing-root empty selection"
+                  Expect.contains trace.Output "Stashed 0 file(s)" "the empty stash is published"
+                  Expect.isFalse
+                      (IO.Directory.Exists(IO.Path.Combine(workspace, "new")))
+                      "stash and echo do not materialize the logical directory")
+          }
+
+          test "allowEmpty refuses a logical dir beneath a dangling symlink" {
+              let source =
+                  "pipeline { agent any stages { stage('stash') { steps { "
+                  + "sh 'ln -s missing link'; "
+                  + "dir('link/sub') { stash name: 'empty', includes: '**', allowEmpty: true; echo 'must-not-run' } "
+                  + "} } } }"
+
+              withRun "dangling-logical-dir" source (fun _ workspace trace ->
+                  Expect.equal trace.Result "failure" "allowEmpty does not hide a dangling ancestor"
+                  Expect.isTrue
+                      (trace.Output
+                       |> List.exists (fun line ->
+                           line.Contains("passes through a symlink", StringComparison.Ordinal)))
+                      "the public logical-dir boundary explains the refusal"
+                  Expect.isFalse
+                      (trace.Output |> List.contains "must-not-run")
+                      "the failed stash stops its logical-dir successor"
+                  Expect.isNotNull
+                      (IO.FileInfo(IO.Path.Combine(workspace, "link")).LinkTarget)
+                      "the dangling link remains observable and was never traversed")
+          }
+
+          test "stash and unstash accept a trailing-separator logical workspace" {
+              let source =
+                  "pipeline { agent any stages { stage('stash') { steps { "
+                  + "dir('sub/') { sh 'printf saved > value.txt'; stash name: 'bundle', includes: '**'; "
+                  + "deleteDir(); unstash 'bundle'; sh 'test \"$(cat value.txt)\" = saved' } "
+                  + "} } } }"
+
+              withRun "trailing-logical-dir" source (fun _ workspace trace ->
+                  Expect.equal trace.Result "success" "the ordinary physical root is not mistaken for a link"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "sub", "value.txt")))
+                      "saved"
+                      "the trailing-spelling round trip restores the selected bytes")
+          }
+
           test "strict malformed booleans create no fresh stash directory or later effects" {
               for label, argument in
                   [ "other word", "'yes'"
