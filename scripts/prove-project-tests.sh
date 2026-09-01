@@ -97,6 +97,32 @@ rg -q -F 'tests/Root.fsproj' "$good_repo/projects.log" || {
   echo "FAIL: root-level project was skipped"
   exit 1
 }
+rg -q -F 'tests/Nested/Deep/Regression.fsproj: EXPECTO!' "$LAB/good.log" || {
+  echo "FAIL: successful gate output did not identify its project"
+  exit 1
+}
+
+# `git -C` alone does not defeat ambient repository selectors. Point every
+# selector at a foreign repository whose index contains only one plausible
+# project path; the runner must still execute all four projects in its own repo.
+ambient_repo="$(make_case ambient-git-selectors)"
+foreign_repo="$(make_case foreign-git-selectors)"
+(
+  cd "$foreign_repo"
+  git rm -qr tests/Nested tests/'Names Differ' tests/Root.fsproj
+  git commit -qm partial-inventory
+)
+rm -f "$ambient_repo/projects.log"
+foreign_index="$(git -C "$foreign_repo" rev-parse --git-path index)"
+run_runner "$ambient_repo" env \
+  GIT_DIR="$foreign_repo/.git" GIT_WORK_TREE="$foreign_repo" \
+  GIT_INDEX_FILE="$foreign_index" GIT_CONFIG_COUNT=1 \
+  GIT_CONFIG_KEY_0=core.worktree GIT_CONFIG_VALUE_0="$foreign_repo" \
+  >"$LAB/ambient-git-selectors.log"
+[ "$(wc -l <"$ambient_repo/projects.log")" -eq 4 ] || {
+  echo "FAIL: ambient Git selectors substituted a partial project inventory"
+  exit 1
+}
 
 log_repo="$(make_case sealed-logs)"
 (
@@ -172,4 +198,4 @@ if expect_refusal "$permissive_repo" permissive-control-check "test project fail
   exit 1
 fi
 
-echo "PROJECT TEST INVENTORY PROOF PASS: nested/mismatched projects executed; inventory and summaries fail closed"
+echo "PROJECT TEST INVENTORY PROOF PASS: nested/mismatched projects identified; ambient Git selectors contained; inventory and summaries fail closed"

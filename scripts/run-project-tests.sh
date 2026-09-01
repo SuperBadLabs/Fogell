@@ -24,9 +24,23 @@ fi
 scratch="$(mktemp -d /tmp/fogell-project-tests.XXXXXX)"
 trap 'rm -rf -- "$scratch"' EXIT
 
+repository_git() {
+  # `git -C` does not override inherited repository/index selectors. Bind the
+  # inventory to the repository containing this script, even when a caller or
+  # hosted runner exports Git plumbing state for a different checkout.
+  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE \
+    -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    -u GIT_QUARANTINE_PATH -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE \
+    -u GIT_REPLACE_REF_BASE -u GIT_PREFIX -u GIT_NAMESPACE \
+    -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS \
+    git -C "$ROOT" --work-tree="$ROOT" \
+      -c core.hooksPath=/dev/null -c core.fsmonitor=false \
+      -c color.ui=false -c color.status=false "$@"
+}
+
 test_projects=()
 mapfile -d '' test_projects < <(
-  git -C "$ROOT" ls-files -z -- ':(glob)tests/**/*.fsproj'
+  repository_git ls-files -z -- ':(glob)tests/**/*.fsproj'
 )
 inventory_pid=$!
 if ! wait "$inventory_pid"; then
@@ -109,10 +123,13 @@ for project in "${test_projects[@]}"; do
     exit 1
   fi
 
-  printf '%s\n' "$summary"
+  printf '%q: %s\n' "$project" "$summary"
   if [ -n "$LOG_DIR" ]; then
     project_key="$(printf '%s' "$project" | sha256sum | cut -c1-16)"
     {
+      # Paths are Git/NUL-safe and can contain newlines. Shell escaping keeps
+      # each value on one line and is reversible with a standard shell parser;
+      # raw `%s` would let a path forge additional evidence-log fields.
       printf 'project: %q\n' "$project"
       printf 'working-directory: %q\n' "$ROOT"
       printf '%s\n' "$summary"
