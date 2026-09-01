@@ -5858,6 +5858,132 @@ let excerptWiring =
               | other -> failtest $"the receipt must verify as SealValid, got {other.Describe}"
           } ]
 
+/// FG-121. The `timestamps()` refusals are compile-shaped: nothing runs, no post
+/// fires, the workspace stays empty. Two forms Jenkins refuses reached execution
+/// here — `timestamps { }` (a closure the argument check cannot see) and, until
+/// FG-134 made `;` a statement separator, `timestamps(); timestamps(false)`
+/// (only the first entry reached the walker). Both are pinned so the refusal
+/// cannot regress to a run. The helpers mirror FG-123a's, which are local to
+/// that list.
+let timestampsRefusals =
+    let withWorkspace label (f: string -> string -> unit) =
+        let root =
+            IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg121-{label}-{Guid.NewGuid():N}")
+
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            f root workspace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    let pipeline optionBody =
+        "pipeline { agent any options { "
+        + optionBody
+        + " } stages { stage('must-not-run') { steps { sh 'touch stage-marker.txt' } } } "
+        + "post { always { sh 'touch post-marker.txt' } } }"
+
+    let assertCompileRefusal label source root workspace =
+        match FogellSide.run [] root "job" source with
+        | Error why -> failtestf "%s did not reach the compile-shaped refusal: %s" label why
+        | Ok trace ->
+            Expect.equal trace.Result "failure" $"{label}: terminal result"
+            Expect.isTrue trace.ReportedFailureReason $"{label}: the refusal is explained"
+            Expect.isEmpty trace.Output $"{label}: the diagnostic is normalized as engine narration"
+            Expect.isEmpty trace.WorkspaceFiles $"{label}: semantic workspace is empty"
+            Expect.isTrue (IO.Directory.Exists workspace) $"{label}: workspace setup completed"
+
+            Expect.isEmpty
+                (IO.Directory.EnumerateFileSystemEntries(workspace, "*", IO.SearchOption.AllDirectories)
+                 |> Seq.toList)
+                $"{label}: no stage, post or scaffolding effect"
+
+    testList
+        "FG-121 timestamps refusals"
+        [ test "timestamps { } is refused before any effect" {
+              withWorkspace "block" (fun root workspace ->
+                  assertCompileRefusal "block" (pipeline "timestamps { }") root workspace)
+          }
+
+          test "timestamps(); timestamps(false) is refused before any effect" {
+              withWorkspace "second-entry" (fun root workspace ->
+                  assertCompileRefusal "second-entry" (pipeline "timestamps(); timestamps(false)") root workspace)
+          }
+
+          test "timestamps() alone still runs the build" {
+              withWorkspace "control" (fun root _ ->
+                  match FogellSide.run [] root "job" (pipeline "timestamps()") with
+                  | Error why -> failtestf "the valid form must run: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the control runs to success"
+                      Expect.equal trace.WorkspaceFiles.Length 2 "both markers are written")
+          }
+
+          test "an engine-stamped xtrace row is still canonicalised" {
+              // Under `timestamps()` the engine stamps its own `+ ` rows, so the
+              // xtrace test that gates trace-only replacements must look past the
+              // stamp. On an unstamped pipeline a column-zero stamp is the build's
+              // own text and stays literal — the declared mimicry residual.
+              let stamped = "[2026-08-03T03:54:07.729Z] + test -n /root"
+              let normalise declares lines =
+                  Trace.normaliseOutputShapedWithTimestampCoverage declares false [] [ "/root", "${HOME}" ] lines
+                  |> fst
+
+              Expect.equal (normalise true [ stamped ]) [ "+ test -n ${HOME}" ] "stamp stripped, expansion canonicalised"
+              Expect.equal (normalise false [ stamped ]) [ stamped ] "a build's own stamp keeps its literal"
+              Expect.equal (normalise true [ "+ test -n /root" ]) [ "+ test -n ${HOME}" ] "an unstamped row is unchanged in behaviour"
+              Expect.equal (normalise true [ "[2026-08-03T03:54:07.729Z] echo /root" ]) [ "echo /root" ] "a non-xtrace row keeps its literal"
+          }
+
+          test "a replacement value that occurs inside the engine's stamp cannot corrupt it" {
+              // Codex, on the first cut: with the value `2026` in the trace-only set,
+              // the stamped row became `[${YEAR}-08-03T…Z] + echo ${YEAR}` — the stamp
+              // rewritten, the strip defeated, the mangled prefix kept. Replacements
+              // now fold over the body only, with the stamp put back untouched, so
+              // both the strip and the coverage count still see the exact stamp.
+              let stamped = "[2026-08-03T03:54:07.729Z] + echo 2026"
+
+              let normalise declares globals traceOnly lines =
+                  Trace.normaliseOutputShapedWithTimestampCoverage declares false globals traceOnly lines
+
+              Expect.equal
+                  (normalise true [] [ "2026", "${YEAR}" ] [ stamped ])
+                  ([ "+ echo ${YEAR}" ], (1, 1))
+                  "trace-only value inside the stamp: body canonicalised, stamp intact then stripped, coverage exact"
+
+              Expect.equal
+                  (normalise true [ "2026", "${YEAR}" ] [] [ stamped ])
+                  ([ "+ echo ${YEAR}" ], (1, 1))
+                  "global value inside the stamp: the same split protects it"
+
+              Expect.equal
+                  (normalise true [] [ ":54:", "${T}" ] [ "[2026-08-03T03:54:07.729Z] + echo :54:" ])
+                  ([ "+ echo ${T}" ], (1, 1))
+                  "a value matching the time fragment"
+
+              Expect.equal
+                  (normalise false [] [ "2026", "${YEAR}" ] [ stamped ])
+                  ([ stamped ], (0, 1))
+                  "an undeclared pipeline's own stamp is ordinary text and stays literal"
+
+              // Copilot, on the second cut: decoration hid the stamp from the split.
+              // Compared output never carries ANSI, so the split and the folds run
+              // on the stripped text — which also lets an `ansiColor` xtrace row be
+              // canonicalised at all, where before the decoration masked its `+ `.
+              let ansi = string (char 27) + "[31m"
+
+              Expect.equal
+                  (normalise true [ "2026", "${YEAR}" ] [] [ ansi + stamped ])
+                  ([ "+ echo ${YEAR}" ], (1, 1))
+                  "decoration before the stamp no longer hides it from the split"
+
+              Expect.equal
+                  (normalise true [] [ "2026", "${YEAR}" ] [ "[2026-08-03T03:54:07.729Z] " + ansi + "+ echo 2026" ])
+                  ([ "+ echo ${YEAR}" ], (1, 1))
+                  "decoration after the stamp no longer hides the xtrace row from canonicalisation"
+          } ]
+
 let spreadAssignmentPreflight =
     let pipelineWithBody body =
         "pipeline { agent any stages { stage('probe') { steps { script { "
@@ -9289,6 +9415,7 @@ let main argv =
               controllerApprovalPreflight
               spreadAssignmentPreflight
               excerptWiring
+              timestampsRefusals
               userOutputSurvives
               stringModel
               receiptFileNaming
