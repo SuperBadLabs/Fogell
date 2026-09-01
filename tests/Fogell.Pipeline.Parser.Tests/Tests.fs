@@ -39,7 +39,7 @@ type private FuzzXorShift64(initialState: uint64) =
     member this.NextInt(exclusiveMaximum: int) =
         int (this.NextUInt64() % uint64 exclusiveMaximum)
 
-type private MalformedFuzzCase =
+type private AdmissionNegativeCase =
     { Label: string
       Family: string
       Source: string
@@ -321,9 +321,11 @@ let sourceExcerpts =
           } ]
 
 /// FG-004b. The fixed-seed generator is intentionally length-delimited and
-/// every generated source is malformed by construction. This is a bounded
-/// robustness sweep, not a grammar fuzzer claiming arbitrary coverage.
-let malformedInputSweep =
+/// every generated source is guaranteed to be refused by the Declarative
+/// parser boundary. Some controls are valid scripted inputs, so this is a
+/// bounded admission-negative robustness sweep, not a grammar fuzzer claiming
+/// arbitrary malformed-Jenkinsfile coverage.
+let admissionNegativeSweep =
     let seed = 0x46472D30303462UL
     let inputCount = 10_000
 
@@ -553,7 +555,7 @@ let malformedInputSweep =
         appendInt32LittleEndian hash bytes.Length
         hash.AppendData bytes
 
-    let corpusDigest (inputs: MalformedFuzzCase array) =
+    let corpusDigest (inputs: AdmissionNegativeCase array) =
         use hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
         appendUInt64LittleEndian hash seed
         appendInt32LittleEndian hash inputs.Length
@@ -580,14 +582,14 @@ let malformedInputSweep =
               "crlf-depth" ]
 
     testList
-        "FG-004b deterministic malformed-input sweep"
+        "FG-004b deterministic admission-negative sweep"
         [ test "the fixed-seed length-delimited corpus is exact and replayable" {
               let first = cases ()
               let replay = cases ()
               let firstDigest = corpusDigest first
               let replayDigest = corpusDigest replay
 
-              Expect.equal first.Length inputCount "exactly 10,000 malformed inputs are generated"
+              Expect.equal first.Length inputCount "exactly 10,000 guaranteed-refused inputs are generated"
               Expect.equal replay.Length inputCount "the replay has the same exact size"
 
               for index in 0 .. inputCount - 1 do
@@ -611,10 +613,10 @@ let malformedInputSweep =
               Expect.equal
                   (first |> Array.map (fun input -> input.Source) |> Set.ofArray |> Set.count)
                   inputCount
-                  "every malformed source is unique"
+                  "every admission-negative source is unique"
 
               let observedFamilies = first |> Array.map (fun input -> input.Family) |> Set.ofArray
-              Expect.equal observedFamilies requiredFamilies "every named malformed family is present"
+              Expect.equal observedFamilies requiredFamilies "every named admission-negative family is present"
 
               for family in requiredFamilies do
                   Expect.isGreaterThan
@@ -654,7 +656,7 @@ let malformedInputSweep =
                   match result with
                   | Ok _ ->
                       failtestf
-                          "guaranteed-malformed input was accepted; seed=0x%016X; index=%d; label=%s"
+                          "guaranteed-refused Declarative input was accepted; seed=0x%016X; index=%d; label=%s"
                           seed
                           index
                           input.Label
@@ -1878,7 +1880,7 @@ let main argv =
             "Fogell.Pipeline.Parser"
             [ admissionLimits
               sourceExcerpts
-              malformedInputSweep
+              admissionNegativeSweep
               declarativeDetection
               structure
               invalidEightEscape

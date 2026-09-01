@@ -149,7 +149,8 @@ identity remain controller/authentication responsibilities.
 node count, nesting, and scalar length before schema compilation (FG-004,
 [`Limits.fs`](../src/Fogell.Admission/Limits.fs) and
 `Parser.parseWithLimits`). The standing FG-004b sweep sends 10,000 replay-pinned
-malformed sources through that boundary and requires typed positioned refusal.
+inputs guaranteed to be refused by the Declarative parser boundary and requires
+typed positioned refusal.
 
 The Groovy `Value` graph is transitive-schema audited so an unreviewed CLR host
 carrier cannot hide under an existing union case. Free and member calls deny by
