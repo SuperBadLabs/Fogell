@@ -766,7 +766,15 @@ module Trace =
             // canonicalisation on its custom-prefixed rows and any inherited-value
             // difference there diverges VISIBLY — declared, fail-closed.)
             let text =
-                if Text.RegularExpressions.Regex.IsMatch(g.TrimStart(), @"^\++ ") then
+                // FG-121. Under `options { timestamps() }` the engine stamps the xtrace
+                // row itself, so a `+ ` line arrives as `[…Z] + …` and the test below
+                // must look past the stamp the engine put there. The stamp is stripped
+                // for the TEST only when the script declared the option — a build's own
+                // column-zero stamp on an unstamped pipeline stays a literal, which keeps
+                // the mimicry residual exactly where the comment above declares it.
+                let probe = if stripTimestamps then timestampPrefix.Replace(g, "") else g
+
+                if Text.RegularExpressions.Regex.IsMatch(probe.TrimStart(), @"^\++ ") then
                     orderedTrace |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) g
                 else
                     g
