@@ -6,31 +6,15 @@ echo "=== sdk ==="; dotnet --version
 ./scripts/prove-dependency-locks.sh \
   || { echo "DEPENDENCY-LOCK/SOURCE-CLEARED BUILD PROOF FAILED"; exit 1; }
 echo "=== tests ==="
-fail=0
-for p in tests/*/; do
-  [ -f "$p/$(basename "$p").fsproj" ] || continue
-  echo "--- $(basename "$p") ---"
-  # Capture, then decide what to show. Piping straight into `rg -o "EXPECTO! .*"`
-  # printed the summary and DISCARDED every failure detail, so a red gate said
-  # "1 failed" and named neither the test nor the assertion. That is what CI did
-  # on PR #36 while the same suite passed locally: the one run that could have
-  # explained an environment-dependent failure threw the explanation away.
-  # A gate that cannot be diagnosed from its own output is a gate you re-run
-  # instead of read.
-  test_out="$(dotnet run --project "$p" -c Release --no-build 2>&1)"
-  test_rc=$?
-  test_summary="$(printf '%s\n' "$test_out" | rg -o "EXPECTO! .*" | tail -1)"
-  if [ "$test_rc" -ne 0 ] || [ -z "$test_summary" ]; then
-    fail=1
-    printf '%s\n' "$test_out"
-    if [ "$test_rc" -eq 0 ]; then
-      echo "TEST PROJECT PRODUCED NO EXPECTO SUMMARY: $(basename "$p")"
-    fi
-  else
-    printf '%s\n' "$test_summary"
-  fi
-done
-[ "$fail" -ne 0 ] && { echo "TESTS FAILED"; exit 1; }
+# FG-229. Prove the tracked-project inventory and Expecto-summary boundary
+# before trusting them. The old `tests/<dir>/<dir>.fsproj` convention silently
+# skipped nested and differently named projects while still producing a green
+# gate. The shared runner is also used by evidence sealing, so those two
+# publication boundaries cannot drift back to different test populations.
+./scripts/prove-project-tests.sh \
+  || { echo "PROJECT TEST INVENTORY PROOF FAILED"; exit 1; }
+./scripts/run-project-tests.sh \
+  || { echo "TESTS FAILED"; exit 1; }
 
 # FG-228. Stash containment depends on both refusing linked-directory prefixes
 # and copying only from a descriptor whose physical identity is the selected
