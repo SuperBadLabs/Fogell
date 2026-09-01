@@ -321,8 +321,10 @@ let sourceExcerpts =
           } ]
 
 /// FG-004b. The fixed-seed generator is intentionally length-delimited and
-/// every generated source is malformed by construction. This is a bounded
-/// robustness sweep, not a grammar fuzzer claiming arbitrary coverage.
+/// every generated source is guaranteed to be refused by the Declarative
+/// parser boundary. Some controls are valid scripted inputs, so this is a
+/// bounded admission-negative robustness sweep, not a grammar fuzzer claiming
+/// arbitrary malformed-Jenkinsfile coverage.
 let malformedInputSweep =
     let seed = 0x46472D30303462UL
     let inputCount = 10_000
@@ -654,7 +656,7 @@ let malformedInputSweep =
                   match result with
                   | Ok _ ->
                       failtestf
-                          "guaranteed-malformed input was accepted; seed=0x%016X; index=%d; label=%s"
+                          "guaranteed-refused Declarative input was accepted; seed=0x%016X; index=%d; label=%s"
                           seed
                           index
                           input.Label

@@ -130,8 +130,15 @@ awk '
 ' "$LAB/board.md" > "$LAB/status-drift.md"
 expect_fail "legal status drift" "$LAB/status-drift.md" "$LAB/ledger.tsv"
 
+# Select the first open P1 row instead of binding this proof to one ticket's
+# current lifecycle state. FG-004b's closure transition changes its priority
+# from an audited open count into inert history, making the old fixed mutation a
+# no-op at exactly the point this proof matters most.
 awk '
-  /^\| FG-004b \|/ { sub(/\| P1 \|/, "| P2 |") }
+  !changed && /^\| FG-[0-9]+[a-z]? \| P1 \|/ && $0 !~ /\| \*\*DONE\*\* \|/ {
+    sub(/\| P1 \|/, "| P2 |")
+    changed=1
+  }
   { print }
 ' "$LAB/board.md" > "$LAB/priority-drift.md"
 expect_fail "legal priority drift" "$LAB/priority-drift.md" "$LAB/ledger.tsv"
@@ -139,7 +146,11 @@ expect_fail "legal priority drift" "$LAB/priority-drift.md" "$LAB/ledger.tsv"
 # 7. Vocabulary is closed. These cases test legality independently of the summary
 # comparison: replacing one legal cell cannot be accepted as a fifth state or tier.
 awk '
-  /^\| FG-004b \|/ { sub(/\| TODO \|/, "| OPEN |") }
+  !changed && /^\| FG-[0-9]+[a-z]? \| P[0-3] \|/ && $0 !~ /\| \*\*DONE\*\* \|/ {
+    if (sub(/\| (TODO|BLOCKED) \|/, "| OPEN |") ||
+        sub(/\| \*\*PARTIAL\*\* \|/, "| OPEN |"))
+      changed=1
+  }
   { print }
 ' "$LAB/board.md" > "$LAB/illegal-status.md"
 expect_fail "illegal status vocabulary" "$LAB/illegal-status.md" "$LAB/ledger.tsv"
