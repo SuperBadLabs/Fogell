@@ -2851,14 +2851,19 @@ let stashSymlinkContainment =
               write (Path.Combine(outside, "value.txt")) "outside"
               Directory.CreateSymbolicLink(Path.Combine(workspace, "link"), outside) |> ignore
 
+              for index in 0 .. 127 do
+                  Directory.CreateDirectory(Path.Combine(workspace, $"ordinary-{index:D3}"))
+                  |> ignore
+
               // Each distinct literal expands the NFA search alphabet. The
               // selection-wide transition budget keeps this adversarial but
               // admitted pattern bounded, while the first in-search poll makes
               // cancellation authoritative over the conservative link refusal.
               let suffix =
-                  [| for code in 0x1000 .. 0x17ff -> char code |]
+                  [| for code in 1 .. 0x1000 do
+                         if code <> int '/' then yield char code |]
                   |> String
-              let pattern = "link/**/" + suffix
+              let pattern = "**/" + suffix
               let mutable polls = 0
               let abortDuringSearch () =
                   polls <- polls + 1

@@ -1117,6 +1117,41 @@ module Stash =
     let private feedGlobProgram program states (value: string) =
         value |> Seq.fold (stepGlobProgram program) states
 
+    let private globSearchAlphabet
+        (includeProgram: GlobToken array)
+        (excludePrograms: GlobToken array list)
+        =
+        let literalCharacters =
+            seq {
+                for program in includeProgram :: excludePrograms do
+                    for token in program do
+                        match token with
+                        | Literal(character, false) ->
+                            yield Char.ToLowerInvariant character
+                            yield Char.ToUpperInvariant character
+                        | Literal(character, true) -> yield character
+                        | _ -> ()
+                yield '/'
+            }
+            |> Seq.filter ((<>) '\u0000')
+            |> Set.ofSeq
+
+        // Literal characters are singleton NFA equivalence classes; every
+        // nonliteral character shares one representative. By pigeonhole, if
+        // fewer than all non-NUL UTF-16 code units are literal, one of the
+        // first count+1 candidates is absent. Build this once per compiled
+        // include, not once per directory reached by the workspace walk.
+        let other =
+            if literalCharacters.Count = int Char.MaxValue then
+                None
+            else
+                seq { for code = 1 to literalCharacters.Count + 1 do yield char code }
+                |> Seq.tryFind (fun character ->
+                    character <> '/' && not (literalCharacters.Contains character))
+
+        other
+        |> Option.fold (fun values character -> Set.add character values) literalCharacters
+
     /// Decide whether an included file path can exist beneath a directory after
     /// the union of explicit and default excludes is applied. This is a language
     /// reachability question over the Ant glob NFAs, so an empty effective
@@ -1127,6 +1162,7 @@ module Stash =
     let private patternHasUnexcludedDescendant
         (includeProgram: GlobToken array)
         (excludePrograms: GlobToken array list)
+        (alphabet: Set<char>)
         (relative: string)
         (permitTransition: unit -> GlobSearchPermit)
         =
@@ -1140,25 +1176,6 @@ module Stash =
             let excluded =
                 excludePrograms
                 |> List.map (fun program -> feedGlobProgram program (initial program) prefix)
-            let literalCharacters =
-                seq {
-                    for program in includeProgram :: excludePrograms do
-                        for token in program do
-                            match token with
-                            | Literal(character, false) ->
-                                yield Char.ToLowerInvariant character
-                                yield Char.ToUpperInvariant character
-                            | Literal(character, true) -> yield character
-                            | _ -> ()
-                    yield '/'
-                }
-                |> Seq.filter ((<>) '\u0000')
-                |> Set.ofSeq
-            let other =
-                seq { for code = 1 to int Char.MaxValue do yield char code }
-                |> Seq.tryFind (fun character ->
-                    character <> '/' && not (literalCharacters.Contains character))
-            let alphabet = other |> Option.fold (fun values character -> Set.add character values) literalCharacters
             let initialState =
                 { Included = included
                   Excluded = excluded
@@ -1273,6 +1290,9 @@ module Stash =
                   Publish.antDefaultExcludePatterns |> List.map (compileGlobProgram true)
               else
                   []
+        let includeSearches =
+            includePrograms
+            |> List.map (fun program -> program, globSearchAlphabet program excludePrograms)
         let files = Collections.Generic.List<string>()
         let pending = Collections.Generic.Stack<Microsoft.Win32.SafeHandles.SafeFileHandle * string>()
         let mutable problem: SaveProblem option = None
@@ -1299,7 +1319,7 @@ module Stash =
         let directoryHasSelection relative =
             let mutable selected = false
 
-            for includeProgram in includePrograms do
+            for includeProgram, alphabet in includeSearches do
                 if not selected && not aborted then
                     let permitTransition () =
                         if
@@ -1317,6 +1337,7 @@ module Stash =
                         patternHasUnexcludedDescendant
                             includeProgram
                             excludePrograms
+                            alphabet
                             relative
                             permitTransition
 
