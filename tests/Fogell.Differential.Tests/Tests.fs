@@ -8717,6 +8717,88 @@ let stashDefaultExcludes =
                           "post remains available after success")
           }
 
+          test "allowEmpty stash succeeds inside an absent logical dir without materializing it" {
+              let source =
+                  "pipeline { agent any stages { stage('stash') { steps { "
+                  + "dir('new') { stash name: 'empty', includes: '**', allowEmpty: true; echo 'continued' } "
+                  + "} } } }"
+
+              withRun "absent-logical-dir" source (fun _ workspace trace ->
+                  Expect.equal trace.Result "success" "allowEmpty preserves the missing-root empty selection"
+                  Expect.contains trace.Output "Stashed 0 file(s)" "the empty stash is published"
+                  Expect.isFalse
+                      (IO.Directory.Exists(IO.Path.Combine(workspace, "new")))
+                      "stash and echo do not materialize the logical directory")
+          }
+
+          test "unstash is the first effect that materializes an absent logical dir" {
+              let source =
+                  "pipeline { agent any stages { stage('stash') { steps { "
+                  + "sh 'printf saved > value.txt'; stash name: 'bundle', includes: 'value.txt'; deleteDir(); "
+                  + "dir('new') { unstash 'bundle'; sh 'test \"$(cat value.txt)\" = saved' } "
+                  + "} } } }"
+
+              withRun "unstash-materializes-logical-dir" source (fun _ workspace trace ->
+                  Expect.equal trace.Result "success" "descriptor-safe unstash creates its logical cwd"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "new", "value.txt")))
+                      "saved"
+                      "the first effect inside dir restores beneath the new workspace")
+          }
+
+          test "allowEmpty refuses a logical dir beneath a dangling symlink" {
+              let source =
+                  "pipeline { agent any stages { stage('stash') { steps { "
+                  + "sh 'ln -s missing link'; "
+                  + "dir('link/sub') { stash name: 'empty', includes: '**', allowEmpty: true; echo 'must-not-run' } "
+                  + "} } } }"
+
+              withRun "dangling-logical-dir" source (fun _ workspace trace ->
+                  Expect.equal trace.Result "failure" "allowEmpty does not hide a dangling ancestor"
+                  Expect.isTrue
+                      (trace.Output
+                       |> List.exists (fun line ->
+                           line.Contains("passes through a symlink", StringComparison.Ordinal)))
+                      "the public logical-dir boundary explains the refusal"
+                  Expect.isFalse
+                      (trace.Output |> List.contains "must-not-run")
+                      "the failed stash stops its logical-dir successor"
+                  Expect.isNotNull
+                      (IO.FileInfo(IO.Path.Combine(workspace, "link")).LinkTarget)
+                      "the dangling link remains observable and was never traversed")
+          }
+
+          test "stash and unstash accept a trailing-separator logical workspace" {
+              let source =
+                  "pipeline { agent any stages { stage('stash') { steps { "
+                  + "dir('sub/') { sh 'printf saved > value.txt'; stash name: 'bundle', includes: '**'; "
+                  + "deleteDir(); unstash 'bundle'; sh 'test \"$(cat value.txt)\" = saved' } "
+                  + "} } } }"
+
+              withRun "trailing-logical-dir" source (fun _ workspace trace ->
+                  Expect.equal trace.Result "success" "the ordinary physical root is not mistaken for a link"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "sub", "value.txt")))
+                      "saved"
+                      "the trailing-spelling round trip restores the selected bytes")
+          }
+
+          test "an ordinary directory-name exclude does not prune its descendants" {
+              let source =
+                  "pipeline { agent any stages { stage('stash') { steps { "
+                  + "sh 'mkdir -p foo && printf kept > foo/value.txt'; "
+                  + "stash name: 'bundle', includes: '**', excludes: 'foo'; "
+                  + "deleteDir(); unstash 'bundle'; sh 'test \"$(cat foo/value.txt)\" = kept' "
+                  + "} } } }"
+
+              withRun "directory-name-exclude" source (fun _ workspace trace ->
+                  Expect.equal trace.Result "success" "a file-only exclude does not prune a directory"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "foo", "value.txt")))
+                      "kept"
+                      "only foo/** would exclude the descendant")
+          }
+
           test "strict malformed booleans create no fresh stash directory or later effects" {
               for label, argument in
                   [ "other word", "'yes'"
@@ -8799,6 +8881,124 @@ let stashDefaultExcludes =
                       (IO.File.Exists(IO.Path.Combine(target, "replacement.txt")))
                       "no replacement payload reached controller storage")
           } ]
+
+/// FG-228 public-boundary proof. The Execution suite owns descriptor mechanics;
+/// this lane proves the real dispatcher refuses the same four selected link
+/// shapes, stops the successor, preserves an ordinary stash/unstash round trip,
+/// and publishes no external sentinel to controller storage.
+let stashSymlinkContainment =
+    let withRun label source assertions =
+        let root =
+            IO.Path.Combine(
+                IO.Path.GetTempPath(),
+                $"fogell-fg228-{label}-{Guid.NewGuid():N}"
+            )
+
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            match FogellSide.run [] root "job" source with
+            | Error why -> failtestf "%s pipeline was refused before execution: %s" label why
+            | Ok trace -> assertions root workspace trace
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    let pipeline flag linkCommand pattern =
+        "pipeline { agent any stages { stage('stash') { steps { "
+        + "sh 'printf ordinary > ordinary.txt'; "
+        + "stash name: 'safe', includes: 'ordinary.txt'; deleteDir(); unstash 'safe'; "
+        + "sh '''set -eu\n"
+        + "mkdir -p hidden/in-dir ../fg228-out-dir\n"
+        + "printf inside-file > hidden/in-file.txt\n"
+        + "printf inside-dir > hidden/in-dir/value.txt\n"
+        + "printf outside-file > ../fg228-out-file.txt\n"
+        + "printf outside-dir > ../fg228-out-dir/value.txt\n"
+        + linkCommand
+        + "\n"
+        + "'''; "
+        + "stash name: 'unsafe', includes: 'ordinary.txt,"
+        + pattern
+        + "'"
+        + flag
+        + "; sh 'touch successor.txt' } } } "
+        + "post { always { sh 'test -f ordinary.txt && printf post > post.txt' } } }"
+
+    let tests =
+        [ test "each link shape under both default-exclude modes refuses without publishing sentinel bytes" {
+              let shapes =
+                  [ "in-file", "ln -s hidden/in-file.txt in-file-link", "in-file-link"
+                    "in-dir", "ln -s hidden/in-dir in-dir-link", "in-dir-link/**"
+                    "out-file", "ln -s ../fg228-out-file.txt out-file-link", "out-file-link"
+                    "out-dir", "ln -s ../fg228-out-dir out-dir-link", "out-dir-link/**" ]
+
+              for shape, linkCommand, pattern in shapes do
+                for mode, flag in [ "default", ""; "optout", ", useDefaultExcludes: false" ] do
+                  let label = shape + "-" + mode
+                  withRun label (pipeline flag linkCommand pattern) (fun root workspace trace ->
+                      Expect.equal trace.Result "failure" $"{label}: the selected link refuses the stash"
+                      Expect.isTrue trace.ReportedFailureReason $"{label}: the refusal is explained"
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "ordinary.txt")))
+                          $"{label}: the ordinary control round-tripped through public stash/unstash"
+                      Expect.equal
+                          (IO.File.ReadAllText(IO.Path.Combine(workspace, "ordinary.txt")))
+                          "ordinary"
+                          $"{label}: the ordinary bytes remain exact"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "successor.txt")))
+                          $"{label}: the refused stash stops its successor"
+                      Expect.isTrue
+                          (IO.File.Exists(IO.Path.Combine(workspace, "post.txt")))
+                          $"{label}: established failure-post behavior remains available"
+                      Expect.equal
+                          (IO.File.ReadAllText(IO.Path.Combine(root, "fg228-out-file.txt")))
+                          "outside-file"
+                          $"{label}: the external file target is untouched"
+                      Expect.equal
+                          (IO.File.ReadAllText(IO.Path.Combine(root, "fg228-out-dir", "value.txt")))
+                          "outside-dir"
+                          $"{label}: the external directory target is untouched"
+
+                      let stashRoot = IO.Path.Combine(root, "_artifacts", "_stash")
+                      let controllerValues =
+                          IO.Directory.GetFiles(stashRoot, "*", IO.SearchOption.AllDirectories)
+                          |> Array.map IO.File.ReadAllText
+                          |> Set.ofArray
+
+                      Expect.equal
+                          controllerValues
+                          (Set.ofList [ "ordinary" ])
+                          $"{label}: no internal or external link-target sentinel reached controller storage")
+          }
+
+          test "public unstash refuses a linked destination without overwriting its external canary" {
+              let source =
+                  "pipeline { agent any stages { stage('unstash') { steps { "
+                  + "sh 'printf saved > value.txt'; stash name: 'safe', includes: 'value.txt'; "
+                  + "deleteDir(); sh 'printf outside > ../unstash-canary.txt; ln -s ../unstash-canary.txt value.txt'; "
+                  + "unstash 'safe'; sh 'touch successor.txt' } } } "
+                  + "post { always { sh 'test \"$(cat ../unstash-canary.txt)\" = outside && printf post > post.txt' } } }"
+
+              withRun "unstash-destination" source (fun root workspace trace ->
+                  Expect.equal trace.Result "failure" "the linked destination refuses unstash"
+                  Expect.isTrue trace.ReportedFailureReason "the unstash refusal is explained"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(root, "unstash-canary.txt")))
+                      "outside"
+                      "the external destination remains byte-exact"
+                  Expect.isFalse
+                      (IO.File.Exists(IO.Path.Combine(workspace, "successor.txt")))
+                      "the unsafe unstash stops its successor"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "post.txt")))
+                      "failure post still runs after the refusal")
+          } ]
+
+    if OperatingSystem.IsLinux() then
+        testList "FG-228 public stash symlink containment" tests
+    else
+        ptestList "FG-228 public stash symlink containment" tests
 
 let dirWorkspaceLifecycle =
     let withRun label source assertions =
@@ -8997,6 +9197,7 @@ let main argv =
               credentialExceptionalCleanup
               credentialCompanionPreservation
               stashDefaultExcludes
+              stashSymlinkContainment
               dirWorkspaceLifecycle
               parallelsAlwaysFailFastArguments
               ansiColorTrailingBlocks ])

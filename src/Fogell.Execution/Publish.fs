@@ -75,7 +75,8 @@ module Publish =
             |> fun p -> p.Replace("(?:.*)/", "(?:.*/)?")
 
         let options =
-            if caseSensitive then RegexOptions.None else RegexOptions.IgnoreCase
+            if caseSensitive then RegexOptions.None
+            else RegexOptions.IgnoreCase ||| RegexOptions.CultureInvariant
 
         Regex("^" + escaped + "$", options)
 
@@ -85,7 +86,7 @@ module Publish =
     // active even when an include names one of the paths literally. The pinned
     // list is case-sensitive and shared only by those two Ant-backed selectors;
     // archive retains its established matcher and behavior.
-    let private antDefaultExcludePatterns =
+    let internal antDefaultExcludePatterns =
         [ "**/*~"
           "**/#*#"
           "**/.#*"
@@ -120,6 +121,10 @@ module Publish =
 
     let internal isAntDefaultExcluded (relative: string) =
         antDefaultExcludeRegexes |> List.exists (fun regex -> regex.IsMatch relative)
+
+    let internal compileGlobMatcher (caseSensitive: bool) (pattern: string) =
+        let regex = compileGlobRegex caseSensitive pattern
+        fun (relative: string) -> regex.IsMatch relative
 
     /// Expand a Jenkins-style ant glob (`**/*.jar`, `target/*.txt`, `out.txt`)
     /// against a workspace. Deliberately supports only the forms measured in the
@@ -992,6 +997,420 @@ module Publish =
 
 module Stash =
 
+    let private safeDiagnosticPath (value: string) =
+        let builder = Text.StringBuilder()
+        let limit = min value.Length 160
+
+        for index in 0 .. limit - 1 do
+            let c = value.[index]
+            if Char.IsControl c then builder.Append($"\\u{int c:X4}") |> ignore
+            else builder.Append c |> ignore
+
+        if value.Length > limit then builder.Append "…" |> ignore
+        builder.ToString()
+
+    let private deleteDirectoryBestEffort path =
+        try
+            if IO.Directory.Exists path then IO.Directory.Delete(path, true)
+        with _ ->
+            ()
+
+    [<RequireQualifiedAccess>]
+    type SaveProblem =
+        | SelectedPathRefused of relative: string * detail: string
+        | StorageFailure of detail: string
+
+        member this.Describe =
+            match this with
+            | SelectedPathRefused(relative, detail) ->
+                $"stash refuses selected path ‘{safeDiagnosticPath relative}’: {detail}"
+            | StorageFailure detail -> $"stash storage failed: {detail}"
+
+    type private GlobToken =
+        | Literal of character: char * caseSensitive: bool
+        | AnyNonSeparator
+        | StarNonSeparator
+        | StarAny
+        | GlobstarPrefixStart
+        | GlobstarPrefixBody
+
+    type private GlobSearchState =
+        { Included: Set<int>
+          Excluded: Set<int> list
+          SegmentKind: int }
+
+    type private GlobSearchPermit =
+        | SearchTransition
+        | SearchAborted
+        | SearchExhausted
+
+    /// Compile the same language as Publish.compileGlobRegex into a small NFA.
+    /// GlobstarPrefix represents the regex rewrite that lets `**/x` also match
+    /// bare `x`; it either consumes no prefix or consumes through a slash.
+    let private compileGlobProgram caseSensitive (pattern: string) =
+        let segments = pattern.Replace('\\', '/').Trim().Split('/', StringSplitOptions.None)
+        let tokens = Collections.Generic.List<GlobToken>()
+
+        for index = 0 to segments.Length - 1 do
+            let segment = segments.[index]
+
+            if segment = "**" then
+                if index = segments.Length - 1 then tokens.Add StarAny
+                else
+                    tokens.Add GlobstarPrefixStart
+                    tokens.Add GlobstarPrefixBody
+            else
+                for character in segment do
+                    match character with
+                    | '*' -> tokens.Add StarNonSeparator
+                    | '?' -> tokens.Add AnyNonSeparator
+                    | literal -> tokens.Add(Literal(literal, caseSensitive))
+
+                if index < segments.Length - 1 then
+                    tokens.Add(Literal('/', true))
+
+        tokens.ToArray()
+
+    let private epsilonClosure (program: GlobToken array) (states: Set<int>) =
+        let pending = Collections.Generic.Stack<int>(states)
+        let reachable = Collections.Generic.HashSet<int>(states)
+
+        while pending.Count > 0 do
+            let state = pending.Pop()
+
+            if state < program.Length then
+                match program.[state] with
+                | StarNonSeparator
+                | StarAny ->
+                    if reachable.Add(state + 1) then pending.Push(state + 1)
+                | GlobstarPrefixStart ->
+                    if reachable.Add(state + 2) then pending.Push(state + 2)
+                | _ -> ()
+
+        reachable |> Set.ofSeq
+
+    let private stepGlobProgram (program: GlobToken array) (states: Set<int>) character =
+        let next = Collections.Generic.HashSet<int>()
+
+        for state in states do
+            if state < program.Length then
+                match program.[state] with
+                | Literal(expected, caseSensitive) ->
+                    let matches =
+                        if caseSensitive then expected = character
+                        else Char.ToUpperInvariant expected = Char.ToUpperInvariant character
+
+                    if matches then next.Add(state + 1) |> ignore
+                | AnyNonSeparator when character <> '/' -> next.Add(state + 1) |> ignore
+                | StarNonSeparator when character <> '/' -> next.Add state |> ignore
+                | StarAny when character <> '\n' -> next.Add state |> ignore
+                | GlobstarPrefixStart when character <> '\n' ->
+                    next.Add(state + 1) |> ignore
+                    if character = '/' then next.Add(state + 2) |> ignore
+                | GlobstarPrefixBody when character <> '\n' ->
+                    next.Add state |> ignore
+                    if character = '/' then next.Add(state + 1) |> ignore
+                | _ -> ()
+
+        epsilonClosure program (next |> Set.ofSeq)
+
+    let private feedGlobProgram program states (value: string) =
+        value |> Seq.fold (stepGlobProgram program) states
+
+    let private globSearchAlphabet
+        (includeProgram: GlobToken array)
+        (excludePrograms: GlobToken array list)
+        =
+        let literalCharacters =
+            seq {
+                for program in includeProgram :: excludePrograms do
+                    for token in program do
+                        match token with
+                        | Literal(character, false) ->
+                            yield Char.ToLowerInvariant character
+                            yield Char.ToUpperInvariant character
+                        | Literal(character, true) -> yield character
+                        | _ -> ()
+                yield '/'
+            }
+            |> Seq.filter ((<>) '\u0000')
+            |> Set.ofSeq
+
+        // Literal characters are singleton NFA equivalence classes; every
+        // nonliteral character shares one representative. By pigeonhole, if
+        // fewer than all non-NUL UTF-16 code units are literal, one of the
+        // first count+1 candidates is absent. Build this once per compiled
+        // include, not once per directory reached by the workspace walk.
+        let other =
+            if literalCharacters.Count = int Char.MaxValue then
+                None
+            else
+                seq { for code = 1 to literalCharacters.Count + 1 do yield char code }
+                |> Seq.tryFind (fun character ->
+                    character <> '/' && not (literalCharacters.Contains character))
+
+        other
+        |> Option.fold (fun values character -> Set.add character values) literalCharacters
+
+    /// Decide whether an included file path can exist beneath a directory after
+    /// the union of explicit and default excludes is applied. This is a language
+    /// reachability question over the Ant glob NFAs, so an empty effective
+    /// selection such as include `link/*.txt`, exclude `link/*` does not refuse a
+    /// directory link, while any surviving admitted witness still does. The
+    /// search admits only real Linux path shapes: non-empty components other than
+    /// `.` and `..`, with no trailing or doubled separator.
+    let private patternHasUnexcludedDescendant
+        (includeProgram: GlobToken array)
+        (excludePrograms: GlobToken array list)
+        (alphabet: Set<char>)
+        (relative: string)
+        (permitTransition: unit -> GlobSearchPermit)
+        =
+        let initial program = epsilonClosure program (Set.singleton 0)
+        let prefix = relative + "/"
+        let included = feedGlobProgram includeProgram (initial includeProgram) prefix
+
+        if Set.isEmpty included then
+            false, false
+        else
+            let excluded =
+                excludePrograms
+                |> List.map (fun program -> feedGlobProgram program (initial program) prefix)
+            let initialState =
+                { Included = included
+                  Excluded = excluded
+                  SegmentKind = 0 }
+            let pending = Collections.Generic.Queue<GlobSearchState>()
+            let visited = Collections.Generic.HashSet<GlobSearchState>()
+            let mutable witness = false
+            let mutable aborted = false
+            let mutable transitionBudgetExhausted = false
+            pending.Enqueue initialState
+            visited.Add initialState |> ignore
+
+            // Jenkinsfile globs are untrusted. Bound the product search; an
+            // exhausted proof returns the fail-closed answer (a survivor may
+            // exist), which can only cause a link refusal or ordinary descent.
+            let maxSearchStates = 10000
+
+            while pending.Count > 0
+                  && not witness
+                  && not aborted
+                  && not transitionBudgetExhausted
+                  && visited.Count <= maxSearchStates do
+                let state = pending.Dequeue()
+
+                if
+                    state.SegmentKind = 3
+                    && state.Included.Contains includeProgram.Length
+                    && List.forall2
+                        (fun (program: GlobToken array) (excludedState: Set<int>) ->
+                            not (excludedState.Contains program.Length))
+                        excludePrograms
+                        state.Excluded
+                then
+                    witness <- true
+                else
+                    for character in alphabet do
+                        if not aborted && not transitionBudgetExhausted then
+                            match permitTransition () with
+                            | SearchAborted -> aborted <- true
+                            | SearchExhausted -> transitionBudgetExhausted <- true
+                            | SearchTransition ->
+                                let nextSegmentKind =
+                                    if character = '/' then
+                                        if state.SegmentKind = 3 then Some 0 else None
+                                    else
+                                        match state.SegmentKind, character with
+                                        | 0, '.' -> Some 1
+                                        | 0, _ -> Some 3
+                                        | 1, '.' -> Some 2
+                                        | 1, _
+                                        | 2, _
+                                        | 3, _ -> Some 3
+                                        | _ -> None
+
+                                match nextSegmentKind with
+                                | None -> ()
+                                | Some segmentKind ->
+                                    let nextIncluded = stepGlobProgram includeProgram state.Included character
+
+                                    if not (Set.isEmpty nextIncluded) then
+                                        let next =
+                                            { Included = nextIncluded
+                                              Excluded =
+                                                List.map2
+                                                    (fun (program: GlobToken array) (excludedState: Set<int>) ->
+                                                        stepGlobProgram program excludedState character)
+                                                    excludePrograms
+                                                    state.Excluded
+                                              SegmentKind = segmentKind }
+
+                                        if visited.Add next then pending.Enqueue next
+
+            // Exhaustion is fail closed: a surviving selected descendant may
+            // exist, so the caller must refuse a link or descend an ordinary
+            // directory. Cancellation is reported separately and outranks that
+            // conservative answer at the stash/unstash publication boundary.
+            witness || visited.Count > maxSearchStates || transitionBudgetExhausted, aborted
+
+    /// Enumerate only physical workspace directories. Link targets are never
+    /// entered: selected file links and selected directory prefixes become a
+    /// named refusal at their lexical path, while unselected links are ignored.
+    let private entryIsSymbolicLink (entry: FileSystemInfo) =
+        not (isNull entry.LinkTarget)
+
+    let private selectWithoutFollowingLinks
+        (workspace: string)
+        (patterns: string list)
+        (excludes: string list)
+        (useDefaultExcludes: bool)
+        (abort: unit -> bool)
+        =
+        let rawIncludes = if List.isEmpty patterns then [ "**" ] else patterns
+        let normalizePattern (pattern: string) = pattern.Replace('\\', '/').Trim()
+        let includes =
+            rawIncludes
+            |> List.filter (fun includePattern ->
+                excludes
+                |> List.exists (fun excludePattern ->
+                    String.Equals(
+                        normalizePattern includePattern,
+                        normalizePattern excludePattern,
+                        StringComparison.OrdinalIgnoreCase))
+                |> not)
+        // Jenkinsfile patterns are untrusted and controller-lived. Compile each
+        // once for this selection, but do not retain tenant strings globally.
+        let includeMatchers = includes |> List.map (Publish.compileGlobMatcher false)
+        let excludeMatchers = excludes |> List.map (Publish.compileGlobMatcher false)
+        let includePrograms = includes |> List.map (compileGlobProgram false)
+        let excludePrograms =
+            (excludes |> List.map (compileGlobProgram false))
+            @ if useDefaultExcludes then
+                  Publish.antDefaultExcludePatterns |> List.map (compileGlobProgram true)
+              else
+                  []
+        let includeSearches =
+            includePrograms
+            |> List.map (fun program -> program, globSearchAlphabet program excludePrograms)
+        let files = Collections.Generic.List<string>()
+        let pending = Collections.Generic.Stack<Microsoft.Win32.SafeHandles.SafeFileHandle * string>()
+        let mutable problem: SaveProblem option = None
+        let mutable aborted = abort ()
+        // This budget is shared by every include and directory in one stash
+        // selection. The per-search state cap alone is insufficient because an
+        // admitted pattern can contribute thousands of distinct literal
+        // characters to the transition alphabet.
+        let maxGlobSearchTransitions = 25_000
+        let abortPollInterval = 256
+        let mutable globSearchTransitions = 0
+
+        match Native.openDirectoryIfPresentWithoutLinks workspace with
+        | Ok(Some root) -> pending.Push(root, "")
+        | Ok None -> ()
+        | Error why -> problem <- Some(SaveProblem.StorageFailure why)
+
+        let explicitlyExcluded relative =
+            excludeMatchers |> List.exists (fun matches -> matches relative)
+
+        let defaultExcluded relative =
+            useDefaultExcludes && Publish.isAntDefaultExcluded relative
+
+        let directoryHasSelection relative =
+            let mutable selected = false
+
+            for includeProgram, alphabet in includeSearches do
+                if not selected && not aborted then
+                    let permitTransition () =
+                        if
+                            globSearchTransitions % abortPollInterval = 0
+                            && abort ()
+                        then
+                            SearchAborted
+                        elif globSearchTransitions >= maxGlobSearchTransitions then
+                            SearchExhausted
+                        else
+                            globSearchTransitions <- globSearchTransitions + 1
+                            SearchTransition
+
+                    let hasSelection, searchAborted =
+                        patternHasUnexcludedDescendant
+                            includeProgram
+                            excludePrograms
+                            alphabet
+                            relative
+                            permitTransition
+
+                    selected <- hasSelection
+                    if searchAborted then aborted <- true
+
+            selected
+
+        try
+            while pending.Count > 0 && Option.isNone problem && not aborted do
+                let descriptor, logicalDirectory = pending.Pop()
+                use descriptor = descriptor
+
+                use entries =
+                    DirectoryInfo(Native.directoryDescriptorPath descriptor)
+                        .EnumerateFileSystemInfos()
+                        .GetEnumerator()
+
+                while entries.MoveNext() && Option.isNone problem && not aborted do
+                    if abort () then
+                        aborted <- true
+                    else
+                        let entry = entries.Current
+                        let relative =
+                            if logicalDirectory = "" then entry.Name
+                            else logicalDirectory + "/" + entry.Name
+
+                        let isLink = entryIsSymbolicLink entry
+                        let isDirectory = entry :? DirectoryInfo
+                        let selected =
+                            if isDirectory then
+                                directoryHasSelection relative
+                            else
+                                includeMatchers |> List.exists (fun matches -> matches relative)
+
+                        let excluded =
+                            defaultExcluded relative
+                            || if not isDirectory then
+                                   explicitlyExcluded relative
+                               else
+                                   false
+
+                        if isLink then
+                            if selected && not excluded then
+                                problem <-
+                                    Some(
+                                        SaveProblem.SelectedPathRefused(
+                                            relative,
+                                            "selected symbolic links and linked directory descendants are not stashed"))
+                        elif isDirectory && selected then
+                            if not excluded then
+                                match Native.openChildDirectoryWithoutLinks descriptor entry.Name with
+                                | Ok child -> pending.Push(child, relative)
+                                | Error why ->
+                                    problem <-
+                                        Some(
+                                            SaveProblem.SelectedPathRefused(
+                                                relative,
+                                                why))
+                        elif selected && not excluded then
+                            files.Add relative
+        with ex ->
+            problem <-
+                Some(
+                    SaveProblem.StorageFailure(
+                        $"could not enumerate stash inputs ({ex.GetType().Name})"))
+
+        while pending.Count > 0 do
+            let descriptor, _ = pending.Pop()
+            descriptor.Dispose()
+
+        problem, (files |> Seq.distinct |> Seq.sort |> Seq.toList), aborted
+
     /// A stash name comes from the Jenkinsfile, which is UNTRUSTED third-party CI
     /// code. Used directly it is a path-traversal primitive, and `save` deletes its
     /// target recursively before recreating it — so `stash name: '../../..'` would
@@ -1033,46 +1452,101 @@ module Stash =
         (excludes: string list)
         (useDefaultExcludes: bool)
         (abort: unit -> bool)
-        =
+        : Result<string list * bool, SaveProblem> =
         let target = dir store buildKey name
-        if IO.Directory.Exists target then IO.Directory.Delete(target, true)
-        IO.Directory.CreateDirectory target |> ignore
 
-        // REVIEW FIX (Codex, PR #15 round 4): `excludes:` was parsed nowhere and applied
-        // nowhere, so a stash quietly carried files the author had asked it to leave out.
-        let excluded =
-            excludes |> List.collect (Publish.expandGlob workspace) |> Set.ofList
-
-        let matched =
-            (if List.isEmpty patterns then [ "**" ] else patterns)
-            |> List.collect (Publish.expandGlob workspace)
-            |> List.distinct
-            |> List.filter (fun f -> not (excluded.Contains f))
-            // Ant's defaults are an independent filter, not implicit include
-            // patterns. They still win when the Jenkinsfile names a hidden path
-            // literally; only useDefaultExcludes:false disables this filter.
-            |> List.filter (fun f -> not useDefaultExcludes || not (Publish.isAntDefaultExcluded f))
-            |> List.sort
+        let selectionProblem, matched, selectionAborted =
+            selectWithoutFollowingLinks workspace patterns excludes useDefaultExcludes abort
 
         // Same during-and-after-copy polling as the archive path: a `stash` inside a
         // `timeout` used to be able to finish AFTER the deadline with the build still
         // green, because nothing downstream observed the expiry. (FG-002e's pattern:
         // every early return is a missed poll.)
-        let mutable aborted = abort ()
+        let mutable aborted = selectionAborted || abort ()
         let copied = System.Collections.Generic.List<string>()
+        let mutable problem = selectionProblem
+        let staging = target + ".new-" + Guid.NewGuid().ToString "N"
+
+        if Option.isNone problem && not aborted then
+            try
+                IO.Directory.CreateDirectory staging |> ignore
+            with ex ->
+                problem <-
+                    Some(
+                        SaveProblem.StorageFailure(
+                            $"could not create staged stash ({ex.GetType().Name})"))
 
         for relative in matched do
-            if not aborted then
+            if not aborted && Option.isNone problem then
                 if abort () then
                     aborted <- true
                 else
-                    let dest = IO.Path.Combine(target, relative)
-                    IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
-                    IO.File.Copy(IO.Path.Combine(workspace, relative), dest, true)
-                    copied.Add relative
-                    if abort () then aborted <- true
+                    match Native.openFileWithoutLinks workspace relative with
+                    | Error why ->
+                        problem <- Some(SaveProblem.SelectedPathRefused(relative, why))
+                    | Ok source ->
+                        use source = source
+                        try
+                            let sourceMode = Native.fileMode source
+                            let sourceModified = Native.fileLastWriteTimeUtc source
+                            let dest = IO.Path.Combine(staging, relative)
+                            IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
+                            use output =
+                                new FileStream(
+                                    dest,
+                                    FileMode.CreateNew,
+                                    FileAccess.Write,
+                                    FileShare.None)
+                            source.CopyTo output
+                            Native.setFileLastWriteTimeUtc output sourceModified
+                            Native.setFileMode output sourceMode
+                            copied.Add relative
+                            if abort () then aborted <- true
+                        with ex ->
+                            problem <-
+                                Some(
+                                    SaveProblem.StorageFailure(
+                                        $"could not stage ‘{safeDiagnosticPath relative}’ ({ex.GetType().Name})"))
 
-        List.ofSeq copied, aborted
+        match problem, aborted with
+        | _, true ->
+            deleteDirectoryBestEffort staging
+            // `copied` describes files written only to the private staging tree.
+            // Cancellation discards that tree, so the committed/public result is
+            // empty even when the final poll observes cancellation after a copy.
+            Ok([], true)
+        | Some refusal, false ->
+            deleteDirectoryBestEffort staging
+            Error refusal
+        | None, false ->
+            // Publish only a completely validated copy. In particular, a refused
+            // same-name replacement leaves the prior stash intact rather than
+            // replacing it with a partial archive assembled before the bad link.
+            let backup = target + ".old-" + Guid.NewGuid().ToString "N"
+
+            try
+                if IO.Directory.Exists target then IO.Directory.Move(target, backup)
+
+                try
+                    IO.Directory.Move(staging, target)
+                with _ ->
+                    if IO.Directory.Exists backup && not (IO.Directory.Exists target) then
+                        IO.Directory.Move(backup, target)
+                    reraise()
+
+                if IO.Directory.Exists backup then
+                    try
+                        IO.Directory.Delete(backup, true)
+                    with _ ->
+                        // The target move above is the commit point. Cleanup of
+                        // the now-obsolete prior tree cannot turn a committed
+                        // stash into a reported failure; a later maintenance
+                        // sweep may remove an orphaned .old-* directory.
+                        ()
+                Ok(List.ofSeq copied, false)
+            with ex ->
+                deleteDirectoryBestEffort staging
+                Error(SaveProblem.StorageFailure($"could not publish staged stash ({ex.GetType().Name})"))
 
     /// Restore a stash into the workspace. Missing name is an error, never a silent
     /// no-op: a build that carries on with none of the files it asked for is the
@@ -1089,27 +1563,56 @@ module Stash =
         if not (IO.Directory.Exists source) then
             Error $"No such saved stash ‘{name}’"
         else
-            let files =
-                IO.Directory.GetFiles(source, "*", IO.SearchOption.AllDirectories)
-                |> Array.map (fun f -> IO.Path.GetRelativePath(source, f))
-                |> Array.sort
+            let selectionProblem, files, selectionAborted =
+                selectWithoutFollowingLinks source [ "**" ] [] false abort
 
             // REVIEW FIX (Codex, PR #15): `restore` had no abort predicate and the
             // dispatcher did no post-copy check, so a large `unstash` as the final step
             // inside a `timeout` finished and reported success past the deadline.
-            let mutable aborted = abort ()
+            let mutable aborted = selectionAborted || abort ()
+            let mutable problem =
+                selectionProblem
+                |> Option.map (function
+                    | SaveProblem.SelectedPathRefused(relative, _) ->
+                        $"unstash refuses stored path ‘{safeDiagnosticPath relative}’: stored symbolic links and linked directory descendants are not restored"
+                    | SaveProblem.StorageFailure detail ->
+                        $"unstash storage read failed: {detail}")
             let restored = System.Collections.Generic.List<string>()
 
             for relative in files do
-                if not aborted then
+                if not aborted && Option.isNone problem then
                     if abort () then
                         aborted <- true
                     else
-                        let dest = IO.Path.Combine(workspace, relative)
-                        IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
-                        IO.File.Copy(IO.Path.Combine(source, relative), dest, true)
-                        restored.Add relative
-                        if abort () then aborted <- true
+                        match Native.openFileWithoutLinks source relative with
+                        | Error why ->
+                            problem <-
+                                Some $"unstash refuses stored path ‘{safeDiagnosticPath relative}’: {why}"
+                        | Ok input ->
+                            use input = input
+                            let sourceMode = Native.fileMode input
+                            let sourceModified = Native.fileLastWriteTimeUtc input
 
-            if aborted then Error "aborted: the step was interrupted while restoring the stash"
-            else Ok(List.ofSeq restored)
+                            match Native.createWorkspaceFileWithoutLinks workspace relative with
+                            | Error why ->
+                                problem <-
+                                    Some $"unstash refuses restore path ‘{safeDiagnosticPath relative}’: {why}"
+                            | Ok output ->
+                                use output = output
+                                try
+                                    input.CopyTo output
+                                    // Content writes may clear setuid/setgid. Apply the
+                                    // stored timestamp and then the mode through the
+                                    // still-open descriptor, leaving special bits last.
+                                    Native.setFileLastWriteTimeUtc output sourceModified
+                                    Native.setFileMode output sourceMode
+                                    restored.Add relative
+                                    if abort () then aborted <- true
+                                with ex ->
+                                    problem <-
+                                        Some $"unstash could not restore ‘{safeDiagnosticPath relative}’ ({ex.GetType().Name})"
+
+            match problem, aborted with
+            | _, true -> Error "aborted: the step was interrupted while restoring the stash"
+            | Some why, false -> Error why
+            | None, false -> Ok(List.ofSeq restored)

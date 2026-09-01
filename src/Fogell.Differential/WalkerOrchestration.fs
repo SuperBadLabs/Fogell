@@ -1976,23 +1976,26 @@ module WalkerOrchestration =
                         ctx.Failed.Value <- true
                         ctx.Sink BuildStatus.Failure
                     | Ok useDefaults ->
-                        let saved, aborted =
-                            Stash.save store stashKey cwd n includes excludes useDefaults abort
-
-                        if aborted then
-                            applyCancellation ctx "stash" deadline (cancellationOf ctx deadline)
-                        elif List.isEmpty saved && not allowEmpty then
-                            // MEASURED: Jenkins FAILS the build here (default
-                            // allowEmpty: false) — the pipeline stops and later steps do
-                            // not run. Reporting success would let the build continue
-                            // having silently lost the inputs it asked for, and a later
-                            // `unstash` would succeed with nothing.
-                            // Receipt: `stash-empty-fails`.
-                            emit $"ERROR: No files included in stash ‘{n}’"
+                        match Stash.save store stashKey cwd n includes excludes useDefaults abort with
+                        | Error refusal ->
+                            emit $"ERROR: {refusal.Describe}"
                             ctx.Failed.Value <- true
                             ctx.Sink BuildStatus.Failure
-                        else
-                            emit $"Stashed {saved.Length} file(s)"
+                        | Ok(saved, aborted) ->
+                            if aborted then
+                                applyCancellation ctx "stash" deadline (cancellationOf ctx deadline)
+                            elif List.isEmpty saved && not allowEmpty then
+                                // MEASURED: Jenkins FAILS the build here (default
+                                // allowEmpty: false) — the pipeline stops and later steps do
+                                // not run. Reporting success would let the build continue
+                                // having silently lost the inputs it asked for, and a later
+                                // `unstash` would succeed with nothing.
+                                // Receipt: `stash-empty-fails`.
+                                emit $"ERROR: No files included in stash ‘{n}’"
+                                ctx.Failed.Value <- true
+                                ctx.Sink BuildStatus.Failure
+                            else
+                                emit $"Stashed {saved.Length} file(s)"
 
             | "unstash", _ ->
                 let step = renderStepArgs ctx stage step

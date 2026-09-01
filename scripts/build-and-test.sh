@@ -32,6 +32,17 @@ for p in tests/*/; do
 done
 [ "$fail" -ne 0 ] && { echo "TESTS FAILED"; exit 1; }
 
+# FG-228. Stash containment depends on both refusing linked-directory prefixes
+# and copying only from a descriptor whose physical identity is the selected
+# lexical workspace path. Recreate the old two-part traversal mechanism in a
+# scratch candidate, require it to compile, and prove the named production tests
+# reject the external-byte copy.
+echo "=== stash symlink containment mutation proof (FG-228, blocking) ==="
+./scripts/prove-fg228-stash-symlinks.sh \
+  || { echo "STASH SYMLINK CONTAINMENT PROOF FAILED"; exit 1; }
+./scripts/check-fg228-evidence.sh \
+  || { echo "STASH SYMLINK EVIDENCE CHECK FAILED"; exit 1; }
+
 # FG-026. The ordinary Store project run above covers the ledger and already
 # refuses a no-summary database skip. This focused wrapper additionally proves
 # that the named ten-test slice and exact live schema marker ran, after first

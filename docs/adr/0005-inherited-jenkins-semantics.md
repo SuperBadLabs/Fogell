@@ -120,6 +120,12 @@ Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
 
 ## Beat
 
+- **Do not archive through stash links.** Jenkins 2.568.1 preserves selected
+  file symlinks and follows selected directory symlinks, including a directory
+  target outside the workspace. Fogell refuses the complete selected stash
+  before publication and applies no-follow source/destination boundaries during
+  unstash. This intentional Linux divergence is measured and retained in the
+  FG-228 evidence rather than promoted to tier-1 compatibility.
 - **No 250-step ceiling.** The exact 250-step control is tier-1 PROVEN; Jenkins
   2.568.1 fails at 251 before a workspace effect while Fogell runs every step,
   and at 400 Jenkins reports the JVM 255-argument limit while Fogell again runs
