@@ -2842,6 +2842,73 @@ let stashSymlinkContainment =
                       Globalization.CultureInfo.CurrentUICulture <- originalUiCulture
           }
 
+          test "directory reachability bounds aggregate transitions and polls cancellation" {
+              let root = tempRoot ()
+              let workspace = Path.Combine(root, "workspace")
+              let outside = Path.Combine(root, "outside")
+              let store = StashStore.under (Path.Combine(root, "controller"))
+              Directory.CreateDirectory workspace |> ignore
+              write (Path.Combine(outside, "value.txt")) "outside"
+              Directory.CreateSymbolicLink(Path.Combine(workspace, "link"), outside) |> ignore
+
+              // Each distinct literal expands the NFA search alphabet. The
+              // selection-wide transition budget keeps this adversarial but
+              // admitted pattern bounded, while the first in-search poll makes
+              // cancellation authoritative over the conservative link refusal.
+              let suffix =
+                  [| for code in 0x1000 .. 0x17ff -> char code |]
+                  |> String
+              let pattern = "link/**/" + suffix
+              let mutable polls = 0
+              let abortDuringSearch () =
+                  polls <- polls + 1
+                  polls >= 3
+              let cancelledWatch = Diagnostics.Stopwatch.StartNew()
+
+              match
+                  Stash.save
+                      store
+                      "build-1"
+                      workspace
+                      "cancelled-search"
+                      [ pattern ]
+                      []
+                      false
+                      abortDuringSearch
+              with
+              | Error problem -> failtestf "search cancellation lost to refusal: %s" problem.Describe
+              | Ok(saved, aborted) ->
+                  Expect.isEmpty saved "a cancelled search publishes no files"
+                  Expect.isTrue aborted "the reachability search observes cancellation"
+
+              cancelledWatch.Stop()
+              Expect.equal polls 3 "the third poll occurs inside glob reachability"
+              Expect.isLessThan cancelledWatch.ElapsedMilliseconds 5_000L "cancellation is observed promptly"
+
+              let boundedWatch = Diagnostics.Stopwatch.StartNew()
+
+              match
+                  Stash.save
+                      store
+                      "build-1"
+                      workspace
+                      "bounded-search"
+                      [ pattern ]
+                      []
+                      false
+                      (fun () -> false)
+              with
+              | Ok result -> failtestf "budget exhaustion permitted a linked directory: %A" result
+              | Error problem ->
+                  Expect.stringContains
+                      problem.Describe
+                      "stash refuses selected path ‘link’"
+                      "budget exhaustion fails closed at the selected link"
+
+              boundedWatch.Stop()
+              Expect.isLessThan boundedWatch.ElapsedMilliseconds 5_000L "aggregate transition work is bounded"
+          }
+
           test "directory descent is bound to descriptors across pathname replacement" {
               let root = tempRoot ()
               let workspace = Path.Combine(root, "workspace")

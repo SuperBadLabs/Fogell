@@ -1039,6 +1039,11 @@ module Stash =
           Excluded: Set<int> list
           SegmentKind: int }
 
+    type private GlobSearchPermit =
+        | SearchTransition
+        | SearchAborted
+        | SearchExhausted
+
     /// Compile the same language as Publish.compileGlobRegex into a small NFA.
     /// GlobstarPrefix represents the regex rewrite that lets `**/x` also match
     /// bare `x`; it either consumes no prefix or consumes through a slash.
@@ -1123,13 +1128,14 @@ module Stash =
         (includeProgram: GlobToken array)
         (excludePrograms: GlobToken array list)
         (relative: string)
+        (permitTransition: unit -> GlobSearchPermit)
         =
         let initial program = epsilonClosure program (Set.singleton 0)
         let prefix = relative + "/"
         let included = feedGlobProgram includeProgram (initial includeProgram) prefix
 
         if Set.isEmpty included then
-            false
+            false, false
         else
             let excluded =
                 excludePrograms
@@ -1160,6 +1166,8 @@ module Stash =
             let pending = Collections.Generic.Queue<GlobSearchState>()
             let visited = Collections.Generic.HashSet<GlobSearchState>()
             let mutable witness = false
+            let mutable aborted = false
+            let mutable transitionBudgetExhausted = false
             pending.Enqueue initialState
             visited.Add initialState |> ignore
 
@@ -1168,7 +1176,11 @@ module Stash =
             // exist), which can only cause a link refusal or ordinary descent.
             let maxSearchStates = 10000
 
-            while pending.Count > 0 && not witness && visited.Count <= maxSearchStates do
+            while pending.Count > 0
+                  && not witness
+                  && not aborted
+                  && not transitionBudgetExhausted
+                  && visited.Count <= maxSearchStates do
                 let state = pending.Dequeue()
 
                 if
@@ -1183,38 +1195,47 @@ module Stash =
                     witness <- true
                 else
                     for character in alphabet do
-                        let nextSegmentKind =
-                            if character = '/' then
-                                if state.SegmentKind = 3 then Some 0 else None
-                            else
-                                match state.SegmentKind, character with
-                                | 0, '.' -> Some 1
-                                | 0, _ -> Some 3
-                                | 1, '.' -> Some 2
-                                | 1, _
-                                | 2, _
-                                | 3, _ -> Some 3
-                                | _ -> None
+                        if not aborted && not transitionBudgetExhausted then
+                            match permitTransition () with
+                            | SearchAborted -> aborted <- true
+                            | SearchExhausted -> transitionBudgetExhausted <- true
+                            | SearchTransition ->
+                                let nextSegmentKind =
+                                    if character = '/' then
+                                        if state.SegmentKind = 3 then Some 0 else None
+                                    else
+                                        match state.SegmentKind, character with
+                                        | 0, '.' -> Some 1
+                                        | 0, _ -> Some 3
+                                        | 1, '.' -> Some 2
+                                        | 1, _
+                                        | 2, _
+                                        | 3, _ -> Some 3
+                                        | _ -> None
 
-                        match nextSegmentKind with
-                        | None -> ()
-                        | Some segmentKind ->
-                            let nextIncluded = stepGlobProgram includeProgram state.Included character
+                                match nextSegmentKind with
+                                | None -> ()
+                                | Some segmentKind ->
+                                    let nextIncluded = stepGlobProgram includeProgram state.Included character
 
-                            if not (Set.isEmpty nextIncluded) then
-                                let next =
-                                    { Included = nextIncluded
-                                      Excluded =
-                                        List.map2
-                                            (fun (program: GlobToken array) (excludedState: Set<int>) ->
-                                                stepGlobProgram program excludedState character)
-                                            excludePrograms
-                                            state.Excluded
-                                      SegmentKind = segmentKind }
+                                    if not (Set.isEmpty nextIncluded) then
+                                        let next =
+                                            { Included = nextIncluded
+                                              Excluded =
+                                                List.map2
+                                                    (fun (program: GlobToken array) (excludedState: Set<int>) ->
+                                                        stepGlobProgram program excludedState character)
+                                                    excludePrograms
+                                                    state.Excluded
+                                              SegmentKind = segmentKind }
 
-                                if visited.Add next then pending.Enqueue next
+                                        if visited.Add next then pending.Enqueue next
 
-            witness || visited.Count > maxSearchStates
+            // Exhaustion is fail closed: a surviving selected descendant may
+            // exist, so the caller must refuse a link or descend an ordinary
+            // directory. Cancellation is reported separately and outranks that
+            // conservative answer at the stash/unstash publication boundary.
+            witness || visited.Count > maxSearchStates || transitionBudgetExhausted, aborted
 
     /// Enumerate only physical workspace directories. Link targets are never
     /// entered: selected file links and selected directory prefixes become a
@@ -1256,6 +1277,13 @@ module Stash =
         let pending = Collections.Generic.Stack<Microsoft.Win32.SafeHandles.SafeFileHandle * string>()
         let mutable problem: SaveProblem option = None
         let mutable aborted = abort ()
+        // This budget is shared by every include and directory in one stash
+        // selection. The per-search state cap alone is insufficient because an
+        // admitted pattern can contribute thousands of distinct literal
+        // characters to the transition alphabet.
+        let maxGlobSearchTransitions = 25_000
+        let abortPollInterval = 256
+        let mutable globSearchTransitions = 0
 
         match Native.openDirectoryIfPresentWithoutLinks workspace with
         | Ok(Some root) -> pending.Push(root, "")
@@ -1269,9 +1297,33 @@ module Stash =
             useDefaultExcludes && Publish.isAntDefaultExcluded relative
 
         let directoryHasSelection relative =
-            includePrograms
-            |> List.exists (fun includeProgram ->
-                patternHasUnexcludedDescendant includeProgram excludePrograms relative)
+            let mutable selected = false
+
+            for includeProgram in includePrograms do
+                if not selected && not aborted then
+                    let permitTransition () =
+                        if
+                            globSearchTransitions % abortPollInterval = 0
+                            && abort ()
+                        then
+                            SearchAborted
+                        elif globSearchTransitions >= maxGlobSearchTransitions then
+                            SearchExhausted
+                        else
+                            globSearchTransitions <- globSearchTransitions + 1
+                            SearchTransition
+
+                    let hasSelection, searchAborted =
+                        patternHasUnexcludedDescendant
+                            includeProgram
+                            excludePrograms
+                            relative
+                            permitTransition
+
+                    selected <- hasSelection
+                    if searchAborted then aborted <- true
+
+            selected
 
         try
             while pending.Count > 0 && Option.isNone problem && not aborted do

@@ -143,7 +143,7 @@ module internal Native =
         let rootDescriptor = openFile(systemRoot, flags)
 
         if rootDescriptor < 0 then
-            Error $"filesystem root cannot be opened without following a link (errno {Marshal.GetLastPInvokeError()})"
+            Error $"filesystem root open failed under the no-follow policy (errno {Marshal.GetLastPInvokeError()})"
         else
             let mutable current = new SafeFileHandle(nativeint rootDescriptor, true)
 
@@ -202,7 +202,7 @@ module internal Native =
                         | Ok() -> Ok None
                         | Error why -> Error why
                     else
-                        Error $"scan root cannot be opened without following a link (errno {code})"
+                        Error $"scan root open failed under the no-follow policy (errno {code})"
                 else
                     let handle = new SafeFileHandle(nativeint descriptor, true)
                     match physicalPath $"/proc/self/fd/{descriptor}" with
@@ -284,7 +284,7 @@ module internal Native =
         let descriptor = openFile(systemRoot, flags)
 
         if descriptor < 0 then
-            Error $"filesystem root cannot be opened without following a link (errno {Marshal.GetLastPInvokeError()})"
+            Error $"filesystem root open failed under the no-follow policy (errno {Marshal.GetLastPInvokeError()})"
         else
             let mutable current = new SafeFileHandle(nativeint descriptor, true)
 
@@ -376,7 +376,7 @@ module internal Native =
 
                         if descriptor < 0 then
                             let code = Marshal.GetLastPInvokeError()
-                            Error $"selected path cannot be opened without following a link (errno {code})"
+                            Error $"selected path open failed under the no-follow policy (errno {code})"
                         else
                             let handle = new SafeFileHandle(nativeint descriptor, true)
 
