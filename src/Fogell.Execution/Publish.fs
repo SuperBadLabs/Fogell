@@ -85,7 +85,7 @@ module Publish =
     // active even when an include names one of the paths literally. The pinned
     // list is case-sensitive and shared only by those two Ant-backed selectors;
     // archive retains its established matcher and behavior.
-    let private antDefaultExcludePatterns =
+    let internal antDefaultExcludePatterns =
         [ "**/*~"
           "**/#*#"
           "**/.#*"
@@ -1025,110 +1025,195 @@ module Stash =
                 $"stash refuses selected path ‘{safeDiagnosticPath relative}’: {detail}"
             | StorageFailure detail -> $"stash storage failed: {detail}"
 
-    let private segmentMatches (pattern: string) (value: string) =
-        let expression =
-            pattern
-            |> Regex.Escape
-            |> fun escaped -> escaped.Replace(@"\*", "[^/]*").Replace(@"\?", "[^/]")
+    type private GlobToken =
+        | Literal of character: char * caseSensitive: bool
+        | AnyNonSeparator
+        | StarNonSeparator
+        | StarAny
+        | GlobstarPrefixStart
+        | GlobstarPrefixBody
 
-        Regex.IsMatch(value, "^" + expression + "$", RegexOptions.IgnoreCase)
+    type private GlobSearchState =
+        { Included: Set<int>
+          Excluded: Set<int> list
+          SegmentKind: int }
 
-    /// Whether an include can select this directory or something beneath it.
-    /// This is a prefix question, not a filesystem walk: a selected directory
-    /// link is refused without enumerating even one target entry. `**` may
-    /// consume zero or more components; every remaining ordinary component can
-    /// be satisfied by some descendant name once the known prefix is consumed.
-    let private patternMaySelectDirectory (pattern: string) (relative: string) =
-        let normalized = pattern.Replace('\\', '/').Trim()
+    /// Compile the same language as Publish.compileGlobRegex into a small NFA.
+    /// GlobstarPrefix represents the regex rewrite that lets `**/x` also match
+    /// bare `x`; it either consumes no prefix or consumes through a slash.
+    let private compileGlobProgram caseSensitive (pattern: string) =
+        let segments = pattern.Replace('\\', '/').Trim().Split('/', StringSplitOptions.None)
+        let tokens = Collections.Generic.List<GlobToken>()
 
-        if Path.IsPathRooted normalized then
+        for index = 0 to segments.Length - 1 do
+            let segment = segments.[index]
+
+            if segment = "**" then
+                if index = segments.Length - 1 then tokens.Add StarAny
+                else
+                    tokens.Add GlobstarPrefixStart
+                    tokens.Add GlobstarPrefixBody
+            else
+                for character in segment do
+                    match character with
+                    | '*' -> tokens.Add StarNonSeparator
+                    | '?' -> tokens.Add AnyNonSeparator
+                    | literal -> tokens.Add(Literal(literal, caseSensitive))
+
+                if index < segments.Length - 1 then
+                    tokens.Add(Literal('/', true))
+
+        tokens.ToArray()
+
+    let private epsilonClosure (program: GlobToken array) (states: Set<int>) =
+        let pending = Collections.Generic.Stack<int>(states)
+        let reachable = Collections.Generic.HashSet<int>(states)
+
+        while pending.Count > 0 do
+            let state = pending.Pop()
+
+            if state < program.Length then
+                match program.[state] with
+                | StarNonSeparator
+                | StarAny ->
+                    if reachable.Add(state + 1) then pending.Push(state + 1)
+                | GlobstarPrefixStart ->
+                    if reachable.Add(state + 2) then pending.Push(state + 2)
+                | _ -> ()
+
+        reachable |> Set.ofSeq
+
+    let private stepGlobProgram (program: GlobToken array) (states: Set<int>) character =
+        let next = Collections.Generic.HashSet<int>()
+
+        for state in states do
+            if state < program.Length then
+                match program.[state] with
+                | Literal(expected, caseSensitive) ->
+                    let matches =
+                        if caseSensitive then expected = character
+                        else Char.ToUpperInvariant expected = Char.ToUpperInvariant character
+
+                    if matches then next.Add(state + 1) |> ignore
+                | AnyNonSeparator when character <> '/' -> next.Add(state + 1) |> ignore
+                | StarNonSeparator when character <> '/' -> next.Add state |> ignore
+                | StarAny -> next.Add state |> ignore
+                | GlobstarPrefixStart ->
+                    next.Add(state + 1) |> ignore
+                    if character = '/' then next.Add(state + 2) |> ignore
+                | GlobstarPrefixBody ->
+                    next.Add state |> ignore
+                    if character = '/' then next.Add(state + 1) |> ignore
+                | _ -> ()
+
+        epsilonClosure program (next |> Set.ofSeq)
+
+    let private feedGlobProgram program states (value: string) =
+        value |> Seq.fold (stepGlobProgram program) states
+
+    /// Decide whether an included file path can exist beneath a directory after
+    /// the union of explicit and default excludes is applied. This is a language
+    /// reachability question over the Ant glob NFAs, so an empty effective
+    /// selection such as include `link/*.txt`, exclude `link/*` does not refuse a
+    /// directory link, while any surviving admitted witness still does. The
+    /// search admits only real Linux path shapes: non-empty components other than
+    /// `.` and `..`, with no trailing or doubled separator.
+    let private patternHasUnexcludedDescendant
+        (includeProgram: GlobToken array)
+        (excludePrograms: GlobToken array list)
+        (relative: string)
+        =
+        let initial program = epsilonClosure program (Set.singleton 0)
+        let prefix = relative + "/"
+        let included = feedGlobProgram includeProgram (initial includeProgram) prefix
+
+        if Set.isEmpty included then
             false
         else
-            let patternSegments = normalized.Split('/', StringSplitOptions.None)
-            let relativeSegments = relative.Split('/', StringSplitOptions.RemoveEmptyEntries)
-            let memo = Collections.Generic.Dictionary<int * int, bool>()
+            let excluded =
+                excludePrograms
+                |> List.map (fun program -> feedGlobProgram program (initial program) prefix)
+            let literalCharacters =
+                seq {
+                    for program in includeProgram :: excludePrograms do
+                        for token in program do
+                            match token with
+                            | Literal(character, false) ->
+                                yield Char.ToLowerInvariant character
+                                yield Char.ToUpperInvariant character
+                            | Literal(character, true) -> yield character
+                            | _ -> ()
+                    yield '/'
+                }
+                |> Seq.filter ((<>) '\u0000')
+                |> Set.ofSeq
+            let other =
+                seq { for code = 1 to int Char.MaxValue do yield char code }
+                |> Seq.tryFind (fun character ->
+                    character <> '/' && not (literalCharacters.Contains character))
+            let alphabet = other |> Option.fold (fun values character -> Set.add character values) literalCharacters
+            let initialState =
+                { Included = included
+                  Excluded = excluded
+                  SegmentKind = 0 }
+            let pending = Collections.Generic.Queue<GlobSearchState>()
+            let visited = Collections.Generic.HashSet<GlobSearchState>()
+            let mutable witness = false
+            pending.Enqueue initialState
+            visited.Add initialState |> ignore
 
-            let rec matches patternIndex relativeIndex =
-                match memo.TryGetValue((patternIndex, relativeIndex)) with
-                | true, value -> value
-                | false, _ ->
-                    let value =
-                        if relativeIndex = relativeSegments.Length then
-                            // The known directory prefix is compatible. Any
-                            // remaining literal/wildcard pattern components are
-                            // a question about target contents, which Fogell does
-                            // not inspect through a link.
-                            patternIndex < patternSegments.Length
-                            && patternSegments.[patternIndex..]
-                               |> Array.forall (fun segment -> segment <> "")
-                        elif patternIndex = patternSegments.Length then
-                            false
-                        elif patternSegments.[patternIndex] = "**" then
-                            matches (patternIndex + 1) relativeIndex
-                            || matches patternIndex (relativeIndex + 1)
-                        elif segmentMatches patternSegments.[patternIndex] relativeSegments.[relativeIndex] then
-                            matches (patternIndex + 1) (relativeIndex + 1)
-                        else
-                            false
+            // Jenkinsfile globs are untrusted. Bound the product search; an
+            // exhausted proof returns the fail-closed answer (a survivor may
+            // exist), which can only cause a link refusal or ordinary descent.
+            let maxSearchStates = 10000
 
-                    memo.[(patternIndex, relativeIndex)] <- value
-                    value
+            while pending.Count > 0 && not witness && visited.Count <= maxSearchStates do
+                let state = pending.Dequeue()
 
-            matches 0 0
+                if
+                    state.SegmentKind = 3
+                    && state.Included.Contains includeProgram.Length
+                    && List.forall2
+                        (fun (program: GlobToken array) (excludedState: Set<int>) ->
+                            not (excludedState.Contains program.Length))
+                        excludePrograms
+                        state.Excluded
+                then
+                    witness <- true
+                else
+                    for character in alphabet do
+                        let nextSegmentKind =
+                            if character = '/' then
+                                if state.SegmentKind = 3 then Some 0 else None
+                            else
+                                match state.SegmentKind, character with
+                                | 0, '.' -> Some 1
+                                | 0, _ -> Some 3
+                                | 1, '.' -> Some 2
+                                | 1, _
+                                | 2, _
+                                | 3, _ -> Some 3
+                                | _ -> None
 
-    /// Whether one exclude covers every possible file below this directory.
-    /// Ordinary excludes such as `foo` apply only to files, while `foo/**`,
-    /// `foo/**/*`, `foo/**/?*`, and global `**` all describe every non-empty
-    /// descendant path. Consume the known directory prefix as an Ant automaton,
-    /// then require a universal remainder: one or more `**` segments, optionally
-    /// followed by one wildcard segment that matches every non-empty name. A
-    /// wildcard segment before `**` is not universal because it requires an
-    /// additional descendant component.
-    let private patternExcludesAllDescendants (pattern: string) (relative: string) =
-        let normalized = pattern.Replace('\\', '/').Trim()
+                        match nextSegmentKind with
+                        | None -> ()
+                        | Some segmentKind ->
+                            let nextIncluded = stepGlobProgram includeProgram state.Included character
 
-        if Path.IsPathRooted normalized then
-            false
-        else
-            // Keep empty components aligned with compileGlobRegex: doubled and
-            // trailing separators are significant and match no normal file path.
-            let patternSegments = normalized.Split('/', StringSplitOptions.None)
-            let relativeSegments = relative.Split('/', StringSplitOptions.RemoveEmptyEntries)
-            let reachable = Collections.Generic.HashSet<int * int>()
-            let remainders = Collections.Generic.HashSet<int>()
+                            if not (Set.isEmpty nextIncluded) then
+                                let next =
+                                    { Included = nextIncluded
+                                      Excluded =
+                                        List.map2
+                                            (fun (program: GlobToken array) (excludedState: Set<int>) ->
+                                                stepGlobProgram program excludedState character)
+                                            excludePrograms
+                                            state.Excluded
+                                      SegmentKind = segmentKind }
 
-            let rec consume patternIndex relativeIndex =
-                if reachable.Add((patternIndex, relativeIndex)) then
-                    if relativeIndex = relativeSegments.Length then
-                        remainders.Add patternIndex |> ignore
-                        if patternIndex < patternSegments.Length && patternSegments.[patternIndex] = "**" then
-                            consume (patternIndex + 1) relativeIndex
-                    elif patternIndex < patternSegments.Length then
-                        if patternSegments.[patternIndex] = "**" then
-                            consume (patternIndex + 1) relativeIndex
-                            consume patternIndex (relativeIndex + 1)
-                        elif segmentMatches patternSegments.[patternIndex] relativeSegments.[relativeIndex] then
-                            consume (patternIndex + 1) (relativeIndex + 1)
+                                if visited.Add next then pending.Enqueue next
 
-            consume 0 0
-
-            remainders
-            |> Seq.exists (fun patternIndex ->
-                let remaining = patternSegments.[patternIndex..]
-                let prefixLength =
-                    remaining |> Array.takeWhile ((=) "**") |> Array.length
-
-                let terminalMatchesEveryName (segment: string) =
-                    let stars = segment |> Seq.filter ((=) '*') |> Seq.length
-                    let questions = segment |> Seq.filter ((=) '?') |> Seq.length
-                    stars > 0
-                    && questions <= 1
-                    && segment |> Seq.forall (fun character -> character = '*' || character = '?')
-
-                prefixLength > 0
-                && (prefixLength = remaining.Length
-                    || (prefixLength = remaining.Length - 1
-                        && terminalMatchesEveryName remaining.[prefixLength])))
+            witness || visited.Count > maxSearchStates
 
     /// Enumerate only physical workspace directories. Link targets are never
     /// entered: selected file links and selected directory prefixes become a
@@ -1159,8 +1244,13 @@ module Stash =
         // once for this selection, but do not retain tenant strings globally.
         let includeMatchers = includes |> List.map (Publish.compileGlobMatcher false)
         let excludeMatchers = excludes |> List.map (Publish.compileGlobMatcher false)
-        let directoryExcludeMatchers =
-            excludes |> List.map patternExcludesAllDescendants
+        let includePrograms = includes |> List.map (compileGlobProgram false)
+        let excludePrograms =
+            (excludes |> List.map (compileGlobProgram false))
+            @ if useDefaultExcludes then
+                  Publish.antDefaultExcludePatterns |> List.map (compileGlobProgram true)
+              else
+                  []
         let files = Collections.Generic.List<string>()
         let pending = Collections.Generic.Stack<Microsoft.Win32.SafeHandles.SafeFileHandle * string>()
         let mutable problem: SaveProblem option = None
@@ -1174,11 +1264,13 @@ module Stash =
         let explicitlyExcluded relative =
             excludeMatchers |> List.exists (fun matches -> matches relative)
 
-        let explicitlyExcludesDirectory relative =
-            directoryExcludeMatchers |> List.exists (fun matches -> matches relative)
-
         let defaultExcluded relative =
             useDefaultExcludes && Publish.isAntDefaultExcluded relative
+
+        let directoryHasSelection relative =
+            includePrograms
+            |> List.exists (fun includeProgram ->
+                patternHasUnexcludedDescendant includeProgram excludePrograms relative)
 
         try
             while pending.Count > 0 && Option.isNone problem && not aborted do
@@ -1203,16 +1295,16 @@ module Stash =
                         let isDirectory = entry :? DirectoryInfo
                         let selected =
                             if isDirectory then
-                                includes |> List.exists (fun pattern -> patternMaySelectDirectory pattern relative)
+                                directoryHasSelection relative
                             else
                                 includeMatchers |> List.exists (fun matches -> matches relative)
 
                         let excluded =
                             defaultExcluded relative
-                            || if isDirectory then
-                                   explicitlyExcludesDirectory relative
-                               else
+                            || if not isDirectory then
                                    explicitlyExcluded relative
+                               else
+                                   false
 
                         if isLink then
                             if selected && not excluded then

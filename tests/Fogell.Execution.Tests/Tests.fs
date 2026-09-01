@@ -2695,6 +2695,7 @@ let stashSymlinkContainment =
                     "link/value.txt", [ "link/value.txt" ]
                     "link/*", [ "link/*" ]
                     "link/**", [ "link/**" ]
+                    "link/*.txt", [ "link/*" ]
                     "link/**", [ "**" ]
                     "link/**", [ "link/**/*" ]
                     "link/**", [ "**/?*" ] ] do
@@ -2711,7 +2712,11 @@ let stashSymlinkContainment =
                   | Ok(saved, false) -> Expect.isEmpty saved $"{pattern}: no ordinary file matched"
                   | Ok(_, true) -> failtest "an inert non-cancelled save reported cancellation"
 
-              for partialExclude in [ "link/*/**"; "link//**"; "link/**/" ] do
+              for includePattern, partialExclude in
+                  [ "link/**", "link/*/**"
+                    "link/**", "link//**"
+                    "link/**", "link/**/"
+                    "link/*.txt", "link/*.log" ] do
                   let root = tempRoot ()
                   let workspace = Path.Combine(root, "workspace")
                   let outside = Path.Combine(root, "outside")
@@ -2726,7 +2731,7 @@ let stashSymlinkContainment =
                           "build-1"
                           workspace
                           "partial-exclude"
-                          [ "link/**" ]
+                          [ includePattern ]
                           [ partialExclude ]
                           false
                           (fun () -> false)
@@ -2736,7 +2741,7 @@ let stashSymlinkContainment =
                       Expect.stringContains
                           problem.Describe
                           "stash refuses selected path ‘link’"
-                          $"{partialExclude} does not exclude every direct child, so the directory link remains selected"
+                          $"{partialExclude} leaves a path admitted by {includePattern}, so the directory link remains selected"
 
               let root = tempRoot ()
               let workspace = Path.Combine(root, "workspace")
