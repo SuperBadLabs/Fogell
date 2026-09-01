@@ -515,6 +515,19 @@ module Compare =
     /// verifier that passed.
     ///
     /// Derived-therefore-safe is only true if something re-derives it. Nothing did.
+    /// A verdict bullet whose text spans lines — an FG-016b excerpt and caret under a
+    /// refusal — becomes ONE LIST ELEMENT PER PHYSICAL LINE, every continuation indented
+    /// under the dash. Two contracts meet here and both are per physical line: the FG-161
+    /// allowlist admits a VERDICT continuation only when it starts with two spaces and ends
+    /// the block at the first EMPTY line, and the seal hashes the verdict's element COUNT
+    /// and joined text, which the verifier rebuilds from the file's physical lines. A single
+    /// element carrying embedded newlines passed the allowlist and failed the hash — the
+    /// pre-push verifier measured SealMismatch — so the split is what makes the seal bind.
+    let private bullet (text: string) : string list =
+        match text.Replace("\r\n", "\n").Split('\n') |> Array.toList with
+        | [] -> [ "  - " ]
+        | first :: rest -> ("  - " + first) :: [ for line in rest -> "    " + line ]
+
     let verdictLines (verdict: Verdict) (workspaceCompared: bool) (bothRefused: bool) : string list =
         match verdict with
         | Proven when workspaceCompared && bothRefused ->
@@ -529,8 +542,8 @@ module Compare =
             [ "VERDICT: PROVEN-PARTIAL — same result, same output."
               "  WORKSPACE NOT COMPARED: no workspace was collected from at least one side,"
               "  so this is NOT a tier-1 claim under ADR 0001. See FG-002b." ]
-        | Diverged ds -> $"VERDICT: DIVERGED ({ds.Length})" :: [ for d in ds -> $"  - {d.Describe}" ]
-        | NotComparable d -> [ "VERDICT: NOT COMPARABLE"; $"  - {d.Describe}" ]
+        | Diverged ds -> $"VERDICT: DIVERGED ({ds.Length})" :: (ds |> List.collect (fun d -> bullet d.Describe))
+        | NotComparable d -> "VERDICT: NOT COMPARABLE" :: bullet d.Describe
 
     /// FG-161. THE ONE LIST of what a receipt prints but its seal does not bind.
     ///

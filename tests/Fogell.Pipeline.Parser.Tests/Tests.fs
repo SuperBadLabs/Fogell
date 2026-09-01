@@ -267,6 +267,57 @@ let sourceExcerpts =
                   (diagnostic MalformedSyntax 1L 401L "right" line)
                   $"malformed_syntax at 1:401: right\n…{clipped}\n{rightCaret}"
                   "the EOF edge has no trailing ellipsis"
+          }
+
+          test "every code the parser can emit renders an exact excerpt end to end" {
+              // The per-code goldens above render a FABRICATED error. These go through
+              // the real parser, so the position each producer records is what lands
+              // under the caret. Admission limits are shrunk so the offending line stays
+              // readable rather than clipped. The four limit carets sit one column PAST
+              // the byte that crossed the limit: `Limits.precheck` advances the column
+              // before classifying the byte, and FG-004b pins that position exactly.
+              // The MalformedSyntax case uses a `refuse` message Fogell owns rather
+              // than FParsec's expectation list, which changes with every grammar edit.
+              let tiny =
+                  { Limits.defaults with
+                      MaxSourceBytes = 12
+                      MaxNodes = 4
+                      MaxDepth = 2
+                      MaxScalarBytes = 3 }
+
+              let rendered limits (source: string) =
+                  match Parser.parseWithLimits limits source with
+                  | Ok _ -> failtestf "expected a rejection, %A parsed" source
+                  | Error e -> AdmissionError.render source e
+
+              let duplicateOptions =
+                  "pipeline {\n  agent any\n  options { timestamps() }\n  options { timestamps() }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              for label, limits, source, expected in
+                  [ "source_too_large",
+                    tiny,
+                    "pipeline { x }",
+                    "source_too_large at 1:1: source is 14 bytes, limit is 12\npipeline { x }\n^"
+                    "nesting_too_deep", tiny, "a\n{{{", "nesting_too_deep at 2:4: nesting depth 3 exceeds limit 2\n{{{\n   ^"
+                    "too_many_nodes", tiny, "a b\nc d e", "too_many_nodes at 2:6: node count exceeds 4\nc d e\n     ^"
+                    "scalar_too_long",
+                    tiny,
+                    "x\n'abcd'",
+                    "scalar_too_long at 2:7: string literal exceeds 3 bytes\n'abcd'\n      ^"
+                    "empty_source", Limits.defaults, "  \n\t", "empty_source at 1:1: source is empty\n  \n^"
+                    "no_pipeline_block",
+                    Limits.defaults,
+                    "node {\n  sh 'x'\n}",
+                    "no_pipeline_block at 1:1: no declarative `pipeline { }` block found\nnode {\n^"
+                    "no_stages",
+                    Limits.defaults,
+                    "pipeline {\n  agent any\n}",
+                    "no_stages at 1:1: pipeline declares no stages\npipeline {\n^"
+                    "malformed_syntax",
+                    Limits.defaults,
+                    duplicateOptions,
+                    "malformed_syntax at 6:1: multiple occurrences of the `options` section: Jenkins rejects duplicate sections before running anything\n}\n^" ] do
+                  Expect.equal (rendered limits source) expected $"{label}: exact end-to-end diagnostic"
           } ]
 
 /// FG-004b. The fixed-seed generator is intentionally length-delimited and
