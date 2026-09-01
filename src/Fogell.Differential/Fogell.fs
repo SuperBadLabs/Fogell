@@ -327,7 +327,14 @@ module FogellSide =
     let preflightExecution (script: string) : Result<Pipeline, string> =
         match Fogell.Pipeline.Parser.Parser.parse script with
         | Result.Error e ->
-            Result.Error $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
+            // FG-016b. This string is what the standalone operator reads on Run.Host's
+            // stderr, so it carries the source excerpt and caret, not only the code
+            // and position. The header line is unchanged (`string e`); the excerpt is
+            // appended. This branch never reaches a receipt: the differential parses
+            // first and turns an input defect into a RefusedBeforeExecution trace with
+            // an EMPTY output, and the controller renders its own copy at the HTTP
+            // boundary from the same renderer.
+            Result.Error(Fogell.Admission.AdmissionError.render script e)
         | Result.Ok pipeline ->
             match unsupportedAssignmentRefusal pipeline with
             | Result.Error why -> Result.Error why
@@ -532,7 +539,12 @@ module FogellSide =
         match Fogell.Pipeline.Parser.Parser.parse script with
         | Result.Error e when Fogell.Admission.ErrorCode.isInputDefect e.Code -> ReferenceRejected e
         | Result.Error e ->
-            EngineUnavailable $"{Fogell.Admission.ErrorCode.toWireString e.Code} at {e.Position}: {e.Message}"
+            // FG-016b. An admission-limit refusal becomes the receipt's NOT COMPARABLE
+            // description and the differential CLI's stdout line, as this string; a
+            // caret under the byte that crossed the limit is the only way an operator
+            // can find it in a 250 KB file. The receipt writer indents the excerpt's
+            // continuation lines so the FG-161 seal binds them (`Compare.bullet`).
+            EngineUnavailable(Fogell.Admission.AdmissionError.render script e)
         | Result.Ok _ ->
             match preflightExecution script with
             | Result.Ok pipeline -> Ready pipeline

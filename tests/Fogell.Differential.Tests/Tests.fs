@@ -5763,6 +5763,101 @@ let unsupportedDeclarativeTools =
                       "the control reached its shell effect")
           } ]
 
+/// FG-016b. The renderer is proven by the parser suite; this proves the WIRING —
+/// the string an operator reads on Run.Host's stderr, and the one the differential
+/// CLI prints for an admission-limit refusal, is the rendered excerpt rather than a
+/// bare header. Each expectation is derived from the renderer itself, so these can
+/// fail only if a preflight stops calling it.
+let excerptWiring =
+    let rendered (source: string) =
+        match Fogell.Pipeline.Parser.Parser.parse source with
+        | Ok _ -> failtestf "control error: %A parsed" source
+        | Error e -> Fogell.Admission.AdmissionError.render source e
+
+    testList
+        "FG-016b excerpt wiring"
+        [ test "an input defect reaches preflightExecution as the rendered excerpt" {
+              let source = "pipeline {\n  agent any\n}"
+
+              match FogellSide.preflightExecution source with
+              | Ok _ -> failtest "a stage-less pipeline must be refused"
+              | Error why ->
+                  Expect.equal why (rendered source) "the operator-facing string is the excerpt, header included"
+                  Expect.stringContains why "\npipeline {\n^" "the excerpt and caret are present, not only the header"
+          }
+
+          test "an admission-limit refusal reaches the run entry as the rendered excerpt" {
+              let source = String.replicate (Fogell.Admission.Limits.defaults.MaxSourceBytes + 1) "x"
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg016b-{Guid.NewGuid():N}")
+
+              try
+                  match FogellSide.run [] root "job" source with
+                  | Ok trace -> failtestf "an over-limit source must not run; got %s" trace.Result
+                  | Error why ->
+                      Expect.equal why (rendered source) "EngineUnavailable carries the rendered excerpt"
+                      Expect.stringContains why "source_too_large at 1:1:" "the stable header leads"
+              finally
+                  if IO.Directory.Exists root then
+                      IO.Directory.Delete(root, true)
+          }
+
+          test "a multi-line refusal writes an indented VERDICT bullet that the seal binds" {
+              // The FG-161 seal admits a VERDICT continuation line only when it starts
+              // with two spaces, and the verdict block ends at the first empty line. A
+              // rendered excerpt has neither property on its own, so the receipt writer
+              // indents every continuation line of a bullet; without that the receipt is
+              // written and then seal-refused, which is fail-closed but unreadable.
+              let source = String.replicate (Fogell.Admission.Limits.defaults.MaxSourceBytes + 1) "x"
+
+              let jenkins =
+                  { Disposition = ExecutedOrRuntime
+                    Result = "success"
+                    Output = [ "visible" ]
+                    WorkspaceHash = "workspace"
+                    WorkspaceFiles = []
+                    Timestamps = (0, 0)
+                    Concurrent = false
+                    EngineNotes = []
+                    ReportedFailureReason = false }
+
+              let receipt =
+                  Compare.receipt
+                      "fg016b-limit.Jenkinsfile"
+                      (Text.Encoding.UTF8.GetBytes source)
+                      "2.568.1"
+                      []
+                      (Result.Ok jenkins)
+                      (Result.Error(rendered source))
+
+              let text = Compare.render receipt
+
+              Expect.stringContains
+                  text
+                  "VERDICT: NOT COMPARABLE\n  - fogell side failed: source_too_large at 1:1:"
+                  "the stable header leads the bullet"
+
+              Expect.stringContains text "\n    ^" "the caret line sits indented under the bullet"
+
+              let verdictBlock =
+                  text.Split('\n')
+                  |> Array.skipWhile (fun l -> not (l.StartsWith "VERDICT: "))
+                  |> Array.skip 1
+                  |> Array.takeWhile (fun l -> l <> "")
+
+              Expect.isNonEmpty verdictBlock "the bullet follows the verdict line"
+
+              for l in verdictBlock do
+                  Expect.isTrue (l.StartsWith "  ") $"a seal-bindable continuation line: {l}"
+
+              // SealValid BY NAME. A catch-all arm here accepted SealMismatch — the seal
+              // hashes the verdict's element count and joined text, and a bullet written
+              // as one element with embedded newlines passed the allowlist and failed the
+              // hash — while this test's name said the seal binds. The verifier caught it.
+              match Compare.verifySealedText (Compare.receiptFileName receipt.File) text with
+              | Compare.SealValid -> ()
+              | other -> failtest $"the receipt must verify as SealValid, got {other.Describe}"
+          } ]
+
 let spreadAssignmentPreflight =
     let pipelineWithBody body =
         "pipeline { agent any stages { stage('probe') { steps { script { "
@@ -9193,6 +9288,7 @@ let main argv =
               unsupportedDeclarativeTools
               controllerApprovalPreflight
               spreadAssignmentPreflight
+              excerptWiring
               userOutputSurvives
               stringModel
               receiptFileNaming
