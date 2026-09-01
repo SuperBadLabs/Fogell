@@ -258,8 +258,14 @@ module internal Native =
     let fileMode (stream: FileStream) =
         File.GetUnixFileMode(stream.SafeFileHandle)
 
+    let fileLastWriteTimeUtc (stream: FileStream) =
+        File.GetLastWriteTimeUtc(stream.SafeFileHandle)
+
     let setFileMode (stream: FileStream) (mode: UnixFileMode) =
         File.SetUnixFileMode(stream.SafeFileHandle, mode)
+
+    let setFileLastWriteTimeUtc (stream: FileStream) (value: DateTime) =
+        File.SetLastWriteTimeUtc(stream.SafeFileHandle, value)
 
     /// Open one selected workspace file through a descriptor and prove that the
     /// descriptor still names the exact lexical path beneath the exact physical

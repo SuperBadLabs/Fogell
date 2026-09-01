@@ -8768,6 +8768,22 @@ let stashDefaultExcludes =
                       "the trailing-spelling round trip restores the selected bytes")
           }
 
+          test "an ordinary directory-name exclude does not prune its descendants" {
+              let source =
+                  "pipeline { agent any stages { stage('stash') { steps { "
+                  + "sh 'mkdir -p foo && printf kept > foo/value.txt'; "
+                  + "stash name: 'bundle', includes: '**', excludes: 'foo'; "
+                  + "deleteDir(); unstash 'bundle'; sh 'test \"$(cat foo/value.txt)\" = kept' "
+                  + "} } } }"
+
+              withRun "directory-name-exclude" source (fun _ workspace trace ->
+                  Expect.equal trace.Result "success" "a file-only exclude does not prune a directory"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "foo", "value.txt")))
+                      "kept"
+                      "only foo/** would exclude the descendant")
+          }
+
           test "strict malformed booleans create no fresh stash directory or later effects" {
               for label, argument in
                   [ "other word", "'yes'"

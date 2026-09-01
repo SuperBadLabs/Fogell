@@ -2838,6 +2838,91 @@ let stashSymlinkContainment =
                   "descriptor-relative restore preserves the source permission bits"
           }
 
+          test "modification time survives stash and unstash" {
+              let root = tempRoot ()
+              let workspace = Path.Combine(root, "workspace")
+              let source = Path.Combine(workspace, "old-report.xml")
+              let store = StashStore.under (Path.Combine(root, "controller"))
+              let modified = DateTime(2020, 2, 3, 4, 5, 6, DateTimeKind.Utc)
+              write source "<testsuite/>"
+              File.SetLastWriteTimeUtc(source, modified)
+
+              match Stash.save store "build-1" workspace "timestamp" [ "old-report.xml" ] [] true (fun () -> false) with
+              | Error problem -> failtest problem.Describe
+              | Ok _ -> ()
+
+              let stored =
+                  Directory.GetFiles(store.Root, "old-report.xml", SearchOption.AllDirectories)
+                  |> Array.exactlyOne
+              Expect.equal
+                  (File.GetLastWriteTimeUtc stored)
+                  modified
+                  "the descriptor-bound staging copy preserves the source timestamp"
+
+              Directory.Delete(workspace, true)
+              Directory.CreateDirectory workspace |> ignore
+
+              match Stash.restore store "build-1" workspace "timestamp" (fun () -> false) with
+              | Error why -> failtest why
+              | Ok _ -> ()
+
+              Expect.equal
+                  (File.GetLastWriteTimeUtc source)
+                  modified
+                  "descriptor-bound restore preserves the stored timestamp"
+          }
+
+          test "staging creation failure returns a structured storage problem" {
+              let root = tempRoot ()
+              let workspace = Path.Combine(root, "workspace")
+              let controllerFile = Path.Combine(root, "controller-file")
+              let store = StashStore.under controllerFile
+              write (Path.Combine(workspace, "value.txt")) "saved"
+              File.WriteAllText(controllerFile, "not-a-directory")
+
+              match Stash.save store "build-1" workspace "broken" [ "**" ] [] true (fun () -> false) with
+              | Ok saved -> failtestf "invalid controller storage unexpectedly published: %A" saved
+              | Error problem ->
+                  Expect.stringContains
+                      problem.Describe
+                      "could not create staged stash"
+                      "controller I/O failure stays inside the typed save boundary"
+          }
+
+          test "cancellation cleanup failure cannot escape the typed save result" {
+              let root = tempRoot ()
+              let workspace = Path.Combine(root, "workspace")
+              let store = StashStore.under (Path.Combine(root, "controller"))
+              let writable =
+                  UnixFileMode.UserRead
+                  ||| UnixFileMode.UserWrite
+                  ||| UnixFileMode.UserExecute
+              let readOnly = UnixFileMode.UserRead ||| UnixFileMode.UserExecute
+              let mutable lockedParent: string option = None
+              write (Path.Combine(workspace, "value.txt")) "saved"
+
+              let abort () =
+                  if not (Directory.Exists store.Root) then
+                      false
+                  else
+                      match Directory.GetDirectories(store.Root, "*.new-*", SearchOption.AllDirectories) with
+                      | [||] -> false
+                      | candidates ->
+                          let parent = Directory.GetParent(candidates.[0]).FullName
+                          File.SetUnixFileMode(parent, readOnly)
+                          lockedParent <- Some parent
+                          true
+
+              try
+                  match Stash.save store "build-1" workspace "cancel" [ "**" ] [] true abort with
+                  | Error problem -> failtest problem.Describe
+                  | Ok(saved, aborted) ->
+                      Expect.isEmpty saved "cancellation preceded the first staged copy"
+                      Expect.isTrue aborted "the cooperative cancellation remains the result"
+              finally
+                  lockedParent |> Option.iter (fun parent -> File.SetUnixFileMode(parent, writable))
+          }
+
           test "diagnostic path rendering cannot forge a second console line" {
               let problem =
                   Stash.SaveProblem.SelectedPathRefused("bad\nERROR: forged", "symbolic link")

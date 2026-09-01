@@ -1008,6 +1008,12 @@ module Stash =
         if value.Length > limit then builder.Append "…" |> ignore
         builder.ToString()
 
+    let private deleteDirectoryBestEffort path =
+        try
+            if IO.Directory.Exists path then IO.Directory.Delete(path, true)
+        with _ ->
+            ()
+
     [<RequireQualifiedAccess>]
     type SaveProblem =
         | SelectedPathRefused of relative: string * detail: string
@@ -1154,9 +1160,11 @@ module Stash =
                                 includeMatchers |> List.exists (fun matches -> matches relative)
 
                         let excluded =
-                            explicitlyExcluded relative
-                            || defaultExcluded relative
-                            || (isDirectory && explicitlyExcludesDirectory relative)
+                            defaultExcluded relative
+                            || if isDirectory then
+                                   explicitlyExcludesDirectory relative
+                               else
+                                   explicitlyExcluded relative
 
                         if isLink then
                             if selected && not excluded then
@@ -1245,7 +1253,14 @@ module Stash =
         let mutable problem = selectionProblem
         let staging = target + ".new-" + Guid.NewGuid().ToString "N"
 
-        IO.Directory.CreateDirectory staging |> ignore
+        if Option.isNone problem && not aborted then
+            try
+                IO.Directory.CreateDirectory staging |> ignore
+            with ex ->
+                problem <-
+                    Some(
+                        SaveProblem.StorageFailure(
+                            $"could not create staged stash ({ex.GetType().Name})"))
 
         for relative in matched do
             if not aborted && Option.isNone problem then
@@ -1259,6 +1274,7 @@ module Stash =
                         use source = source
                         try
                             let sourceMode = Native.fileMode source
+                            let sourceModified = Native.fileLastWriteTimeUtc source
                             let dest = IO.Path.Combine(staging, relative)
                             IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
                             use output =
@@ -1268,6 +1284,7 @@ module Stash =
                                     FileAccess.Write,
                                     FileShare.None)
                             source.CopyTo output
+                            Native.setFileLastWriteTimeUtc output sourceModified
                             Native.setFileMode output sourceMode
                             copied.Add relative
                             if abort () then aborted <- true
@@ -1279,10 +1296,10 @@ module Stash =
 
         match problem, aborted with
         | Some refusal, _ ->
-            IO.Directory.Delete(staging, true)
+            deleteDirectoryBestEffort staging
             Error refusal
         | None, true ->
-            IO.Directory.Delete(staging, true)
+            deleteDirectoryBestEffort staging
             Ok(List.ofSeq copied, true)
         | None, false ->
             // Publish only a completely validated copy. In particular, a refused
@@ -1311,7 +1328,7 @@ module Stash =
                         ()
                 Ok(List.ofSeq copied, false)
             with ex ->
-                if IO.Directory.Exists staging then IO.Directory.Delete(staging, true)
+                deleteDirectoryBestEffort staging
                 Error(SaveProblem.StorageFailure($"could not publish staged stash ({ex.GetType().Name})"))
 
     /// Restore a stash into the workspace. Missing name is an error, never a silent
@@ -1357,6 +1374,7 @@ module Stash =
                         | Ok input ->
                             use input = input
                             let sourceMode = Native.fileMode input
+                            let sourceModified = Native.fileLastWriteTimeUtc input
 
                             match Native.createWorkspaceFileWithoutLinks workspace relative with
                             | Error why ->
@@ -1367,7 +1385,9 @@ module Stash =
                                 try
                                     input.CopyTo output
                                     // Content writes may clear setuid/setgid. Apply the
-                                    // stored mode last, through the still-open descriptor.
+                                    // stored timestamp and then the mode through the
+                                    // still-open descriptor, leaving special bits last.
+                                    Native.setFileLastWriteTimeUtc output sourceModified
                                     Native.setFileMode output sourceMode
                                     restored.Add relative
                                     if abort () then aborted <- true
