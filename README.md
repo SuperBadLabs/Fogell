@@ -78,6 +78,27 @@ The working loop is therefore:
     evidence/           sealed measurement receipts
     scripts/            harnesses
 
+## Measured speed — three-engine face-off
+
+One run on mario, 2026-08-29: the same trivial per-stage pipeline at sizes 50
+and 100, five serial heats per engine per size, against a local McLoving
+controller+agent pair and a local Jenkins controller. Marginal cost per stage
+uses the delta method (50 → 100), so per-build fixed overhead cancels.
+
+| engine | marginal cost, median | within-run ratio vs Jenkins |
+|---|---|---|
+| Fogell | 14.3 ms/stage | 27.7× faster |
+| McLoving | 226.5 ms/stage | 1.7× faster |
+| Jenkins | 394.8 ms/stage | — |
+
+The within-run ratio is the only portable claim: Jenkins absolutes moved 38%
+within a session for identical work. Sizes stop at 100: probing found Jenkins
+cannot compile 400 steps in one stage (255-argument limit) or 250 stages
+(64 KB method limit), and McLoving's agent takes one step per stage. Steps are trivial, so this measures per-stage
+engine machinery, not workload throughput. This is an operator measurement
+with engine builds unpinned, not sealed differential evidence; raw data and
+limits: [bench/faceoff/2026-08-29-mario/](bench/faceoff/2026-08-29-mario/PROVENANCE.md).
+
 ## Inherited measurements
 
 See `docs/architecture/BASELINE.md` — every number was measured on luigi

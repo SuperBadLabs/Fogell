@@ -1,0 +1,56 @@
+=== face-off on mario: sizes=[50, 100] heats=5 serial ===
+
+--- probe (largest size, one build each) ---
+  fogell: OK (2.0s)
+  mcloving: OK (20.3s)
+  jenkins: OK (39.9s)
+
+  calibration (probe seconds at n=100) — compare across runs to spot
+  environment drift; Jenkins absolutes have moved 38% within a session
+  for identical work, so only WITHIN-run ratios are safe to quote:
+    fogell        2.0s
+    jenkins      39.9s
+    mcloving     20.3s
+
+--- heats (per-build deadline 160s) ---
+  fogell n=50 h=1: 1097 ms
+  fogell n=50 h=2: 949 ms
+  fogell n=50 h=3: 950 ms
+  fogell n=50 h=4: 1160 ms
+  fogell n=50 h=5: 1042 ms
+  fogell n=100 h=1: 1665 ms
+  fogell n=100 h=2: 1755 ms
+  fogell n=100 h=3: 1761 ms
+  fogell n=100 h=4: 1706 ms
+  fogell n=100 h=5: 1851 ms
+  mcloving n=50 h=1: 11820 ms
+  mcloving n=50 h=2: 11321 ms
+  mcloving n=50 h=3: 11377 ms
+  mcloving n=50 h=4: 10746 ms
+  mcloving n=50 h=5: 10789 ms
+  mcloving n=100 h=1: 22645 ms
+  mcloving n=100 h=2: 20948 ms
+  mcloving n=100 h=3: 22674 ms
+  mcloving n=100 h=4: 22666 ms
+  mcloving n=100 h=5: 22622 ms
+  jenkins n=50 h=1: 19590 ms
+  jenkins n=50 h=2: 19876 ms
+  jenkins n=50 h=3: 19050 ms
+  jenkins n=50 h=4: 19008 ms
+  jenkins n=50 h=5: 19400 ms
+  jenkins n=100 h=1: 39142 ms
+  jenkins n=100 h=2: 39363 ms
+  jenkins n=100 h=3: 38748 ms
+  jenkins n=100 h=4: 38820 ms
+  jenkins n=100 h=5: 39255 ms
+
+=== marginal cost per unit (50 → 100) ===
+  fogell         1042ms →     1755ms      14.3 ms/unit (median)    14.3 (min) Δ0%
+  mcloving      11321ms →    22645ms     226.5 ms/unit (median)   204.0 (min) Δ10%
+  jenkins       19400ms →    39142ms     394.8 ms/unit (median)   394.8 (min) Δ0%
+
+  vs Jenkins (within-run ratio — the portable claim):
+    fogell     27.7x faster
+    mcloving   1.7x faster
+
+wrote out/mario-final.tsv
