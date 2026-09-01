@@ -678,6 +678,13 @@ module FogellSide =
                     |> List.exists (fun o -> not (List.isEmpty o.Positional) || not (List.isEmpty o.Named))
                 then
                     Some "the timestamps() option takes no arguments"
+                elif timestampsOptions |> List.exists (fun o -> o.HasBlock) then
+                    // FG-121. `timestamps { }` parses as the option carrying a trailing
+                    // closure, and the argument check above cannot see a closure. Jenkins
+                    // refuses the model, so accepting it ran a build the reference engine
+                    // will not compile. MEASURED on Jenkins 2.568.1 by FG-053's verifier;
+                    // UNPROVEN by receipt (FG-129: a compile-shaped refusal seals none).
+                    Some "the timestamps() option takes no block"
                 else
                     None
 
