@@ -2772,6 +2772,76 @@ let stashSymlinkContainment =
                       UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute)
           }
 
+          test "directory reachability matches globstar newline and invariant-case regex semantics" {
+              let newlineRoot = tempRoot ()
+              let newlineWorkspace = Path.Combine(newlineRoot, "workspace")
+              let newlineOutside = Path.Combine(newlineRoot, "outside")
+              let newlineStore = StashStore.under (Path.Combine(newlineRoot, "controller"))
+              Directory.CreateDirectory newlineWorkspace |> ignore
+              write (Path.Combine(newlineOutside, "value.txt")) "outside"
+              Directory.CreateSymbolicLink(Path.Combine(newlineWorkspace, "linked\nname"), newlineOutside)
+              |> ignore
+
+              match
+                  Stash.save
+                      newlineStore
+                      "build-1"
+                      newlineWorkspace
+                      "newline"
+                      [ "**" ]
+                      []
+                      false
+                      (fun () -> false)
+              with
+              | Error problem -> failtestf "regex-inert LF link was selected: %s" problem.Describe
+              | Ok(saved, false) -> Expect.isEmpty saved "dot/globstar does not cross LF"
+              | Ok(_, true) -> failtest "an inert LF link reported cancellation"
+
+              let cultureRoot = tempRoot ()
+              let cultureWorkspace = Path.Combine(cultureRoot, "workspace")
+              let cultureStore = StashStore.under (Path.Combine(cultureRoot, "controller"))
+              write (Path.Combine(cultureWorkspace, "i", "value.txt")) "selected"
+              let turkish =
+                  try Some(Globalization.CultureInfo.GetCultureInfo("tr-TR"))
+                  with :? Globalization.CultureNotFoundException -> None
+
+              match turkish with
+              | None ->
+                  Expect.equal
+                      Globalization.CultureInfo.CurrentCulture
+                      Globalization.CultureInfo.InvariantCulture
+                      "a globalization-invariant runtime already removes ambient-culture disagreement"
+              | Some turkish ->
+                  let originalCulture = Globalization.CultureInfo.CurrentCulture
+                  let originalUiCulture = Globalization.CultureInfo.CurrentUICulture
+
+                  try
+                      Globalization.CultureInfo.CurrentCulture <- turkish
+                      Globalization.CultureInfo.CurrentUICulture <- turkish
+
+                      match
+                          Stash.save
+                              cultureStore
+                              "build-1"
+                              cultureWorkspace
+                              "culture"
+                              [ "I/**" ]
+                              []
+                              false
+                              (fun () -> false)
+                      with
+                      | Error problem -> failtest problem.Describe
+                      | Ok(saved, false) ->
+                          Expect.equal
+                              saved
+                              [ "i/value.txt" ]
+                              "regex leaf matching and NFA descent both use invariant folding"
+                      | Ok(_, true) -> failtest "the invariant culture control reported cancellation"
+                  finally
+                      Globalization.CultureInfo.CurrentCulture <- originalCulture
+                      Globalization.CultureInfo.CurrentUICulture <- originalUiCulture
+          }
+
           test "directory descent is bound to descriptors across pathname replacement" {
               let root = tempRoot ()
               let workspace = Path.Combine(root, "workspace")
@@ -2889,6 +2959,38 @@ let stashSymlinkContainment =
                   Expect.equal (File.ReadAllText canaryFile) "outside-unchanged" "unstash never overwrites outside"
           }
 
+          test "unstash descriptor-walk materializes an absent logical workspace" {
+              let root = tempRoot ()
+              let sourceWorkspace = Path.Combine(root, "source")
+              let missingWorkspace = Path.Combine(root, "logical", "new")
+              let store = StashStore.under (Path.Combine(root, "controller"))
+              write (Path.Combine(sourceWorkspace, "nested", "value.txt")) "saved"
+
+              match
+                  Stash.save
+                      store
+                      "build-1"
+                      sourceWorkspace
+                      "safe"
+                      [ "nested/value.txt" ]
+                      []
+                      true
+                      (fun () -> false)
+              with
+              | Error problem -> failtest problem.Describe
+              | Ok _ -> ()
+
+              match Stash.restore store "build-1" missingWorkspace "safe" (fun () -> false) with
+              | Error why -> failtest why
+              | Ok restored ->
+                  Expect.equal restored [ "nested/value.txt" ] "the requested stash is restored"
+
+              Expect.equal
+                  (File.ReadAllText(Path.Combine(missingWorkspace, "nested", "value.txt")))
+                  "saved"
+                  "missing logical root and stored parents are created without following links"
+          }
+
           test "unstash refuses a linked controller source without disclosing its target" {
               let root = tempRoot ()
               let workspace = Path.Combine(root, "workspace")
@@ -2918,6 +3020,21 @@ let stashSymlinkContainment =
               Expect.isFalse
                   (File.Exists(Path.Combine(workspace, "value.txt")))
                   "controller target bytes never enter the workspace"
+
+              let mutable polls = 0
+              let abortAfterSelection () =
+                  polls <- polls + 1
+                  polls >= 3
+
+              match Stash.restore store "build-1" workspace "safe" abortAfterSelection with
+              | Ok restored -> failtestf "cancelled linked source restored: %A" restored
+              | Error why ->
+                  Expect.equal
+                      why
+                      "aborted: the step was interrupted while restoring the stash"
+                      "cancellation outranks the simultaneously recorded stored-link refusal"
+
+              Expect.equal polls 3 "the final post-selection poll observes cancellation"
           }
 
           test "executable and special mode bits survive stash and unstash" {

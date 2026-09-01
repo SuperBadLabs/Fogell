@@ -8731,6 +8731,21 @@ let stashDefaultExcludes =
                       "stash and echo do not materialize the logical directory")
           }
 
+          test "unstash is the first effect that materializes an absent logical dir" {
+              let source =
+                  "pipeline { agent any stages { stage('stash') { steps { "
+                  + "sh 'printf saved > value.txt'; stash name: 'bundle', includes: 'value.txt'; deleteDir(); "
+                  + "dir('new') { unstash 'bundle'; sh 'test \"$(cat value.txt)\" = saved' } "
+                  + "} } } }"
+
+              withRun "unstash-materializes-logical-dir" source (fun _ workspace trace ->
+                  Expect.equal trace.Result "success" "descriptor-safe unstash creates its logical cwd"
+                  Expect.equal
+                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "new", "value.txt")))
+                      "saved"
+                      "the first effect inside dir restores beneath the new workspace")
+          }
+
           test "allowEmpty refuses a logical dir beneath a dangling symlink" {
               let source =
                   "pipeline { agent any stages { stage('stash') { steps { "

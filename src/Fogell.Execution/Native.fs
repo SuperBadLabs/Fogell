@@ -267,6 +267,78 @@ module internal Native =
     let setFileLastWriteTimeUtc (stream: FileStream) (value: DateTime) =
         File.SetLastWriteTimeUtc(stream.SafeFileHandle, value)
 
+    /// Materialize an absolute logical workspace through live directory
+    /// descriptors. Every existing component is opened with O_NOFOLLOW and each
+    /// missing component is created relative to its already trusted parent, so a
+    /// `dir('new') { unstash ... }` boundary gains ordinary mkdir -p behavior
+    /// without introducing a pathname-following gap.
+    let private openOrCreateDirectoryWithoutLinks (absoluteRoot: string) =
+        let root = canonicalDirectoryPath absoluteRoot
+        let systemRoot = Path.GetPathRoot root |> canonicalDirectoryPath
+        let flags =
+            OpenReadOnly
+            ||| OpenNonBlocking
+            ||| OpenDirectory
+            ||| OpenNoFollow
+            ||| OpenCloseOnExec
+        let descriptor = openFile(systemRoot, flags)
+
+        if descriptor < 0 then
+            Error $"filesystem root cannot be opened without following a link (errno {Marshal.GetLastPInvokeError()})"
+        else
+            let mutable current = new SafeFileHandle(nativeint descriptor, true)
+
+            try
+                let relative = Path.GetRelativePath(systemRoot, root)
+                let segments =
+                    if relative = "." then [||]
+                    else relative.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries)
+                let mutable failure: string option = None
+
+                for segment in segments do
+                    if Option.isNone failure then
+                        let parent = current.DangerousGetHandle() |> int
+                        let mutable child = openFileAt(parent, segment, flags, 0)
+
+                        if child < 0 then
+                            let openCode = Marshal.GetLastPInvokeError()
+
+                            if openCode = 2 then
+                                let made = makeDirectoryAt(parent, segment, 511)
+                                let makeCode = if made = 0 then 0 else Marshal.GetLastPInvokeError()
+
+                                if made = 0 || makeCode = 17 then
+                                    child <- openFileAt(parent, segment, flags, 0)
+                                else
+                                    failure <-
+                                        Some $"workspace directory cannot be created without following a link (errno {makeCode})"
+                            else
+                                failure <-
+                                    Some $"workspace directory is linked or unavailable (errno {openCode})"
+
+                        if Option.isNone failure then
+                            if child < 0 then
+                                failure <-
+                                    Some $"workspace directory is linked or unavailable (errno {Marshal.GetLastPInvokeError()})"
+                            else
+                                current.Dispose()
+                                current <- new SafeFileHandle(nativeint child, true)
+
+                match failure with
+                | Some why ->
+                    current.Dispose()
+                    Error why
+                | None ->
+                    match physicalPath (directoryDescriptorPath current) with
+                    | Some physicalRoot when String.Equals(physicalRoot, root, StringComparison.Ordinal) ->
+                        Ok current
+                    | _ ->
+                        current.Dispose()
+                        Error "workspace root is a symbolic link or escaped object"
+            with ex ->
+                current.Dispose()
+                Error $"workspace root validation failed ({ex.GetType().Name})"
+
     /// Open one selected workspace file through a descriptor and prove that the
     /// descriptor still names the exact lexical path beneath the exact physical
     /// workspace root. `O_NOFOLLOW` rejects a final file link; the descriptor's
@@ -361,81 +433,66 @@ module internal Native =
             Error "restore path is not a strict relative path"
         else
             let root = canonicalDirectoryPath workspace
-            let rootDescriptor =
-                openFile (
-                    root,
-                    OpenReadOnly
-                    ||| OpenNonBlocking
-                    ||| OpenDirectory
-                    ||| OpenNoFollow
-                    ||| OpenCloseOnExec)
-
-            if rootDescriptor < 0 then
-                Error $"workspace root cannot be opened without following a link (errno {Marshal.GetLastPInvokeError()})"
-            else
-                let mutable current = new SafeFileHandle(nativeint rootDescriptor, true)
-
+            match openOrCreateDirectoryWithoutLinks root with
+            | Error why -> Error why
+            | Ok rootHandle ->
+                let mutable current = rootHandle
                 try
-                    let rootDescriptorPath = $"/proc/self/fd/{rootDescriptor}"
+                    let segments = relative.Split(Path.DirectorySeparatorChar)
+                    let directories = segments |> Array.take (segments.Length - 1)
+                    let mutable failure: string option = None
 
-                    match physicalPath rootDescriptorPath with
-                    | Some physicalRoot when String.Equals(physicalRoot, root, StringComparison.Ordinal) ->
-                        let segments = relative.Split(Path.DirectorySeparatorChar)
-                        let directories = segments |> Array.take (segments.Length - 1)
-                        let mutable failure: string option = None
+                    for segment in directories do
+                        if Option.isNone failure then
+                            let parent = current.DangerousGetHandle() |> int
+                            let flags =
+                                OpenReadOnly
+                                ||| OpenNonBlocking
+                                ||| OpenDirectory
+                                ||| OpenNoFollow
+                                ||| OpenCloseOnExec
+                            let mutable child = openFileAt(parent, segment, flags, 0)
 
-                        for segment in directories do
-                            if Option.isNone failure then
-                                let parent = current.DangerousGetHandle() |> int
-                                let flags =
-                                    OpenReadOnly
-                                    ||| OpenNonBlocking
-                                    ||| OpenDirectory
-                                    ||| OpenNoFollow
-                                    ||| OpenCloseOnExec
-                                let mutable child = openFileAt(parent, segment, flags, 0)
+                            if child < 0 && Marshal.GetLastPInvokeError() = 2 then
+                                // Mode 0777 subject to the process umask,
+                                // matching ordinary Directory.CreateDirectory
+                                // semantics while retaining descriptor-relative
+                                // no-follow creation.
+                                let made = makeDirectoryAt(parent, segment, 511)
+                                if made = 0 || Marshal.GetLastPInvokeError() = 17 then
+                                    child <- openFileAt(parent, segment, flags, 0)
 
-                                if child < 0 && Marshal.GetLastPInvokeError() = 2 then
-                                    // Mode 0777 subject to the process umask,
-                                    // matching ordinary Directory.CreateDirectory
-                                    // semantics while retaining descriptor-relative
-                                    // no-follow creation.
-                                    let made = makeDirectoryAt(parent, segment, 511)
-                                    if made = 0 || Marshal.GetLastPInvokeError() = 17 then
-                                        child <- openFileAt(parent, segment, flags, 0)
-
-                                if child < 0 then
-                                    failure <-
-                                        Some $"restore directory component is missing, linked, or unavailable (errno {Marshal.GetLastPInvokeError()})"
-                                else
-                                    current.Dispose()
-                                    current <- new SafeFileHandle(nativeint child, true)
-
-                        match failure with
-                        | Some why -> Error why
-                        | None ->
-                            let leaf = segments.[segments.Length - 1]
-                            let descriptor =
-                                openFileAt(
-                                    current.DangerousGetHandle() |> int,
-                                    leaf,
-                                    OpenWriteOnly
-                                    ||| OpenCreate
-                                    ||| OpenTruncate
-                                    ||| OpenNoFollow
-                                    ||| OpenCloseOnExec,
-                                    384)
-
-                            if descriptor < 0 then
-                                Error $"restore target is linked or unavailable (errno {Marshal.GetLastPInvokeError()})"
+                            if child < 0 then
+                                failure <-
+                                    Some $"restore directory component is missing, linked, or unavailable (errno {Marshal.GetLastPInvokeError()})"
                             else
-                                let handle = new SafeFileHandle(nativeint descriptor, true)
-                                try
-                                    Ok(new FileStream(handle, FileAccess.Write, 65536, false))
-                                with ex ->
-                                    handle.Dispose()
-                                    Error $"restore target descriptor is unwritable ({ex.GetType().Name})"
-                    | _ -> Error "workspace root is a symbolic link or escaped object"
+                                current.Dispose()
+                                current <- new SafeFileHandle(nativeint child, true)
+
+                    match failure with
+                    | Some why -> Error why
+                    | None ->
+                        let leaf = segments.[segments.Length - 1]
+                        let descriptor =
+                            openFileAt(
+                                current.DangerousGetHandle() |> int,
+                                leaf,
+                                OpenWriteOnly
+                                ||| OpenCreate
+                                ||| OpenTruncate
+                                ||| OpenNoFollow
+                                ||| OpenCloseOnExec,
+                                384)
+
+                        if descriptor < 0 then
+                            Error $"restore target is linked or unavailable (errno {Marshal.GetLastPInvokeError()})"
+                        else
+                            let handle = new SafeFileHandle(nativeint descriptor, true)
+                            try
+                                Ok(new FileStream(handle, FileAccess.Write, 65536, false))
+                            with ex ->
+                                handle.Dispose()
+                                Error $"restore target descriptor is unwritable ({ex.GetType().Name})"
                 finally
                     current.Dispose()
 

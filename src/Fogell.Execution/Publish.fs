@@ -75,7 +75,8 @@ module Publish =
             |> fun p -> p.Replace("(?:.*)/", "(?:.*/)?")
 
         let options =
-            if caseSensitive then RegexOptions.None else RegexOptions.IgnoreCase
+            if caseSensitive then RegexOptions.None
+            else RegexOptions.IgnoreCase ||| RegexOptions.CultureInvariant
 
         Regex("^" + escaped + "$", options)
 
@@ -1097,11 +1098,11 @@ module Stash =
                     if matches then next.Add(state + 1) |> ignore
                 | AnyNonSeparator when character <> '/' -> next.Add(state + 1) |> ignore
                 | StarNonSeparator when character <> '/' -> next.Add state |> ignore
-                | StarAny -> next.Add state |> ignore
-                | GlobstarPrefixStart ->
+                | StarAny when character <> '\n' -> next.Add state |> ignore
+                | GlobstarPrefixStart when character <> '\n' ->
                     next.Add(state + 1) |> ignore
                     if character = '/' then next.Add(state + 2) |> ignore
-                | GlobstarPrefixBody ->
+                | GlobstarPrefixBody when character <> '\n' ->
                     next.Add state |> ignore
                     if character = '/' then next.Add(state + 1) |> ignore
                 | _ -> ()
@@ -1539,6 +1540,6 @@ module Stash =
                                         Some $"unstash could not restore ‘{safeDiagnosticPath relative}’ ({ex.GetType().Name})"
 
             match problem, aborted with
-            | Some why, _ -> Error why
-            | None, true -> Error "aborted: the step was interrupted while restoring the stash"
+            | _, true -> Error "aborted: the step was interrupted while restoring the stash"
+            | Some why, false -> Error why
             | None, false -> Ok(List.ofSeq restored)
