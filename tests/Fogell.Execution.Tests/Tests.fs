@@ -2657,6 +2657,33 @@ let stashSymlinkContainment =
                       problem.Describe
                       $"stash refuses selected path ‘{refusedPath}’: selected symbolic links and linked directory descendants are not stashed"
                       "the directory link is rejected by classification before its target is entered"
+
+              let cancellationRoot = tempRoot ()
+              let cancellationWorkspace, cancellationPattern, _ = arrange cancellationRoot "out-dir"
+              let cancellationStore = StashStore.under (Path.Combine(cancellationRoot, "controller"))
+              File.Delete(Path.Combine(cancellationWorkspace, "ordinary.txt"))
+              let mutable polls = 0
+              let abortAfterSelection () =
+                  polls <- polls + 1
+                  polls >= 3
+
+              match
+                  Stash.save
+                      cancellationStore
+                      "build-1"
+                      cancellationWorkspace
+                      "cancelled-directory-link"
+                      [ cancellationPattern ]
+                      []
+                      false
+                      abortAfterSelection
+              with
+              | Error problem -> failtestf "selection refusal incorrectly outranked cancellation: %s" problem.Describe
+              | Ok(saved, aborted) ->
+                  Expect.isEmpty saved "nothing is published when cancellation follows selection"
+                  Expect.isTrue aborted "cancellation remains authoritative over the simultaneous refusal"
+
+              Expect.equal polls 3 "the final poll observes cancellation only after selection records the link refusal"
             } ]
 
           test "unselected, unmatched and wholly excluded directory links remain inert" {

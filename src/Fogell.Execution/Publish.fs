@@ -1343,12 +1343,12 @@ module Stash =
                                         $"could not stage ‘{safeDiagnosticPath relative}’ ({ex.GetType().Name})"))
 
         match problem, aborted with
-        | Some refusal, _ ->
-            deleteDirectoryBestEffort staging
-            Error refusal
-        | None, true ->
+        | _, true ->
             deleteDirectoryBestEffort staging
             Ok(List.ofSeq copied, true)
+        | Some refusal, false ->
+            deleteDirectoryBestEffort staging
+            Error refusal
         | None, false ->
             // Publish only a completely validated copy. In particular, a refused
             // same-name replacement leaves the prior stash intact rather than
