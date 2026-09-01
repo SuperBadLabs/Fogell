@@ -1,0 +1,161 @@
+# Differential receipt — fg228-stash-symlinks-default.Jenkinsfile
+
+jenkins-core: 2.568.1
+seal:         e5546cbefcaae24ec0f664fe1c1599caae5644807dbb26c2324b4e1c50d93751
+case-digest:  cc5bb6ff3efdd06e8ae2898b644e0b4ab13272361e47028551fc742d5cfe9bc5
+sealed-output: sequence
+
+VERDICT: DIVERGED (3)
+  - terminal result: jenkins=success fogell=failure
+  - output line 12: jenkins=Stashed 5 file(s) fogell=Stage "Restore links" skipped due to earlier failure(s)
+  - workspace hash: jenkins=4fa798490d95 fogell=443b57719a94
+
+## Comparison contract
+  compared: terminal result
+  compared: ordered normalised output lines — EXCEPT concurrent (parallel) cases,
+    which compare as a MULTISET; those receipts say so under `## Output comparison notes`
+  compared: canonical workspace hash over sorted (path, content-hash) pairs
+  excluded: timestamps() PREFIX TEXT, ANSI escapes, blank lines
+  compared as a CLASSIFICATION — none / partial / all — over COMPARED survivors:
+    timestamps() coverage. Two engines read two clocks, so the instants can never
+    agree; an engine that IGNORED the option, or honoured it for only some lines,
+    would otherwise compare equal to one that honoured it fully. Line COUNTS are
+    printed but never compared — the engines do not emit the same number of lines.
+    FG-118: prefix provenance follows each line through the complete contextual
+    normaliser, and both counts come from its final survivor set. `all` means every
+    compared survivor carried a prefix; suppressed narration and other raw console
+    lines are outside both output comparison and this coverage claim.
+    FG-053: this exclusion was CLAIMED and unimplemented until a case first used
+    the option, and read as true only because none did.
+  excluded: [Pipeline] graph annotations, 'Post stage' label, node/workspace banners, Started/Finished lines
+  compared: shell xtrace ('+ cmd') lines — BOTH engines run `sh -xe`, so the
+    trace is identical emitted output, continuations included (retires FG-002c)
+  compared: xtrace CONTINUATION rows — dash traces a multiline word with `+ ` on
+    its first physical line only (measured; no re-quoting, no record terminator),
+    so a mismatching line pair that becomes equal under the SAME inherited-env
+    replacement list applied to BOTH sides compares as that canonical form.
+    Literals cancel; receipt lines stay literal; the rule can only turn a
+    divergence into an equality, never hide one direction only. EVERY pair the
+    rule folds is LISTED in the receipt that used it (sealed) — EXCEPT in a
+    CONCURRENT case, where multiset comparison pairs nothing, so the receipt
+    lists PER-SIDE OCCURRENCES (`jenkins ${HOME}`, `fogell ${HOME}`) and their
+    multiplicity instead of pair records. FG-158: this said EVERY pair while the
+    concurrent path emitted occurrences, which is a promise the mode cannot keep.
+    A canonical
+    comparison is always visible in the case it decided — ordinary output that
+    prints an inherited value (e.g. `printenv HOME`) folds the same way, the
+    declared environment-of-necessity class the ${WORKSPACE} fold already is
+  excluded: .git, @tmp siblings, durable-task spool files, script.sh, *.pid
+  excluded: plugin banners such as [Checks API] — an artifact of which plugins are installed
+  compared as a BOOLEAN, not text: whether a failure reason was reported
+    (applies to failure/aborted only — an unstable build is explained by its test report)
+    (Jenkins' wording comes from whichever plugin implements the step;
+     matching it verbatim would over-fit to a plugin string. Silence is the defect.)
+  excluded: credential-masking narration — both engines announce it, wording differs
+  engine notes: printed in the receipt, never compared — the engine reporting
+    on its own checks (e.g. an unavailable /proc scan), not on the build
+  RULE (FG-102): nothing is excluded on wording alone. Every exclusion above is
+    context-gated, emitted identically by both engines, or an exact measured
+    sentence — see docs/REVIEW_CHECKLIST.md. A build printing narration-like
+    text is COMPARED, and tests carry look-alike rows proving it.
+  excluded: compile/evaluation rejection narration — Jenkins refuses an invalid
+    pipeline at COMPILE time, Fogell when it evaluates the stage gate; both fail with
+    the same workspace, and comparing a compiler's error layout is over-fitting
+  compared: timeout narration — both engines emit Jenkins' wording (set-to-expire
+    banner, Cancelling/Sending/Terminated, Timeout has been exceeded) and the
+    sentences ALSO count as the abort's reported reason
+  excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as
+    the reported reason; the wording comes from whichever plugin implements the step
+  not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording
+  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
+    (the workspace HASH is sealed, the listing under it is not); any engine notes;
+    the timestamps() line's COUNTS — only the none/partial/all CLASSIFICATION is
+    compared and sealed, so `all (2)` may be edited to `all (999)`; and the FG-119
+    RECOVERED provenance block, which can be added, removed or fabricated without
+    breaking the seal (FG-128). For a case compared as a MULTISET the printed ORDER
+    is unsealed too — see the PARALLEL lines below. Everything else printed here is
+    bound.
+    So `--verify-seals` passing does NOT mean this document is unaltered — it means
+    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
+    minus fenced regions; it is NOT implemented, so this list is what holds today.
+
+## Jenkins
+  result:         success
+  workspace-hash: 4fa798490d95a0440e2442b9f2db66489e50a691418dbbcd295472c9d78b13a2
+  output (48 lines):
+    | + set -eu
+    | + rm -rf ../fg228-outside-file.txt ../fg228-outside-dir
+    | + mkdir -p hidden/in-dir-target ../fg228-outside-dir
+    | + printf ordinary
+    | + printf inside-file
+    | + printf inside-dir
+    | + printf outside-file
+    | + printf outside-dir
+    | + ln -s hidden/in-file-target.txt in-file-link
+    | + ln -s hidden/in-dir-target in-dir-link
+    | + ln -s ../fg228-outside-file.txt out-file-link
+    | + ln -s ../fg228-outside-dir out-dir-link
+    | Stashed 5 file(s)
+    | + set -eu
+    | + test -L in-file-link
+    | + printf %s=link: in-file-link
+    | + readlink in-file-link
+    | + test -L in-dir-link
+    | + test -d in-dir-link
+    | + printf %s=directory
+    | in-dir-link
+    | + test -L out-file-link
+    | + printf %s=link: out-file-link
+    | + readlink out-file-link
+    | + test -L out-dir-link
+    | + test -d out-dir-link
+    | + printf %s=directory
+    | out-dir-link
+    | + test -f ordinary.txt
+    | + printf %s= ordinary.txt
+    | + cat ordinary.txt
+    | + printf
+    | + test -f in-file-link
+    | + printf %s=missing
+    | in-file-link
+    | + test -f in-dir-link/value.txt
+    | + printf %s= in-dir-link/value.txt
+    | + cat in-dir-link/value.txt
+    | + printf
+    | + test -f out-file-link
+    | + printf %s= out-file-link
+    | + cat out-file-link
+    | + printf
+    | + test -f out-dir-link/value.txt
+    | + printf %s= out-dir-link/value.txt
+    | + cat out-dir-link/value.txt
+    | + printf
+    | + rm -rf ../fg228-outside-file.txt ../fg228-outside-dir
+  workspace:
+    112c3266acaa  in-dir-link/value.txt
+    03822375f2ac  ordinary.txt
+    906560a07e9f  out-dir-link/value.txt
+    cbfab0197984  symlink-observation.txt
+    5ac8f8ef35ba  symlink-types.txt
+
+## Fogell
+  result:         failure
+  workspace-hash: 443b57719a9470c1780194136ec26256f5fd639171e52a7bd2ab37f9687ef4a6
+  output (13 lines):
+    | + set -eu
+    | + rm -rf ../fg228-outside-file.txt ../fg228-outside-dir
+    | + mkdir -p hidden/in-dir-target ../fg228-outside-dir
+    | + printf ordinary
+    | + printf inside-file
+    | + printf inside-dir
+    | + printf outside-file
+    | + printf outside-dir
+    | + ln -s hidden/in-file-target.txt in-file-link
+    | + ln -s hidden/in-dir-target in-dir-link
+    | + ln -s ../fg228-outside-file.txt out-file-link
+    | + ln -s ../fg228-outside-dir out-dir-link
+    | Stage "Restore links" skipped due to earlier failure(s)
+  workspace:
+    112c3266acaa  hidden/in-dir-target/value.txt
+    ab26cc2b70c0  hidden/in-file-target.txt
+    03822375f2ac  ordinary.txt

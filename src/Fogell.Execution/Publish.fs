@@ -121,6 +121,9 @@ module Publish =
     let internal isAntDefaultExcluded (relative: string) =
         antDefaultExcludeRegexes |> List.exists (fun regex -> regex.IsMatch relative)
 
+    let internal matchesGlob (caseSensitive: bool) (pattern: string) (relative: string) =
+        compileGlobRegex caseSensitive pattern |> fun regex -> regex.IsMatch relative
+
     /// Expand a Jenkins-style ant glob (`**/*.jar`, `target/*.txt`, `out.txt`)
     /// against a workspace. Deliberately supports only the forms measured in the
     /// corpus; anything else is reported rather than silently matching nothing.
@@ -992,6 +995,190 @@ module Publish =
 
 module Stash =
 
+    let private safeDiagnosticPath (value: string) =
+        let builder = Text.StringBuilder()
+        let limit = min value.Length 160
+
+        for index in 0 .. limit - 1 do
+            let c = value.[index]
+            if Char.IsControl c then builder.Append($"\\u{int c:X4}") |> ignore
+            else builder.Append c |> ignore
+
+        if value.Length > limit then builder.Append "…" |> ignore
+        builder.ToString()
+
+    [<RequireQualifiedAccess>]
+    type SaveProblem =
+        | SelectedPathRefused of relative: string * detail: string
+        | StorageFailure of detail: string
+
+        member this.Describe =
+            match this with
+            | SelectedPathRefused(relative, detail) ->
+                $"stash refuses selected path ‘{safeDiagnosticPath relative}’: {detail}"
+            | StorageFailure detail -> $"stash storage failed: {detail}"
+
+    let private segmentMatches (pattern: string) (value: string) =
+        let expression =
+            pattern
+            |> Regex.Escape
+            |> fun escaped -> escaped.Replace(@"\*", "[^/]*").Replace(@"\?", "[^/]")
+
+        Regex.IsMatch(value, "^" + expression + "$", RegexOptions.IgnoreCase)
+
+    /// Whether an include can select this directory or something beneath it.
+    /// This is a prefix question, not a filesystem walk: a selected directory
+    /// link is refused without enumerating even one target entry. `**` may
+    /// consume zero or more components; every remaining ordinary component can
+    /// be satisfied by some descendant name once the known prefix is consumed.
+    let private patternMaySelectDirectory (pattern: string) (relative: string) =
+        let normalized = pattern.Replace('\\', '/').Trim()
+
+        if Path.IsPathRooted normalized then
+            false
+        else
+            let patternSegments = normalized.Split('/', StringSplitOptions.None)
+            let relativeSegments = relative.Split('/', StringSplitOptions.RemoveEmptyEntries)
+            let memo = Collections.Generic.Dictionary<int * int, bool>()
+
+            let rec matches patternIndex relativeIndex =
+                match memo.TryGetValue((patternIndex, relativeIndex)) with
+                | true, value -> value
+                | false, _ ->
+                    let value =
+                        if relativeIndex = relativeSegments.Length then
+                            // The known directory prefix is compatible. Any
+                            // remaining literal/wildcard pattern components are
+                            // a question about target contents, which Fogell does
+                            // not inspect through a link.
+                            patternIndex < patternSegments.Length
+                            && patternSegments.[patternIndex..]
+                               |> Array.forall (fun segment -> segment <> "")
+                        elif patternIndex = patternSegments.Length then
+                            false
+                        elif patternSegments.[patternIndex] = "**" then
+                            matches (patternIndex + 1) relativeIndex
+                            || matches patternIndex (relativeIndex + 1)
+                        elif segmentMatches patternSegments.[patternIndex] relativeSegments.[relativeIndex] then
+                            matches (patternIndex + 1) (relativeIndex + 1)
+                        else
+                            false
+
+                    memo.[(patternIndex, relativeIndex)] <- value
+                    value
+
+            matches 0 0
+
+    /// Enumerate only physical workspace directories. Link targets are never
+    /// entered: selected file links and selected directory prefixes become a
+    /// named refusal at their lexical path, while unselected links are ignored.
+    let private entryIsSymbolicLink (entry: FileSystemInfo) =
+        not (isNull entry.LinkTarget)
+
+    let private selectWithoutFollowingLinks
+        (workspace: string)
+        (patterns: string list)
+        (excludes: string list)
+        (useDefaultExcludes: bool)
+        (abort: unit -> bool)
+        =
+        let rawIncludes = if List.isEmpty patterns then [ "**" ] else patterns
+        let normalizePattern (pattern: string) = pattern.Replace('\\', '/').Trim()
+        let includes =
+            rawIncludes
+            |> List.filter (fun includePattern ->
+                excludes
+                |> List.exists (fun excludePattern ->
+                    String.Equals(
+                        normalizePattern includePattern,
+                        normalizePattern excludePattern,
+                        StringComparison.OrdinalIgnoreCase))
+                |> not)
+        let files = Collections.Generic.List<string>()
+        let pending = Collections.Generic.Stack<Microsoft.Win32.SafeHandles.SafeFileHandle * string>()
+        let mutable problem: SaveProblem option = None
+        let mutable aborted = abort ()
+
+        match Native.openDirectoryWithoutLinks workspace with
+        | Ok root -> pending.Push(root, "")
+        | Error why -> problem <- Some(SaveProblem.StorageFailure why)
+
+        let explicitlyExcluded relative =
+            excludes |> List.exists (fun pattern -> Publish.matchesGlob false pattern relative)
+
+        let explicitlyExcludesDirectory relative =
+            excludes
+            |> List.exists (fun pattern ->
+                let normalized = pattern.Replace('\\', '/').Trim()
+                normalized.EndsWith("/**", StringComparison.Ordinal)
+                && Publish.matchesGlob false (normalized.Substring(0, normalized.Length - 3)) relative)
+
+        let defaultExcluded relative =
+            useDefaultExcludes && Publish.isAntDefaultExcluded relative
+
+        try
+            while pending.Count > 0 && Option.isNone problem && not aborted do
+                let descriptor, logicalDirectory = pending.Pop()
+                use descriptor = descriptor
+
+                use entries =
+                    DirectoryInfo(Native.directoryDescriptorPath descriptor)
+                        .EnumerateFileSystemInfos()
+                        .GetEnumerator()
+
+                while entries.MoveNext() && Option.isNone problem && not aborted do
+                    if abort () then
+                        aborted <- true
+                    else
+                        let entry = entries.Current
+                        let relative =
+                            if logicalDirectory = "" then entry.Name
+                            else logicalDirectory + "/" + entry.Name
+
+                        let isLink = entryIsSymbolicLink entry
+                        let isDirectory = entry :? DirectoryInfo
+                        let selected =
+                            if isDirectory then
+                                includes |> List.exists (fun pattern -> patternMaySelectDirectory pattern relative)
+                            else
+                                includes |> List.exists (fun pattern -> Publish.matchesGlob false pattern relative)
+
+                        let excluded =
+                            explicitlyExcluded relative
+                            || defaultExcluded relative
+                            || (isDirectory && explicitlyExcludesDirectory relative)
+
+                        if isLink then
+                            if selected && not excluded then
+                                problem <-
+                                    Some(
+                                        SaveProblem.SelectedPathRefused(
+                                            relative,
+                                            "selected symbolic links and linked directory descendants are not stashed"))
+                        elif isDirectory then
+                            if not excluded then
+                                match Native.openChildDirectoryWithoutLinks descriptor entry.Name with
+                                | Ok child -> pending.Push(child, relative)
+                                | Error why ->
+                                    problem <-
+                                        Some(
+                                            SaveProblem.SelectedPathRefused(
+                                                relative,
+                                                why))
+                        elif selected && not excluded then
+                            files.Add relative
+        with ex ->
+            problem <-
+                Some(
+                    SaveProblem.StorageFailure(
+                        $"could not enumerate stash inputs ({ex.GetType().Name})"))
+
+        while pending.Count > 0 do
+            let descriptor, _ = pending.Pop()
+            descriptor.Dispose()
+
+        problem, (files |> Seq.distinct |> Seq.sort |> Seq.toList), aborted
+
     /// A stash name comes from the Jenkinsfile, which is UNTRUSTED third-party CI
     /// code. Used directly it is a path-traversal primitive, and `save` deletes its
     /// target recursively before recreating it — so `stash name: '../../..'` would
@@ -1033,46 +1220,87 @@ module Stash =
         (excludes: string list)
         (useDefaultExcludes: bool)
         (abort: unit -> bool)
-        =
+        : Result<string list * bool, SaveProblem> =
         let target = dir store buildKey name
-        if IO.Directory.Exists target then IO.Directory.Delete(target, true)
-        IO.Directory.CreateDirectory target |> ignore
 
-        // REVIEW FIX (Codex, PR #15 round 4): `excludes:` was parsed nowhere and applied
-        // nowhere, so a stash quietly carried files the author had asked it to leave out.
-        let excluded =
-            excludes |> List.collect (Publish.expandGlob workspace) |> Set.ofList
-
-        let matched =
-            (if List.isEmpty patterns then [ "**" ] else patterns)
-            |> List.collect (Publish.expandGlob workspace)
-            |> List.distinct
-            |> List.filter (fun f -> not (excluded.Contains f))
-            // Ant's defaults are an independent filter, not implicit include
-            // patterns. They still win when the Jenkinsfile names a hidden path
-            // literally; only useDefaultExcludes:false disables this filter.
-            |> List.filter (fun f -> not useDefaultExcludes || not (Publish.isAntDefaultExcluded f))
-            |> List.sort
+        let selectionProblem, matched, selectionAborted =
+            selectWithoutFollowingLinks workspace patterns excludes useDefaultExcludes abort
 
         // Same during-and-after-copy polling as the archive path: a `stash` inside a
         // `timeout` used to be able to finish AFTER the deadline with the build still
         // green, because nothing downstream observed the expiry. (FG-002e's pattern:
         // every early return is a missed poll.)
-        let mutable aborted = abort ()
+        let mutable aborted = selectionAborted || abort ()
         let copied = System.Collections.Generic.List<string>()
+        let mutable problem = selectionProblem
+        let staging = target + ".new-" + Guid.NewGuid().ToString "N"
+
+        IO.Directory.CreateDirectory staging |> ignore
 
         for relative in matched do
-            if not aborted then
+            if not aborted && Option.isNone problem then
                 if abort () then
                     aborted <- true
                 else
-                    let dest = IO.Path.Combine(target, relative)
-                    IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
-                    IO.File.Copy(IO.Path.Combine(workspace, relative), dest, true)
-                    copied.Add relative
-                    if abort () then aborted <- true
+                    match Native.openFileWithoutLinks workspace relative with
+                    | Error why ->
+                        problem <- Some(SaveProblem.SelectedPathRefused(relative, why))
+                    | Ok source ->
+                        use source = source
+                        try
+                            let dest = IO.Path.Combine(staging, relative)
+                            IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
+                            use output =
+                                new FileStream(
+                                    dest,
+                                    FileMode.CreateNew,
+                                    FileAccess.Write,
+                                    FileShare.None)
+                            source.CopyTo output
+                            copied.Add relative
+                            if abort () then aborted <- true
+                        with ex ->
+                            problem <-
+                                Some(
+                                    SaveProblem.StorageFailure(
+                                        $"could not stage ‘{relative}’ ({ex.GetType().Name})"))
 
-        List.ofSeq copied, aborted
+        match problem, aborted with
+        | Some refusal, _ ->
+            IO.Directory.Delete(staging, true)
+            Error refusal
+        | None, true ->
+            IO.Directory.Delete(staging, true)
+            Ok(List.ofSeq copied, true)
+        | None, false ->
+            // Publish only a completely validated copy. In particular, a refused
+            // same-name replacement leaves the prior stash intact rather than
+            // replacing it with a partial archive assembled before the bad link.
+            let backup = target + ".old-" + Guid.NewGuid().ToString "N"
+
+            try
+                if IO.Directory.Exists target then IO.Directory.Move(target, backup)
+
+                try
+                    IO.Directory.Move(staging, target)
+                with _ ->
+                    if IO.Directory.Exists backup && not (IO.Directory.Exists target) then
+                        IO.Directory.Move(backup, target)
+                    reraise()
+
+                if IO.Directory.Exists backup then
+                    try
+                        IO.Directory.Delete(backup, true)
+                    with _ ->
+                        // The target move above is the commit point. Cleanup of
+                        // the now-obsolete prior tree cannot turn a committed
+                        // stash into a reported failure; a later maintenance
+                        // sweep may remove an orphaned .old-* directory.
+                        ()
+                Ok(List.ofSeq copied, false)
+            with ex ->
+                if IO.Directory.Exists staging then IO.Directory.Delete(staging, true)
+                Error(SaveProblem.StorageFailure($"could not publish staged stash ({ex.GetType().Name})"))
 
     /// Restore a stash into the workspace. Missing name is an error, never a silent
     /// no-op: a build that carries on with none of the files it asked for is the
@@ -1089,27 +1317,46 @@ module Stash =
         if not (IO.Directory.Exists source) then
             Error $"No such saved stash ‘{name}’"
         else
-            let files =
-                IO.Directory.GetFiles(source, "*", IO.SearchOption.AllDirectories)
-                |> Array.map (fun f -> IO.Path.GetRelativePath(source, f))
-                |> Array.sort
+            let selectionProblem, files, selectionAborted =
+                selectWithoutFollowingLinks source [ "**" ] [] false abort
 
             // REVIEW FIX (Codex, PR #15): `restore` had no abort predicate and the
             // dispatcher did no post-copy check, so a large `unstash` as the final step
             // inside a `timeout` finished and reported success past the deadline.
-            let mutable aborted = abort ()
+            let mutable aborted = selectionAborted || abort ()
+            let mutable problem =
+                selectionProblem
+                |> Option.map (function
+                    | SaveProblem.SelectedPathRefused(relative, _) ->
+                        $"unstash refuses stored path ‘{safeDiagnosticPath relative}’: stored symbolic links and linked directory descendants are not restored"
+                    | SaveProblem.StorageFailure detail ->
+                        $"unstash storage read failed: {detail}")
             let restored = System.Collections.Generic.List<string>()
 
             for relative in files do
-                if not aborted then
+                if not aborted && Option.isNone problem then
                     if abort () then
                         aborted <- true
                     else
-                        let dest = IO.Path.Combine(workspace, relative)
-                        IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
-                        IO.File.Copy(IO.Path.Combine(source, relative), dest, true)
-                        restored.Add relative
-                        if abort () then aborted <- true
+                        match Native.openFileWithoutLinks source relative with
+                        | Error why ->
+                            problem <- Some $"unstash refuses stored path ‘{relative}’: {why}"
+                        | Ok input ->
+                            use input = input
 
-            if aborted then Error "aborted: the step was interrupted while restoring the stash"
-            else Ok(List.ofSeq restored)
+                            match Native.createWorkspaceFileWithoutLinks workspace relative with
+                            | Error why ->
+                                problem <- Some $"unstash refuses restore path ‘{relative}’: {why}"
+                            | Ok output ->
+                                use output = output
+                                try
+                                    input.CopyTo output
+                                    restored.Add relative
+                                    if abort () then aborted <- true
+                                with ex ->
+                                    problem <- Some $"unstash could not restore ‘{relative}’ ({ex.GetType().Name})"
+
+            match problem, aborted with
+            | Some why, _ -> Error why
+            | None, true -> Error "aborted: the step was interrupted while restoring the stash"
+            | None, false -> Ok(List.ofSeq restored)

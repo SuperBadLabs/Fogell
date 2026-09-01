@@ -195,7 +195,14 @@ would reopen controller authority.
 **Implemented in this tree.** Fogell-managed workspace paths reject absolute
 paths, parent traversal, symlink components, outside-root resolution, and
 workspace reuse ([`Workspace.fs`](../src/Fogell.Execution/Workspace.fs);
-FG-030). Linux steps run in process groups; timeout/cancellation use SIGTERM,
+FG-030). Stash separately refuses every selected file link or selected linked
+directory prefix. Directory enumeration is rooted in live no-follow descriptors,
+so concurrent pathname substitution refuses instead of entering the link target. It opens each ordinary source
+with `O_NOFOLLOW`, binds exact physical path identity through the live descriptor,
+and copies from that descriptor; a refused staged replacement publishes no
+link-target bytes and preserves its prior stash. Restore applies the same source
+boundary and creates each destination through no-follow directory descriptors,
+refusing final or ancestor destination links (FG-228). Linux steps run in process groups; timeout/cancellation use SIGTERM,
 grace, then SIGKILL, and normal completion reaps descendants. The runnable
 controller binds cleanup to captured Linux process birth identity, tracks inner
 groups before release, and treats ambiguous extinction as reconciliation rather
@@ -336,6 +343,7 @@ recorded inputs and oracle.
 | Invoke `sh` to read host files or contact the network | Allowed with the agent account's authority; no egress fence exists. | Dedicated VM/account plus default-deny egress before hostile execution; ADR 0004 / FG-200 residual. |
 | Read controller credentials from ambient environment | GString, shell, and both Git profiles start from cleared explicit environments; the blocking FG-222 proof plants and rejects inherited authority. | Keep every process launcher profile-explicit; separately protect readable files, sockets, and network services. |
 | Escape a managed path with `../`, an absolute path, or a symlink component | Managed workspace resolver refuses it. Arbitrary shell paths remain possible. | Keep resolver tests; enforce VM/account boundary for shell. |
+| Use stash/unstash links to copy bytes across the workspace/controller boundary | A selected file link or linked-directory prefix refuses the whole stash. No-follow enumeration and descriptor-bound source reads keep target bytes out; restore also refuses linked stored sources and linked destination components. A compiled follow-and-copy mutant fails the external-sentinel proof. | Keep FG-228 public, descriptor and mutant tests. This is Linux stash policy, not shell, hard-link, device-node, mount, same-UID, archive, or JUnit isolation. |
 | Leave descendants after completion or timeout | Ordinary descendants are reaped; a hostile process can leave the group. | Lifecycle claim only; hostile isolation requires VM boundary. |
 | Read another build's credential as the same UID | Possible; 0600 and masking do not stop it. | FG-070b distinct UID/user namespace plus original-user probe. |
 | Recover a credential file left by abrupt host death or failed deletion | Possible beneath the controller `_secrets` tree; lexical `finally` covers catchable host failures, not process death or a deletion error. | Isolate the controller identity, protect the state root, and add bounded stale-secret recovery before claiming crash-safe revocation. |
@@ -401,6 +409,9 @@ recorded inputs and oracle.
   kernel state, prepared SCM material, or explicitly supplied credentials.
 - Artifact descriptor containment does not provide same-UID, hard-link, mount,
   namespace, or host-administrator isolation, nor listing or retention policy.
+- Stash descriptor containment does not confine arbitrary shell reads, hard links,
+  mounts, same-UID controller-state access, or selectors with separate contracts;
+  its file/directory-link behavior is proven only on pinned Linux.
 - The effect checkpoint and retry ledgers are durable Store foundations, not
   evidence that every step/connector or controller policy consumes them;
   FG-026b owns the controller-managed producer and scheduled-reconciliation

@@ -2483,16 +2483,19 @@ let stashDefaultExcludes =
                   write relative
 
               let save name patterns defaults =
-                  Stash.save
-                      store
-                      "build-1"
-                      workspace
-                      name
-                      patterns
-                      [ "user/drop.txt" ]
-                      defaults
-                      (fun () -> false)
-                  |> fst
+                  match
+                      Stash.save
+                          store
+                          "build-1"
+                          workspace
+                          name
+                          patterns
+                          [ "user/drop.txt" ]
+                          defaults
+                          (fun () -> false)
+                  with
+                  | Ok(saved, _) -> saved
+                  | Error problem -> failtest problem.Describe
 
               let savedDefault = save "defaults" [ "**" ] true
               let expectedDefault = caseNear @ [ "visible.txt" ] |> Set.ofList
@@ -2527,6 +2530,273 @@ let stashDefaultExcludes =
                   Expect.isFalse
                       (File.Exists(Path.Combine(workspace, excluded.Head)))
                       "a default-excluded file was never copied into controller storage"
+          } ]
+
+/// FG-228. Fogell deliberately takes a stricter policy than the pinned Jenkins
+/// link behavior: every selected symbolic-link path refuses before controller
+/// bytes are replaced. These tests hold save, descriptor and restore boundaries
+/// beneath the public walker.
+let stashSymlinkContainment =
+    let write (path: string) (value: string) =
+        Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+        File.WriteAllText(path, value)
+
+    let arrange root shape =
+        let workspace = Path.Combine(root, "workspace")
+        let outside = Path.Combine(root, "outside")
+        Directory.CreateDirectory workspace |> ignore
+        write (Path.Combine(workspace, "ordinary.txt")) "ordinary"
+
+        let pattern, link =
+            match shape with
+            | "in-file" ->
+                write (Path.Combine(workspace, "hidden", "in-file.txt")) "inside-file-sentinel"
+                let link = Path.Combine(workspace, "in-file-link")
+                File.CreateSymbolicLink(link, Path.Combine("hidden", "in-file.txt")) |> ignore
+                "in-file-link", "in-file-link"
+            | "in-dir" ->
+                write (Path.Combine(workspace, "hidden", "in-dir", "value.txt")) "inside-dir-sentinel"
+                let link = Path.Combine(workspace, "in-dir-link")
+                Directory.CreateSymbolicLink(link, Path.Combine("hidden", "in-dir")) |> ignore
+                "in-dir-link/**", "in-dir-link"
+            | "out-file" ->
+                write (Path.Combine(outside, "out-file.txt")) "outside-file-sentinel"
+                let link = Path.Combine(workspace, "out-file-link")
+                File.CreateSymbolicLink(link, Path.Combine(outside, "out-file.txt")) |> ignore
+                "out-file-link", "out-file-link"
+            | "out-dir" ->
+                write (Path.Combine(outside, "out-dir", "value.txt")) "outside-dir-sentinel"
+                let link = Path.Combine(workspace, "out-dir-link")
+                Directory.CreateSymbolicLink(link, Path.Combine(outside, "out-dir")) |> ignore
+                "out-dir-link/**", "out-dir-link"
+            | other -> failwith $"unknown link shape {other}"
+
+        workspace, pattern, link
+
+    let inventory root =
+        if Directory.Exists root then
+            Directory.GetFiles(root, "*", SearchOption.AllDirectories)
+            |> Array.map (fun path -> Path.GetRelativePath(root, path), File.ReadAllText path)
+            |> Array.sortBy fst
+            |> Array.toList
+        else
+            []
+
+    testList
+        "FG-228 stash symlink containment"
+        [ test "each selected link shape independently refuses under both default-exclude modes and preserves the prior stash" {
+              for shape in [ "in-file"; "in-dir"; "out-file"; "out-dir" ] do
+                for useDefaults in [ true; false ] do
+                  let root = tempRoot ()
+                  let workspace, pattern, refusedPath = arrange root shape
+                  let store = StashStore.under (Path.Combine(root, "controller"))
+
+                  match
+                      Stash.save
+                          store
+                          "build-1"
+                          workspace
+                          "links"
+                          [ "ordinary.txt" ]
+                          []
+                          useDefaults
+                          (fun () -> false)
+                  with
+                  | Error problem -> failtest problem.Describe
+                  | Ok _ -> ()
+
+                  let before = inventory store.Root
+
+                  match
+                      Stash.save
+                          store
+                          "build-1"
+                          workspace
+                          "links"
+                          [ "ordinary.txt"; pattern ]
+                          []
+                          useDefaults
+                          (fun () -> false)
+                  with
+                  | Ok result -> failtestf "selected symlinks were copied: %A" result
+                  | Error problem ->
+                      Expect.equal
+                          problem.Describe
+                          $"stash refuses selected path ‘{refusedPath}’: selected symbolic links and linked directory descendants are not stashed"
+                          $"{shape}: the refusal names the exact selected path and stable link policy"
+
+                  Expect.equal
+                      (inventory store.Root)
+                      before
+                      "a refused replacement publishes no sentinel and preserves the complete prior stash"
+                  Expect.equal
+                      (before |> List.map snd)
+                      [ "ordinary" ]
+                      "the ordinary control was copied through the descriptor boundary"
+          }
+
+          test "unselected, unmatched and wholly excluded directory links remain inert" {
+              for pattern, excludes in
+                  [ "other/**", []
+                    "link", []
+                    "link/", []
+                    "link//child", []
+                    "link/value.txt", [ "link/value.txt" ]
+                    "link/*", [ "link/*" ]
+                    "link/**", [ "link/**" ] ] do
+                  let root = tempRoot ()
+                  let workspace = Path.Combine(root, "workspace")
+                  let outside = Path.Combine(root, "outside")
+                  let store = StashStore.under (Path.Combine(root, "controller"))
+                  Directory.CreateDirectory workspace |> ignore
+                  write (Path.Combine(outside, "value.txt")) "outside"
+                  Directory.CreateSymbolicLink(Path.Combine(workspace, "link"), outside) |> ignore
+
+                  match Stash.save store "build-1" workspace "inert" [ pattern ] excludes false (fun () -> false) with
+                  | Error problem -> failtestf "%s unexpectedly selected the link: %s" pattern problem.Describe
+                  | Ok(saved, false) -> Expect.isEmpty saved $"{pattern}: no ordinary file matched"
+                  | Ok(_, true) -> failtest "an inert non-cancelled save reported cancellation"
+          }
+
+          test "directory descent is bound to descriptors across pathname replacement" {
+              let root = tempRoot ()
+              let workspace = Path.Combine(root, "workspace")
+              let childPath = Path.Combine(workspace, "child")
+              let movedPath = Path.Combine(workspace, "checked-child")
+              let outside = Path.Combine(root, "outside")
+              write (Path.Combine(childPath, "value.txt")) "inside"
+              write (Path.Combine(outside, "value.txt")) "outside"
+
+              match Native.openDirectoryWithoutLinks workspace with
+              | Error why -> failtest why
+              | Ok workspaceDescriptor ->
+                  use workspaceDescriptor = workspaceDescriptor
+
+                  match Native.openChildDirectoryWithoutLinks workspaceDescriptor "child" with
+                  | Error why -> failtest why
+                  | Ok childDescriptor ->
+                      use childDescriptor = childDescriptor
+                      Directory.Move(childPath, movedPath)
+                      Directory.CreateSymbolicLink(childPath, outside) |> ignore
+
+                      match Native.openChildDirectoryWithoutLinks workspaceDescriptor "child" with
+                      | Ok escaped ->
+                          escaped.Dispose()
+                          failtest "the replacement directory link was reopened"
+                      | Error why ->
+                          Expect.stringContains why "linked" "O_NOFOLLOW rejects the swapped directory"
+
+                      let values =
+                          Directory.GetFiles(Native.directoryDescriptorPath childDescriptor)
+                          |> Array.map File.ReadAllText
+                          |> Array.toList
+
+                      Expect.equal
+                          values
+                          [ "inside" ]
+                          "the live child descriptor remains on the checked physical directory"
+          }
+
+          test "an opened source descriptor survives pathname replacement while a path-copy mutant follows it" {
+              let root = tempRoot ()
+              let workspace = Path.Combine(root, "workspace")
+              let sourcePath = Path.Combine(workspace, "source.txt")
+              let movedPath = Path.Combine(workspace, "original.txt")
+              let outside = Path.Combine(root, "outside.txt")
+              Directory.CreateDirectory workspace |> ignore
+              File.WriteAllText(sourcePath, "descriptor-original")
+              File.WriteAllText(outside, "path-mutant-external")
+
+              match Native.openFileWithoutLinks workspace "source.txt" with
+              | Error why -> failtest why
+              | Ok stream ->
+                  use stream = stream
+                  File.Move(sourcePath, movedPath)
+                  File.CreateSymbolicLink(sourcePath, outside) |> ignore
+                  use reader = new StreamReader(stream)
+                  Expect.equal
+                      (reader.ReadToEnd())
+                      "descriptor-original"
+                      "the production stream stays bound to the inode opened before replacement"
+                  Expect.equal
+                      (File.ReadAllText sourcePath)
+                      "path-mutant-external"
+                      "the planted pathname-copy mutant follows the replacement link"
+          }
+
+          test "unstash refuses final and ancestor destination links without overwriting external canaries" {
+              for nested in [ false; true ] do
+                  let root = tempRoot ()
+                  let workspace = Path.Combine(root, "workspace")
+                  let store = StashStore.under (Path.Combine(root, "controller"))
+                  Directory.CreateDirectory workspace |> ignore
+                  let relative = if nested then "nested/value.txt" else "value.txt"
+                  write (Path.Combine(workspace, relative)) "saved"
+
+                  match Stash.save store "build-1" workspace "safe" [ relative ] [] true (fun () -> false) with
+                  | Error problem -> failtest problem.Describe
+                  | Ok _ -> ()
+
+                  Directory.Delete(workspace, true)
+                  Directory.CreateDirectory workspace |> ignore
+                  let canary = Path.Combine(root, if nested then "nested-canary" else "file-canary")
+
+                  if nested then
+                      Directory.CreateDirectory canary |> ignore
+                      write (Path.Combine(canary, "value.txt")) "outside-unchanged"
+                      Directory.CreateSymbolicLink(Path.Combine(workspace, "nested"), canary) |> ignore
+                  else
+                      File.WriteAllText(canary, "outside-unchanged")
+                      File.CreateSymbolicLink(Path.Combine(workspace, "value.txt"), canary) |> ignore
+
+                  match Stash.restore store "build-1" workspace "safe" (fun () -> false) with
+                  | Ok restored -> failtestf "unsafe destination restored: %A" restored
+                  | Error why ->
+                      Expect.stringContains why relative "the refusal names the restore path"
+
+                  let canaryFile = if nested then Path.Combine(canary, "value.txt") else canary
+                  Expect.equal (File.ReadAllText canaryFile) "outside-unchanged" "unstash never overwrites outside"
+          }
+
+          test "unstash refuses a linked controller source without disclosing its target" {
+              let root = tempRoot ()
+              let workspace = Path.Combine(root, "workspace")
+              let store = StashStore.under (Path.Combine(root, "controller"))
+              Directory.CreateDirectory workspace |> ignore
+              File.WriteAllText(Path.Combine(workspace, "value.txt"), "saved")
+
+              match Stash.save store "build-1" workspace "safe" [ "value.txt" ] [] true (fun () -> false) with
+              | Error problem -> failtest problem.Describe
+              | Ok _ -> ()
+
+              let stored = Directory.GetFiles(store.Root, "value.txt", SearchOption.AllDirectories) |> Array.exactlyOne
+              let outside = Path.Combine(root, "controller-canary.txt")
+              File.WriteAllText(outside, "controller-secret")
+              File.Delete stored
+              File.CreateSymbolicLink(stored, outside) |> ignore
+              File.Delete(Path.Combine(workspace, "value.txt"))
+
+              match Stash.restore store "build-1" workspace "safe" (fun () -> false) with
+              | Ok restored -> failtestf "linked source restored: %A" restored
+              | Error why ->
+                  Expect.equal
+                      why
+                      "unstash refuses stored path ‘value.txt’: stored symbolic links and linked directory descendants are not restored"
+                      "stored-link refusal uses the stable unstash-specific diagnostic"
+
+              Expect.isFalse
+                  (File.Exists(Path.Combine(workspace, "value.txt")))
+                  "controller target bytes never enter the workspace"
+          }
+
+          test "diagnostic path rendering cannot forge a second console line" {
+              let problem =
+                  Stash.SaveProblem.SelectedPathRefused("bad\nERROR: forged", "symbolic link")
+
+              Expect.equal
+                  problem.Describe
+                  "stash refuses selected path ‘bad\\u000AERROR: forged’: symbolic link"
+                  "control characters are escaped in the stable operator diagnostic"
           } ]
 
 /// FG-070/071. The properties that make secret handling better than Jenkins',
@@ -2837,15 +3107,22 @@ let secrets =
               File.WriteAllText(canary, "must survive")
 
               for hostile in [ "../../canary"; "/etc"; "..\\..\\canary"; "a/../../b" ] do
-                  let saved, _ = Stash.save store "build-1" ws hostile [ "f.txt" ] [] true (fun () -> false)
+                  let saved, _ =
+                      match Stash.save store "build-1" ws hostile [ "f.txt" ] [] true (fun () -> false) with
+                      | Ok result -> result
+                      | Error problem -> failtest problem.Describe
                   Expect.equal saved [ "f.txt" ] $"the stash still works for name '{hostile}'"
 
               Expect.isTrue (File.Exists canary) "nothing outside the stash root was touched"
               Expect.equal (File.ReadAllText canary) "must survive" "and it was not overwritten"
 
               // Distinct hostile names must not collide with each other either.
-              let a, _ = Stash.save store "build-1" ws "x" [ "f.txt" ] [] true (fun () -> false)
-              let b, _ = Stash.save store "build-1" ws "y" [ "f.txt" ] [] true (fun () -> false)
+              let save name =
+                  match Stash.save store "build-1" ws name [ "f.txt" ] [] true (fun () -> false) with
+                  | Ok result -> result
+                  | Error problem -> failtest problem.Describe
+              let a, _ = save "x"
+              let b, _ = save "y"
               Expect.equal a b "both saved"
 
               match Stash.restore store "build-1" ws "x" (fun () -> false) with
@@ -4982,6 +5259,7 @@ let main argv =
                       eventDrivenWaits
                       credentialKeyBoundaries
                       stashDefaultExcludes
+                      stashSymlinkContainment
                       secrets
                       deadProcessDetection
                       externalInterrupt
