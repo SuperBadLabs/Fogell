@@ -10,8 +10,25 @@ scratch="$(mktemp -d /tmp/fogell-lock-proof.XXXXXX)"
 trap 'rm -rf -- "$scratch"' EXIT
 
 source_cleared_config="$scratch/NuGet.Config"
-package_cache="$scratch/nuget-packages"
-mkdir -p "$package_cache"
+# The isolated cache the cold restore populates and the no-restore build reads.
+# By default it lives under the scratch directory and dies with it. A caller may
+# name a location in FOGELL_LOCK_PROOF_PACKAGE_CACHE, which this proof then
+# LEAVES IN PLACE: the gate does so and points NUGET_PACKAGES at the same
+# directory for every later step. Deleting the cache here made the next plain
+# `dotnet build` in the gate (FG-207, then the restart and approval lanes)
+# restore into ~/.nuget instead, rewrite every project.assets.json, and
+# recompile the solution a second time — ~60 s of hosted run 33567174871 spent
+# rebuilding what the no-restore build below had already built. The emptiness
+# requirement in populate_isolated_cache is unchanged: a caller-named cache that
+# already holds anything is refused, not reused, so the cold-restore claim
+# still means what it says.
+if [ -n "${FOGELL_LOCK_PROOF_PACKAGE_CACHE:-}" ]; then
+  mkdir -p -- "$FOGELL_LOCK_PROOF_PACKAGE_CACHE"
+  package_cache="$(cd -- "$FOGELL_LOCK_PROOF_PACKAGE_CACHE" && pwd -P)"
+else
+  package_cache="$scratch/nuget-packages"
+  mkdir -p "$package_cache"
+fi
 cat >"$source_cleared_config" <<'CONFIG'
 <?xml version="1.0" encoding="utf-8"?>
 <configuration>
@@ -144,16 +161,71 @@ check_lock_policy() {
   local project
   local property
   local actual
+  local results
+  local jobs_max
+  local i
+  local -a projects
 
-  while IFS= read -r project; do
-    for property in RestorePackagesWithLockFile RestoreLockedMode; do
-      actual="$(dotnet msbuild "$root/$project" -getProperty:"$property")"
+  mapfile -t projects < <(list_projects "$root")
+  results="$(mktemp -d "$scratch/lock-policy.XXXXXX")"
+
+  # ONE EVALUATION PER PROJECT, RUN CONCURRENTLY. The earlier form started one
+  # msbuild per property per project — 52 serial evaluations for two booleans,
+  # ~24 s of hosted run 33567174871. Asking for both properties in one call
+  # halves the starts, and the projects are independent, so the evaluations
+  # run in parallel and are judged afterwards in inventory order: the first
+  # diagnostic is deterministic whatever the completion order, and the message
+  # is unchanged because the mutation arms below match it verbatim. The cap is
+  # one evaluation per core, not build-audits.sh's nproc/3: an evaluation-only
+  # msbuild is a fraction of an fflat compile. UNMEASURED on the 4-core runner;
+  # if this shows up in a step timing, that divisor is the knob.
+  jobs_max=$(nproc 2>/dev/null || echo 4)
+  i=0
+  for project in "${projects[@]}"; do
+    while [ "$(jobs -rp | wc -l)" -ge "$jobs_max" ]; do wait -n; done
+    {
+      if dotnet msbuild "$root/$project" \
+        -getProperty:RestorePackagesWithLockFile -getProperty:RestoreLockedMode \
+        >"$results/$i.json" 2>"$results/$i.log"; then
+        : >"$results/$i.ok"
+      fi
+    } &
+    i=$((i + 1))
+  done
+  wait
+
+  i=0
+  for project in "${projects[@]}"; do
+    if [ ! -e "$results/$i.ok" ]; then
+      echo "dependency-lock policy: $project: property evaluation failed" >&2
+      cat "$results/$i.json" "$results/$i.log" >&2
+      return 1
+    fi
+    # Parsed to a file and checked before it is read: a parser failure inside a
+    # process substitution would otherwise read as "no properties, nothing
+    # wrong". Both names are required, so a missing key is a failure too.
+    if ! python3 - "$results/$i.json" >"$results/$i.properties" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    properties = json.load(stream)["Properties"]
+for name in ("RestorePackagesWithLockFile", "RestoreLockedMode"):
+    print(f"{name}={properties[name]}")
+PY
+    then
+      echo "dependency-lock policy: $project: property evaluation output was not readable" >&2
+      cat "$results/$i.json" >&2
+      return 1
+    fi
+    while IFS='=' read -r property actual; do
       if [ "$actual" != "true" ]; then
         echo "dependency-lock policy: $project: $property evaluated to '$actual', expected 'true'" >&2
         return 1
       fi
-    done
-  done < <(list_projects "$root")
+    done <"$results/$i.properties"
+    i=$((i + 1))
+  done
 }
 
 restore_locked() {

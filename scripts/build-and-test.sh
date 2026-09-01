@@ -2,6 +2,26 @@
 # FG-000/FG-001 — the gate every ticket must pass before its PR.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+
+# ONE NUGET PACKAGE CACHE FOR THE WHOLE GATE. prove-dependency-locks.sh fills it
+# from empty — that emptiness is part of its proof — and every later dotnet
+# invocation reads the same directory, so the assets files its no-restore build
+# wrote stay valid and the plain `dotnet build` calls further down (FG-207, the
+# restart lane, the approval lane) are incremental no-ops rather than a second
+# full compile of the solution behind a cache that had been deleted under them.
+# Run-scoped and removed at exit: a stale cache is never reused across runs and
+# the gate never writes a developer's own ~/.nuget/packages. The cost moves to
+# AFTER the gate: the assets files then name a deleted cache, so a developer's
+# next plain `dotnet build` restores into ~/.nuget/packages and recompiles once.
+# That is the rebuild that used to happen inside the gate, not a new one.
+# Resolved with `pwd -P` to match the proof's own resolution of the same path;
+# a symlinked /tmp would otherwise hash two spellings of one cache as different.
+gate_package_cache="$(mktemp -d /tmp/fogell-gate-nuget.XXXXXX)"
+trap 'rm -rf -- "$gate_package_cache"' EXIT
+gate_package_cache="$(cd -- "$gate_package_cache" && pwd -P)"
+export FOGELL_LOCK_PROOF_PACKAGE_CACHE="$gate_package_cache"
+export NUGET_PACKAGES="$gate_package_cache"
+
 echo "=== sdk ==="; dotnet --version
 ./scripts/prove-dependency-locks.sh \
   || { echo "DEPENDENCY-LOCK/SOURCE-CLEARED BUILD PROOF FAILED"; exit 1; }
