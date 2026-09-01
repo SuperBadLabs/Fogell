@@ -1081,8 +1081,9 @@ module Stash =
     /// `foo/**/*`, `foo/**/?*`, and global `**` all describe every non-empty
     /// descendant path. Consume the known directory prefix as an Ant automaton,
     /// then require a universal remainder: one or more `**` segments, optionally
-    /// followed by one all-star segment. An all-star segment before `**` is not
-    /// universal because it requires an additional descendant component.
+    /// followed by one wildcard segment that matches every non-empty name. A
+    /// wildcard segment before `**` is not universal because it requires an
+    /// additional descendant component.
     let private patternExcludesAllDescendants (pattern: string) (relative: string) =
         let normalized = pattern.Replace('\\', '/').Trim()
 
@@ -1220,7 +1221,7 @@ module Stash =
                                         SaveProblem.SelectedPathRefused(
                                             relative,
                                             "selected symbolic links and linked directory descendants are not stashed"))
-                        elif isDirectory then
+                        elif isDirectory && selected then
                             if not excluded then
                                 match Native.openChildDirectoryWithoutLinks descriptor entry.Name with
                                 | Ok child -> pending.Push(child, relative)

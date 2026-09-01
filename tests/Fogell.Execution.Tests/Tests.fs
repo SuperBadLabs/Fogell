@@ -2634,6 +2634,31 @@ let stashSymlinkContainment =
                       "the ordinary control was copied through the descriptor boundary"
           }
 
+          testList "FG-228 linked-directory traversal mutant" [
+            test "selected directory link traversal is refused before copy" {
+              let root = tempRoot ()
+              let workspace, pattern, refusedPath = arrange root "out-dir"
+              let store = StashStore.under (Path.Combine(root, "controller"))
+
+              match
+                  Stash.save
+                      store
+                      "build-1"
+                      workspace
+                      "directory-link"
+                      [ pattern ]
+                      []
+                      false
+                      (fun () -> false)
+              with
+              | Ok result -> failtestf "selected directory symlink was copied: %A" result
+              | Error problem ->
+                  Expect.equal
+                      problem.Describe
+                      $"stash refuses selected path ‘{refusedPath}’: selected symbolic links and linked directory descendants are not stashed"
+                      "the directory link is rejected by classification before its target is entered"
+            } ]
+
           test "unselected, unmatched and wholly excluded directory links remain inert" {
               for pattern, excludes in
                   [ "other/**", []
@@ -2685,6 +2710,34 @@ let stashSymlinkContainment =
                           problem.Describe
                           "stash refuses selected path ‘link’"
                           $"{partialExclude} does not exclude every direct child, so the directory link remains selected"
+
+              let root = tempRoot ()
+              let workspace = Path.Combine(root, "workspace")
+              let blocked = Path.Combine(workspace, "unselected")
+              let store = StashStore.under (Path.Combine(root, "controller"))
+              write (Path.Combine(workspace, "selected.txt")) "selected"
+              write (Path.Combine(blocked, "unreadable.txt")) "unselected"
+              File.SetUnixFileMode(blocked, UnixFileMode.None)
+
+              try
+                  match
+                      Stash.save
+                          store
+                          "build-1"
+                          workspace
+                          "pruned"
+                          [ "selected.txt" ]
+                          []
+                          false
+                          (fun () -> false)
+                  with
+                  | Error problem -> failtestf "an unrelated physical directory was descended: %s" problem.Describe
+                  | Ok(saved, false) -> Expect.equal saved [ "selected.txt" ] "only the selected file is copied"
+                  | Ok(_, true) -> failtest "an unselected directory caused cancellation"
+              finally
+                  File.SetUnixFileMode(
+                      blocked,
+                      UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute)
           }
 
           test "directory descent is bound to descriptors across pathname replacement" {
