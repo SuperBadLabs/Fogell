@@ -6972,7 +6972,7 @@ let ansiColorTrailingBlocks =
                       "duplicate cardinality owns the exact single diagnostic before shape"
           }
 
-          test "duplicates across source orders and option sections retain the duplicate owner" {
+          test "duplicates retain their owner within a section; across sections cardinality refuses first" {
               let oneSection first second =
                   $"pipeline {{ agent any options {{ {first}; {second} }} stages {{ stage('S') {{ steps {{ sh 'true' }} }} }} }}"
 
@@ -6981,10 +6981,25 @@ let ansiColorTrailingBlocks =
 
               for source in
                   [ oneSection "ansiColor('xterm')" "ansiColor('xterm') {}"
-                    oneSection "ansiColor('xterm') {}" "ansiColor('xterm')"
-                    twoSections "ansiColor('xterm')" "ansiColor('xterm') {}"
-                    twoSections "ansiColor('xterm') {}" "ansiColor('xterm')" ] do
+                    oneSection "ansiColor('xterm') {}" "ansiColor('xterm')" ] do
                   Expect.equal (rejectSource source) (true, [ duplicateError ]) "duplicate precedence survives parsing"
+
+              // FG-132. A SECOND top-level `options` section never reaches this
+              // validator any more: section cardinality is refused at parse time,
+              // which is where Jenkins refuses the model too. The duplicate-owner
+              // precedence above is reachable only within one section.
+              for source in
+                  [ twoSections "ansiColor('xterm')" "ansiColor('xterm') {}"
+                    twoSections "ansiColor('xterm') {}" "ansiColor('xterm')" ] do
+                  match Fogell.Pipeline.Parser.Parser.parse source with
+                  | Ok _ -> failtest "a duplicate top-level options section must be refused at parse time"
+                  | Error why ->
+                      Expect.equal why.Code Fogell.Admission.MalformedSyntax "section cardinality owns the refusal"
+
+                      Expect.stringContains
+                          why.Message
+                          "multiple occurrences of the `options` section"
+                          "the refusal names the duplicated section"
 
               let mixedInvalid =
                   "pipeline { agent any options { ansiColor('xterm', 'vga') {} } "
