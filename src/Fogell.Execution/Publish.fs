@@ -1345,7 +1345,10 @@ module Stash =
         match problem, aborted with
         | _, true ->
             deleteDirectoryBestEffort staging
-            Ok(List.ofSeq copied, true)
+            // `copied` describes files written only to the private staging tree.
+            // Cancellation discards that tree, so the committed/public result is
+            // empty even when the final poll observes cancellation after a copy.
+            Ok([], true)
         | Some refusal, false ->
             deleteDirectoryBestEffort staging
             Error refusal

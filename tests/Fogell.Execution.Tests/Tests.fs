@@ -3033,6 +3033,37 @@ let stashSymlinkContainment =
                   lockedParent |> Option.iter (fun parent -> File.SetUnixFileMode(parent, writable))
           }
 
+          test "post-copy cancellation reports no files from the discarded staging tree" {
+              let root = tempRoot ()
+              let workspace = Path.Combine(root, "workspace")
+              let store = StashStore.under (Path.Combine(root, "controller"))
+              write (Path.Combine(workspace, "value.txt")) "staged but never published"
+
+              let abortAfterStagedCopy () =
+                  Directory.Exists store.Root
+                  && Directory.GetFiles(store.Root, "value.txt", SearchOption.AllDirectories).Length = 1
+
+              match
+                  Stash.save
+                      store
+                      "build-1"
+                      workspace
+                      "cancel-after-copy"
+                      [ "**" ]
+                      []
+                      true
+                      abortAfterStagedCopy
+              with
+              | Error problem -> failtest problem.Describe
+              | Ok(saved, aborted) ->
+                  Expect.isEmpty saved "discarded staging files are not reported as committed"
+                  Expect.isTrue aborted "the post-copy cancellation remains the result"
+
+              Expect.isEmpty
+                  (Directory.GetFiles(store.Root, "*", SearchOption.AllDirectories))
+                  "cancellation removes the staged file instead of publishing it"
+          }
+
           test "diagnostic path rendering cannot forge a second console line" {
               let problem =
                   Stash.SaveProblem.SelectedPathRefused("bad\nERROR: forged", "symbolic link")
