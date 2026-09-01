@@ -190,6 +190,12 @@ module internal Native =
     let directoryDescriptorPath (handle: SafeFileHandle) =
         $"/proc/self/fd/{handle.DangerousGetHandle() |> int}"
 
+    let fileMode (stream: FileStream) =
+        File.GetUnixFileMode(stream.SafeFileHandle)
+
+    let setFileMode (stream: FileStream) (mode: UnixFileMode) =
+        File.SetUnixFileMode(stream.SafeFileHandle, mode)
+
     /// Open one selected workspace file through a descriptor and prove that the
     /// descriptor still names the exact lexical path beneath the exact physical
     /// workspace root. `O_NOFOLLOW` rejects a final file link; the descriptor's
@@ -260,7 +266,10 @@ module internal Native =
     /// Every ancestor is opened with O_DIRECTORY|O_NOFOLLOW and the final leaf
     /// with O_NOFOLLOW, so a symlink swap cannot redirect unstash outside the
     /// workspace between validation and write.
-    let createWorkspaceFileWithoutLinks (workspace: string) (relative: string) : Result<FileStream, string> =
+    let createWorkspaceFileWithoutLinks
+        (workspace: string)
+        (relative: string)
+        : Result<FileStream, string> =
         if not (OperatingSystem.IsLinux()) then
             Error "unstash link containment requires Linux descriptor semantics"
         elif
@@ -317,7 +326,7 @@ module internal Native =
 
                                 if child < 0 then
                                     failure <-
-                                        Some $"restore directory ‘{segment}’ is missing, linked, or unavailable (errno {Marshal.GetLastPInvokeError()})"
+                                        Some $"restore directory component is missing, linked, or unavailable (errno {Marshal.GetLastPInvokeError()})"
                                 else
                                     current.Dispose()
                                     current <- new SafeFileHandle(nativeint child, true)
@@ -338,7 +347,7 @@ module internal Native =
                                     384)
 
                             if descriptor < 0 then
-                                Error $"restore target ‘{leaf}’ is linked or unavailable (errno {Marshal.GetLastPInvokeError()})"
+                                Error $"restore target is linked or unavailable (errno {Marshal.GetLastPInvokeError()})"
                             else
                                 let handle = new SafeFileHandle(nativeint descriptor, true)
                                 try

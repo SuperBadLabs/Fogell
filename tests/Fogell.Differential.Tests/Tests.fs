@@ -8842,8 +8842,7 @@ let stashSymlinkContainment =
         + "; sh 'touch successor.txt' } } } "
         + "post { always { sh 'test -f ordinary.txt && printf post > post.txt' } } }"
 
-    testList
-        "FG-228 public stash symlink containment"
+    let tests =
         [ test "each link shape under both default-exclude modes refuses without publishing sentinel bytes" {
               let shapes =
                   [ "in-file", "ln -s hidden/in-file.txt in-file-link", "in-file-link"
@@ -8913,6 +8912,11 @@ let stashSymlinkContainment =
                       (IO.File.Exists(IO.Path.Combine(workspace, "post.txt")))
                       "failure post still runs after the refusal")
           } ]
+
+    if OperatingSystem.IsLinux() then
+        testList "FG-228 public stash symlink containment" tests
+    else
+        ptestList "FG-228 public stash symlink containment" tests
 
 let dirWorkspaceLifecycle =
     let withRun label source assertions =

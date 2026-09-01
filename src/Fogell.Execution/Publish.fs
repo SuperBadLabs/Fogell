@@ -121,8 +121,9 @@ module Publish =
     let internal isAntDefaultExcluded (relative: string) =
         antDefaultExcludeRegexes |> List.exists (fun regex -> regex.IsMatch relative)
 
-    let internal matchesGlob (caseSensitive: bool) (pattern: string) (relative: string) =
-        compileGlobRegex caseSensitive pattern |> fun regex -> regex.IsMatch relative
+    let internal compileGlobMatcher (caseSensitive: bool) (pattern: string) =
+        let regex = compileGlobRegex caseSensitive pattern
+        fun (relative: string) -> regex.IsMatch relative
 
     /// Expand a Jenkins-style ant glob (`**/*.jar`, `target/*.txt`, `out.txt`)
     /// against a workspace. Deliberately supports only the forms measured in the
@@ -1094,6 +1095,18 @@ module Stash =
                         normalizePattern excludePattern,
                         StringComparison.OrdinalIgnoreCase))
                 |> not)
+        // Jenkinsfile patterns are untrusted and controller-lived. Compile each
+        // once for this selection, but do not retain tenant strings globally.
+        let includeMatchers = includes |> List.map (Publish.compileGlobMatcher false)
+        let excludeMatchers = excludes |> List.map (Publish.compileGlobMatcher false)
+        let directoryExcludeMatchers =
+            excludes
+            |> List.choose (fun pattern ->
+                let normalized = pattern.Replace('\\', '/').Trim()
+                if normalized.EndsWith("/**", StringComparison.Ordinal) then
+                    Some(Publish.compileGlobMatcher false (normalized.Substring(0, normalized.Length - 3)))
+                else
+                    None)
         let files = Collections.Generic.List<string>()
         let pending = Collections.Generic.Stack<Microsoft.Win32.SafeHandles.SafeFileHandle * string>()
         let mutable problem: SaveProblem option = None
@@ -1104,14 +1117,10 @@ module Stash =
         | Error why -> problem <- Some(SaveProblem.StorageFailure why)
 
         let explicitlyExcluded relative =
-            excludes |> List.exists (fun pattern -> Publish.matchesGlob false pattern relative)
+            excludeMatchers |> List.exists (fun matches -> matches relative)
 
         let explicitlyExcludesDirectory relative =
-            excludes
-            |> List.exists (fun pattern ->
-                let normalized = pattern.Replace('\\', '/').Trim()
-                normalized.EndsWith("/**", StringComparison.Ordinal)
-                && Publish.matchesGlob false (normalized.Substring(0, normalized.Length - 3)) relative)
+            directoryExcludeMatchers |> List.exists (fun matches -> matches relative)
 
         let defaultExcluded relative =
             useDefaultExcludes && Publish.isAntDefaultExcluded relative
@@ -1141,7 +1150,7 @@ module Stash =
                             if isDirectory then
                                 includes |> List.exists (fun pattern -> patternMaySelectDirectory pattern relative)
                             else
-                                includes |> List.exists (fun pattern -> Publish.matchesGlob false pattern relative)
+                                includeMatchers |> List.exists (fun matches -> matches relative)
 
                         let excluded =
                             explicitlyExcluded relative
@@ -1248,6 +1257,7 @@ module Stash =
                     | Ok source ->
                         use source = source
                         try
+                            let sourceMode = Native.fileMode source
                             let dest = IO.Path.Combine(staging, relative)
                             IO.Directory.CreateDirectory(IO.Path.GetDirectoryName dest) |> ignore
                             use output =
@@ -1257,13 +1267,14 @@ module Stash =
                                     FileAccess.Write,
                                     FileShare.None)
                             source.CopyTo output
+                            Native.setFileMode output sourceMode
                             copied.Add relative
                             if abort () then aborted <- true
                         with ex ->
                             problem <-
                                 Some(
                                     SaveProblem.StorageFailure(
-                                        $"could not stage ‘{relative}’ ({ex.GetType().Name})"))
+                                        $"could not stage ‘{safeDiagnosticPath relative}’ ({ex.GetType().Name})"))
 
         match problem, aborted with
         | Some refusal, _ ->
@@ -1340,21 +1351,28 @@ module Stash =
                     else
                         match Native.openFileWithoutLinks source relative with
                         | Error why ->
-                            problem <- Some $"unstash refuses stored path ‘{relative}’: {why}"
+                            problem <-
+                                Some $"unstash refuses stored path ‘{safeDiagnosticPath relative}’: {why}"
                         | Ok input ->
                             use input = input
+                            let sourceMode = Native.fileMode input
 
                             match Native.createWorkspaceFileWithoutLinks workspace relative with
                             | Error why ->
-                                problem <- Some $"unstash refuses restore path ‘{relative}’: {why}"
+                                problem <-
+                                    Some $"unstash refuses restore path ‘{safeDiagnosticPath relative}’: {why}"
                             | Ok output ->
                                 use output = output
                                 try
                                     input.CopyTo output
+                                    // Content writes may clear setuid/setgid. Apply the
+                                    // stored mode last, through the still-open descriptor.
+                                    Native.setFileMode output sourceMode
                                     restored.Add relative
                                     if abort () then aborted <- true
                                 with ex ->
-                                    problem <- Some $"unstash could not restore ‘{relative}’ ({ex.GetType().Name})"
+                                    problem <-
+                                        Some $"unstash could not restore ‘{safeDiagnosticPath relative}’ ({ex.GetType().Name})"
 
             match problem, aborted with
             | Some why, _ -> Error why

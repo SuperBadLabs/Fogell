@@ -2582,8 +2582,7 @@ let stashSymlinkContainment =
         else
             []
 
-    testList
-        "FG-228 stash symlink containment"
+    let tests =
         [ test "each selected link shape independently refuses under both default-exclude modes and preserves the prior stash" {
               for shape in [ "in-file"; "in-dir"; "out-file"; "out-dir" ] do
                 for useDefaults in [ true; false ] do
@@ -2789,6 +2788,39 @@ let stashSymlinkContainment =
                   "controller target bytes never enter the workspace"
           }
 
+          test "executable and special mode bits survive stash and unstash" {
+              let root = tempRoot ()
+              let workspace = Path.Combine(root, "workspace")
+              let source = Path.Combine(workspace, "run.sh")
+              let store = StashStore.under (Path.Combine(root, "controller"))
+              let mode =
+                  UnixFileMode.UserRead
+                  ||| UnixFileMode.UserWrite
+                  ||| UnixFileMode.UserExecute
+                  ||| UnixFileMode.GroupRead
+                  ||| UnixFileMode.GroupExecute
+                  ||| UnixFileMode.SetUser
+                  ||| UnixFileMode.SetGroup
+              write source "#!/bin/sh\nprintf preserved\n"
+              File.SetUnixFileMode(source, mode)
+
+              match Stash.save store "build-1" workspace "mode" [ "run.sh" ] [] true (fun () -> false) with
+              | Error problem -> failtest problem.Describe
+              | Ok _ -> ()
+
+              Directory.Delete(workspace, true)
+              Directory.CreateDirectory workspace |> ignore
+
+              match Stash.restore store "build-1" workspace "mode" (fun () -> false) with
+              | Error why -> failtest why
+              | Ok restored -> Expect.equal restored [ "run.sh" ] "the executable was restored"
+
+              Expect.equal
+                  (File.GetUnixFileMode source)
+                  mode
+                  "descriptor-relative restore preserves the source permission bits"
+          }
+
           test "diagnostic path rendering cannot forge a second console line" {
               let problem =
                   Stash.SaveProblem.SelectedPathRefused("bad\nERROR: forged", "symbolic link")
@@ -2797,7 +2829,45 @@ let stashSymlinkContainment =
                   problem.Describe
                   "stash refuses selected path ‘bad\\u000AERROR: forged’: symbolic link"
                   "control characters are escaped in the stable operator diagnostic"
+          }
+
+          test "unstash restore diagnostics escape stored control characters" {
+              let root = tempRoot ()
+              let workspace = Path.Combine(root, "workspace")
+              let store = StashStore.under (Path.Combine(root, "controller"))
+              // `**` does not select LF-containing names under .NET's default
+              // regex mode. CR is still a console-control boundary and reaches
+              // the descriptor-relative restore refusal end to end.
+              let relative = "bad\rERROR: forged"
+              let outside = Path.Combine(root, "outside.txt")
+              Directory.CreateDirectory workspace |> ignore
+              File.WriteAllText(Path.Combine(workspace, relative), "saved")
+
+              match Stash.save store "build-1" workspace "diagnostic" [ relative ] [] true (fun () -> false) with
+              | Error problem -> failtest problem.Describe
+              | Ok _ -> ()
+
+              File.WriteAllText(outside, "outside-unchanged")
+              File.Delete(Path.Combine(workspace, relative))
+              File.CreateSymbolicLink(Path.Combine(workspace, relative), outside) |> ignore
+
+              match Stash.restore store "build-1" workspace "diagnostic" (fun () -> false) with
+              | Ok restored -> failtestf "unsafe destination restored: %A" restored
+              | Error why ->
+                  Expect.isFalse (why.Contains '\n') "the diagnostic stays on one console line"
+                  Expect.isFalse (why.Contains '\r') "the diagnostic cannot return to the line start"
+                  Expect.stringContains
+                      why
+                      "bad\\u000DERROR: forged"
+                      "the outer restore path is escaped before rendering"
+
+              Expect.equal (File.ReadAllText outside) "outside-unchanged" "the linked target remains untouched"
           } ]
+
+    if OperatingSystem.IsLinux() then
+        testList "FG-228 stash symlink containment" tests
+    else
+        ptestList "FG-228 stash symlink containment" tests
 
 /// FG-070/071. The properties that make secret handling better than Jenkins',
 /// each asserted against a real subprocess.
