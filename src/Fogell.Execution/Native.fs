@@ -310,24 +310,33 @@ module internal Native =
 
                             try
                                 let stream = new FileStream(handle, FileAccess.Read, 65536, false)
-                                let descriptorPath = $"/proc/self/fd/{descriptor}"
 
-                                match physicalPath descriptorPath with
-                                | Some openedPath
-                                    when String.Equals(openedPath, lexicalCandidate, StringComparison.Ordinal)
-                                         && not (Directory.Exists descriptorPath)
-                                         && stream.CanSeek ->
-                                    // Force seekable-file metadata acquisition before
-                                    // handing the descriptor to the copy boundary. This
-                                    // rejects directories and streams such as FIFOs; the
-                                    // FG-228 claim deliberately does not cover hard links,
-                                    // device nodes, or mount substitution.
-                                    stream.Length |> ignore
-                                    Ok stream
-                                | _ ->
+                                try
+                                    let descriptorPath = $"/proc/self/fd/{descriptor}"
+
+                                    match physicalPath descriptorPath with
+                                    | Some openedPath
+                                        when String.Equals(openedPath, lexicalCandidate, StringComparison.Ordinal)
+                                             && not (Directory.Exists descriptorPath)
+                                             && stream.CanSeek ->
+                                        // Force seekable-file metadata acquisition before
+                                        // handing the descriptor to the copy boundary. This
+                                        // rejects directories and streams such as FIFOs; the
+                                        // FG-228 claim deliberately does not cover hard links,
+                                        // device nodes, or mount substitution.
+                                        stream.Length |> ignore
+                                        Ok stream
+                                    | _ ->
+                                        stream.Dispose()
+                                        Error "selected path is a symbolic link, non-seekable file, or escaped object"
+                                with ex ->
+                                    // Once FileStream owns the SafeFileHandle it is the
+                                    // resource boundary. Dispose the stream itself if
+                                    // descriptor validation or metadata acquisition fails.
                                     stream.Dispose()
-                                    Error "selected path is a symbolic link, non-seekable file, or escaped object"
+                                    Error $"selected path descriptor is unreadable ({ex.GetType().Name})"
                             with ex ->
+                                // Construction failed before ownership transferred.
                                 handle.Dispose()
                                 Error $"selected path descriptor is unreadable ({ex.GetType().Name})"
             with ex ->
