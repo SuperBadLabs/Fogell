@@ -2642,7 +2642,10 @@ let stashSymlinkContainment =
                     "link//child", []
                     "link/value.txt", [ "link/value.txt" ]
                     "link/*", [ "link/*" ]
-                    "link/**", [ "link/**" ] ] do
+                    "link/**", [ "link/**" ]
+                    "link/**", [ "**" ]
+                    "link/**", [ "link/**/*" ]
+                    "link/**", [ "**/?*" ] ] do
                   let root = tempRoot ()
                   let workspace = Path.Combine(root, "workspace")
                   let outside = Path.Combine(root, "outside")
@@ -2655,6 +2658,33 @@ let stashSymlinkContainment =
                   | Error problem -> failtestf "%s unexpectedly selected the link: %s" pattern problem.Describe
                   | Ok(saved, false) -> Expect.isEmpty saved $"{pattern}: no ordinary file matched"
                   | Ok(_, true) -> failtest "an inert non-cancelled save reported cancellation"
+
+              for partialExclude in [ "link/*/**"; "link//**"; "link/**/" ] do
+                  let root = tempRoot ()
+                  let workspace = Path.Combine(root, "workspace")
+                  let outside = Path.Combine(root, "outside")
+                  let store = StashStore.under (Path.Combine(root, "controller"))
+                  Directory.CreateDirectory workspace |> ignore
+                  write (Path.Combine(outside, "value.txt")) "outside"
+                  Directory.CreateSymbolicLink(Path.Combine(workspace, "link"), outside) |> ignore
+
+                  match
+                      Stash.save
+                          store
+                          "build-1"
+                          workspace
+                          "partial-exclude"
+                          [ "link/**" ]
+                          [ partialExclude ]
+                          false
+                          (fun () -> false)
+                  with
+                  | Ok result -> failtestf "%s suppressed link refusal: %A" partialExclude result
+                  | Error problem ->
+                      Expect.stringContains
+                          problem.Describe
+                          "stash refuses selected path ‘link’"
+                          $"{partialExclude} does not exclude every direct child, so the directory link remains selected"
           }
 
           test "directory descent is bound to descriptors across pathname replacement" {

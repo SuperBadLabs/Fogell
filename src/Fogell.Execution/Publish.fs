@@ -1076,6 +1076,59 @@ module Stash =
 
             matches 0 0
 
+    /// Whether one exclude covers every possible file below this directory.
+    /// Ordinary excludes such as `foo` apply only to files, while `foo/**`,
+    /// `foo/**/*`, `foo/**/?*`, and global `**` all describe every non-empty
+    /// descendant path. Consume the known directory prefix as an Ant automaton,
+    /// then require a universal remainder: one or more `**` segments, optionally
+    /// followed by one all-star segment. An all-star segment before `**` is not
+    /// universal because it requires an additional descendant component.
+    let private patternExcludesAllDescendants (pattern: string) (relative: string) =
+        let normalized = pattern.Replace('\\', '/').Trim()
+
+        if Path.IsPathRooted normalized then
+            false
+        else
+            // Keep empty components aligned with compileGlobRegex: doubled and
+            // trailing separators are significant and match no normal file path.
+            let patternSegments = normalized.Split('/', StringSplitOptions.None)
+            let relativeSegments = relative.Split('/', StringSplitOptions.RemoveEmptyEntries)
+            let reachable = Collections.Generic.HashSet<int * int>()
+            let remainders = Collections.Generic.HashSet<int>()
+
+            let rec consume patternIndex relativeIndex =
+                if reachable.Add((patternIndex, relativeIndex)) then
+                    if relativeIndex = relativeSegments.Length then
+                        remainders.Add patternIndex |> ignore
+                        if patternIndex < patternSegments.Length && patternSegments.[patternIndex] = "**" then
+                            consume (patternIndex + 1) relativeIndex
+                    elif patternIndex < patternSegments.Length then
+                        if patternSegments.[patternIndex] = "**" then
+                            consume (patternIndex + 1) relativeIndex
+                            consume patternIndex (relativeIndex + 1)
+                        elif segmentMatches patternSegments.[patternIndex] relativeSegments.[relativeIndex] then
+                            consume (patternIndex + 1) (relativeIndex + 1)
+
+            consume 0 0
+
+            remainders
+            |> Seq.exists (fun patternIndex ->
+                let remaining = patternSegments.[patternIndex..]
+                let prefixLength =
+                    remaining |> Array.takeWhile ((=) "**") |> Array.length
+
+                let terminalMatchesEveryName (segment: string) =
+                    let stars = segment |> Seq.filter ((=) '*') |> Seq.length
+                    let questions = segment |> Seq.filter ((=) '?') |> Seq.length
+                    stars > 0
+                    && questions <= 1
+                    && segment |> Seq.forall (fun character -> character = '*' || character = '?')
+
+                prefixLength > 0
+                && (prefixLength = remaining.Length
+                    || (prefixLength = remaining.Length - 1
+                        && terminalMatchesEveryName remaining.[prefixLength])))
+
     /// Enumerate only physical workspace directories. Link targets are never
     /// entered: selected file links and selected directory prefixes become a
     /// named refusal at their lexical path, while unselected links are ignored.
@@ -1106,13 +1159,7 @@ module Stash =
         let includeMatchers = includes |> List.map (Publish.compileGlobMatcher false)
         let excludeMatchers = excludes |> List.map (Publish.compileGlobMatcher false)
         let directoryExcludeMatchers =
-            excludes
-            |> List.choose (fun pattern ->
-                let normalized = pattern.Replace('\\', '/').Trim()
-                if normalized.EndsWith("/**", StringComparison.Ordinal) then
-                    Some(Publish.compileGlobMatcher false (normalized.Substring(0, normalized.Length - 3)))
-                else
-                    None)
+            excludes |> List.map patternExcludesAllDescendants
         let files = Collections.Generic.List<string>()
         let pending = Collections.Generic.Stack<Microsoft.Win32.SafeHandles.SafeFileHandle * string>()
         let mutable problem: SaveProblem option = None
