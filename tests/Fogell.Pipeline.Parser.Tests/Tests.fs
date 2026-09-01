@@ -1117,6 +1117,62 @@ let structure =
                   Expect.equal e.Code MalformedSyntax $"{label}: duplicate section is an admission refusal"
           }
 
+          test "FG-132 a duplicate top-level options section is refused" {
+              // MEASURED on Jenkins 2.568.1, UNPROVEN by receipt (FG-129: a
+              // compile-shaped refusal cannot seal one): two top-level `options { }`
+              // blocks, both holding valid directives, give `Multiple occurrences of
+              // the options section` — refused on cardinality alone, before anything
+              // runs. The guard counts sections, not their contents, so the
+              // empty-first form falls under the same rule by construction.
+              let topTwoNonempty =
+                  "pipeline {\n  agent any\n  options { timestamps() }\n  options { disableConcurrentBuilds() }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              let topEmptyFirst =
+                  "pipeline {\n  agent any\n  options { }\n  options { timestamps() }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
+
+              for label, source in
+                  [ "two non-empty", topTwoNonempty; "empty then non-empty", topEmptyFirst ] do
+                  let e = err source
+                  Expect.equal e.Code MalformedSyntax $"{label}: duplicate options section is an admission refusal"
+                  Expect.stringContains
+                      e.Message
+                      "multiple occurrences of the `options` section"
+                      $"{label}: the refusal names the duplicated section"
+                  // The guard runs after the section collection, so the position is
+                  // the pipeline block's closing brace — coarser than Jenkins, which
+                  // names the duplicate's own line (`WorkflowScript: 4:`). The same
+                  // shape as every FG-014 duplicate-section guard; pinned exactly so
+                  // a position regression cannot hide behind a vacuous >0 check.
+                  Expect.equal e.Position.Line 6L $"{label}: the refusal position is the collection point"
+                  Expect.equal e.Position.Column 1L $"{label}: at the closing brace's column"
+          }
+
+          test "FG-132 one options block per scope stays admitted" {
+              // The legal shape five corpus files use: one pipeline-level block plus
+              // one stage-level block. The cardinality guard is per scope and must
+              // not see this pair as a repeat.
+              let src =
+                  "pipeline {\n  agent any\n  options { timestamps() }\n  stages {\n    stage('a') {\n      options { timeout(time: 1, unit: 'MINUTES') }\n      steps { echo 'x' }\n    }\n  }\n}"
+
+              let p = ok src
+              Expect.equal p.Options.Length 1 "the pipeline block keeps its single directive"
+              Expect.equal p.Stages.[0].Options.Length 1 "the stage block keeps its single directive"
+          }
+
+          test "FG-132 duplicate stage-level options still concatenate" {
+              // Deliberately unguarded: stage-scope duplication has no Jenkins
+              // measurement, and refusing without one risks rejecting a pipeline
+              // Jenkins accepts. Concatenation keeps every directive visible to the
+              // FG-053 validators, which is what makes the repeat detectable at all.
+              // If this test starts failing because stage duplicates are refused,
+              // that refusal needs its own measurement first.
+              let src =
+                  "pipeline {\n  agent any\n  stages {\n    stage('a') {\n      options { timeout(time: 1, unit: 'MINUTES') }\n      options { timeout(time: 2, unit: 'MINUTES') }\n      steps { echo 'x' }\n    }\n  }\n}"
+
+              let p = ok src
+              Expect.equal p.Stages.[0].Options.Length 2 "both stage-level directives survive into the IR"
+          }
+
           test "FG-014 tools require a Jenkins-measured newline or semicolon between entries" {
               let newline =
                   "pipeline {\n  agent any\n  tools {\n    maven 'm3'\n    jdk 'j8'\n  }\n  stages { stage('a') { steps { echo 'x' } } }\n}"
