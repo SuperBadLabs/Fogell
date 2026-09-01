@@ -1293,7 +1293,15 @@ let private pipelineParser: P<Pipeline> =
                    >>= rejectingDuplicateSections "agent" (function TopAgent _ -> true | _ -> false)
                    >>= rejectingDuplicateSections "tools" (function TopTools _ -> true | _ -> false)
                    >>= rejectingDuplicateSections "stages" (function TopStages _ -> true | _ -> false)
-                   >>= rejectingDuplicateSections "post" (function TopPost _ -> true | _ -> false)))
+                   >>= rejectingDuplicateSections "post" (function TopPost _ -> true | _ -> false)
+                   // FG-132. MEASURED on Jenkins 2.568.1, UNPROVEN by receipt (FG-129: a
+                   // compile-shaped refusal cannot seal one): two top-level `options { }`
+                   // blocks, both holding valid directives, give `Multiple occurrences of
+                   // the options section` and the model is refused on cardinality alone.
+                   // Guard the TOP level only: a stage-level pair is legal (five corpus
+                   // files carry pipeline+stage), and a duplicate STAGE `options` has no
+                   // measurement yet.
+                   >>= rejectingDuplicateSections "options" (function TopOptions _ -> true | _ -> false)))
     .>>. manyChars anyChar
     |>> fun ((capturedPreamble, sections), capturedEpilogue) ->
             let pick f = sections |> List.tryPick f
@@ -1307,15 +1315,13 @@ let private pipelineParser: P<Pipeline> =
                         | _ -> None))
                     Set.empty
               Tools = defaultArg (pick (function TopTools t -> Some t | _ -> None)) []
-            // EVERY `options` SECTION, not the first. `pick` is `tryPick`, so a
-            // second `options { }` block was invisible: `options { buildDiscarder(...) }`
-            // followed by `options { retry(2) }` parsed as the first alone, and the
-            // FG-053 refusal never saw the directive it exists to catch — Fogell ran
-            // a build Jenkins rejects. This is the same first-vs-all mistake this
-            // file already fixed one level down, where `tryFind` over the ENTRIES of
-            // one block accepted `timestamps(); timestamps(false)`; the section level
-            // kept it. Collecting them concatenated also preserves the duplicate for
-            // the arg validators, which is what makes the repeat detectable at all.
+            // A duplicate top-level `options` section is REFUSED at collection
+            // (FG-132), so at most one reaches this projection. `collect` stays
+            // rather than a first-match `pick`: if the guard were ever removed,
+            // `pick` would silently revert to the first-vs-all mistake where a
+            // second block's directives — including the ones the FG-053 refusal
+            // exists to catch — vanished without a word, while `collect` keeps
+            // every directive visible to the validators.
               Options = sections |> List.collect (function TopOptions o -> o | _ -> [])
               Parameters = defaultArg (pick (function TopParameters p -> Some p | _ -> None)) []
               Triggers = defaultArg (pick (function TopTriggers t -> Some t | _ -> None)) []
