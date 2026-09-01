@@ -71,9 +71,17 @@ for project in "${test_projects[@]}"; do
   # redirected (HeMan does). Remove terminal decoration, then count summary
   # MARKERS rather than lines: a failure and a forged success on one physical
   # line are still two summaries and must refuse.
-  sed $'s/\033\\[[0-9;?]*[ -\\/]*[@-~]//g' "$full_log" >"$normalized_log"
+  #
+  # Every text tool on this boundary is pinned to LC_ALL=C: the bracket ranges
+  # in this strip collate by locale, and under a collating UTF-8 locale
+  # (en_US.UTF-8, GNU sed 4.9) they match nothing, escapes survive, and the
+  # summary check below refuses genuine successes. C also makes the tools
+  # byte-oriented, so raw test output that is not valid UTF-8 cannot make a
+  # pattern silently stop matching. Only these tool invocations are pinned —
+  # the test processes themselves keep the caller's locale.
+  LC_ALL=C sed $'s/\033\\[[0-9;?]*[ -\\/]*[@-~]//g' "$full_log" >"$normalized_log"
   summary_markers="$(
-    awk '
+    LC_ALL=C awk '
       {
         rest = $0
         while ((position = index(rest, "EXPECTO! ")) != 0) {
@@ -99,10 +107,13 @@ for project in "${test_projects[@]}"; do
   # One marker exists. Extract its semantic summary through Expecto's explicit
   # terminator; a marker without a well-formed terminator is a non-success below.
   mapfile -t summaries < <(
-    sed -E -n 's/^.*(EXPECTO! .*(Success|Failure)!).*$/\1/p' "$normalized_log"
+    LC_ALL=C sed -E -n 's/^.*(EXPECTO! .*(Success|Failure)!).*$/\1/p' "$normalized_log"
   )
   summary="${summaries[0]:-}"
-  summary_pattern='^EXPECTO! ([0-9]{1,9}) tests? run .* ([0-9]{1,9}) passed, ([0-9]{1,9}) ignored, ([0-9]{1,9}) failed, ([0-9]{1,9}) errored\. Success!$'
+  # Digits are enumerated rather than written as ranges: [[ =~ ]] cannot be
+  # locale-pinned per invocation, and a range expression collates by the
+  # ambient locale. An enumerated bracket expression has no collation at all.
+  summary_pattern='^EXPECTO! ([0123456789]{1,9}) tests? run .* ([0123456789]{1,9}) passed, ([0123456789]{1,9}) ignored, ([0123456789]{1,9}) failed, ([0123456789]{1,9}) errored\. Success!$'
   summary_valid=false
   if [[ "$summary" =~ $summary_pattern ]]; then
     total=$((10#${BASH_REMATCH[1]}))

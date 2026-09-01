@@ -29,6 +29,7 @@ make_case() {
     'printf "%s\n" "$3" >> "$FAKE_PROJECT_LOG"' \
     'case "${FAKE_TEST_MODE:-success}" in' \
     '  success) printf "\\033[37m[12:34:56 INF] EXPECTO! \\033[36m1\\033[37m test run in 00:00:00.0010000 - 1 passed, 0 ignored, 0 failed, 0 errored. \\033[36mSuccess!\\033[37m <Expecto>\\033[0m\\n" ;;' \
+    '  binary-envelope) printf "\\377\\033[37m[12:34:56 INF] EXPECTO! \\033[36m1\\033[37m test run in 00:00:00.0010000 - 1 passed, 0 ignored, 0 failed, 0 errored. \\033[36mSuccess!\\033[37m <Expecto>\\033[0m\\n" ;;' \
     '  no-summary) echo "test process returned without a summary" ;;' \
     '  zero) echo "EXPECTO! 0 tests run in 00:00:00 - 0 passed, 0 ignored, 0 failed, 0 errored. Success!" ;;' \
     '  failed) echo "EXPECTO! 1 test run in 00:00:00 - 0 passed, 0 ignored, 1 failed, 0 errored. Failure!" ;;' \
@@ -159,6 +160,90 @@ expect_refusal "$malformed_repo" malformed-summary "produced a non-success Expec
 inconsistent_repo="$(make_case inconsistent-summary)"
 expect_refusal "$inconsistent_repo" inconsistent-summary "produced a non-success Expecto summary" env FAKE_TEST_MODE=inconsistent
 
+# The summary boundary must not inherit the ambient locale (FG-230). Under a
+# collating UTF-8 locale, GNU sed's collation-dependent bracket ranges in the
+# ANSI strip matched nothing, escapes survived normalization, and the runner
+# refused every genuine success. Run the runner under explicitly named locales
+# on both sides of that defect: a UTF-8 locale must accept a genuine success
+# AND still refuse bad summaries (acceptance alone would pass a mutant that
+# skips validation under UTF-8), and the C locale must accept the same success.
+# A machine with no UTF-8 locale cannot execute this arm and must say so, not
+# pass silently.
+#
+# Locale names do not identify the hazard: glibc's C.UTF-8 collates by
+# codepoint, so bracket ranges behave exactly as in C there and an arm run
+# under it proves nothing about this defect class. Probe each available UTF-8
+# locale directly — under a divergently collating one, the range [@-~] fails
+# to match plain ASCII — and prefer a divergent locale over a merely UTF-8 one.
+utf8_locale=""
+utf8_fallback=""
+while IFS= read -r locale_candidate; do
+  case "$locale_candidate" in
+    *.UTF-8 | *.UTF-8@* | *.utf8 | *.utf8@*) ;;
+    *) continue ;;
+  esac
+  [ -n "$utf8_fallback" ] || utf8_fallback="$locale_candidate"
+  if [ -n "$(printf 'A' | LC_ALL="$locale_candidate" sed 's/[@-~]//' 2>/dev/null)" ]; then
+    utf8_locale="$locale_candidate"
+    break
+  fi
+done < <(locale -a 2>/dev/null)
+if [ -z "$utf8_locale" ]; then
+  utf8_locale="$utf8_fallback"
+  [ -z "$utf8_locale" ] || echo \
+    "NOTE: no divergently collating UTF-8 locale on this host; locale arm runs under $utf8_locale, which cannot exercise the range-collation regression"
+fi
+[ -n "$utf8_locale" ] || {
+  echo "FAIL: no UTF-8 locale available to prove locale independence"
+  exit 1
+}
+utf8_accept_repo="$(make_case utf8-locale-accept)"
+utf8_accept_rc=0
+run_runner "$utf8_accept_repo" env LC_ALL="$utf8_locale" LANG="$utf8_locale" \
+  >"$LAB/utf8-locale-accept.log" 2>&1 || utf8_accept_rc=$?
+if [ "$utf8_accept_rc" -ne 0 ] || ! rg -q -F \
+  'tests/Canonical.Tests/Canonical.Tests.fsproj: EXPECTO!' \
+  "$LAB/utf8-locale-accept.log"; then
+  echo "FAIL: genuine success was refused under $utf8_locale"
+  cat "$LAB/utf8-locale-accept.log"
+  exit 1
+fi
+# A genuine success whose summary line also carries a byte that is not valid
+# UTF-8 (test output is arbitrary bytes). Under a UTF-8 locale an unpinned
+# extraction regex cannot match across that byte and would refuse the success;
+# the byte-oriented C-pinned boundary must accept it.
+utf8_binary_repo="$(make_case utf8-locale-binary-envelope)"
+utf8_binary_rc=0
+run_runner "$utf8_binary_repo" env LC_ALL="$utf8_locale" LANG="$utf8_locale" \
+  FAKE_TEST_MODE=binary-envelope \
+  >"$LAB/utf8-locale-binary-envelope.log" 2>&1 || utf8_binary_rc=$?
+if [ "$utf8_binary_rc" -ne 0 ] || ! rg -q -F \
+  'tests/Canonical.Tests/Canonical.Tests.fsproj: EXPECTO!' \
+  "$LAB/utf8-locale-binary-envelope.log"; then
+  echo "FAIL: success with a non-UTF-8 byte on the summary line was refused under $utf8_locale"
+  cat "$LAB/utf8-locale-binary-envelope.log"
+  exit 1
+fi
+utf8_failed_repo="$(make_case utf8-locale-failed)"
+expect_refusal "$utf8_failed_repo" utf8-locale-failed \
+  "produced a non-success Expecto summary" \
+  env LC_ALL="$utf8_locale" LANG="$utf8_locale" FAKE_TEST_MODE=failed
+utf8_same_line_repo="$(make_case utf8-locale-same-line-multiple)"
+expect_refusal "$utf8_same_line_repo" utf8-locale-same-line-multiple \
+  "produced multiple Expecto summaries" \
+  env LC_ALL="$utf8_locale" LANG="$utf8_locale" FAKE_TEST_MODE=same-line-multiple
+c_accept_repo="$(make_case c-locale-accept)"
+c_accept_rc=0
+run_runner "$c_accept_repo" env LC_ALL=C LANG=C \
+  >"$LAB/c-locale-accept.log" 2>&1 || c_accept_rc=$?
+if [ "$c_accept_rc" -ne 0 ] || ! rg -q -F \
+  'tests/Canonical.Tests/Canonical.Tests.fsproj: EXPECTO!' \
+  "$LAB/c-locale-accept.log"; then
+  echo "FAIL: genuine success was refused under LC_ALL=C"
+  cat "$LAB/c-locale-accept.log"
+  exit 1
+fi
+
 empty_repo="$(make_case empty-inventory)"
 (
   cd "$empty_repo"
@@ -198,4 +283,4 @@ if expect_refusal "$permissive_repo" permissive-control-check "test project fail
   exit 1
 fi
 
-echo "PROJECT TEST INVENTORY PROOF PASS: nested/mismatched projects identified; ambient Git selectors contained; inventory and summaries fail closed"
+echo "PROJECT TEST INVENTORY PROOF PASS: nested/mismatched projects identified; ambient Git selectors contained; inventory and summaries fail closed; summary boundary holds under named UTF-8 and C locales"
