@@ -320,6 +320,80 @@ let sourceExcerpts =
                   Expect.equal (rendered limits source) expected $"{label}: exact end-to-end diagnostic"
           } ]
 
+/// FG-121. An `options` entry must be a call. Jenkins' Declarative parser matches
+/// each entry as a method call and reports `Expected an option` for a bare
+/// identifier; this grammar parsed `timestamps` alone as a zero-argument step —
+/// indistinguishable from `timestamps()` in the IR — and ran the build.
+let bareOptionEntries =
+    let top options =
+        $"pipeline {{\n  agent any\n  options {{ {options} }}\n  stages {{ stage('a') {{ steps {{ echo 'x' }} }} }}\n}}"
+
+    let stage options =
+        $"pipeline {{\n  agent any\n  stages {{\n    stage('a') {{\n      options {{ {options} }}\n      steps {{ echo 'x' }}\n    }}\n  }}\n}}"
+
+    let refused label source name =
+        let e = err source
+        Expect.equal e.Code MalformedSyntax $"{label}: a bare option entry is an admission refusal"
+
+        Expect.stringContains
+            e.Message
+            $"options entry `{name}` is not a call: Jenkins reports `Expected an option`"
+            $"{label}: the refusal names the entry and Jenkins' own diagnostic"
+
+    testList
+        "FG-121 bare option entries"
+        [ test "a bare option name is refused at pipeline and stage scope" {
+              // The guard is by FORM, not by name: a Groovy bare identifier is a
+              // property read, never a method call, so no option name can be valid
+              // without parentheses, arguments or a block. MEASURED on Jenkins
+              // 2.568.1 for `timestamps` by FG-053's verifier; UNPROVEN by receipt
+              // (FG-129: a compile-shaped refusal seals none).
+              refused "top-level timestamps" (top "timestamps") "timestamps"
+              refused "stage-level timestamps" (stage "timestamps") "timestamps"
+              refused "top-level disableConcurrentBuilds" (top "disableConcurrentBuilds") "disableConcurrentBuilds"
+              refused "bare before a semicolon" (top "timestamps; skipDefaultCheckout()") "timestamps"
+              refused "bare against the closing brace" (top "timestamps}") "timestamps"
+              refused "bare with a trailing comment" (top "timestamps // stamp\n") "timestamps"
+              // A block comment is trivia too; the verifier found this form fail-open
+              // when the lookahead knew only the line-comment spelling.
+              refused "bare with a trailing block comment" (top "timestamps /* stamp */") "timestamps"
+              refused "bare with a block comment spanning lines" (top "timestamps /* one\n  two */\n  skipDefaultCheckout()") "timestamps"
+              refused "bare with a block comment and no space" (top "timestamps/* stamp */") "timestamps"
+              refused "bare after a valid entry" (top "skipDefaultCheckout()\n    timestamps\n  ") "timestamps"
+          }
+
+          test "call forms still reach the step grammar" {
+              // Parentheses, command-form arguments and a trailing block are all
+              // method calls in Groovy. The block form is deliberately ADMITTED here
+              // so the walker can refuse it with a named reason; refusing it in the
+              // grammar would collapse two different Jenkins diagnostics into one.
+              Expect.equal (ok (top "timestamps()")).Options.Length 1 "parenthesised zero-argument call"
+
+              Expect.equal
+                  (ok (top "timeout time: 1, unit: 'MINUTES'")).Options.Head.Named.Length
+                  2
+                  "command-form named arguments without parentheses"
+
+              Expect.equal (ok (top "timestamps(); skipDefaultCheckout()")).Options.Length 2 "two calls on one line"
+
+              let block = ok (top "timestamps { }")
+              Expect.isTrue block.Options.Head.HasBlock "a trailing block is a call, carried as HasBlock for the walker"
+
+              // A block comment between the name and its arguments is trivia Groovy
+              // discards; the guard must skip it rather than read it as a terminator,
+              // or a call Jenkins accepts is refused — measured by the verifier.
+              Expect.equal (ok (top "timestamps /* x */ ()")).Options.Length 1 "comment before the parentheses is still a call"
+              Expect.isTrue (ok (top "timestamps /* x */ { }")).Options.Head.HasBlock "comment before the block is still a call"
+
+              Expect.equal
+                  (ok (top "timeout /* x */ time: 1, unit: 'MINUTES'")).Options.Head.Named.Length
+                  2
+                  "comment before command-form arguments is still a call"
+
+              let stageBlock = ok (stage "timeout(time: 1, unit: 'MINUTES')")
+              Expect.equal stageBlock.Stages.Head.Options.Length 1 "stage-scope call"
+          } ]
+
 /// FG-004b. The fixed-seed generator is intentionally length-delimited and
 /// every generated source is guaranteed to be refused by the Declarative
 /// parser boundary. Some controls are valid scripted inputs, so this is a
@@ -1880,6 +1954,7 @@ let main argv =
             "Fogell.Pipeline.Parser"
             [ admissionLimits
               sourceExcerpts
+              bareOptionEntries
               admissionNegativeSweep
               declarativeDetection
               structure

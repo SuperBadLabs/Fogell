@@ -753,9 +753,24 @@ module Trace =
         let orderedTrace = order traceOnlyReplacements
 
         let canonical (line: TaggedLine) =
+            // FG-121. Under `options { timestamps() }` the engine's own stamp leads
+            // the line, and a replacement VALUE can occur inside it — an env value
+            // `2026` rewrote `[2026-08-03T…Z]` into `[${YEAR}-08-03T…Z]`, which the
+            // strip below no longer recognised, so the row kept a mangled prefix.
+            // Split the stamp off once, canonicalise the BODY only, and put the
+            // untouched stamp back: the strip and the coverage count downstream
+            // both still see the exact stamp. A build's own column-zero stamp on an
+            // undeclared pipeline is ordinary text and is not split.
+            let stamp, body =
+                if stripTimestamps then
+                    let body = timestampPrefix.Replace(line.Text, "")
+                    line.Text.Substring(0, line.Text.Length - body.Length), body
+                else
+                    "", line.Text
+
             let g =
                 orderedGlobal
-                |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) line.Text
+                |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) body
 
             // ENV values rewrite only on xtrace rows — engine-generated lines where
             // expansions actually appear. Ordinary output keeps its literals, which
@@ -771,7 +786,7 @@ module Trace =
                 else
                     g
 
-            { line with Text = text }
+            { line with Text = stamp + text }
 
         normaliseOutputInnerTaggedWhen stripTimestamps (lines |> Seq.map canonical)
 
