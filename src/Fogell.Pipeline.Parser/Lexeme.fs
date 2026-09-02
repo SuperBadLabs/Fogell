@@ -409,9 +409,12 @@ let endsExpression (c: char) =
 /// FG-141. Slashy spans are skipped too, when the position says slashy (see
 /// [endsExpression]): `def pattern = /}/` inside a `script { }` body counted
 /// the brace and ended the block early, rejecting the whole pipeline as
-/// `opaque section` — a false refusal of valid Groovy. An unclosed
-/// candidate span falls back to the ordinary single character, which is
-/// exactly the pre-FG-141 reading — the fix can only remove derailments.
+/// `opaque section` — a false refusal of valid Groovy. A candidate that reaches
+/// EOF falls back to the ordinary slash reading. A candidate that reaches a
+/// physical line ending is different: Groovy permits multiline slashies, but
+/// Fogell's current grammar does not model them, so balanced capture records a
+/// semantic refusal rather than splitting one Jenkins expression into later
+/// runnable grammar items.
 let balancedRaw (opening: char) (closing: char) : P<string> =
     let inner (stream: CharStream<ParserState>) =
         if stream.Peek() <> opening then
@@ -582,7 +585,7 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
 
                             stream.UserState.Refusal.Value <-
                                 Some(
-                                    "a slashy literal cannot cross a balanced physical line ending",
+                                    "multiline slashy literals are unsupported inside balanced regions",
                                     { Line = position.Line
                                       Column = position.Column }
                                 )
