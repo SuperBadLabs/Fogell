@@ -196,22 +196,96 @@ d=$(lab_with "$SEQ" truncated)
 head -3 "$SRC/$SEQ" > "$d"/*.receipt.txt
 expect_reject "a truncated receipt" "$d" "REFUSED"
 
-# 14. the RECOVERED provenance block is declared outside the seal (FG-128), so adding
-# one must NOT break verification. Stated as a test because it is a real hole and the
-# receipt says so in the file — an accepted, named limit, not an oversight.
-d=$(lab_with "$SEQ" recovered)
+# 14. FG-128. The RECOVERED provenance block is bound by its OWN line. Until FG-128
+# this arm asserted the OPPOSITE — that an added block is accepted, "declared
+# unsealed" — because that was the real hole, named in the receipt. It is closed now:
+# a block with no `recovered-seal:` line is refused.
+d=$(lab_with "$SEQ" recovered-unbound)
 python3 - "$d"/*.receipt.txt <<'PY'
 import sys
 p=sys.argv[1]; s=open(p).read()
-s=s.replace("VERDICT:", "RECOVERED: this case DIVERGED on an earlier attempt and did not reproduce.\n  fabricated\n\nVERDICT:", 1)
+s=s.replace("VERDICT:", "RECOVERED: this case DIVERGED on an earlier attempt and did not reproduce.\n    fabricated history\n\nVERDICT:", 1)
 open(p,"w").write(s)
 PY
 if cmp -s "$SRC/$SEQ" "$d"/*.receipt.txt; then
   echo "  FAIL: the RECOVERED block was never added — this arm would prove nothing"
   FAILED=1
 else
-  expect_accept "an ADDED RECOVERED block (FG-128, declared unsealed)" "$d"
+  expect_reject "an ADDED RECOVERED block with no recovered-seal line (FG-128)" "$d" "no recovered-seal line binds it"
 fi
+
+# 14.1 a correctly bound block is ACCEPTED. The line is sha256 over "seal=<this
+# receipt's content seal>\nrecovered=N\n" plus the entries joined by "\n" — the writer's
+# recipe, recomputed here so the arm cannot pass by copying a value out of the code
+# under test.
+bind_recovered() {
+  python3 - "$1" "$2" <<'PY'
+import sys, hashlib, re
+p, entry = sys.argv[1], sys.argv[2]; s=open(p).read()
+seal=re.search(r"^seal:\s+(\S+)$", s, re.M).group(1)
+h=hashlib.sha256(("seal="+seal+"\nrecovered=1\n"+entry).encode()).hexdigest()
+s=s.replace("\ncase-digest:", "\nrecovered-seal: "+h+"\ncase-digest:", 1)
+s=s.replace("VERDICT:", "RECOVERED: this case DIVERGED on an earlier attempt and did not reproduce.\n  The verdict below is from a re-run. What the earlier attempt showed:\n    "+entry+"\n\nVERDICT:", 1)
+open(p,"w").write(s)
+PY
+}
+ENTRY="attempt 1: DIVERGED (1) — result differs: jenkins=success fogell=failure"
+d=$(lab_with "$SEQ" recovered-bound); bind_recovered "$d"/*.receipt.txt "$ENTRY"
+grep -q '^recovered-seal: ' "$d"/*.receipt.txt || { echo "  FAIL: the recovered-seal line was never added — this arm would prove nothing"; FAILED=1; }
+expect_accept "a RECOVERED block bound by its recovered-seal line (FG-128)" "$d"
+
+# 14.2 an EDITED entry under a correct line: the content seal still matches, the
+# provenance does not — reported as its own class, not as a content mismatch.
+d=$(lab_with "$SEQ" recovered-edited); bind_recovered "$d"/*.receipt.txt "$ENTRY"
+sed -i 's/^    attempt 1: DIVERGED (1) — result differs.*/    attempt 1: PROVEN (nothing to see)/' "$d"/*.receipt.txt
+expect_reject "an EDITED entry inside a bound RECOVERED block" "$d" "PROVENANCE MISMATCH"
+
+# 14.3 the line DELETED from a bound receipt — the block is back to unbound.
+d=$(lab_with "$SEQ" recovered-line-deleted); bind_recovered "$d"/*.receipt.txt "$ENTRY"
+sed -i '/^recovered-seal: /d' "$d"/*.receipt.txt
+expect_reject "a bound RECOVERED block whose recovered-seal line was DELETED" "$d" "no recovered-seal line binds it"
+
+# 14.4 a recovered-seal line with NO block: a stray binding is refused too.
+d=$(lab_with "$SEQ" recovered-orphan-line)
+python3 - "$d"/*.receipt.txt <<'PY'
+import sys
+p=sys.argv[1]; s=open(p).read()
+s=s.replace("\ncase-digest:", "\nrecovered-seal: 0000000000000000000000000000000000000000000000000000000000000000\ncase-digest:", 1)
+open(p,"w").write(s)
+PY
+expect_reject "a recovered-seal line with NO RECOVERED block" "$d" "no RECOVERED provenance block"
+
+# 14.5 a SECOND RECOVERED block appended after a bound one: the hash binds the first
+# block's entries, so without a once-only rule the second was unbound history that
+# verified — found by both reviewers on the first PR.
+d=$(lab_with "$SEQ" recovered-second-block); bind_recovered "$d"/*.receipt.txt "$ENTRY"
+python3 - "$d"/*.receipt.txt <<'PY'
+import sys
+p=sys.argv[1]; s=open(p).read()
+s=s.replace("VERDICT:", "RECOVERED: this case DIVERGED on an earlier attempt and did not reproduce.\n    unbound history\n\nVERDICT:", 1)
+open(p,"w").write(s)
+PY
+[ "$(grep -c '^RECOVERED:' "$d"/*.receipt.txt)" = 2 ] || { echo "  FAIL: the second RECOVERED block was never added — this arm would prove nothing"; FAILED=1; }
+expect_reject "a SECOND RECOVERED block appended after a bound one" "$d" "RECOVERED:"
+
+# 14.6 a bound block TRANSPLANTED from another receipt: the donor's line and block are
+# genuine and agree with each other, but the hash also binds the donor's content seal,
+# so in any other receipt it is a provenance mismatch. Over the entries alone it was the
+# same value in every receipt — found by Codex on the second PR.
+d=$(lab_with "$SEQ" recovered-donor); bind_recovered "$d"/*.receipt.txt "$ENTRY"
+t=$(lab_with "$MULTI" recovered-transplant)
+python3 - "$d"/*.receipt.txt "$t"/*.receipt.txt <<'PY'
+import sys, re
+donor=open(sys.argv[1]).read(); p=sys.argv[2]; s=open(p).read()
+line=re.search(r"^recovered-seal: .*$", donor, re.M).group(0)
+block=re.search(r"^RECOVERED:.*?(?=\n\n)", donor, re.M|re.S).group(0)
+s=s.replace("\ncase-digest:", "\n"+line+"\ncase-digest:", 1)
+s=s.replace("VERDICT:", block+"\n\nVERDICT:", 1)
+open(p,"w").write(s)
+PY
+{ grep -q '^recovered-seal: ' "$t"/*.receipt.txt && grep -q '^RECOVERED:' "$t"/*.receipt.txt; } || { echo "  FAIL: the transplant never landed — this arm would prove nothing"; FAILED=1; }
+expect_reject "a bound RECOVERED block TRANSPLANTED from another receipt" "$t" "PROVENANCE MISMATCH"
+
 
 # 14b. A FLIPPED sealed-output MODE. That field decides HOW the verifier hashes, so
 # leaving it unsealed put a key under the mat: a `sequence` receipt whose output happens
