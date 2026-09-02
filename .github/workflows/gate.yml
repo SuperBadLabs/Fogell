@@ -21,8 +21,9 @@
 #           the partition itself (every gate block inside one listed lane), so
 #           a hole in it fails that lane and with it the aggregate below
 #   drills  the postgres-backed proofs that were always separate workflow steps
-#           (runnable controller and its FG-231 hang proof, backup/restore,
-#           migration rollback); they need the built tree, so this job builds it
+#           (runnable controller, its FG-232 inotify bound and FG-231 hang
+#           proof, backup/restore, migration rollback); they need the built
+#           tree, so this job builds it
 #   gate    the one required check, aggregating all of the above; it fails
 #           unless every job succeeded, and is the only name branch protection
 #           looks for
@@ -331,7 +332,8 @@ jobs:
     # they still need that tree, so this job builds it the way README says to.
     runs-on: ubuntu-latest
     # The four proofs measured 40 s + 43 s + 12 s + 91 s on run 33571850280 (the
-    # FG-231 step and this job's own restore+build are UNMEASURED hosted; the
+    # FG-231 and FG-232 steps and this job's own restore+build are UNMEASURED
+    # hosted; FG-232 ran in about 1 s on HeMan; the
     # dependency-lock proof's cold restore and build inside that run's single
     # gate step took 75 s, the nearest measurement). Without
     # a bound GitHub's default is 360 minutes, and two runs on 2026-09-01
@@ -424,6 +426,25 @@ jobs:
           docker pull "$FOGELL_FG224_CONTROLLER_IMAGE" >/dev/null
           ./scripts/prove-runnable-controller.sh
 
+      - name: controller inotify footprint is bounded regardless of cwd (FG-232)
+        # ASP.NET Core roots the host's file provider at the cwd and watches
+        # that whole tree, one inotify watch per directory, to reload
+        # appsettings.json. Started from a ~268k-directory home on 2026-09-02
+        # the controller held 65,361 of the user's 65,536 watches and every
+        # other FileSystemWatcher for the user failed. The controller now pins
+        # its content root to the apphost directory and reads configuration
+        # once. The checker is shown to fail first (an unreadable process is
+        # unavailable rather than zero; a stand-in at the bound is refused and
+        # one under it passes with its count named), then the real controller
+        # is started from a 256-subdirectory tree against the service database
+        # and must hold fewer than 64 watches. About 1 s on HeMan.
+        timeout-minutes: 10
+        env:
+          FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
+          FOGELL_PG_PORT: 55440
+          FOGELL_BUILD_CONFIGURATION: Release
+        run: ./scripts/prove-fg232-controller-inotify.sh
+
       - name: runnable controller proof cannot hang (FG-231)
         # Plants six stalls in byte-mutated copies of the proof above — a
         # controller ignoring SIGTERM, a silent HTTP socket, a Run.Host that
@@ -432,7 +453,7 @@ jobs:
         # the container only after the identity budget expired — and requires
         # each to become a named refusal within budget
         # with no controller left behind. This is the checker being shown to
-        # fail; the two steps above are it passing.
+        # fail; the two FG-224 steps above are it passing.
         timeout-minutes: 10
         env:
           FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}

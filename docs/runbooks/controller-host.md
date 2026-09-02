@@ -162,6 +162,16 @@ Export the required variables above, then start the controller:
 src/Fogell.Controller.Host/bin/Release/net10.0/Fogell.Controller.Host
 ```
 
+The directory the controller is started from is not an input. Its content
+root is the apphost's own directory and configuration is read once at
+startup, so the process holds no inotify watches (FG-232). Earlier builds
+rooted at the working directory and watched it recursively for configuration
+reloads: started from a large home directory, one controller held nearly all
+of the user's `fs.inotify.max_user_watches`, and every other file watcher for
+that user then failed. `scripts/prove-fg232-controller-inotify.sh` starts the
+built controller from a 256-subdirectory tree and requires fewer than 64
+watches.
+
 Use `/health/live` for HTTP-process liveness; it remains 200 when dependencies
 are unavailable. `/health/ready` lazily checks database reachability, runtime
 database capabilities, both execution launchers, and then state-root

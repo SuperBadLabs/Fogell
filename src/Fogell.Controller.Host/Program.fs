@@ -55,6 +55,27 @@ let internal databaseStartupErrorForStores
         maintenanceStore.RuntimeDatabaseIdentity
         runtimeStore.RuntimeCapabilities
 
+/// FG-232. The content root is the apphost's own directory, never the current
+/// working directory, and configuration files are read once rather than
+/// watched. ASP.NET Core's default roots its file provider at the cwd and, to
+/// reload appsettings.json on change, watches that whole tree with one inotify
+/// watch per directory: launched from a home directory of ~268k directories,
+/// the controller held 65,361 of the user's 65,536 inotify watches and every other
+/// FileSystemWatcher for the user then failed. Every setting the controller acts
+/// on is read from its environment by ControllerConfig at startup, so nothing
+/// consumes a reload; with the watch disabled the host holds no inotify instance
+/// at all, whatever directory it is started from. The reload switch is the
+/// host's own `hostBuilder:reloadConfigOnChange` key, supplied as a host
+/// argument so that no environment variable is needed; the process's real argv
+/// is not host input and stays ignored.
+let internal contentRootPath = AppContext.BaseDirectory
+
+[<Literal>]
+let internal reloadConfigOnChangeSwitch = "--hostBuilder:reloadConfigOnChange=false"
+
+let internal hostOptions () =
+    WebApplicationOptions(ContentRootPath = contentRootPath, Args = [| reloadConfigOnChangeSwitch |])
+
 [<EntryPoint>]
 let main _ =
     match ControllerConfig.load () with
@@ -99,7 +120,7 @@ let main _ =
                         | Ok value -> value
                         | Error error -> invalidOp error
 
-                    let builder = WebApplication.CreateBuilder()
+                    let builder = WebApplication.CreateBuilder(hostOptions ())
                     builder.WebHost.UseUrls config.ListenUrl |> ignore
                     builder.WebHost.ConfigureKestrel(fun options ->
                         // The public limit is on DECODED pipeline bytes. Kestrel's
