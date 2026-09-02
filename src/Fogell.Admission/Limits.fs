@@ -105,7 +105,9 @@ module Limits =
             let mutable sawLineBreak = false
             let mutable lastWasBlockClose = false
             let mutable awaitingControlParen = false
+            let mutable statementBracePending = false
             let controlParens = System.Collections.Generic.Stack<bool>()
+            let statementBraces = System.Collections.Generic.Stack<bool>()
             let mutable expressionNesting = 0
             let mutable err = None
             let mutable i = 0
@@ -127,8 +129,11 @@ module Limits =
                 sawLineBreak <- true
                 // Command-form arguments must begin on their head's line.
                 // Do not reset HaveOperand generally: Fogell permits a binary
-                // operator after newline trivia (`a\n / b`). A completed block
-                // is the narrow seam where a slash may begin the next statement.
+                // operator after newline trivia (`a\n / b`). Only a brace
+                // proven by a control/body keyword may start a new statement
+                // here. A closure is an expression operand, so
+                // resetting after its `}` would let the following division
+                // masquerade as a slashy and hide structural depth.
                 commandHead <- false
 
                 if lastWasBlockClose && expressionNesting = 0 then
@@ -198,6 +203,21 @@ module Limits =
                         sawLineBreak <- false
                         lastWasBlockClose <- false
                 else
+                    let commentStarts =
+                        c = '/'
+                        && i + 1 < source.Length
+                        && (source.[i + 1] = '/' || source.[i + 1] = '*')
+
+                    if
+                        c <> ' '
+                        && c <> '\t'
+                        && c <> '\r'
+                        && c <> '\n'
+                        && c <> '{'
+                        && not commentStarts
+                    then
+                        statementBracePending <- false
+
                     match c with
                     | ' ' | '\t' -> ()
                     | '\r' | '\n' -> markTriviaBreak ()
@@ -275,6 +295,11 @@ module Limits =
                         else
                             // A brace begins either a statement body or an
                             // expression literal; both allow an operand first.
+                            // Only a control/else body is proven to be the
+                            // former. A bare or trailing closure can itself
+                            // occur at a statement head and must stay unknown.
+                            statementBraces.Push statementBracePending
+                            statementBracePending <- false
                             needsOperand <- true
                             statementHead <- true
                             commandHead <- false
@@ -295,6 +320,7 @@ module Limits =
                                 // body, not division by the condition.
                                 needsOperand <- true
                                 statementHead <- true
+                                statementBracePending <- true
                             else
                                 needsOperand <- false
                                 statementHead <- false
@@ -306,9 +332,12 @@ module Limits =
                             statementHead <- false
                             lastWasBlockClose <- false
                         else
+                            let closedStatementBrace =
+                                if statementBraces.Count = 0 then false else statementBraces.Pop()
+
                             needsOperand <- false
                             statementHead <- false
-                            lastWasBlockClose <- true
+                            lastWasBlockClose <- closedStatementBrace
 
                         commandHead <- false
                         sawLineBreak <- false
@@ -344,13 +373,16 @@ module Limits =
                                 needsOperand <- true
                                 statementHead <- false
                                 commandHead <- false
-                            | "else" ->
+                            | "else" | "try" | "finally" | "do" ->
                                 // An unbraced else body begins a statement just
-                                // like a completed control header.
+                                // like a completed control header. The other
+                                // body keywords likewise prove a following
+                                // brace is a statement block.
                                 awaitingControlParen <- false
                                 needsOperand <- true
                                 statementHead <- true
                                 commandHead <- false
+                                statementBracePending <- true
                             | "def" | "final" | "new" | "instanceof" | "as" ->
                                 awaitingControlParen <- false
                                 needsOperand <- true

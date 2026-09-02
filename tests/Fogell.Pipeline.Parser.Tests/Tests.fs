@@ -393,6 +393,51 @@ let admissionLimits =
                   | Error e -> Expect.equal e.Code TooManyNodes "slashy content cannot hide subsequent nodes"
                   | Ok _ -> failtest "a quote inside a slashy bypassed the node precheck"
 
+              let hiddenDepth =
+                  String.replicate (Limits.defaults.MaxDepth + 16) "("
+                  + "2"
+                  + String.replicate (Limits.defaults.MaxDepth + 16) ")"
+
+              for newlineLabel, newline in [ "LF", "\n"; "CRLF", "\r\n"; "bare CR", "\r" ] do
+                  for closureLabel, closure in
+                      [ "assigned", "def x = { -> 4 }"
+                        "bare", "{ -> 4 }"
+                        "trailing", "foo { -> 4 }" ] do
+                      for triviaLabel, trivia in [ "plain", ""; "commented", " /* trivia */" ] do
+                          let closureDivisionDepth = closure + trivia + newline + " / " + hiddenDepth + " / 2"
+                          let label = $"{closureLabel}/{triviaLabel}/{newlineLabel}"
+
+                          match Limits.precheck Limits.defaults closureDivisionDepth with
+                          | Error e ->
+                              Expect.equal e.Code NestingTooDeep $"{label}: division after a closure cannot hide depth"
+                          | Ok _ -> failtestf "%s: a closure operand bypassed the structural precheck" label
+
+                          match Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults closureDivisionDepth with
+                          | Error e -> Expect.equal e.Code NestingTooDeep $"{label}: Groovy retains the closure guard"
+                          | Ok _ -> failtestf "%s: the Groovy route admitted depth hidden after a closure" label
+
+                  let scriptBody =
+                      "pipeline { agent any stages { stage('B') { steps { script { def x = { -> 4 }"
+                      + newline
+                      + " / "
+                      + hiddenDepth
+                      + " / 2 } } } } } }"
+
+                  match Parser.parseWithLimits Limits.defaults scriptBody with
+                  | Error e -> Expect.equal e.Code NestingTooDeep $"{newlineLabel}: Declarative script body retains guard"
+                  | Ok _ -> failtestf "%s: Declarative admitted depth hidden after a closure" newlineLabel
+
+                  let lowDepth = { limits with MaxDepth = 2; MaxScalarBytes = 100 }
+                  let statementSlashy = "if (true) {} /* trivia */" + newline + "/(((2)))/"
+
+                  Expect.isOk
+                      (Limits.precheck lowDepth statementSlashy)
+                      $"{newlineLabel}: a proven statement block permits a following slashy"
+
+                  Expect.isOk
+                      (Fogell.Groovy.Parser.Parser.parseWithLimits lowDepth statementSlashy)
+                      $"{newlineLabel}: the Groovy route preserves the statement-block/slashy control"
+
               let elseDepth = "if (true) {} else /a'aa/; if (((true))) {}"
 
               match Limits.precheck { limits with MaxDepth = 2; MaxScalarBytes = 100 } elseDepth with
