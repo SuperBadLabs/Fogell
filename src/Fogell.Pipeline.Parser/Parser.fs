@@ -20,24 +20,22 @@ let private stepParser, private stepRef = createParserForwardedToRef<Step, Parse
 
 /// A named argument, carrying whether its value was SINGLE-quoted (literal) so a step
 /// that renders text itself can honour Groovy's quoting. See Step.LiteralNamedArgs.
-/// FG-138. A raw (unquoted) argument value: single- and double-quoted SPANS consumed
-/// whole via `Lexeme.stringSpanRaw`, slashy spans consumed whole when position says
-/// slashy (FG-141), everything else scanned to a stop character. Dollar-slashy
-/// stays unparsed everywhere.
+/// FG-138. A raw (unquoted) argument value: ordinary/triple-quoted spans,
+/// comments and position-decided slashies are consumed whole; everything else
+/// is scanned to a stop character. Dollar-slashy stays unparsed everywhere.
 ///
 /// The stop set can therefore include `;` without truncating an expression that
 /// carries one INSIDE a literal — `env.PART + '; echo b'`, `"printf 'x\"; …'"`,
-/// and since FG-141 a slashy `/; …/` too. Five review rounds on FG-134 each found another string
-/// form a hand-rolled character test had missed, and two of the intermediate
-/// states produced SILENT no-ops. `Lexeme` knew MORE forms than the hand-rolled test
-/// did, and asking it beat enumerating again.
+/// and since FG-141 a slashy `/; …/` too. The lexical state moves only forward:
+/// reconstructing it with character lookbehind misread comments containing
+/// `/*` and operator runs longer than two characters.
 let private rawArgValue (stops: char list) : P<string> =
-    // A `/` IS DIVISION OR A SLASHY OPENER, DECIDED BY POSITION — see `slash`
-    // below. The history that shaped the rule, kept because both failure
-    // directions actually shipped:
+    // A `/` IS DIVISION OR A SLASHY OPENER, DECIDED BY FORWARD TOKEN CONTEXT.
+    // The history that shaped the rule is kept because both failure directions
+    // actually shipped:
     //
     // Treating EVERY `/` as a span opener was an APPROVAL BYPASS. `input
-    // message: 10 / 2` — plain division — sent `/` into `stringSpanRaw`, which
+    // message: 10 / 2` — plain division — sent `/` into the old delimiter scanner, which
     // found no closing delimiter, so the argument failed to parse; `steps` is
     // wrapped in `attempt`, that failure backtracked, the section became
     // EMPTY, and the build reported SUCCESS having never published a prompt.
@@ -50,121 +48,172 @@ let private rawArgValue (stops: char list) : P<string> =
     //
     // Treating NO `/` as an opener — the interim FG-141 state — truncated a
     // slashy at any stop character inside it and refused valid pipelines.
-    // The position test (one character of lookbehind) is what lets both
-    // scenario W and the slashy gates Z2/Z3 hold at once.
-    let plain: P<string> =
-        many1Satisfy (fun c -> not (List.contains c stops) && c <> '\'' && c <> '"' && c <> '/')
+    // The forward scanner starts exactly where the surrounding argument grammar
+    // has established an operand position. Comments preserve the token state;
+    // quoted/slashy spans become expression enders; ordinary operators update it.
+    let scan (stream: CharStream<ParserState>) =
+        let start = stream.Index
+        let mutable lastSig = ' '
+        let mutable priorSig = ' '
+        let mutable thirdSig = ' '
+        let mutable lastSigIndex = -1L
+        let mutable priorSigIndex = -1L
+        let mutable finished = false
+        let mutable failed = false
+        let mutable scalarRefusal = None
 
-    let quotedSpan: P<string> = attempt (lookAhead (anyOf "'\"") >>. stringSpanRaw)
+        let recordSignificant c index =
+            thirdSig <- priorSig
+            priorSig <- lastSig
+            priorSigIndex <- lastSigIndex
+            lastSig <- c
+            lastSigIndex <- index
 
-    // FG-141. The context this scanner "does not have" is one character of
-    // lookbehind: a `/` after something that can END an expression is division
-    // and stays ordinary text — `input message: 10 / 2` is scenario W's
-    // approval bypass and must never change reading. A `/` with NO left
-    // operand can only open a slashy, whose span is consumed whole so a stop
-    // character inside it (`/a}b/`, `/a;b/`) cannot truncate the argument.
-    // The span must CLOSE ON ITS OWN LINE — a raw argument is line-bounded,
-    // and letting a candidate span hunt across lines for a closer would
-    // swallow later statements on a typo. Unterminated falls back to the
-    // ordinary character, the exact pre-FG-141 reading.
-    let slash: P<string> =
-        fun stream ->
-            if stream.Peek() <> '/' then
-                Reply(Error, expected "'/'")
-            else
-                let here = stream.Index
-                let peekAt (index: int64) =
-                    stream.Seek index
-                    stream.Peek()
+        let recordRawScalar (contentStart: int64) (contentLength: int) (finish: int64) =
+            stream.Seek contentStart
+            let content = stream.Read contentLength
+            stream.Seek finish
 
-                // Find the previous lexical character, treating block comments
-                // as trivia. Looking only at the comment's closing slash turns
-                // `x /* c */ / y` into a slashy even though Groovy sees division.
-                // Each skipped comment is immediately before this slash, so the
-                // total backward work is bounded by the raw argument's length.
-                let previousSignificant (before: int64) =
-                    let mutable i = before
-                    let mutable result = None
+            if scalarRefusal.IsNone then
+                let scalarBytes = System.Text.Encoding.UTF8.GetByteCount content
 
-                    while result.IsNone && i >= 0L do
-                        let ch = peekAt i
+                if scalarBytes > stream.UserState.Limits.MaxScalarBytes then
+                    let position = stream.Position
 
-                        if ch = ' ' || ch = '\t' then
-                            i <- i - 1L
-                        elif ch = '/' && i > 0L && peekAt (i - 1L) = '*' then
-                            let mutable opener = -1L
-                            let mutable j = i - 2L
+                    scalarRefusal <-
+                        Some(
+                            AdmissionError.at
+                                ScalarTooLong
+                                position.Line
+                                position.Column
+                                $"string literal exceeds {stream.UserState.Limits.MaxScalarBytes} UTF-8 bytes"
+                        )
 
-                            while opener < 0L && j > 0L do
-                                if peekAt (j - 1L) = '/' && peekAt j = '*' then
-                                    opener <- j - 1L
-                                else
-                                    j <- j - 1L
+        while not finished && not failed && not stream.IsEndOfStream do
+            let c = stream.Peek()
 
-                            if opener >= 0L then
-                                i <- opener - 1L
-                            else
-                                result <- Some(ch, i)
-                        else
-                            result <- Some(ch, i)
+            if List.contains c stops then
+                finished <- true
+            elif c = '\'' || c = '"' then
+                let literalStart = stream.Index
+                let q = c
+                let tripled = stream.Peek(1) = q && stream.Peek(2) = q
+                let delimiterLength = if tripled then 3 else 1
+                stream.Skip delimiterLength
+                let mutable closed = false
 
-                    result, i - 1L
+                while not closed && not failed && not stream.IsEndOfStream do
+                    let d = stream.Peek()
 
-                let last, beforePrior = previousSignificant (here - 1L)
-                let prior, _ = previousSignificant beforePrior
-                let lastSig, lastSigIndex = defaultArg last (' ', -1L)
-                let priorSig, priorSigIndex = defaultArg prior (' ', -1L)
+                    if d = '\\' then
+                        stream.Skip()
+                        if not stream.IsEndOfStream then stream.Skip()
+                    elif tripled && d = q && stream.Peek(1) = q && stream.Peek(2) = q then
+                        stream.Skip(3)
+                        closed <- true
+                    elif not tripled && d = q then
+                        stream.Skip()
+                        closed <- true
+                    elif not tripled && (d = '\r' || d = '\n') then
+                        failed <- true
+                    else
+                        stream.Skip()
 
-                stream.Seek here
+                if closed then
+                    let finish = stream.Index
+                    let contentStart = literalStart + int64 delimiterLength
+                    let contentLength = int (finish - literalStart - int64 (2 * delimiterLength))
+                    recordRawScalar contentStart contentLength finish
+                    recordSignificant q (finish - 1L)
+                else
+                    failed <- true
+            elif c = '/' && stream.Peek(1) = '/' then
+                stream.Skip(2)
+
+                while
+                    not stream.IsEndOfStream
+                    && stream.Peek() <> '\r'
+                    && stream.Peek() <> '\n'
+                    do
+                    stream.Skip()
+            elif c = '/' && stream.Peek(1) = '*' then
+                stream.Skip(2)
+                let mutable closed = false
+
+                while not closed && not stream.IsEndOfStream do
+                    if stream.Peek() = '*' && stream.Peek(1) = '/' then
+                        stream.Skip(2)
+                        closed <- true
+                    else
+                        stream.Skip()
+
+                if not closed then failed <- true
+            elif c = '/' then
+                let slashIndex = stream.Index
 
                 let postfixDivision =
                     ((lastSig = '+' && priorSig = '+')
                      || (lastSig = '-' && priorSig = '-'))
                     && lastSigIndex = priorSigIndex + 1L
+                    && Lexeme.endsExpression thirdSig
 
                 if Lexeme.endsExpression lastSig || postfixDivision then
                     stream.Skip()
-                    Reply("/") // division: the ordinary character
+                    recordSignificant '/' slashIndex
                 else
-                    let sb = System.Text.StringBuilder()
-                    sb.Append(stream.Read(1)) |> ignore
+                    stream.Skip()
+                    let contentStart = stream.Index
                     let mutable closed = false
-                    let mutable bad = false
+                    let mutable searching = true
 
-                    while not closed && not bad && not stream.IsEndOfStream do
+                    while not closed && searching && not stream.IsEndOfStream do
                         let d = stream.Peek()
 
                         if d = '\\' && stream.Peek(1) = '/' then
-                            sb.Append(stream.Read(2)) |> ignore
+                            stream.Skip(2)
                         elif d = '/' then
-                            sb.Append(stream.Read(1)) |> ignore
+                            stream.Skip()
                             closed <- true
                         elif d = '\r' || d = '\n' then
-                            bad <- true
+                            searching <- false
                         else
-                            sb.Append(stream.Read(1)) |> ignore
+                            stream.Skip()
 
                     if closed then
-                        recordScalarContent (sb.ToString().Substring(1, sb.Length - 2)) stream
-                        Reply(sb.ToString())
+                        let finish = stream.Index
+                        let contentLength = int (finish - contentStart - 1L)
+                        recordRawScalar contentStart contentLength finish
+                        recordSignificant '\'' (finish - 1L)
                     else
-                        stream.Seek here
-                        stream.Skip()
-                        Reply("/")
+                        stream.Seek(slashIndex + 1L)
+                        recordSignificant '/' slashIndex
+            else
+                let index = stream.Index
+                stream.Skip()
 
-    let chunks = commentSpanRaw <|> quotedSpan <|> plain <|> slash
+                if c <> ' ' && c <> '\t' && c <> '\r' && c <> '\n' then
+                    recordSignificant c index
 
-    // At the start of an argument value the surrounding call grammar has
-    // already established an operand position. That context is stronger than
-    // character lookbehind (`echo /x/` otherwise sees the `o` in `echo` and
-    // mistakes the literal for division). Capture and bound that first slashy,
-    // then let the ordinary raw-expression scanner consume any continuation.
-    attempt (
-        pipe2
-            (lookAhead (pchar '/' .>> notFollowedBy (anyOf "/*")) >>. stringSpanRaw)
-            (manyStrings chunks)
-            (+))
-    <|> many1Strings chunks
+        let finish = stream.Index
+
+        if failed then
+            stream.Seek start
+            Reply(Error, expected "a raw argument value")
+        elif finish = start then
+            Reply(Error, expected "a raw argument value")
+        else
+            let length = int (finish - start)
+            stream.Seek start
+            let raw = stream.Read length
+
+            match scalarRefusal with
+            | Some refusal ->
+                stream.UserState <- { stream.UserState with ScalarRefusal = Some refusal }
+            | None -> ()
+
+            Reply(raw)
+
+    scan
 
 /// A string literal wins ONLY when it is the WHOLE value.
 ///
@@ -333,8 +382,8 @@ let private positionalArg: P<string> =
 /// the story about the other one; a stale rationale reads as intent and makes the
 /// code look like the anomaly.
 ///
-/// What holds now: literal SPANS are consumed whole by `Lexeme.stringSpanRaw`, so
-/// `;` is a stop character for the raw text BETWEEN literals and never truncates
+/// What holds now: the forward raw scanner consumes literal/comment spans whole,
+/// so `;` is a stop character for the raw text BETWEEN spans and never truncates
 /// an expression carrying one inside quotes. Receipt
 /// `steps-semicolon-after-raw-arg`, proven to discriminate by mutation.
 

@@ -442,7 +442,8 @@ let admissionLimits =
               // of the slashy/division decision, not disposable trivia.
               for label, expression in
                   [ "inline separated unary", "x - - /aaaaa/"
-                    "comment-separated unary", "x - /* c */ - /aaaaa/" ] do
+                    "comment-separated unary", "x - /* c */ - /aaaaa/"
+                    "three-character operator run", "x--- /aaaaa/" ] do
                   expectPipelineScalar
                       label
                       ("pipeline { agent any stages { stage('B') { steps { echo "
@@ -468,22 +469,25 @@ let admissionLimits =
                        + newline
                        + "- /aaaaa/]) } } } }")
 
-              let namedUnaryValue = "[x - - /aaaaa/]"
+              for unaryLabel, namedUnaryValue in
+                  [ "separated unary", "[x - - /aaaaa/]"
+                    "operator run", "[x--- /aaaaa/]" ] do
+                  for kind, condition in
+                      [ "branch", "branch pattern: " + namedUnaryValue
+                        "tag", "tag pattern: " + namedUnaryValue
+                        "changeset", "changeset pattern: " + namedUnaryValue
+                        "changelog", "changelog pattern: " + namedUnaryValue
+                        "triggeredBy", "triggeredBy cause: " + namedUnaryValue
+                        "environment", "environment name: " + namedUnaryValue + ", value: 'x'"
+                        "equals", "equals expected: " + namedUnaryValue + ", actual: 1"
+                        "changeRequest", "changeRequest target: " + namedUnaryValue ] do
+                      expectPipelineScalar
+                          (kind + " named " + unaryLabel)
+                          ("pipeline { agent any stages { stage('B') { when { "
+                           + condition
+                           + " } steps { echo 'x' } } } }")
 
-              for kind, condition in
-                  [ "branch", "branch pattern: " + namedUnaryValue
-                    "tag", "tag pattern: " + namedUnaryValue
-                    "changeset", "changeset pattern: " + namedUnaryValue
-                    "changelog", "changelog pattern: " + namedUnaryValue
-                    "triggeredBy", "triggeredBy cause: " + namedUnaryValue
-                    "environment", "environment name: " + namedUnaryValue + ", value: 'x'"
-                    "equals", "equals expected: " + namedUnaryValue + ", actual: 1"
-                    "changeRequest", "changeRequest target: " + namedUnaryValue ] do
-                  expectPipelineScalar
-                      (kind + " named balanced unary")
-                      ("pipeline { agent any stages { stage('B') { when { "
-                       + condition
-                       + " } steps { echo 'x' } } } }")
+              expectGroovyScalarTooLong "three-character operator-run interpretation" "x--- /aaaaa/"
 
               // A block comment does not erase the operand before it. Every
               // slash here is division, so the long identifier is not a scalar.
@@ -491,7 +495,11 @@ let admissionLimits =
                   [ "inline", "x /* c */ / aaaaa / b"
                     "paren", "(x /* c */ / aaaaa / b)"
                     "named", "message: x /* c */ / aaaaa / b"
-                    "paren named", "(message: x /* c */ / aaaaa / b)" ] do
+                    "paren named", "(message: x /* c */ / aaaaa / b)"
+                    "inline inner opener", "x /* /* */ / aaaaa / b"
+                    "paren inner opener", "(x /* /* */ / aaaaa / b)"
+                    "named inner opener", "message: x /* /* */ / aaaaa / b"
+                    "paren named inner opener", "(message: x /* /* */ / aaaaa / b)" ] do
                   let source =
                       "pipeline { agent any stages { stage('B') { steps { echo "
                       + argument
@@ -503,7 +511,9 @@ let admissionLimits =
 
               for condition in
                   [ "branch pattern: x /* c */ / aaaaa / b"
-                    "branch(pattern: x /* c */ / aaaaa / b)" ] do
+                    "branch(pattern: x /* c */ / aaaaa / b)"
+                    "branch pattern: x /* /* */ / aaaaa / b"
+                    "branch(pattern: x /* /* */ / aaaaa / b)" ] do
                   let source =
                       "pipeline { agent any stages { stage('B') { when { "
                       + condition
@@ -512,6 +522,30 @@ let admissionLimits =
                   match Parser.parseWithLimits limits source with
                   | Ok _ -> ()
                   | Error e -> failtestf "named when comment-trivia division became a scalar: %A" e
+
+              let innerOpenerSlashy = "x + /* a /* */ /aaaaa/"
+
+              for label, argument in
+                  [ "inline", innerOpenerSlashy
+                    "paren", "(" + innerOpenerSlashy + ")"
+                    "named", "message: " + innerOpenerSlashy
+                    "paren named", "(message: " + innerOpenerSlashy + ")" ] do
+                  expectPipelineScalar
+                      (label + " non-nesting comment slashy")
+                      ("pipeline { agent any stages { stage('B') { steps { echo "
+                       + argument
+                       + " } } } }")
+
+              for condition in
+                  [ "branch pattern: " + innerOpenerSlashy
+                    "branch(pattern: " + innerOpenerSlashy + ")" ] do
+                  expectPipelineScalar
+                      "named when non-nesting comment slashy"
+                      ("pipeline { agent any stages { stage('B') { when { "
+                       + condition
+                       + " } steps { echo 'x' } } } }")
+
+              expectGroovyScalarTooLong "non-nesting comment slashy interpretation" innerOpenerSlashy
 
               // FParsec accepts LF, CRLF and bare CR as physical line endings.
               // Raw balanced capture must end comments on the same three forms.

@@ -358,155 +358,6 @@ let stringLiteralBare: P<string> =
 
 let stringLiteral: P<string> = lexeme stringLiteralBare
 
-/// The RAW SOURCE of a Groovy string literal — the FIVE forms this lexer knows
-/// (triple-single, triple-double, single, double, slashy), escapes respected.
-/// NOT dollar-slashy `$/.../$`, which nothing here parses; a `;` inside one is
-/// unprotected. "every form" is what this said, and it was never true.
-///
-/// FG-138. `Lexeme` is where this codebase knows what a Groovy string IS —
-/// [stringLiteral] above enumerates triple-single, triple-double, single, double
-/// and slashy. [balancedRaw] below skips `'`, `"`, comments AND — since FG-141
-/// landed 2026-08-18 — position-decided slashy spans. The gap this paragraph
-/// used to document as OPEN: a slashy carrying the active closing delimiter,
-/// such as `/a}b/` inside a `when { expression { … } }`, was counted as a brace
-/// and ended the balanced region early (measured then against the host as
-/// `no_stages: pipeline declares no stages`, the whole structure collapsed).
-/// PROVEN NOW by receipts `when-slashy-brace` and `script-slashy-brace`, the
-/// receipts this note promised would arrive with the fix. FG-140. `Parser` needed the same knowledge to
-/// stop a raw argument at a `;` OUTSIDE a literal, and grew its own character
-/// scanner instead. Five review rounds found five forms it had missed, and two
-/// intermediate states produced SILENT no-ops — a build exiting 0 with no
-/// `step-started` and no files.
-///
-/// Three scanners disagreeing about what a string is was the defect; the
-/// semicolons only exposed it. This is the one implementation, here, where the
-/// other two already live.
-///
-/// Returns the literal's SOURCE including delimiters, because a caller
-/// reassembling a raw expression needs the text back exactly as written —
-/// [stringLiteral] decodes, which is the wrong thing for that job.
-let stringSpanRaw: P<string> =
-    let scan (stream: CharStream<ParserState>) =
-        let start = stream.Index
-        let c = stream.Peek()
-
-        let readDelimited (q: char) (tripled: bool) =
-            let closer = if tripled then System.String(q, 3) else string q
-            for _ in 1 .. closer.Length do stream.Skip()
-            let mutable closed = false
-            let mutable unterminated = false
-
-            while not closed && not stream.IsEndOfStream do
-                let d = stream.Peek()
-
-                if q = '/' && d = '\\' && stream.Peek(1) = '/' then
-                    stream.Skip(2)
-                elif q <> '/' && d = '\\' then
-                    stream.Skip()
-                    if not stream.IsEndOfStream then stream.Skip()
-                elif not tripled && d = q then
-                    stream.Skip()
-                    closed <- true
-                elif tripled && stream.PeekString 3 = closer then
-                    for _ in 1 .. 3 do stream.Skip()
-                    closed <- true
-                elif d = '\n' && not tripled && q <> '/' then
-                    // AN UNTERMINATED SINGLE-LINE LITERAL IS AN ERROR, not a span.
-                    // This used to report `closed`, so the caller received raw source
-                    // MISSING ITS CLOSING DELIMITER while the contract above promises
-                    // the delimiters are included. A malformed literal was then partly
-                    // accepted instead of failing closed — the same preference for
-                    // guessing over refusing that FG-143/145/147 each had to remove.
-                    unterminated <- true
-                    closed <- true
-                else
-                    stream.Skip()
-
-            closed && not unterminated
-
-        if c = '\'' || c = '"' then
-            let tripled = stream.PeekString 3 = System.String(c, 3)
-            if readDelimited c tripled then
-                let len = int (stream.Index - start)
-                stream.Seek start
-                let raw = stream.Read len
-                let delimiterLength = if tripled then 3 else 1
-                recordScalarContent (raw.Substring(delimiterLength, raw.Length - (2 * delimiterLength))) stream
-                Reply(raw)
-            else
-                stream.Seek start
-                Reply(Error, expected "a terminated string literal")
-        elif c = '/' then
-            // SLASHY, ASSUMED NOT DIVISION. This scanner treats any `/` as a slashy
-            // opener and does NOT decide between a literal and a division operator.
-            //
-            // NO CALLER SENDS `/` HERE ANY MORE. `rawArgValue` reaches this only
-            // after `'` or `"`; it once excluded `/` from plain text and tried
-            // here, and that was an APPROVAL BYPASS — `input message: 10 / 2` found
-            // no closing delimiter, the argument failed to parse, `steps` backtracked
-            // to EMPTY, and the build reported success with no prompt published
-            // (FG-141, approval-lane scenario W). This comment described that
-            // removed caller path for a round after it was gone.
-            if readDelimited '/' false then
-                let len = int (stream.Index - start)
-                stream.Seek start
-                let raw = stream.Read len
-                recordScalarContent (raw.Substring(1, raw.Length - 2)) stream
-                Reply(raw)
-            else
-                stream.Seek start
-                Reply(Error, expected "a terminated slashy string")
-        else
-            Reply(Error, expected "a string literal")
-
-    scan
-
-/// Raw comment source for scanners that retain an unevaluated expression.
-/// Literal-looking bytes inside comments must never reach string/span parsers.
-let commentSpanRaw: P<string> =
-    let scan (stream: CharStream<ParserState>) =
-        let start = stream.Index
-
-        if stream.PeekString 2 = "//" then
-            stream.Skip(2)
-
-            while
-                not stream.IsEndOfStream
-                && stream.Peek() <> '\r'
-                && stream.Peek() <> '\n'
-                do
-                stream.Skip()
-
-            let length = int (stream.Index - start)
-            stream.Seek start
-            Reply(stream.Read length)
-        elif stream.PeekString 2 = "/*" then
-            stream.Skip(2)
-            let mutable closed = false
-
-            while not closed && not stream.IsEndOfStream do
-                if stream.PeekString 2 = "*/" then
-                    stream.Skip(2)
-                    closed <- true
-                else
-                    stream.Skip()
-
-            if closed then
-                let length = int (stream.Index - start)
-                stream.Seek start
-                Reply(stream.Read length)
-            else
-                // The `/*` prefix has committed this text to a comment. Rewinding
-                // here lets an enclosing alternative retry the same suffix as a
-                // slashy, and a row of unterminated openers then scans the tail
-                // once per opener. Leave the stream at EOF and fail fatally: an
-                // unterminated comment has no valid raw-expression reading.
-                Reply(FatalError, expected "a terminated block comment")
-        else
-            Reply(Error, expected "a comment")
-
-    scan
-
 // --- balanced raw capture --------------------------------------------------
 
 /// FG-141. Can the character ending the text so far END an expression? This is
@@ -545,10 +396,12 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
             // in the body is a slashy opener
             let mutable lastSig = ' '
             let mutable priorSig = ' '
+            let mutable thirdSig = ' '
             let mutable lastSigIndex = -1L
             let mutable priorSigIndex = -1L
 
             let recordSignificant c index =
+                thirdSig <- priorSig
                 priorSig <- lastSig
                 priorSigIndex <- lastSigIndex
                 lastSig <- c
@@ -636,7 +489,8 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                         endsExpression lastSig
                         || (((lastSig = '+' && priorSig = '+')
                              || (lastSig = '-' && priorSig = '-'))
-                            && lastSigIndex = priorSigIndex + 1L)
+                            && lastSigIndex = priorSigIndex + 1L
+                            && endsExpression thirdSig)
                     )
                 then
                     // FG-141: no left operand, so this `/` can only open a
