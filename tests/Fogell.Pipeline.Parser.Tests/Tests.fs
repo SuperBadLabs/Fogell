@@ -584,7 +584,15 @@ let admissionLimits =
                         "stage opaque block",
                         "pipeline { agent any stages { stage('B') { steps { echo 'x' } mystery { /x"
                         + newline
-                        + "} y/ } } } }" ]
+                        + "} y/ } } } }"
+                        "nested top-level opaque block",
+                        "pipeline { agent any stages { stage('B') { steps { echo 'x' } } } libraries { outer { /x"
+                        + newline
+                        + "} y/ } } }"
+                        "nested stage opaque block",
+                        "pipeline { agent any stages { stage('B') { steps { echo 'x' } mystery { outer { /x"
+                        + newline
+                        + "} y/ } } } } }" ]
 
                   for contextLabel, source in opaqueSlashyContexts do
                       match Parser.parseWithLimits Limits.defaults source with
@@ -603,6 +611,29 @@ let admissionLimits =
                       match Parser.parseWithLimits Limits.defaults source with
                       | Ok _ -> ()
                       | Error e -> failtestf "same-line slashy failed in %s: %A" contextLabel e
+
+                  let balancedArgumentSplits =
+                      [ "named bracket",
+                        "pipeline { agent any stages { stage('B') { steps { echo message: [/x"
+                        + newline
+                        + "] y/] } } } }"
+                        "positional bracket",
+                        "pipeline { agent any stages { stage('B') { steps { echo [/x"
+                        + newline
+                        + "] y/] } } } }"
+                        "named parenthesis",
+                        "pipeline { agent any stages { stage('B') { steps { echo message: (/x"
+                        + newline
+                        + ") y/) } } } }" ]
+
+                  for contextLabel, source in balancedArgumentSplits do
+                      match Parser.parseWithLimits Limits.defaults source with
+                      | Error e ->
+                          Expect.equal
+                              e.Code
+                              MalformedSyntax
+                              $"{newlineLabel} refuses the balanced {contextLabel} split"
+                      | Ok _ -> failtestf "%s admitted a balanced %s split" newlineLabel contextLabel
 
                   let lowScalar =
                       { Limits.defaults with

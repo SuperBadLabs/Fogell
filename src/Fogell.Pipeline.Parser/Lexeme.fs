@@ -568,6 +568,25 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                         stream.Seek finish
                         recordScalarContent rawContent stream
                         recordSignificant '\'' (finish - 1L) // a completed literal ends an expression
+                    elif crossedLine then
+                        // This position has no left operand, so the slash cannot
+                        // be division. Rewinding it to an ordinary character lets
+                        // a collection or opaque block close at the line break and
+                        // the following text become another grammar item — a
+                        // compile-invalid Jenkinsfile admitted as runnable work.
+                        // Persist the semantic refusal through enclosing attempts,
+                        // matching rawArgValue's same-boundary contract.
+                        if stream.UserState.Refusal.Value.IsNone then
+                            let position = stream.Position
+
+                            stream.UserState.Refusal.Value <-
+                                Some(
+                                    "a slashy literal cannot cross a balanced physical line ending",
+                                    { Line = position.Line
+                                      Column = position.Column }
+                                )
+
+                        failed <- true
                     else
                         stream.Seek(before)
                         stream.Skip()
