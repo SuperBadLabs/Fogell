@@ -200,6 +200,25 @@ let private rawArgValue (allowCommandHead: bool) (stops: char list) : P<string> 
                         recordRawScalar contentStart contentLength finish
                         recordSignificant '\'' (finish - 1L)
                         commandHead <- false
+                    elif
+                        not stream.IsEndOfStream
+                        && (stream.Peek() = '\r' || stream.Peek() = '\n')
+                    then
+                        // At an operand position this slash can only begin a
+                        // slashy literal. Falling back at a physical line ending
+                        // lets the enclosing grammar reinterpret the next line as
+                        // another step/condition and bypass this value's limits.
+                        if stream.UserState.Refusal.Value.IsNone then
+                            let position = stream.Position
+
+                            stream.UserState.Refusal.Value <-
+                                Some(
+                                    "a slashy literal cannot cross a raw physical line ending",
+                                    { Line = position.Line
+                                      Column = position.Column }
+                                )
+
+                        failed <- true
                     else
                         stream.Seek(slashIndex + 1L)
                         recordSignificant '/' slashIndex

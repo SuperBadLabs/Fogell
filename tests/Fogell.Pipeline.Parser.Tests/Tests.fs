@@ -572,6 +572,33 @@ let admissionLimits =
                   | Error e -> Expect.equal e.Code MalformedSyntax $"{newlineLabel} terminates a slashy literal"
                   | Ok _ -> failtestf "a slashy literal crossed a raw %s boundary" newlineLabel
 
+                  let lowScalar =
+                      { Limits.defaults with
+                          MaxScalarBytes = 4 }
+
+                  let multilineSlashyContexts =
+                      [ "positional raw",
+                        "pipeline { agent any stages { stage('B') { steps { echo /aaaaa"
+                        + newline
+                        + "tail/ } } } }"
+                        "named raw",
+                        "pipeline { agent any stages { stage('B') { steps { echo message: /aaaaa"
+                        + newline
+                        + "tail/ } } } }"
+                        "named when",
+                        "pipeline { agent any stages { stage('B') { when { branch pattern: /aaaaa"
+                        + newline
+                        + "tail/ } steps { echo 'x' } } } }" ]
+
+                  for contextLabel, source in multilineSlashyContexts do
+                      match Parser.parseWithLimits lowScalar source with
+                      | Error e ->
+                          Expect.equal
+                              e.Code
+                              MalformedSyntax
+                              $"raw {newlineLabel} terminates the {contextLabel} slashy-shaped value"
+                      | Ok _ -> failtestf "%s %s slashy value split across grammar items" newlineLabel contextLabel
+
                   for firstLabel, firstStep in [ "positional raw", "echo x"; "named raw", "echo message: x" ] do
                       let adjacentSteps =
                           "pipeline { agent any stages { stage('B') { steps { "
@@ -2764,11 +2791,12 @@ let slashyPosition =
               Expect.equal (Pipeline.totalSteps p) 1 "when body intact"
           }
 
-          test "an unterminated slashy candidate falls back to the old reading" {
-              // The `/` stays ordinary text; the argument still parses and the
-              // nonsense fails loudly at evaluation, not silently at parse.
-              let p = ok (steps "        echo env.A + / 2")
-              Expect.equal (Pipeline.totalSteps p) 1 "no cross-line hunt"
+          test "an operand-position slashy candidate cannot fall through at a line ending" {
+              // After `+`, `/` cannot be binary division. Letting it become raw
+              // text at the generated line ending permits the next line to be
+              // reinterpreted as a separate step and bypasses value admission.
+              let e = err (steps "        echo env.A + / 2")
+              Expect.equal e.Code MalformedSyntax "the unterminated operand is refused at admission"
           } ]
 
 [<EntryPoint>]
