@@ -30,6 +30,12 @@ let private initialState (limits: Limits) =
       MaxScalarBytes = limits.MaxScalarBytes
       ScalarRefusal = None }
 
+let private keepFirstScalarRefusal state refusal =
+    if state.ScalarRefusal.IsNone then
+        { state with ScalarRefusal = Some refusal }
+    else
+        state
+
 /// FG-190/192. Consume trivia FORWARD so a non-nesting block comment is read
 /// with the same boundaries as Groovy. Record a break only when trivia was
 /// actually consumed; zero-width `ws` must not overwrite the last token's
@@ -255,7 +261,7 @@ let private slashy: P<Expr> =
                                 position.Column
                                 $"string literal exceeds {state.MaxScalarBytes} UTF-8 bytes"
 
-                        setUserState { state with ScalarRefusal = Some refusal } >>% EStr decoded
+                        setUserState (keepFirstScalarRefusal state refusal) >>% EStr decoded
                     else
                         preturn (EStr decoded)))
 

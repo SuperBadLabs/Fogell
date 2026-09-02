@@ -266,7 +266,7 @@ let private rawArgValue (allowCommandHead: bool) (stops: char list) : P<string> 
 
             match scalarRefusal with
             | Some refusal ->
-                stream.UserState <- { stream.UserState with ScalarRefusal = Some refusal }
+                stream.UserState <- keepFirstScalarRefusal stream.UserState refusal
             | None -> ()
 
             Reply(raw)
@@ -625,7 +625,7 @@ let private rebaseAdmissionError (strippedColumns: int64) (origin: FParsec.Posit
 
     { error with Position = rebased }
 
-let private parenArgs (origin: FParsec.Position) (raw: string) =
+let private parenArgs (stateBeforeScan: ParserState) (origin: FParsec.Position) (raw: string) =
     let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
 
     getUserState
@@ -638,13 +638,19 @@ let private parenArgs (origin: FParsec.Position) (raw: string) =
                 match parsedState.ScalarRefusal, parsedState.Refusal.Value with
                 | Some e, _ ->
                     let rebased = rebaseAdmissionError 1L origin e
-                    setUserState { outerState with ScalarRefusal = Some rebased } >>% v
+                    // balancedRaw has already scanned this same body and may
+                    // hold a provisional end-of-span position. Replace that
+                    // provisional value with the inner grammar's exact one,
+                    // while retaining any refusal that preceded the call.
+                    setUserState (keepFirstScalarRefusal stateBeforeScan rebased) >>% v
                 | None, Some(message, _) -> refuse message
                 | None, None -> preturn v
             | ParserResult.Failure(_, _, failedState) ->
                 match failedState.ScalarRefusal, failedState.Refusal.Value with
                 | Some e, _ ->
                     let rebased = rebaseAdmissionError 1L origin e
+                    // This branch fails immediately, so the enclosing attempt
+                    // rewinds the immutable scalar state with the parse.
                     setUserState { outerState with ScalarRefusal = Some rebased }
                     >>. fail "parenthesised argument contains an overlong scalar"
                 | None, Some(message, _) -> refuse message
@@ -653,14 +659,31 @@ let private parenArgs (origin: FParsec.Position) (raw: string) =
 
 let private hspaces: P<unit> = skipMany (anyOf " \t")
 
-let private validateNestedScalar (strippedColumns: int64) (origin: FParsec.Position) (source: string) : P<string> =
+let private validateNestedScalarFrom
+    (stateBeforeScan: ParserState)
+    (strippedColumns: int64)
+    (origin: FParsec.Position)
+    (source: string)
+    : P<string> =
     getUserState
     >>= fun state ->
             match Fogell.Groovy.Parser.Parser.parseWithLimits state.Limits source with
             | Result.Error e when e.Code = ScalarTooLong ->
                 let rebased = rebaseAdmissionError strippedColumns origin e
-                setUserState { state with ScalarRefusal = Some rebased } >>% source
+                // balancedBody may have recorded the same scalar at its span
+                // boundary. Prefer the nested grammar's accurate location, but
+                // never replace a refusal that existed before this body began.
+                setUserState (keepFirstScalarRefusal stateBeforeScan rebased) >>% source
             | _ -> preturn source
+
+let private validateNestedScalar (strippedColumns: int64) (origin: FParsec.Position) (source: string) : P<string> =
+    getUserState
+    >>= fun state -> validateNestedScalarFrom state strippedColumns origin source
+
+let private validatedBalancedBody strippedColumns openChar closeChar =
+    getUserState .>>. getPosition .>>. balancedBody openChar closeChar
+    >>= fun ((stateBeforeScan, origin), raw) ->
+            validateNestedScalarFrom stateBeforeScan strippedColumns origin raw
 
 let private nonEmptyInlineArgs =
     hspaces >>. argList true
@@ -683,7 +706,8 @@ stepRef.Value <-
             // workspace, nothing else. Any zero-argument call form was affected —
             // `deleteDir()`, `cleanWs()`, and so on.
             (choice
-                [ attempt (getPosition .>>. balancedRaw '(' ')') >>= fun (origin, raw) -> parenArgs origin raw
+                [ attempt (getUserState .>>. getPosition .>>. balancedRaw '(' ')')
+                  >>= fun ((stateBeforeScan, origin), raw) -> parenArgs stateBeforeScan origin raw
                   attempt nonEmptyInlineArgs
                   notFollowedBy (attempt (hspaces >>. identifier .>>? symbol ":" >>. lookAhead (pchar '[')))
                   >>% ([], [], Set.empty, Set.empty, [], Set.empty, []) ])
@@ -696,10 +720,8 @@ stepRef.Value <-
         // walker could never run one. `Fogell.Groovy.Parser` is what understands this
         // text; the walker hands it over at execution.
         if name = "script" then
-            (attempt (getPosition .>>. balancedBody '{' '}')
-             >>= fun (origin, raw) ->
-                     validateNestedScalar 1L origin raw
-                     |>> fun validated -> pos, name, args, [], true, Some validated)
+            (attempt (validatedBalancedBody 1L '{' '}')
+             |>> fun validated -> pos, name, args, [], true, Some validated)
             <|> preturn (pos, name, args, [], false, None)
         else
             opt (attempt stepBlock)
@@ -1139,8 +1161,8 @@ let rec private whenCondition: P<WhenCondition> =
                       attempt whenEnvironmentCondition
                       attempt (
                           keyword "expression"
-                          >>. getPosition .>>. balancedBody '{' '}'
-                          >>= fun (origin, raw) -> validateNestedScalar 1L origin raw |>> WhenExpression)
+                          >>. validatedBalancedBody 1L '{' '}'
+                          |>> WhenExpression)
                       attempt (keyword "allOf" >>. between (symbol "{") (symbol "}") (whenSeparators >>. many (attempt (whenCondition .>> whenSeparators))) .>> ws |>> WhenAllOf)
                       attempt (keyword "anyOf" >>. between (symbol "{") (symbol "}") (whenSeparators >>. many (attempt (whenCondition .>> whenSeparators))) .>> ws |>> WhenAnyOf)
                       attempt (keyword "not" >>. between (symbol "{") (symbol "}") whenCondition .>> ws |>> WhenNot)

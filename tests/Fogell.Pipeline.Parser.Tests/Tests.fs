@@ -353,6 +353,88 @@ let admissionLimits =
                     "same-line epilogue", basePipeline + " echo /aaaaa/" ] do
                   expectPositionedScalar label source
 
+              let positionedScalarError label result =
+                  match result with
+                  | Error e when e.Code = ScalarTooLong -> e
+                  | Error e -> failtestf "%s returned the wrong refusal: %A" label e
+                  | Ok _ -> failtestf "%s admitted an overlong scalar" label
+
+              let firstGroovy = "def first = /aaaaa/\n"
+
+              let firstGroovyError =
+                  Fogell.Groovy.Parser.Parser.parseWithLimits limits firstGroovy
+                  |> positionedScalarError "first Groovy scalar"
+
+              let twoGroovyScalars = firstGroovy + "def second = /bbbbbb/\n"
+
+              Expect.equal
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits limits twoGroovyScalars
+                   |> positionedScalarError "two Groovy scalars")
+                  firstGroovyError
+                  "a later Groovy scalar cannot displace the first positioned refusal"
+
+              let pipelineWithSteps body =
+                  mk $"    stage('B') {{ steps {{\n{body}\n    }} }}"
+
+              let firstPipelineBody = "      echo /aaaaa/"
+              let firstPipeline = pipelineWithSteps firstPipelineBody
+
+              let firstPipelineError =
+                  Parser.parseWithLimits limits firstPipeline
+                  |> positionedScalarError "first Declarative scalar"
+
+              for label, laterStep in
+                  [ "direct slashy", "      echo /bbbbbb/"
+                    "balanced nested value", "      echo [/bbbbbb/]"
+                    "raw positional expression", "      echo /bbbbbb/ + env.X"
+                    "successful parenthesised reparse", "      echo(/bbbbbb/)"
+                    "failed parenthesised reparse", "      echo(/bbbbbb/ +)"
+                    "nested script validation", "      script { def later = /bbbbbb/ }" ] do
+                  let source = pipelineWithSteps (firstPipelineBody + "\n" + laterStep)
+
+                  Expect.equal
+                      (Parser.parseWithLimits limits source
+                       |> positionedScalarError label)
+                      firstPipelineError
+                      $"{label}: a later scalar cannot displace the first positioned refusal"
+
+              let pipelineWithWhenScalar scalar =
+                  mk
+                      ("    stage('A') { steps { echo /aaaaa/ } }\n"
+                       + $"    stage('B') {{ when {{ expression {{ def later = {scalar} }} }} steps {{ echo 'x' }} }}")
+
+              let firstWhenError =
+                  Parser.parseWithLimits limits (pipelineWithWhenScalar "/bbbb/")
+                  |> positionedScalarError "first scalar before a bounded when expression"
+
+              Expect.equal
+                  (Parser.parseWithLimits limits (pipelineWithWhenScalar "/bbbbbb/")
+                   |> positionedScalarError "nested when validation")
+                  firstWhenError
+                  "when-expression validation cannot displace the first positioned refusal"
+
+              let pipelineThenEpilogue = firstPipeline + "def later = /bbbbbb/\n"
+
+              Expect.equal
+                  (Parser.parseWithLimits limits pipelineThenEpilogue
+                   |> positionedScalarError "epilogue validation")
+                  firstPipelineError
+                  "epilogue validation cannot displace the first positioned refusal"
+
+              let firstPreamble = "def first = /aaaaa/\n" + basePipeline
+
+              let firstPreambleError =
+                  Parser.parseWithLimits limits firstPreamble
+                  |> positionedScalarError "first preamble scalar"
+
+              let preambleThenEpilogue = firstPreamble + "\ndef later = /bbbbbb/"
+
+              Expect.equal
+                  (Parser.parseWithLimits limits preambleThenEpilogue
+                   |> positionedScalarError "preamble and epilogue validation")
+                  firstPreambleError
+                  "epilogue validation cannot displace a preamble refusal"
+
               expectGroovyAccepted
                   "escaped slash"
                   "/aa\\//"

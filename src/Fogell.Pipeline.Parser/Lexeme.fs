@@ -33,6 +33,16 @@ let parserState () = parserStateWithLimits Limits.defaults
 
 type P<'a> = Parser<'a, ParserState>
 
+/// Scalar refusals follow source order on the parser branch that survives.
+/// The state is immutable so `attempt` can still rewind an abandoned branch;
+/// within one committed branch, later literals must not displace the first
+/// positioned refusal.
+let keepFirstScalarRefusal (state: ParserState) refusal =
+    if state.ScalarRefusal.IsNone then
+        { state with ScalarRefusal = Some refusal }
+    else
+        state
+
 /// Record a scalar refusal at the point its grammar/scanner has committed to a
 /// literal span. Keeping this state immutable is load-bearing: an enclosing
 /// `attempt` must rewind a scalar interpretation that the grammar abandons.
@@ -49,7 +59,7 @@ let recordScalarContent (rawContent: string) (stream: CharStream<ParserState>) =
                 position.Column
                 $"string literal exceeds {stream.UserState.Limits.MaxScalarBytes} UTF-8 bytes"
 
-        stream.UserState <- { stream.UserState with ScalarRefusal = Some refusal }
+        stream.UserState <- keepFirstScalarRefusal stream.UserState refusal
 
 /// Record a semantic refusal before failing the current parser branch. The
 /// fallback may still parse, but admission reads this cell before returning it.
@@ -285,7 +295,7 @@ let private slashyQuoted: P<string> =
                         position.Column
                         $"string literal exceeds {state.Limits.MaxScalarBytes} UTF-8 bytes"
 
-                setUserState { state with ScalarRefusal = Some refusal } >>% decoded
+                setUserState (keepFirstScalarRefusal state refusal) >>% decoded
             else
                 preturn decoded
 
