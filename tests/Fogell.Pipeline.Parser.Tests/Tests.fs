@@ -205,6 +205,16 @@ let admissionLimits =
                   | Error e -> Expect.equal e.Code ScalarTooLong $"{label} is refused by the scalar limit"
                   | Ok _ -> failtestf "%s bypassed the scalar limit" label
 
+              let expectGroovyAccepted label source =
+                  match Fogell.Groovy.Parser.Parser.parseWithLimits limits source with
+                  | Ok _ -> ()
+                  | Error e -> failtestf "%s should parse at the exact scalar boundary, got %A" label e
+
+              let expectGroovyScalarTooLong label source =
+                  match Fogell.Groovy.Parser.Parser.parseWithLimits limits source with
+                  | Error e -> Expect.equal e.Code ScalarTooLong $"{label} is refused by the scalar limit"
+                  | Ok _ -> failtestf "%s bypassed the scalar limit" label
+
               let tripleSingle content = "'''" + content + "'''"
               let tripleDouble content = "\"\"\"" + content + "\"\"\""
 
@@ -220,6 +230,77 @@ let admissionLimits =
               expectScalarTooLong "slashy" "/aaaaa/"
               expectAccepted "UTF-8 slashy" "/éé/"
               expectScalarTooLong "UTF-8 slashy" "/ééa/"
+              expectAccepted "pipeline escaped-slash" "/aa\\//"
+              expectScalarTooLong "pipeline escaped-slash" "/aa\\/a/"
+              expectAccepted "pipeline even backslash run" "/aa\\\\/"
+              expectScalarTooLong "pipeline even backslash run" "/aa\\\\a/"
+
+              for label, exact, over in
+                  [ "return keyword", "return /aaaa/", "return /aaaaa/"
+                    "throw keyword", "throw /aaaa/", "throw /aaaaa/"
+                    "case keyword",
+                    "switch (x) { case /aaaa/: break }",
+                    "switch (x) { case /aaaaa/: break }"
+                    "in keyword", "for (x in /aaaa/) { break }", "for (x in /aaaaa/) { break }"
+                    "command call", "echo /aaaa/", "echo /aaaaa/"
+                    "unbraced body", "if (true) /aaaa/", "if (true) /aaaaa/"
+                    "new statement", "return\n/aaaa/", "return\n/aaaaa/"
+                    "block seam", "if (true) {}\n/aaaa/", "if (true) {}\n/aaaaa/" ] do
+                  expectGroovyAccepted label exact
+                  expectGroovyScalarTooLong label over
+
+              let basePipeline =
+                  "pipeline { agent any stages { stage('B') { steps { echo 'x' } } } }"
+
+              let pipelineCases =
+                  [ "stage name",
+                    "pipeline { agent any stages { stage /aaaa/ { steps { echo 'x' } } } }",
+                    "pipeline { agent any stages { stage /aaaaa/ { steps { echo 'x' } } } }"
+                    "agent label",
+                    "pipeline { agent label /aaaa/ stages { stage('B') { steps { echo 'x' } } } }",
+                    "pipeline { agent label /aaaaa/ stages { stage('B') { steps { echo 'x' } } } }"
+                    "tool entry",
+                    "pipeline { agent any tools { maven /aaaa/ } stages { stage('B') { steps { echo 'x' } } } }",
+                    "pipeline { agent any tools { maven /aaaaa/ } stages { stage('B') { steps { echo 'x' } } } }"
+                    "when condition",
+                    "pipeline { agent any stages { stage('B') { when { branch /aaaa/ } steps { echo 'x' } } } }",
+                    "pipeline { agent any stages { stage('B') { when { branch /aaaaa/ } steps { echo 'x' } } } }"
+                    "step argument",
+                    "pipeline { agent any stages { stage('B') { steps { echo /aaaa/ } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo /aaaaa/ } } } }"
+                    "script body",
+                    "pipeline { agent any stages { stage('B') { steps { script { echo /aaaa/ } } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { script { echo /aaaaa/ } } } } }"
+                    "when expression",
+                    "pipeline { agent any stages { stage('B') { when { expression { echo /aaaa/ } } steps { echo 'x' } } } }",
+                    "pipeline { agent any stages { stage('B') { when { expression { echo /aaaaa/ } } steps { echo 'x' } } } }"
+                    "preamble", "echo /aaaa/\n" + basePipeline, "echo /aaaaa/\n" + basePipeline
+                    "epilogue", basePipeline + "\necho /aaaa/", basePipeline + "\necho /aaaaa/" ]
+
+              for label, exact, over in pipelineCases do
+                  match Parser.parseWithLimits limits exact with
+                  | Ok _ -> ()
+                  | Error e -> failtestf "%s should parse at the exact scalar boundary, got %A" label e
+
+                  match Parser.parseWithLimits limits over with
+                  | Error e -> Expect.equal e.Code ScalarTooLong $"{label} is refused by the scalar limit"
+                  | Ok _ -> failtestf "%s bypassed the scalar limit" label
+
+              expectGroovyAccepted
+                  "escaped slash"
+                  "/aa\\//"
+
+              expectGroovyScalarTooLong
+                  "raw escaped-slash bytes"
+                  "/aa\\/a/"
+
+              expectGroovyAccepted
+                  "Groovy even backslash run plus escaped slash"
+                  "/a\\\\//"
+
+              expectGroovyScalarTooLong
+                  "Groovy even backslash run plus escaped slash"
+                  "/aa\\\\//"
 
               Expect.isOk (Limits.precheck limits "10 / 2 / 5") "division operators do not open slashy spans"
 
@@ -241,6 +322,23 @@ let admissionLimits =
                   | Ok() -> failtest "expected raw text after an unterminated slashy candidate to count nodes"
 
               Expect.equal fallbackNodeError.Code TooManyNodes "slashy fallback cannot bypass the node limit"
+
+              // Identifier-headed `a / b / c` is already parsed by this
+              // deliberately partial Groovy grammar as a command call with a
+              // slashy argument. Numeric division and division after a
+              // completed literal are unambiguous controls for admission.
+              for source in [ "10 / 20000 / 5"; "/aa/ / 2" ] do
+                  match Fogell.Groovy.Parser.Parser.parseWithLimits limits source with
+                  | Error e when e.Code = ScalarTooLong -> failtestf "division was misclassified in %s" source
+                  | _ -> ()
+
+              let adversarial = String.Concat(Array.replicate 131_000 "\\/")
+              Limits.precheck Limits.defaults "\\/" |> ignore
+              let started = Diagnostics.Stopwatch.StartNew()
+              let adversarialResult = Limits.precheck Limits.defaults adversarial
+              started.Stop()
+              Expect.isOk adversarialResult "the source-sized escaped-slash adversary remains ordinary raw text"
+              Expect.isLessThan started.Elapsed.TotalSeconds 1.0 "the admission scan remains bounded-linear"
           }
 
           test "deep nesting is rejected before the grammar recurses" {
@@ -534,6 +632,15 @@ let admissionNegativeSweep =
         let utf8ScalarExact =
             String.replicate ((Limits.defaults.MaxScalarBytes - 2) / 2) "é" + "aa"
 
+        let slashyOver =
+            "/" + String.replicate (Limits.defaults.MaxScalarBytes + 1) "a" + "/"
+
+        let slashyPipeline body =
+            "pipeline { agent any stages { stage('B') { " + body + " } } }"
+
+        let slashyClosingColumn (source: string) =
+            int64 (source.LastIndexOf('/') + 2)
+
         [ exact "empty" "empty-or-trivia" "" EmptySource 1L 1L
           exact "trivia" "empty-or-trivia" " \t\r\n" EmptySource 1L 1L
           exact "no-pipeline" "no-pipeline" "node { echo 'x' }" NoPipelineBlock 1L 1L
@@ -705,20 +812,61 @@ let admissionNegativeSweep =
               ScalarTooLong
               1L
               (int64 Limits.defaults.MaxScalarBytes + 8L)
+          let source =
+              "pipeline { agent any stages { stage "
+              + slashyOver
+              + " { steps { echo 'x' } } } }"
+
           exact
-              "slashy-scalar-content-limit"
+              "slashy-stage-context-limit-plus-one"
               "slashy-scalar-limit"
-              ("/" + String.replicate Limits.defaults.MaxScalarBytes "a" + "/")
-              NoPipelineBlock
-              1L
-              1L
-          exact
-              "slashy-scalar-limit-plus-one"
-              "slashy-scalar-limit"
-              ("/" + String.replicate (Limits.defaults.MaxScalarBytes + 1) "a" + "/")
+              source
               ScalarTooLong
               1L
-              (int64 Limits.defaults.MaxScalarBytes + 4L)
+              (slashyClosingColumn source)
+          let source =
+              "pipeline { agent label "
+              + slashyOver
+              + " stages { stage('B') { steps { echo 'x' } } } }"
+
+          exact
+              "slashy-agent-context-limit-plus-one"
+              "slashy-scalar-limit"
+              source
+              ScalarTooLong
+              1L
+              (slashyClosingColumn source)
+          let source =
+              "pipeline { agent any tools { maven "
+              + slashyOver
+              + " } stages { stage('B') { steps { echo 'x' } } } }"
+
+          exact
+              "slashy-tool-context-limit-plus-one"
+              "slashy-scalar-limit"
+              source
+              ScalarTooLong
+              1L
+              (slashyClosingColumn source)
+          let source =
+              slashyPipeline ("when { branch " + slashyOver + " } steps { echo 'x' }")
+
+          exact
+              "slashy-when-context-limit-plus-one"
+              "slashy-scalar-limit"
+              source
+              ScalarTooLong
+              1L
+              (slashyClosingColumn source)
+          let source = slashyPipeline ("steps { echo " + slashyOver + " }")
+
+          exact
+              "slashy-step-context-limit-plus-one"
+              "slashy-scalar-limit"
+              source
+              ScalarTooLong
+              1L
+              (slashyClosingColumn source)
           exact
               "lf-resets-depth-position"
               "lf-depth"
@@ -863,7 +1011,7 @@ let admissionNegativeSweep =
               Expect.equal replayDigest firstDigest "the complete length-delimited corpus replays byte-for-byte"
               Expect.equal
                   firstDigest
-                  "bffdbf2d78c3c4ba2cd5fee2ffd94652804d2fb377ce5ee00bebaee8da00d171"
+                  "365dc88fcfd41c86408dfa83a9b0729bb8cc45c2d3f2a0d8ecfb9c9ea7a54013"
                   "the fixed seed and recipe corpus are pinned"
 
               Expect.equal

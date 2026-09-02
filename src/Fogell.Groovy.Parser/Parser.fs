@@ -17,14 +17,18 @@ open Fogell.Admission
 type private TriviaState =
     { BreakInTrivia: bool
       TriviaEndIndex: int64
-      GroupDepth: int }
+      GroupDepth: int
+      MaxScalarBytes: int
+      ScalarRefusal: AdmissionError option }
 
 type private P<'a> = Parser<'a, TriviaState>
 
-let private initialState =
+let private initialState (limits: Limits) =
     { BreakInTrivia = false
       TriviaEndIndex = -1L
-      GroupDepth = 0 }
+      GroupDepth = 0
+      MaxScalarBytes = limits.MaxScalarBytes
+      ScalarRefusal = None }
 
 /// FG-190/192. Consume trivia FORWARD so a non-nesting block comment is read
 /// with the same boundaries as Groovy. Record a break only when trivia was
@@ -222,11 +226,36 @@ let private tripleSingle: P<Expr> =
 /// unreachable. It hid because the existing receipts put `)` directly against
 /// the closing delimiter; the approval lane's Z2 rewrite met the space first.
 let private slashy: P<Expr> =
+    let content =
+        manyChars (attempt (skipString "\\/" >>% '/') <|> satisfy (fun c -> c <> '/' && c <> '\n'))
+
+    let captured =
+        between
+            (skipString "/")
+            (skipString "/")
+            (withSkippedString (fun skipped decoded -> decoded, skipped) content)
+
+    // The grammar owns the ambiguous slashy-versus-division decision. The
+    // immutable refusal field rewinds with an abandoned `attempt`, while an
+    // accepted slashy is measured from its raw content before the parse result
+    // can be admitted.
     lexeme (
         attempt (
-            between (skipString "/") (skipString "/") (
-                manyChars (attempt (skipString "\\/" >>% '/') <|> satisfy (fun c -> c <> '/' && c <> '\n')))
-            |>> EStr))
+            captured .>>. getPosition .>>. getUserState
+            >>= fun (((decoded, raw), position), state) ->
+                    let scalarBytes = System.Text.Encoding.UTF8.GetByteCount raw
+
+                    if scalarBytes > state.MaxScalarBytes then
+                        let refusal =
+                            AdmissionError.at
+                                ScalarTooLong
+                                position.Line
+                                position.Column
+                                $"string literal exceeds {state.MaxScalarBytes} UTF-8 bytes"
+
+                        setUserState { state with ScalarRefusal = Some refusal } >>% EStr decoded
+                    else
+                        preturn (EStr decoded)))
 
 let private exprForward = createParserForwardedToRef<Expr, TriviaState> ()
 let private exprRef = fst exprForward
@@ -815,8 +844,12 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Script, Admission
     match Limits.precheck limits source with
     | Result.Error e -> Result.Error e
     | Result.Ok() ->
-        match runParserOnString program initialState "script" source with
+        match runParserOnString program (initialState limits) "script" source with
+        | ParserResult.Success(_, state, _) when state.ScalarRefusal.IsSome ->
+            Result.Error state.ScalarRefusal.Value
         | ParserResult.Success(s, _, _) -> Result.Ok s
+        | ParserResult.Failure(_, _, state) when state.ScalarRefusal.IsSome ->
+            Result.Error state.ScalarRefusal.Value
         | ParserResult.Failure(msg, err, _) ->
             let firstLine =
                 msg.Split('\n')

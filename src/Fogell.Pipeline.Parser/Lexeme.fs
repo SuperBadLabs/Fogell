@@ -1,6 +1,7 @@
 module Fogell.Pipeline.Parser.Lexeme
 
 open FParsec
+open Fogell.Admission
 open Fogell.Ir
 
 /// Shared lexing for the Declarative grammar.
@@ -13,12 +14,22 @@ open Fogell.Ir
 /// Semantic refusals are different from ordinary grammar misses. FParsec's
 /// `attempt` correctly rewinds the latter so a deliberate opaque fallback can
 /// fail closed, but the former must survive that rewind and reach admission.
-/// The mutable cell is intentional: stream backtracking restores the user-state
-/// value, not mutations made through the same referenced object.
+/// The semantic-refusal cell is intentional: stream backtracking restores the
+/// user-state value, not mutations made through the same referenced object.
+/// ScalarRefusal is deliberately the opposite: an overlong slashy discovered
+/// on an abandoned grammar branch must rewind with that branch, so only the
+/// scalar interpretation the parser actually commits can refuse admission.
 type ParserState =
-    { mutable Refusal: (string * Fogell.Ir.Position) option }
+    { Refusal: (string * Fogell.Ir.Position) option ref
+      MaxScalarBytes: int
+      ScalarRefusal: AdmissionError option }
 
-let parserState () = { Refusal = None }
+let parserStateWithLimits (limits: Limits) =
+    { Refusal = ref None
+      MaxScalarBytes = limits.MaxScalarBytes
+      ScalarRefusal = None }
+
+let parserState () = parserStateWithLimits Limits.defaults
 
 type P<'a> = Parser<'a, ParserState>
 
@@ -27,8 +38,8 @@ type P<'a> = Parser<'a, ParserState>
 let refuse (message: string) : P<'a> =
     getPosition .>>. getUserState
     >>= fun (position, state) ->
-            if state.Refusal.IsNone then
-                state.Refusal <-
+            if state.Refusal.Value.IsNone then
+                state.Refusal.Value <-
                     Some(
                         message,
                         { Line = position.Line
@@ -206,10 +217,35 @@ let private tripleQuoted (q: string) : P<string> =
 /// no parentheses is REFUSED by Jenkins at compile time, and the probe that used
 /// it proved nothing while looking like evidence.
 let private slashyQuoted: P<string> =
-    between (skipString "/") (skipString "/") (
+    let content =
         manyStrings (
             (skipChar '\\' >>. (anyChar |>> fun c -> if c = '/' then "/" else "\\" + string c))
-            <|> (satisfy (fun c -> c <> '/' && c <> '\n') |>> string)))
+            <|> (satisfy (fun c -> c <> '/' && c <> '\n') |>> string))
+
+    let captured =
+        between
+            (skipString "/")
+            (skipString "/")
+            (withSkippedString (fun skipped decoded -> decoded, skipped) content)
+
+    // Slashy-versus-division is decided by the surrounding grammar. Capturing
+    // the raw content here applies the caller's byte cap only after that
+    // decision, without decoding escapes or guessing in Limits.precheck.
+    captured .>>. getPosition .>>. getUserState
+    >>= fun (((decoded, raw), position), state) ->
+            let scalarBytes = System.Text.Encoding.UTF8.GetByteCount raw
+
+            if scalarBytes > state.MaxScalarBytes then
+                let refusal =
+                    AdmissionError.at
+                        ScalarTooLong
+                        position.Line
+                        position.Column
+                        $"string literal exceeds {state.MaxScalarBytes} UTF-8 bytes"
+
+                setUserState { state with ScalarRefusal = Some refusal } >>% decoded
+            else
+                preturn decoded
 
 /// As [escapedChar], but an escaped $ keeps its backslash.
 ///

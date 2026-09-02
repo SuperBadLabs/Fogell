@@ -437,18 +437,27 @@ let private stepBlock: P<Step list> =
 
 let private parenArgs (raw: string) =
     let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
-    let state = parserState ()
 
-    match runParserOnString (ws >>. argList .>> eof) state "args" body with
-    | ParserResult.Success(v, parsedState, _) ->
-        match parsedState.Refusal with
-        | Some(message, _) -> refuse message
-        | None -> preturn v
-    | ParserResult.Failure(_, _, failedState) ->
-        match failedState.Refusal with
-        | Some(message, _) -> refuse message
-        | None ->
-            refuse "a parenthesised argument body that does not parse is refused, never downgraded to one positional value"
+    getUserState
+    >>= fun outerState ->
+            let state =
+                { parserState () with
+                    MaxScalarBytes = outerState.MaxScalarBytes }
+
+            match runParserOnString (ws >>. argList .>> eof) state "args" body with
+            | ParserResult.Success(v, parsedState, _) ->
+                match parsedState.ScalarRefusal, parsedState.Refusal.Value with
+                | Some e, _ -> setUserState { outerState with ScalarRefusal = Some e } >>% v
+                | None, Some(message, _) -> refuse message
+                | None, None -> preturn v
+            | ParserResult.Failure(_, _, failedState) ->
+                match failedState.ScalarRefusal, failedState.Refusal.Value with
+                | Some e, _ ->
+                    setUserState { outerState with ScalarRefusal = Some e }
+                    >>. fail "parenthesised argument contains an overlong scalar"
+                | None, Some(message, _) -> refuse message
+                | None, None ->
+                    refuse "a parenthesised argument body that does not parse is refused, never downgraded to one positional value"
 
 let private hspaces: P<unit> = skipMany (anyOf " \t")
 
@@ -1484,37 +1493,34 @@ module private LoopControl =
 /// it — a submission with an invalid body was accepted and queued, failing only when a
 /// runner picked it up, where the contract promises a 422 at admission.
 ///
-/// Putting it inside `parse` is what makes "which entry points are covered" stop being a
-/// question: there is one.
-let private scriptBodyErrors (pipeline: Pipeline) : (string * Position) list =
+/// Keeping it under `parseWithLimits` is what makes "which entry points are covered" stop
+/// being a question: `parse` only supplies the defaults. Nested Groovy receives the same
+/// caller limits so a slashy inside script/when/preamble/epilogue cannot take a wider path.
+type private NestedSourceError =
+    | NestedAdmission of AdmissionError
+    | NestedSyntax of string * Position
+
+let private scriptBodyErrors (limits: Limits) (pipeline: Pipeline) : NestedSourceError list =
+    let parseNested checkLoopControl label position source =
+        match Fogell.Groovy.Parser.Parser.parseWithLimits limits source with
+        | Result.Error e when e.Code = ScalarTooLong -> [ NestedAdmission e ]
+        | Result.Error e -> [ NestedSyntax($"{label} did not parse as Groovy: {string e}", position) ]
+        | Result.Ok parsed when checkLoopControl ->
+            match LoopControl.misplaced parsed with
+            | keyword :: _ ->
+                [ NestedSyntax(
+                      $"{label}: `{keyword}` outside a loop; Jenkins rejects the pipeline at compile time",
+                      position
+                  ) ]
+            | [] -> []
+        | Result.Ok _ -> []
+
     let rec fromSteps (steps: Step list) =
         steps
         |> List.collect (fun st ->
             let here =
                 match st.ScriptBody with
-                | Some src ->
-                    match Fogell.Groovy.Parser.Parser.parse src with
-                    | Result.Error e -> [ $"script block did not parse as Groovy: {string e}", st.Position ]
-                    | Result.Ok parsed ->
-                        // FG-183. Parsed, and still not admissible.
-                        match LoopControl.misplaced parsed with
-                        | keyword :: _ ->
-                            // NAMES THE ONE THING THIS CHECK KNOWS. It briefly hedged
-                            // across two readings — "not inside a loop, and not a switch
-                            // arm's final statement" — because a lowered `switch` could
-                            // still deliver an arm's `break` here, and Jenkins ACCEPTS
-                            // that one, so claiming a compile rejection would have been
-                            // false. It is true now for a DIFFERENT reason than that hedge
-                            // recorded, and the stale rationale outlived the lowering that
-                            // made it necessary: `LoopControl.misplaced` accounts for
-                            // switch break boundaries itself, so an arm's `break` is legal
-                            // at any depth and never arrives here, while a `continue` with
-                            // no enclosing loop still does. A refusal that misreports its
-                            // reason sends an author to fix the wrong thing, so the reason
-                            // has to move whenever the rule does.
-                            [ $"script block: `{keyword}` outside a loop; Jenkins rejects the pipeline at compile time",
-                              st.Position ]
-                        | [] -> []
+                | Some src -> parseNested true "script block" st.Position src
                 | None -> []
 
             here @ fromSteps st.Block)
@@ -1549,19 +1555,27 @@ let private scriptBodyErrors (pipeline: Pipeline) : (string * Position) list =
         | Some cond ->
             whenSources cond
             |> List.collect (fun src ->
-                match Fogell.Groovy.Parser.Parser.parse src with
-                | Result.Error e ->
-                    let position =
-                        match stage.Steps with
-                        | first :: _ -> first.Position
-                        | [] -> { Line = 1L; Column = 1L }
+                let position =
+                    match stage.Steps with
+                    | first :: _ -> first.Position
+                    | [] -> { Line = 1L; Column = 1L }
 
-                    [ $"when expression did not parse as Groovy: {string e}", position ]
-                | Result.Ok _ -> [])
+                parseNested false "when expression" position src)
 
     let stages = Pipeline.flattenStages pipeline.Stages
 
-    (stages |> List.collect (fun stage -> fromSteps stage.Steps))
+    let surroundingSourceErrors =
+        [ pipeline.Preamble; pipeline.Epilogue ]
+        |> List.choose (fun source ->
+            if System.String.IsNullOrWhiteSpace source then
+                None
+            else
+                match Fogell.Groovy.Parser.Parser.parseWithLimits limits source with
+                | Result.Error e when e.Code = ScalarTooLong -> Some(NestedAdmission e)
+                | _ -> None)
+
+    surroundingSourceErrors
+    @ (stages |> List.collect (fun stage -> fromSteps stage.Steps))
     @ (stages |> List.collect (fun stage -> stage.Post |> List.collect (snd >> fromSteps)))
     @ (pipeline.Post |> List.collect (snd >> fromSteps))
     @ (stages |> List.collect whenErrors)
@@ -1596,23 +1610,28 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, Admissi
         if not (looksDeclarative source) then
             Result.Error(AdmissionError.at NoPipelineBlock 1L 1L "no declarative `pipeline { }` block found")
         else
-            match runParserOnString (pipelineParser .>> eof) (parserState ()) "Jenkinsfile" source with
+            match runParserOnString (pipelineParser .>> eof) (parserStateWithLimits limits) "Jenkinsfile" source with
+            | ParserResult.Success(_, state, _) when state.ScalarRefusal.IsSome ->
+                Result.Error state.ScalarRefusal.Value
             | ParserResult.Success(p, state, _) ->
-                match state.Refusal with
+                match state.Refusal.Value with
                 | Some(message, position) ->
                     Result.Error(refusalError message position)
                 | None when List.isEmpty p.Stages ->
                     Result.Error(AdmissionError.at NoStages 1L 1L "pipeline declares no stages")
                 | None ->
-                    match scriptBodyErrors p with
-                    | (why, position) :: _ ->
+                    match scriptBodyErrors limits p with
+                    | NestedAdmission e :: _ -> Result.Error e
+                    | NestedSyntax(why, position) :: _ ->
                         Result.Error
                             { Code = MalformedSyntax
                               Message = why
                               Position = position }
                     | [] -> Result.Ok p
+            | ParserResult.Failure(_, _, state) when state.ScalarRefusal.IsSome ->
+                Result.Error state.ScalarRefusal.Value
             | ParserResult.Failure(msg, err, state) ->
-                match state.Refusal with
+                match state.Refusal.Value with
                 | Some(message, position) ->
                     Result.Error(refusalError message position)
                 | None ->
