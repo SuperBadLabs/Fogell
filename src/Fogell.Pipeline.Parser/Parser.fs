@@ -73,39 +73,54 @@ let private rawArgValue (stops: char list) : P<string> =
                 Reply(Error, expected "'/'")
             else
                 let here = stream.Index
-                let mutable i = here - 1L
-                let mutable lastSig = ' '
-                let mutable priorSig = ' '
-                let mutable scanning = true
+                let peekAt (index: int64) =
+                    stream.Seek index
+                    stream.Peek()
 
-                while scanning && i >= 0L do
-                    stream.Seek i
-                    let ch = stream.Peek()
+                // Find the previous lexical character, treating block comments
+                // as trivia. Looking only at the comment's closing slash turns
+                // `x /* c */ / y` into a slashy even though Groovy sees division.
+                // Each skipped comment is immediately before this slash, so the
+                // total backward work is bounded by the raw argument's length.
+                let previousSignificant (before: int64) =
+                    let mutable i = before
+                    let mutable result = None
 
-                    if ch = ' ' || ch = '\t' then
-                        i <- i - 1L
-                    else
-                        lastSig <- ch
-                        scanning <- false
+                    while result.IsNone && i >= 0L do
+                        let ch = peekAt i
 
-                i <- i - 1L
-                scanning <- true
+                        if ch = ' ' || ch = '\t' then
+                            i <- i - 1L
+                        elif ch = '/' && i > 0L && peekAt (i - 1L) = '*' then
+                            let mutable opener = -1L
+                            let mutable j = i - 2L
 
-                while scanning && i >= 0L do
-                    stream.Seek i
-                    let ch = stream.Peek()
+                            while opener < 0L && j > 0L do
+                                if peekAt (j - 1L) = '/' && peekAt j = '*' then
+                                    opener <- j - 1L
+                                else
+                                    j <- j - 1L
 
-                    if ch = ' ' || ch = '\t' then
-                        i <- i - 1L
-                    else
-                        priorSig <- ch
-                        scanning <- false
+                            if opener >= 0L then
+                                i <- opener - 1L
+                            else
+                                result <- Some(ch, i)
+                        else
+                            result <- Some(ch, i)
+
+                    result, i - 1L
+
+                let last, beforePrior = previousSignificant (here - 1L)
+                let prior, _ = previousSignificant beforePrior
+                let lastSig, lastSigIndex = defaultArg last (' ', -1L)
+                let priorSig, priorSigIndex = defaultArg prior (' ', -1L)
 
                 stream.Seek here
 
                 let postfixDivision =
-                    (lastSig = '+' && priorSig = '+')
-                    || (lastSig = '-' && priorSig = '-')
+                    ((lastSig = '+' && priorSig = '+')
+                     || (lastSig = '-' && priorSig = '-'))
+                    && lastSigIndex = priorSigIndex + 1L
 
                 if Lexeme.endsExpression lastSig || postfixDivision then
                     stream.Skip()
@@ -124,7 +139,7 @@ let private rawArgValue (stops: char list) : P<string> =
                         elif d = '/' then
                             sb.Append(stream.Read(1)) |> ignore
                             closed <- true
-                        elif d = '\n' then
+                        elif d = '\r' || d = '\n' then
                             bad <- true
                         else
                             sb.Append(stream.Read(1)) |> ignore
@@ -137,7 +152,7 @@ let private rawArgValue (stops: char list) : P<string> =
                         stream.Skip()
                         Reply("/")
 
-    let chunks = attempt commentSpanRaw <|> quotedSpan <|> plain <|> slash
+    let chunks = commentSpanRaw <|> quotedSpan <|> plain <|> slash
 
     // At the start of an argument value the surrounding call grammar has
     // already established an operand position. That context is stronger than

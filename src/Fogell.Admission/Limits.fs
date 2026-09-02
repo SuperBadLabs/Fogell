@@ -425,6 +425,20 @@ module Limits =
                                 $"string literal exceeds {limits.MaxScalarBytes} UTF-8 bytes"
                         )
 
+            // An unterminated block comment is already conclusively malformed.
+            // Refuse it in this single linear pass instead of handing a suffix
+            // containing many `/*` candidates to backtracking raw scanners,
+            // where each candidate could otherwise rescan to EOF.
+            if err.IsNone && blockComment then
+                err <-
+                    Some(
+                        AdmissionError.at
+                            MalformedSyntax
+                            line
+                            column
+                            "unterminated block comment"
+                    )
+
             match err with
             | Some e -> Error e
             | None -> Ok()

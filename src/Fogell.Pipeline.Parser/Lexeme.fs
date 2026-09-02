@@ -496,8 +496,12 @@ let commentSpanRaw: P<string> =
                 stream.Seek start
                 Reply(stream.Read length)
             else
-                stream.Seek start
-                Reply(Error, expected "a terminated block comment")
+                // The `/*` prefix has committed this text to a comment. Rewinding
+                // here lets an enclosing alternative retry the same suffix as a
+                // slashy, and a row of unterminated openers then scans the tail
+                // once per opener. Leave the stream at EOF and fail fatally: an
+                // unterminated comment has no valid raw-expression reading.
+                Reply(FatalError, expected "a terminated block comment")
         else
             Reply(Error, expected "a comment")
 
@@ -541,6 +545,14 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
             // in the body is a slashy opener
             let mutable lastSig = ' '
             let mutable priorSig = ' '
+            let mutable lastSigIndex = -1L
+            let mutable priorSigIndex = -1L
+
+            let recordSignificant c index =
+                priorSig <- lastSig
+                priorSigIndex <- lastSigIndex
+                lastSig <- c
+                lastSigIndex <- index
 
             while depth > 0 && not failed && not (stream.IsEndOfStream) do
                 let c = stream.Peek()
@@ -576,8 +588,7 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                                 stream.Skip()
 
                         if not closed then failed <- true
-                        priorSig <- lastSig
-                        lastSig <- q // a completed literal ends an expression
+                        recordSignificant q (stream.Index - 1L) // a completed literal ends an expression
                     else
 
                     stream.Skip()
@@ -598,10 +609,13 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                         else
                             stream.Skip()
 
-                    priorSig <- lastSig
-                    lastSig <- q // a completed literal ends an expression
+                    recordSignificant q (stream.Index - 1L) // a completed literal ends an expression
                 elif c = '/' && stream.Peek(1) = '/' then
-                    while not stream.IsEndOfStream && stream.Peek() <> '\n' do
+                    while
+                        not stream.IsEndOfStream
+                        && stream.Peek() <> '\r'
+                        && stream.Peek() <> '\n'
+                        do
                         stream.Skip()
                 elif c = '/' && stream.Peek(1) = '*' then
                     stream.Skip()
@@ -620,8 +634,9 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                     c = '/'
                     && not (
                         endsExpression lastSig
-                        || ((lastSig = '+' && priorSig = '+')
-                            || (lastSig = '-' && priorSig = '-'))
+                        || (((lastSig = '+' && priorSig = '+')
+                             || (lastSig = '-' && priorSig = '-'))
+                            && lastSigIndex = priorSigIndex + 1L)
                     )
                 then
                     // FG-141: no left operand, so this `/` can only open a
@@ -649,21 +664,19 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                         let rawContent = stream.Read contentLength
                         stream.Seek finish
                         recordScalarContent rawContent stream
-                        priorSig <- lastSig
-                        lastSig <- '\'' // a completed literal ends an expression
+                        recordSignificant '\'' (finish - 1L) // a completed literal ends an expression
                     else
                         stream.Seek(before)
                         stream.Skip()
-                        priorSig <- lastSig
-                        lastSig <- '/'
+                        recordSignificant '/' before
                 else
+                    let significantIndex = stream.Index
                     if c = opening then depth <- depth + 1
                     elif c = closing then depth <- depth - 1
                     stream.Skip()
 
                     if c <> ' ' && c <> '\t' && c <> '\r' && c <> '\n' then
-                        priorSig <- lastSig
-                        lastSig <- c
+                        recordSignificant c significantIndex
 
             if depth <> 0 then
                 Reply(Error, messageError $"unbalanced '{opening}'")
