@@ -148,6 +148,15 @@ if lane_active build; then
   ./scripts/run-project-tests.sh \
     || { echo "TESTS FAILED"; exit 1; }
 
+  # FG-235. Process callbacks have already lost CR/LF terminators, so a
+  # multiline literal credential cannot be protected by the registered whole
+  # form on progressive output. Prove selected text/UTF-8 file credentials
+  # refuse before sibling materialization, and kill both the shared predicate
+  # and user-facing runtime-preflight guards in compiling scratch candidates.
+  echo "=== multiline credential progressive-output proof (FG-235, blocking) ==="
+  ./scripts/prove-fg235-multiline-secrets.sh \
+    || { echo "MULTILINE CREDENTIAL PROGRESSIVE-OUTPUT PROOF FAILED"; exit 1; }
+
   # FG-228. Stash containment depends on both refusing linked-directory prefixes
   # and copying only from a descriptor whose physical identity is the selected
   # lexical workspace path. Recreate the old two-part traversal mechanism in a

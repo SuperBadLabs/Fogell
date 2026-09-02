@@ -218,6 +218,41 @@ module WalkerOrchestration =
               yield
                   $"""ERROR: unsupported or malformed credential binding request(s) for kind(s) {String.concat ", " unsupportedKinds}; refusing to bind credentials""" ]
 
+    /// FG-235. ProcessGroup has already discarded CR/LF terminators when a
+    /// progressive output callback reaches the masker. Refuse selected literal
+    /// credentials carrying either terminator before any binding is materialized.
+    /// The diagnostic names only store/request metadata, never secret content.
+    let internal credentialLineBreakRefusalErrors
+        (store: Map<string, Credential>)
+        (requests: CredentialRequest list)
+        =
+        let refusal id field =
+            $"ERROR: {Secrets.UnsupportedMultilineCredentialCode}: credential '{id}' {field} contains a line break that progressive masking cannot safely protect; refusing to bind credentials"
+
+        [ for request in requests do
+              match request with
+              | BindText(id, _) ->
+                  match Map.tryFind id store with
+                  | Some(SecretText value) when Secrets.containsPhysicalLineBreak value ->
+                      yield refusal id "text"
+                  | _ -> ()
+              | BindUserPass(id, _, _) ->
+                  match Map.tryFind id store with
+                  | Some(UsernamePassword(user, password)) ->
+                      if Secrets.containsPhysicalLineBreak user then
+                          yield refusal id "username"
+
+                      if Secrets.containsPhysicalLineBreak password then
+                          yield refusal id "password"
+                  | _ -> ()
+              | BindFile(id, _) ->
+                  match Map.tryFind id store with
+                  | Some(SecretFile credential)
+                      when Secrets.preparedFileContainsPhysicalLineBreak credential ->
+                      yield refusal id "file"
+                  | _ -> ()
+              | BindUnmodelled _ -> () ]
+
     /// Returns (runStage, runPostWithDeadline) — the two entry points run()
     /// drives: one per top-level stage, one for the pipeline-level post.
     let makeRunners (deps: OrchestrationDeps) =
@@ -1293,6 +1328,42 @@ module WalkerOrchestration =
                         Credentials.idsOf requests
                         |> List.filter (fun id -> not (store.Value.ContainsKey id))
 
+                // Resolve every type before creating the first companion file. This
+                // preserves the existing type-mismatch verdict while making the new
+                // line-break refusal atomic across mixed sibling requests.
+                let typeMismatches =
+                    if parsedNothing || not (List.isEmpty unmodelled) || not (List.isEmpty missing) then
+                        []
+                    else
+                        requests
+                        |> List.choose (function
+                            | BindText(id, _) ->
+                                match store.Value.[id] with
+                                | SecretText _ -> None
+                                | other -> Some $"'{id}' is a {typeName other} credential but was requested as `string`"
+                            | BindUserPass(id, _, _) ->
+                                match store.Value.[id] with
+                                | UsernamePassword _ -> None
+                                | other ->
+                                    Some
+                                        $"'{id}' is a {typeName other} credential but was requested as `usernamePassword`"
+                            | BindFile(id, _) ->
+                                match store.Value.[id] with
+                                | SecretFile _ -> None
+                                | other -> Some $"'{id}' is a {typeName other} credential but was requested as `file`"
+                            | BindUnmodelled _ -> None)
+
+                let lineBreakRefusals =
+                    if
+                        not parsedNothing
+                        && List.isEmpty unmodelled
+                        && List.isEmpty typeMismatches
+                        && List.isEmpty missing
+                    then
+                        credentialLineBreakRefusalErrors store.Value requests
+                    else
+                        []
+
                 if parsedNothing then
                     emit $"""ERROR: withCredentials bound nothing — could not parse any binding from '{String.concat " " step.Positional}'"""
                     ctx.Failed.Value <- true
@@ -1325,18 +1396,20 @@ module WalkerOrchestration =
                     emit $"""ERROR: credential id(s) not found: {String.concat ", " missing}"""
                     ctx.Failed.Value <- true
                     ctx.Sink BuildStatus.Failure
+                elif not (List.isEmpty typeMismatches) then
+                    emit $"""ERROR: credential type mismatch: {String.concat "; " typeMismatches}"""
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
+                elif not (List.isEmpty lineBreakRefusals) then
+                    for diagnostic in lineBreakRefusals do
+                        emit diagnostic
+
+                    ctx.Failed.Value <- true
+                    ctx.Sink BuildStatus.Failure
                 else
                     let store = store.Value
                     let secretDir = Path.Combine(workspaceRoot, "_secrets", jobName)
 
-                    // REVIEW FIX (Codex, PR #15): a type mismatch used to be COERCED —
-                    // a `string` request against a username/password credential got the
-                    // username, a `usernamePassword` request against secret text left
-                    // the username unset. That is precisely the "build goes green while
-                    // the deploy authenticates as nobody" outcome this step's own
-                    // comment warns about, two lines above the code that did it. A
-                    // mismatch is a misconfiguration and must fail before the body runs.
-                    let mismatches = System.Collections.Generic.List<string>()
                     // Non-secret variables that still have to reach the child, e.g. a
                     // usernamePassword's username.
                     let plainEnv = System.Collections.Generic.List<string * string>()
@@ -1354,10 +1427,7 @@ module WalkerOrchestration =
                                 | BindText(id, v) ->
                                     match store.[id] with
                                     | SecretText value -> [ Secrets.bind secretDir v value |> trackBinding ]
-                                    | other ->
-                                        mismatches.Add
-                                            $"'{id}' is a {typeName other} credential but was requested as `string`"
-                                        []
+                                    | _ -> invalidOp "credential type changed after withCredentials preflight"
                                 | BindUserPass(id, uv, pv) ->
                                     match store.[id] with
                                     | UsernamePassword(u, p) ->
@@ -1375,10 +1445,7 @@ module WalkerOrchestration =
                                         // which is the real defect here.
                                         [ Secrets.bind secretDir uv u |> trackBinding
                                           Secrets.bind secretDir pv p |> trackBinding ]
-                                    | other ->
-                                        mismatches.Add
-                                            $"'{id}' is a {typeName other} credential but was requested as `usernamePassword`"
-                                        []
+                                    | _ -> invalidOp "credential type changed after withCredentials preflight"
                                 | BindFile(id, v) ->
                                     // REVIEW FIX (both reviewers, PR #15): Jenkins binds the
                                     // requested variable to a PATH to a temporary file. The
@@ -1396,10 +1463,7 @@ module WalkerOrchestration =
                                     // other mismatch failed closed — an inconsistency that
                                     // let a misconfigured credential through the one gate
                                     // built to stop it.
-                                    | other ->
-                                        mismatches.Add
-                                            $"'{id}' is a {typeName other} credential but was requested as `file`"
-                                        []
+                                    | _ -> invalidOp "credential type changed after withCredentials preflight"
                                 | BindUnmodelled _ -> [])
                         with _ ->
                             Secrets.revoke (List.ofSeq createdBindings)
@@ -1407,57 +1471,46 @@ module WalkerOrchestration =
 
                     // Jenkins narrates the masking; excluded from comparison as
                     // engine narration, but said so a reader is not left guessing.
-                    if mismatches.Count > 0 then
-                        // REVIEW FIX (Codex, PR #15): a mixed request creates the valid
-                        // bindings BEFORE the mismatch is noticed, and this branch
-                        // returned without revoking them — leaving secret files on disk
-                        // outside the workspace, so workspace cleanup never removed
-                        // them.
+                    try
+                        // One line naming every bound variable, matching Jenkins' shape.
+                        // The wording is not compared (see the contract); the line exists
+                        // so a reader of OUR log is told what is being masked.
+                        // Register BEFORE the narration line, so nothing this block can
+                        // print is emitted while the masker is still unaware of it. The
+                        // recorded index scopes the LEAK CHECK, not the masking: only
+                        // output from here on can be a leak of these values.
+                        runCtx.BindSecrets bindings
+
+                        let names = bindings |> List.map (fun b -> "$" + b.ValueVariable)
+                        emit $"""Masking supported pattern matches of {String.concat " or " names}"""
+
+                        // FG-044b(b). Explicit variables requested by THIS wrapper are
+                        // lexical and may shadow outer values. Generated `_FILE` companions
+                        // are Fogell-only conveniences: they may fill an unused name, never
+                        // overwrite a pipeline, stage, withEnv or outer-credential binding.
+                        let currentPlain = List.ofSeq plainEnv
+
+                        let preservedNames =
+                            envForWith (ctx.EnvOverlay @ currentPlain) stage
+                            |> List.map fst
+                            |> Set.ofList
+
+                        let overlay =
+                            ctx.EnvOverlay
+                            @ currentPlain
+                            @ Secrets.environmentForPreserving preservedNames bindings
+                        let inner = { ctx with EnvOverlay = overlay; Secrets = ctx.Secrets @ bindings }
+
+                        for st in step.Block do
+                            if not (halted inner) then
+                                runStepDispatch inner cwd stage st deadline
+
+                        if inner.Failed.Value then ctx.Failed.Value <- true
+                    finally
+                        // Lexical cleanup must survive a catchable host failure in the
+                        // wrapper body. Abrupt process death still requires state-root
+                        // recovery/cleanup and remains a documented residual.
                         Secrets.revoke bindings
-                        emit $"""ERROR: credential type mismatch: {String.concat "; " mismatches}"""
-                        ctx.Failed.Value <- true
-                        ctx.Sink BuildStatus.Failure
-                    else
-                        try
-                            // One line naming every bound variable, matching Jenkins' shape.
-                            // The wording is not compared (see the contract); the line exists
-                            // so a reader of OUR log is told what is being masked.
-                            // Register BEFORE the narration line, so nothing this block can
-                            // print is emitted while the masker is still unaware of it. The
-                            // recorded index scopes the LEAK CHECK, not the masking: only
-                            // output from here on can be a leak of these values.
-                            runCtx.BindSecrets bindings
-
-                            let names = bindings |> List.map (fun b -> "$" + b.ValueVariable)
-                            emit $"""Masking supported pattern matches of {String.concat " or " names}"""
-
-                            // FG-044b(b). Explicit variables requested by THIS wrapper are
-                            // lexical and may shadow outer values. Generated `_FILE` companions
-                            // are Fogell-only conveniences: they may fill an unused name, never
-                            // overwrite a pipeline, stage, withEnv or outer-credential binding.
-                            let currentPlain = List.ofSeq plainEnv
-
-                            let preservedNames =
-                                envForWith (ctx.EnvOverlay @ currentPlain) stage
-                                |> List.map fst
-                                |> Set.ofList
-
-                            let overlay =
-                                ctx.EnvOverlay
-                                @ currentPlain
-                                @ Secrets.environmentForPreserving preservedNames bindings
-                            let inner = { ctx with EnvOverlay = overlay; Secrets = ctx.Secrets @ bindings }
-
-                            for st in step.Block do
-                                if not (halted inner) then
-                                    runStepDispatch inner cwd stage st deadline
-
-                            if inner.Failed.Value then ctx.Failed.Value <- true
-                        finally
-                            // Lexical cleanup must survive a catchable host failure in the
-                            // wrapper body. Abrupt process death still requires state-root
-                            // recovery/cleanup and remains a documented residual.
-                            Secrets.revoke bindings
 
             // FG-047 companion. `deleteDir()` empties the CURRENT directory — the
             // workspace, or the enclosing `dir` block's cwd — without removing the
