@@ -612,6 +612,12 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                         failed <- true
 
                     match dfaSlashyBoundary with
+                    | NonConsuming ->
+                        // This slash was immediately escaped in malformed raw
+                        // source. It is a constant-time non-opener hint; do not
+                        // seek through the independently classified next slash.
+                        stream.Skip()
+                        recordSignificant '/' before
                     | Complete closingIndex ->
                         // Admission has already proved the exact same-line
                         // delimiter. Consume it directly instead of searching

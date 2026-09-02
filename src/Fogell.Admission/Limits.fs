@@ -30,6 +30,7 @@ type Limits =
 [<Struct>]
 type SlashySpanBoundary =
     | Unclassified
+    | NonConsuming
     | Complete of ClosingIndex: int
     | Incomplete of PhysicalEndIndex: int
 
@@ -66,6 +67,7 @@ type SlashySpans internal (boundaries: SlashySpanBoundary array, recoveryBoundar
                         Unclassified
                     else
                         match boundaries.[outerIndex] with
+                        | NonConsuming -> NonConsuming
                         | Complete outerCloser when outerCloser >= start && outerCloser < start + length ->
                             Complete(outerCloser - start)
                         | Complete outerCloser when outerCloser >= start + length -> Incomplete length
@@ -521,9 +523,7 @@ module Limits =
                             column <- column + 2L
                     | '/'
                         when i > 0
-                             && source.[i - 1] = '\\'
-                             && slashyClosers.[i] >= 0
-                             && (needsOperand || statementHead || commandHead) ->
+                             && source.[i - 1] = '\\' ->
                         // Raw/balanced parser consumers need the cached hint
                         // even when malformed source presents an escaped slash
                         // where an opener would otherwise be expected. It is
@@ -533,7 +533,7 @@ module Limits =
                         // `\\/ /x/` reaches a real slashy, while
                         // `\\/ amount / x / 2` keeps both later slashes as
                         // division. The parser table retains its O(1) hint.
-                        recognizedSlashyBoundaries.[i] <- Complete slashyClosers.[i]
+                        recognizedSlashyBoundaries.[i] <- NonConsuming
                     | '/'
                         when slashyClosers.[i] >= 0
                              && returnCommandHead

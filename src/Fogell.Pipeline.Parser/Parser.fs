@@ -215,6 +215,13 @@ let private rawArgValue (allowCommandHead: bool) (stops: char list) : P<string> 
                         failed <- true
 
                     match stream.UserState.BalancedSlashySpans.Boundary(int slashIndex) with
+                    | NonConsuming ->
+                        // Admission classified this as an escaped parser hint,
+                        // not an opener. Consume only this slash so a later,
+                        // independently classified opener remains visible.
+                        stream.Skip()
+                        recordSignificant '/' slashIndex
+                        commandHead <- false
                     | Complete closingIndex ->
                         // Admission already proved this exact delimiter. The
                         // boundary is source-relative here and slice-relative

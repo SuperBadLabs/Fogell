@@ -736,6 +736,15 @@ let admissionLimits =
                   [ "opaque stage extension",
                     "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return /aaaa/ } } } }",
                     "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return /aaaaa/ } } } }"
+                    "escaped-hint opaque stage extension",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { \\/ /aaaa/ } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { \\/ /aaaaa/ } } } }"
+                    "escaped-hint raw positional",
+                    "pipeline { agent any stages { stage('B') { steps { echo \\/ /aaaa/ } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo \\/ /aaaaa/ } } } }"
+                    "escaped-hint raw named",
+                    "pipeline { agent any stages { stage('B') { steps { echo message: \\/ /aaaa/ } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo message: \\/ /aaaaa/ } } } }"
                     "command in collection",
                     "pipeline { agent any stages { stage('B') { steps { echo [{ echo /aaaa/ }] } } } }",
                     "pipeline { agent any stages { stage('B') { steps { echo [{ echo /aaaaa/ }] } } } }"
@@ -847,6 +856,40 @@ let admissionLimits =
                   (spans.Slice(7, 3).Boundary(0))
                   (Incomplete 3)
                   "a closer beyond an isolated reparse is its local EOF boundary"
+
+              let escapedHintSource = "\\/ /a/"
+
+              let escapedHintSpans =
+                  match Limits.precheckWithSlashySpans Limits.defaults escapedHintSource with
+                  | Ok classified -> classified
+                  | Error e -> failtestf "escaped-hint boundary control failed precheck: %A" e
+
+              Expect.equal
+                  (escapedHintSpans.Boundary(1))
+                  NonConsuming
+                  "an immediately escaped slash is explicitly non-consuming"
+
+              Expect.equal
+                  (escapedHintSpans.Boundary(3))
+                  (Complete 5)
+                  "the later real opener keeps its independent complete boundary"
+
+              let escapedHintSlice = escapedHintSpans.Slice(1, 5)
+              Expect.equal (escapedHintSlice.Boundary(0)) NonConsuming "a slice preserves the non-consuming hint"
+              Expect.equal (escapedHintSlice.Boundary(2)) (Complete 4) "a slice rebases the later real opener"
+
+              for label, source, slashIndex in
+                  [ "EOF", "\\/", 1
+                    "LF", "\\/\n", 1
+                    "CRLF", "\\/\r\n", 1
+                    "CR", "\\/\r", 1 ] do
+                  match Limits.precheckWithSlashySpans Limits.defaults source with
+                  | Ok classified ->
+                      Expect.equal
+                          (classified.Boundary(slashIndex))
+                          NonConsuming
+                          $"{label}: an escaped slash never becomes an incomplete slashy"
+                  | Error e -> failtestf "%s escaped non-consuming control failed: %A" label e
 
               for newlineLabel, newline in [ "LF", "\n"; "CRLF", "\r\n"; "CR", "\r" ] do
                   let prefix =
@@ -1211,6 +1254,20 @@ let admissionLimits =
                   recoveryStarted.Elapsed.TotalSeconds
                   2.0
                   "grammar-failure slashy recovery walks cached complete spans once"
+
+              let escapedHintAdversary = ")\ndef x = " + String.replicate 10_000 "\\/ " + "/aaaa/"
+              let escapedHintStarted = Diagnostics.Stopwatch.StartNew()
+              let escapedHintResult = Fogell.Groovy.Parser.Parser.parseWithLimits recoveryLimits escapedHintAdversary
+              escapedHintStarted.Stop()
+
+              match escapedHintResult with
+              | Error e -> Expect.equal e.Code MalformedSyntax "non-consuming hints do not invent a scalar"
+              | Ok _ -> failtest "the malformed escaped-hint adversary unexpectedly parsed"
+
+              Expect.isLessThan
+                  escapedHintStarted.Elapsed.TotalSeconds
+                  2.0
+                  "repeated non-consuming hints never trigger suffix scans"
 
               let positionedScalarError label result =
                   match result with
