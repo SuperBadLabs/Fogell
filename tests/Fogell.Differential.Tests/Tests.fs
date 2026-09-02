@@ -6120,6 +6120,40 @@ let recoveredProvenanceSeal =
               | other -> failtest $"expected SealRefused, got {describe other}"
           }
 
+          test "a bound block transplanted from another receipt is a provenance mismatch" {
+              // Found by Codex on the second PR: a hash over the entries alone is the
+              // same in every receipt, so a genuine block and its line could be lifted
+              // from an unrelated case and presented as this case's history. The
+              // provenance hash binds this receipt's content seal too.
+              let other =
+                  { Compare.receipt
+                        "fg128-unrelated.Jenkinsfile"
+                        (Text.Encoding.UTF8.GetBytes "pipeline { agent any }")
+                        "2.568.1"
+                        []
+                        (Result.Ok(trace "success"))
+                        (Result.Ok(trace "success")) with
+                      RecoveredFrom = [ entry ] }
+
+              Expect.notEqual other.Seal firstAttempt.Seal "the donor is a different receipt"
+              let donor = Compare.render other
+              let donorLine = donor.Split('\n') |> Array.find (fun l -> l.StartsWith "recovered-seal:")
+
+              let donorBlock =
+                  let ls = donor.Split('\n') |> Array.toList
+                  let i = ls |> List.findIndex (fun l -> l.StartsWith "RECOVERED:")
+                  ls |> List.skip i |> List.takeWhile (fun l -> l <> "") |> String.concat "\n"
+
+              let text =
+                  (Compare.render firstAttempt)
+                      .Replace("\ncase-digest:", $"\n{donorLine}\ncase-digest:")
+                      .Replace("VERDICT:", $"{donorBlock}\n\nVERDICT:")
+
+              match verify firstAttempt text with
+              | Compare.ProvenanceMismatch _ -> ()
+              | other -> failtest $"expected ProvenanceMismatch, got {describe other}"
+          }
+
           test "a fabricated block on a first-attempt receipt is refused" {
               let text =
                   (Compare.render firstAttempt)

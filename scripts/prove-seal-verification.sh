@@ -214,14 +214,16 @@ else
   expect_reject "an ADDED RECOVERED block with no recovered-seal line (FG-128)" "$d" "no recovered-seal line binds it"
 fi
 
-# 14.1 a correctly bound block is ACCEPTED. The line is sha256 over "recovered=N\n"
-# plus the entries joined by "\n" — the writer's recipe, recomputed here so the arm
-# cannot pass by copying a value out of the code under test.
+# 14.1 a correctly bound block is ACCEPTED. The line is sha256 over "seal=<this
+# receipt's content seal>\nrecovered=N\n" plus the entries joined by "\n" — the writer's
+# recipe, recomputed here so the arm cannot pass by copying a value out of the code
+# under test.
 bind_recovered() {
   python3 - "$1" "$2" <<'PY'
-import sys, hashlib
+import sys, hashlib, re
 p, entry = sys.argv[1], sys.argv[2]; s=open(p).read()
-h=hashlib.sha256(("recovered=1\n"+entry).encode()).hexdigest()
+seal=re.search(r"^seal:\s+(\S+)$", s, re.M).group(1)
+h=hashlib.sha256(("seal="+seal+"\nrecovered=1\n"+entry).encode()).hexdigest()
 s=s.replace("\ncase-digest:", "\nrecovered-seal: "+h+"\ncase-digest:", 1)
 s=s.replace("VERDICT:", "RECOVERED: this case DIVERGED on an earlier attempt and did not reproduce.\n  The verdict below is from a re-run. What the earlier attempt showed:\n    "+entry+"\n\nVERDICT:", 1)
 open(p,"w").write(s)
@@ -243,6 +245,16 @@ d=$(lab_with "$SEQ" recovered-line-deleted); bind_recovered "$d"/*.receipt.txt "
 sed -i '/^recovered-seal: /d' "$d"/*.receipt.txt
 expect_reject "a bound RECOVERED block whose recovered-seal line was DELETED" "$d" "no recovered-seal line binds it"
 
+# 14.4 a recovered-seal line with NO block: a stray binding is refused too.
+d=$(lab_with "$SEQ" recovered-orphan-line)
+python3 - "$d"/*.receipt.txt <<'PY'
+import sys
+p=sys.argv[1]; s=open(p).read()
+s=s.replace("\ncase-digest:", "\nrecovered-seal: 0000000000000000000000000000000000000000000000000000000000000000\ncase-digest:", 1)
+open(p,"w").write(s)
+PY
+expect_reject "a recovered-seal line with NO RECOVERED block" "$d" "no RECOVERED provenance block"
+
 # 14.5 a SECOND RECOVERED block appended after a bound one: the hash binds the first
 # block's entries, so without a once-only rule the second was unbound history that
 # verified — found by both reviewers on the first PR.
@@ -256,15 +268,24 @@ PY
 [ "$(grep -c '^RECOVERED:' "$d"/*.receipt.txt)" = 2 ] || { echo "  FAIL: the second RECOVERED block was never added — this arm would prove nothing"; FAILED=1; }
 expect_reject "a SECOND RECOVERED block appended after a bound one" "$d" "RECOVERED:"
 
-# 14.4 a recovered-seal line with NO block: a stray binding is refused too.
-d=$(lab_with "$SEQ" recovered-orphan-line)
-python3 - "$d"/*.receipt.txt <<'PY'
-import sys
-p=sys.argv[1]; s=open(p).read()
-s=s.replace("\ncase-digest:", "\nrecovered-seal: 0000000000000000000000000000000000000000000000000000000000000000\ncase-digest:", 1)
+# 14.6 a bound block TRANSPLANTED from another receipt: the donor's line and block are
+# genuine and agree with each other, but the hash also binds the donor's content seal,
+# so in any other receipt it is a provenance mismatch. Over the entries alone it was the
+# same value in every receipt — found by Codex on the second PR.
+d=$(lab_with "$SEQ" recovered-donor); bind_recovered "$d"/*.receipt.txt "$ENTRY"
+t=$(lab_with "$MULTI" recovered-transplant)
+python3 - "$d"/*.receipt.txt "$t"/*.receipt.txt <<'PY'
+import sys, re
+donor=open(sys.argv[1]).read(); p=sys.argv[2]; s=open(p).read()
+line=re.search(r"^recovered-seal: .*$", donor, re.M).group(0)
+block=re.search(r"^RECOVERED:.*?(?=\n\n)", donor, re.M|re.S).group(0)
+s=s.replace("\ncase-digest:", "\n"+line+"\ncase-digest:", 1)
+s=s.replace("VERDICT:", block+"\n\nVERDICT:", 1)
 open(p,"w").write(s)
 PY
-expect_reject "a recovered-seal line with NO RECOVERED block" "$d" "no RECOVERED provenance block"
+{ grep -q '^recovered-seal: ' "$t"/*.receipt.txt && grep -q '^RECOVERED:' "$t"/*.receipt.txt; } || { echo "  FAIL: the transplant never landed — this arm would prove nothing"; FAILED=1; }
+expect_reject "a bound RECOVERED block TRANSPLANTED from another receipt" "$t" "PROVENANCE MISMATCH"
+
 
 # 14b. A FLIPPED sealed-output MODE. That field decides HOW the verifier hashes, so
 # leaving it unsealed put a key under the mat: a `sequence` receipt whose output happens
