@@ -165,7 +165,8 @@ module Limits =
             // non-recursive branches below.
             let mutable unaryChainDepth = 0
             let mutable unaryFloor = 0
-            let unaryFloors = System.Collections.Generic.Stack<int>()
+            let mutable postfixPrimary = false
+            let unaryFrames = System.Collections.Generic.Stack<int * int>()
             let controlParens = System.Collections.Generic.Stack<bool>()
             // A `case` expression ends at a colon at the same structural and
             // expression nesting where the keyword began. Its third field is
@@ -217,6 +218,7 @@ module Limits =
                 // Unary frames outside the current structural primary remain
                 // active while its nested expression is parsed.
                 unaryChainDepth <- unaryFloor
+                postfixPrimary <- false
 
             let markTriviaBreak () =
                 sawLineBreak <- true
@@ -406,7 +408,7 @@ module Limits =
                             commandHead <- false
                             returnFallbackPending <- false
                             returnCommandHead <- false
-                            resetUnaryChain ()
+                            postfixPrimary <- true
                             sawLineBreak <- false
                 else
                     match c with
@@ -421,6 +423,9 @@ module Limits =
                         i <- i + 1
                         column <- column + 1L
                     | '\'' | '"' ->
+                        if not needsOperand then resetUnaryChain ()
+
+                        postfixPrimary <- false
                         returnFallbackPending <- false
                         returnCommandHead <- false
                         quote <- c
@@ -448,6 +453,8 @@ module Limits =
                         // closing slash exists this arm is not entered: the slash is
                         // processed as ordinary code and all fallback
                         // node/depth accounting remains visible.
+                        if not needsOperand then resetUnaryChain ()
+
                         recordNode ()
 
                         if err.IsNone then
@@ -460,7 +467,7 @@ module Limits =
                             commandHead <- false
                             returnFallbackPending <- false
                             returnCommandHead <- false
-                            resetUnaryChain ()
+                            postfixPrimary <- true
                             sawLineBreak <- false
                     | '/' when needsOperand || statementHead || commandHead ->
                         // Preserve the DFA decision even without a same-line
@@ -478,6 +485,14 @@ module Limits =
                         resetUnaryChain ()
                         sawLineBreak <- false
                     | '{' | '[' | '(' ->
+                        // A postfix index cannot cross a physical ending in
+                        // the Groovy grammar. Calls and trailing closures can,
+                        // so only `[` forces a completed-primary seam here.
+                        if c = '[' && postfixPrimary && sawLineBreak then
+                            resetUnaryChain ()
+                        elif not needsOperand && not postfixPrimary then
+                            resetUnaryChain ()
+
                         let opensInterpolation =
                             match pendingInterpolation with
                             | Some context when c = '{' ->
@@ -486,8 +501,9 @@ module Limits =
                                 true
                             | _ -> false
 
-                        unaryFloors.Push unaryFloor
+                        unaryFrames.Push(unaryFloor, unaryChainDepth)
                         unaryFloor <- unaryChainDepth
+                        postfixPrimary <- false
                         depth <- depth + 1
                         recordNode ()
                         returnFallbackPending <- false
@@ -539,11 +555,12 @@ module Limits =
                         depth <- depth - 1
                         recordNode ()
 
-                        let parentUnaryFloor =
-                            if unaryFloors.Count = 0 then 0 else unaryFloors.Pop()
+                        let parentUnaryFloor, inheritedUnaryChain =
+                            if unaryFrames.Count = 0 then 0, 0 else unaryFrames.Pop()
 
                         unaryFloor <- parentUnaryFloor
-                        unaryChainDepth <- parentUnaryFloor
+                        unaryChainDepth <- inheritedUnaryChain
+                        postfixPrimary <- true
 
                         match caseContext with
                         | Some(caseDepth, _, _) when depth < caseDepth -> caseContext <- None
@@ -591,7 +608,10 @@ module Limits =
                                 // that wrap that literal active until its quote.
                                 unaryChainDepth <- outerUnaryDepth
                     | c when System.Char.IsLetterOrDigit c || c = '_' ->
-                        resetUnaryChain ()
+                        let startsAsOperand = needsOperand
+
+                        if not startsAsOperand then resetUnaryChain ()
+
                         let start = i
 
                         while
@@ -615,11 +635,13 @@ module Limits =
 
                             match word with
                             | "if" | "while" | "for" | "switch" | "catch" ->
+                                resetUnaryChain ()
                                 awaitingControlParen <- true
                                 needsOperand <- true
                                 statementHead <- false
                                 commandHead <- false
                             | "return" | "throw" | "case" | "in" ->
+                                resetUnaryChain ()
                                 // These keywords require an expression next;
                                 // their final identifier character must never
                                 // force a following slash to division.
@@ -633,23 +655,36 @@ module Limits =
                                 if word = "case" then
                                     caseContext <- Some(depth, expressionNesting, 0)
                             | "else" ->
+                                resetUnaryChain ()
                                 // An unbraced else body begins a statement just
                                 // like a completed control header.
                                 awaitingControlParen <- false
                                 needsOperand <- true
                                 statementHead <- true
                                 commandHead <- false
-                            | "def" | "final" | "new" | "instanceof" | "as" ->
+                            | "new" ->
+                                // Constructor syntax is one primary whose
+                                // identifier and optional call arguments are
+                                // parsed after this keyword.
+                                postfixPrimary <- false
+                                awaitingControlParen <- false
+                                needsOperand <- true
+                                statementHead <- false
+                                commandHead <- false
+                            | "def" | "final" | "instanceof" | "as" ->
+                                resetUnaryChain ()
                                 awaitingControlParen <- false
                                 needsOperand <- true
                                 statementHead <- false
                                 commandHead <- false
                             | "true" | "false" | "null" ->
+                                postfixPrimary <- true
                                 awaitingControlParen <- false
                                 needsOperand <- false
                                 statementHead <- false
                                 commandHead <- false
                             | _ ->
+                                postfixPrimary <- true
                                 awaitingControlParen <- false
                                 // A leading identifier can be a Groovy
                                 // command head (`echo /x/`); a number cannot.
@@ -683,10 +718,10 @@ module Limits =
                         returnCommandHead <- false
                         sawLineBreak <- false
                     | '+' | '-' when i + 1 < source.Length && source.[i + 1] = c && not needsOperand ->
-                        resetUnaryChain ()
                         // Postfix increment/decrement leaves a complete value.
                         i <- i + 1
                         column <- column + 1L
+                        postfixPrimary <- true
                         needsOperand <- false
                         statementHead <- false
                         commandHead <- false
@@ -709,7 +744,38 @@ module Limits =
                         returnCommandHead <- false
                         sawLineBreak <- false
                     | ('!' | '-') when needsOperand ->
+                        postfixPrimary <- false
                         recordUnaryOperator ()
+                        needsOperand <- true
+                        statementHead <- false
+                        commandHead <- false
+                        awaitingControlParen <- false
+                        returnFallbackPending <- false
+                        returnCommandHead <- false
+                        sawLineBreak <- false
+                    | '?' when postfixPrimary && i + 1 < source.Length && source.[i + 1] = '.' ->
+                        // Safe navigation extends the completed primary; its
+                        // member/call suffix is still parsed under outer unary
+                        // frames.
+                        needsOperand <- true
+                        statementHead <- false
+                        commandHead <- false
+                        awaitingControlParen <- false
+                        returnFallbackPending <- false
+                        returnCommandHead <- false
+                        sawLineBreak <- false
+                    | '*' when postfixPrimary && i + 1 < source.Length && source.[i + 1] = '.' ->
+                        // Spread-dot is one postfix continuation token.
+                        i <- i + 1
+                        column <- column + 1L
+                        needsOperand <- true
+                        statementHead <- false
+                        commandHead <- false
+                        awaitingControlParen <- false
+                        returnFallbackPending <- false
+                        returnCommandHead <- false
+                        sawLineBreak <- false
+                    | '.' when postfixPrimary && (i + 1 >= source.Length || source.[i + 1] <> '.') ->
                         needsOperand <- true
                         statementHead <- false
                         commandHead <- false

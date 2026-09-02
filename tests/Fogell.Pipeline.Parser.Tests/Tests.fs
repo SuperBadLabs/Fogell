@@ -489,6 +489,67 @@ let admissionLimits =
               Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults outerUnaryList
               |> expectCode "outer unary list plus later item unary/Groovy" NestingTooDeep
 
+              let unary count = String.replicate count "!"
+
+              let postfixCases outerCount innerCount =
+                  let outer = unary outerCount
+                  let inner = unary innerCount
+
+                  [ "free call", outer + "foo(" + inner + "true)"
+                    "constructor call", outer + "new Foo(" + inner + "true)"
+                    "index", outer + "foo[" + inner + "true]"
+                    "member call", outer + "foo.bar(" + inner + "true)"
+                    "safe member call", outer + "foo?.bar(" + inner + "true)"
+                    "spread member call", outer + "foo*.bar(" + inner + "true)"
+                    "grouped receiver member call", outer + "(foo).bar(" + inner + "true)"
+                    "list receiver member call", outer + "[foo].bar(" + inner + "true)"
+                    "string receiver member call", outer + "'foo'.bar(" + inner + "true)"
+                    "trailing closure", outer + "foo { return " + inner + "true }"
+                    "member trailing closure", outer + "foo.bar { return " + inner + "true }" ]
+
+              for label, source in postfixCases 40 40 do
+                  Limits.precheck Limits.defaults source
+                  |> expectCode (label + " retains outer unary/precheck") NestingTooDeep
+
+                  Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults source
+                  |> expectCode (label + " retains outer unary/Groovy") NestingTooDeep
+
+              for label, source in postfixCases 40 24 do
+                  Limits.precheck Limits.defaults source
+                  |> expectCode (label + " plus-one postfix depth/precheck") NestingTooDeep
+
+                  Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults source
+                  |> expectCode (label + " plus-one postfix depth/Groovy") NestingTooDeep
+
+              for label, source in postfixCases 40 23 do
+                  Expect.isOk
+                      (Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults source)
+                      $"{label}: 40 outer plus 23 inner unary frames and one suffix group fit exactly"
+
+              let siblingArguments =
+                  unary 40
+                  + "foo("
+                  + unary 23
+                  + "true, "
+                  + unary 23
+                  + "false)"
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults siblingArguments)
+                  "sibling call arguments each restart at the inherited outer-unary floor"
+
+              let independentControls =
+                  [ "binary seam", unary 40 + "foo + foo(" + unary 40 + "true)"
+                    "semicolon seam", unary 40 + "foo; foo(" + unary 40 + "true)"
+                    "newline index seam", unary 40 + "foo\n[" + unary 40 + "true]" ]
+
+              for label, source in independentControls do
+                  Expect.isOk (Limits.precheck Limits.defaults source) $"{label}: precheck resets the completed primary"
+
+                  Expect.isOk
+                      (Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults source)
+                      $"{label}: the recursive grammar agrees that the expressions are independent"
+
               let hostile = String.replicate (Limits.defaults.MaxDepth + 1) "!" + "true"
 
               let scripted =
