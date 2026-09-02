@@ -706,6 +706,53 @@ let admissionLimits =
                                   quoteLabel
                                   e
 
+                          for secondLabel, second in [ "LF", "\n"; "CRLF", "\r\n"; "bare CR", "\r" ] do
+                              let adjacentEnding =
+                                  "pipeline { agent any stages { stage('B') { steps { "
+                                  + prefix
+                                  + quote
+                                  + "a\\"
+                                  + newline
+                                  + second
+                                  + "b"
+                                  + quote
+                                  + " } } } }"
+
+                              // These two source fragments join into ONE CRLF
+                              // byte sequence. Every other pair is two physical
+                              // endings, only the first of which is escaped.
+                              let oneCrLf = newline = "\r" && second = "\n"
+
+                              match Parser.parseWithLimits Limits.defaults adjacentEnding with
+                              | Ok pipeline when oneCrLf ->
+                                  let step = pipeline.Stages.[0].Steps.[0]
+                                  let actual =
+                                      if argumentLabel = "positional" then step.Positional
+                                      else step.Named |> List.map snd
+
+                                  Expect.equal
+                                      actual
+                                      [ "ab" ]
+                                      $"bare CR + LF is one direct {quoteLabel}-quoted CRLF continuation"
+                              | Error e when not oneCrLf ->
+                                  Expect.equal
+                                      e.Code
+                                      MalformedSyntax
+                                      $"{newlineLabel} + {secondLabel} refuses the second unescaped direct {quoteLabel}-quoted ending"
+                              | Ok _ ->
+                                  failtestf
+                                      "%s + %s crossed a direct %s %s-quoted argument"
+                                      newlineLabel
+                                      secondLabel
+                                      argumentLabel
+                                      quoteLabel
+                              | Error e ->
+                                  failtestf
+                                      "one CRLF direct %s %s-quoted continuation was rejected: %A"
+                                      argumentLabel
+                                      quoteLabel
+                                      e
+
                   let tripleMultiline =
                       "pipeline { agent any stages { stage('B') { steps { echo(['''a"
                       + newline
@@ -714,6 +761,44 @@ let admissionLimits =
                   match Parser.parseWithLimits Limits.defaults tripleMultiline with
                   | Ok _ -> ()
                   | Error e -> failtestf "%s was rejected inside a triple-single-quoted string: %A" newlineLabel e
+
+                  for tripleLabel, tripleQuote in [ "triple-single", "'''"; "triple-double", "\"\"\"" ] do
+                      for argumentLabel, prefix in [ "positional", "echo "; "named", "echo message: " ] do
+                          for secondLabel, second in [ "LF", "\n"; "CRLF", "\r\n"; "bare CR", "\r" ] do
+                              let adjacentTripleEnding =
+                                  "pipeline { agent any stages { stage('B') { steps { "
+                                  + prefix
+                                  + tripleQuote
+                                  + "a\\"
+                                  + newline
+                                  + second
+                                  + "b"
+                                  + tripleQuote
+                                  + " } } } }"
+
+                              match Parser.parseWithLimits Limits.defaults adjacentTripleEnding with
+                              | Ok pipeline ->
+                                  let step = pipeline.Stages.[0].Steps.[0]
+                                  let actual =
+                                      if argumentLabel = "positional" then step.Positional
+                                      else step.Named |> List.map snd
+
+                                  let expected =
+                                      if newline = "\r" && second = "\n" then [ "ab" ]
+                                      else [ "a\nb" ]
+
+                                  Expect.equal
+                                      actual
+                                      expected
+                                      $"{newlineLabel} + {secondLabel} has exact direct {tripleLabel} continuation semantics"
+                              | Error e ->
+                                  failtestf
+                                      "%s + %s direct %s %s continuation was rejected: %A"
+                                      newlineLabel
+                                      secondLabel
+                                      argumentLabel
+                                      tripleLabel
+                                      e
 
                   let continuedOrdinary =
                       "pipeline { agent any stages { stage('B') { steps { echo(['a\\"

@@ -207,13 +207,11 @@ let private escapedChar: P<char> =
 /// boundaries for those forms. The outer [attempt] restores the backslash when
 /// it is not a continuation so the ordinary escape parser can consume it.
 let private escapedPhysicalContinuation: P<string> =
-    attempt (
-        skipChar '\\'
-        >>. choice
-                [ attempt (skipChar '\r' >>. skipChar '\n')
-                  skipChar '\n'
-                  skipChar '\r' ]
-        >>% "")
+    // FParsec normalizes each physical LF, CRLF or bare CR into ONE logical
+    // newline. In particular, `skipChar '\r'` and `skipChar '\n'` each accept
+    // any of those complete forms; composing them as a CRLF parser consumes two
+    // adjacent physical endings. [skipNewline] is the exact one-ending parser.
+    attempt (skipChar '\\' >>. skipNewline >>% "")
 
 /// The ONLY thing that separates [escapedCharKeepingDollar] from [escapedChar].
 ///
