@@ -2995,6 +2995,16 @@ let fg180Grammar =
               | other -> failtestf "wrong slashy AST: %A" other
           }
 
+          test "ordinary strings refuse every raw physical line-ending spelling" {
+              for quoteLabel, quote in [ "single", "'"; "double", "\"" ] do
+                  for newlineLabel, newline in [ "LF", "\n"; "CRLF", "\r\n"; "bare CR", "\r" ] do
+                      let source = "def value = " + quote + "before" + newline + "after" + quote + "\n"
+
+                      Expect.isFalse
+                          (parses source)
+                          $"{quoteLabel}-quoted raw {newlineLabel} requires a triple-quoted multiline string"
+          }
+
           test "all four quoted consumers remove each physical continuation spelling" {
               for label, ending in [ "LF", "\n"; "CRLF", "\r\n"; "CR", "\r" ] do
                   let sources =

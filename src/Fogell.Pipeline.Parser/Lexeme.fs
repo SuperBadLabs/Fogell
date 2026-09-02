@@ -465,10 +465,12 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                         elif d = q then
                             stream.Skip()
                             closed <- true
-                        elif (d = '\r' || d = '\n') && q = '\'' then
-                            // Ordinary single-quoted Groovy strings cannot cross
-                            // an unescaped physical line ending. CRLF is observed
-                            // at its CR, and bare CR must behave exactly like LF.
+                        elif d = '\r' || d = '\n' then
+                            // Ordinary single- and double-quoted Groovy strings
+                            // cannot cross an unescaped physical line ending.
+                            // CRLF is observed at its CR, and bare CR must behave
+                            // exactly like LF. Triple-quoted spans took the branch
+                            // above and retain their multiline contract.
                             failed <- true
                         else
                             stream.Skip()

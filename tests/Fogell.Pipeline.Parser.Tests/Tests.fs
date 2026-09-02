@@ -590,14 +590,23 @@ let admissionLimits =
                           Expect.equal e.Code ScalarTooLong $"{newlineLabel} after {firstLabel} exposes the gate's scalar"
                       | Ok _ -> failtestf "%s after %s swallowed the approval gate" newlineLabel firstLabel
 
-                  let ordinaryMultiline =
-                      "pipeline { agent any stages { stage('B') { steps { echo(['a"
-                      + newline
-                      + "b']) } } } }"
+                  for quoteLabel, quote in [ "single", "'"; "double", "\"" ] do
+                      let ordinaryMultiline =
+                          "pipeline { agent any stages { stage('B') { steps { echo(["
+                          + quote
+                          + "a"
+                          + newline
+                          + "b"
+                          + quote
+                          + "]) } } } }"
 
-                  match Parser.parseWithLimits Limits.defaults ordinaryMultiline with
-                  | Error e -> Expect.equal e.Code MalformedSyntax $"{newlineLabel} refuses an ordinary multiline string"
-                  | Ok _ -> failtestf "%s was swallowed inside an ordinary single-quoted string" newlineLabel
+                      match Parser.parseWithLimits Limits.defaults ordinaryMultiline with
+                      | Error e ->
+                          Expect.equal
+                              e.Code
+                              MalformedSyntax
+                              $"{newlineLabel} refuses an ordinary {quoteLabel}-quoted multiline string"
+                      | Ok _ -> failtestf "%s was swallowed inside an ordinary %s-quoted string" newlineLabel quoteLabel
 
                   let tripleMultiline =
                       "pipeline { agent any stages { stage('B') { steps { echo(['''a"

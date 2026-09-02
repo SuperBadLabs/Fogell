@@ -206,7 +206,7 @@ let private singleQuoted: P<Expr> =
     between
         (skipString "'")
         (skipString "'")
-        (manyStrings (escaped <|> (satisfy (fun c -> c <> '\'' && c <> '\n') |>> string)))
+        (manyStrings (escaped <|> (satisfy (fun c -> c <> '\'' && c <> '\r' && c <> '\n') |>> string)))
     |>> EStr
 
 let private tripleSingle: P<Expr> =
@@ -273,6 +273,8 @@ let private exprOrCommandImpl = snd exprOrCommandForward
 /// GString: literal runs plus `${…}` and `$ref` interpolations, kept apart so
 /// the interpreter — not the lexer — decides what an interpolation means.
 let private gstring (q: string) : P<Expr> =
+    let isTriple = q.Length = 3
+
     let part =
         choice
             [ // FG-180: `"${tool 'M3'}/bin"` — a placeholder holds a whole
@@ -281,7 +283,12 @@ let private gstring (q: string) : P<Expr> =
               attempt (skipChar '$' >>. rawIdent .>>. many (attempt (skipChar '.' >>. rawIdent))
                        |>> fun (h, tail) -> GExpr(List.fold (fun acc n -> EProp(acc, n)) (EVar h) tail))
               (escaped |>> GLit)
-              (many1Satisfy (fun c -> c <> '$' && c <> '\\' && c <> q.[0]) |>> GLit) ]
+              (many1Satisfy (fun c ->
+                  c <> '$'
+                  && c <> '\\'
+                  && c <> q.[0]
+                  && (isTriple || (c <> '\r' && c <> '\n')))
+               |>> GLit) ]
 
     between (skipString q) (skipString q) (many part)
     |>> fun parts ->
