@@ -145,8 +145,8 @@ identity remain controller/authentication responsibilities.
 
 ### 3. Untrusted Jenkinsfile to parser and interpreter
 
-**Implemented in this tree.** Default admission limits bound source characters,
-node count, nesting, and scalar length before schema compilation (FG-004,
+**Implemented in this tree.** Default admission limits bound UTF-8 source bytes,
+node count, nesting, and UTF-8 scalar-content bytes before schema compilation (FG-004,
 [`Limits.fs`](../src/Fogell.Admission/Limits.fs) and
 `Parser.parseWithLimits`). The standing FG-004b sweep sends 10,000 replay-pinned
 inputs guaranteed to be refused by the Declarative parser boundary and requires

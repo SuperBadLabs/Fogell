@@ -1,5 +1,6 @@
 namespace Fogell.Admission
 
+open System.Text
 open Fogell.Ir
 
 /// FG-004 admission limits, applied BEFORE schema compilation.
@@ -25,20 +26,24 @@ type Limits =
 
 module Limits =
 
-    /// Cheap pre-parse guard. Counts brace depth and token-ish nodes with a
-    /// single linear scan — no recursion, so this itself cannot overflow. It is
+    /// Cheap pre-parse guard. Performs a UTF-8 byte-count pass, then counts
+    /// brace depth and token-ish nodes with a second linear scan. Neither pass
+    /// recurses, so this guard cannot itself exhaust the stack. It is
     /// intentionally approximate: its job is to make the *parser* safe to run,
     /// not to be a second grammar.
     let precheck (limits: Limits) (source: string) : Result<unit, AdmissionError> =
+        let sourceBytes =
+            if isNull source then 0 else Encoding.UTF8.GetByteCount source
+
         if System.String.IsNullOrWhiteSpace source then
             Error(AdmissionError.at EmptySource 1L 1L "source is empty")
-        elif source.Length > limits.MaxSourceBytes then
+        elif sourceBytes > limits.MaxSourceBytes then
             Error(
                 AdmissionError.at
                     SourceTooLarge
                     1L
                     1L
-                    $"source is {source.Length} bytes, limit is {limits.MaxSourceBytes}"
+                    $"source is {sourceBytes} UTF-8 bytes, limit is {limits.MaxSourceBytes}"
             )
         else
             let mutable depth = 0
@@ -63,14 +68,17 @@ module Limits =
                 if quote <> '\000' then
                     // inside a string literal: only look for its terminator
                     if c = quote && (i = 0 || source.[i - 1] <> '\\') then
-                        if i - scalarStart > limits.MaxScalarBytes then
+                        let scalarBytes =
+                            Encoding.UTF8.GetByteCount(source, scalarStart + 1, i - scalarStart - 1)
+
+                        if scalarBytes > limits.MaxScalarBytes then
                             err <-
                                 Some(
                                     AdmissionError.at
                                         ScalarTooLong
                                         line
                                         column
-                                        $"string literal exceeds {limits.MaxScalarBytes} bytes"
+                                        $"string literal exceeds {limits.MaxScalarBytes} UTF-8 bytes"
                                 )
 
                         quote <- '\000'
@@ -117,6 +125,20 @@ module Limits =
                             )
 
                 i <- i + 1
+
+            if err.IsNone && quote <> '\000' then
+                let scalarBytes =
+                    Encoding.UTF8.GetByteCount(source, scalarStart + 1, source.Length - scalarStart - 1)
+
+                if scalarBytes > limits.MaxScalarBytes then
+                    err <-
+                        Some(
+                            AdmissionError.at
+                                ScalarTooLong
+                                line
+                                column
+                                $"string literal exceeds {limits.MaxScalarBytes} UTF-8 bytes"
+                        )
 
             match err with
             | Some e -> Error e

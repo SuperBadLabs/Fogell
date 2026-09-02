@@ -52,11 +52,91 @@ let admissionLimits =
         "FG-004 admission limits"
         [ test "empty source is named, not a crash" {
               Expect.equal (err "").Code EmptySource "empty_source"
+              Expect.equal (err null).Code EmptySource "a null CLR caller is also refused"
           }
 
           test "oversized source is rejected before parsing" {
               let big = String.replicate 300_000 "x"
               Expect.equal (err big).Code SourceTooLarge "source_too_large"
+          }
+
+          test "source and scalar limits count UTF-8 bytes, not UTF-16 code units" {
+              let sourceLimits =
+                  { Limits.defaults with
+                      MaxSourceBytes = 4 }
+
+              Expect.isOk (Limits.precheck sourceLimits "éé") "two two-byte scalars fit exactly"
+              Expect.isOk (Limits.precheck sourceLimits "😀") "one surrogate pair is four UTF-8 bytes"
+
+              let astralSourceError =
+                  match Limits.precheck { sourceLimits with MaxSourceBytes = 3 } "😀" with
+                  | Error e -> e
+                  | Ok() -> failtest "expected a four-byte surrogate pair to cross a three-byte limit"
+
+              Expect.equal astralSourceError.Code SourceTooLarge "the source rejects an astral scalar by UTF-8 size"
+              Expect.equal
+                  astralSourceError.Message
+                  "source is 4 UTF-8 bytes, limit is 3"
+                  "the astral source count is exact"
+
+              let sourceError =
+                  match Limits.precheck { sourceLimits with MaxSourceBytes = 3 } "éé" with
+                  | Error e -> e
+                  | Ok() -> failtest "expected the UTF-8 source byte limit to reject"
+
+              Expect.equal sourceError.Code SourceTooLarge "four UTF-8 bytes cross a three-byte source limit"
+              Expect.equal sourceError.Message "source is 4 UTF-8 bytes, limit is 3" "the byte count is explicit"
+
+              let scalarLimits =
+                  { Limits.defaults with
+                      MaxSourceBytes = 100
+                      MaxScalarBytes = 4 }
+
+              Expect.isOk (Limits.precheck scalarLimits "'éé'") "four UTF-8 content bytes fit exactly"
+              Expect.isOk (Limits.precheck scalarLimits "'😀'") "one astral scalar fits the scalar limit exactly"
+
+              let astralScalarError =
+                  match Limits.precheck scalarLimits "'😀a'" with
+                  | Error e -> e
+                  | Ok() -> failtest "expected an astral scalar plus ASCII to cross the scalar limit"
+
+              Expect.equal astralScalarError.Code ScalarTooLong "the scalar rejects astral content by UTF-8 size"
+              Expect.equal astralScalarError.Position.Line 1L "the astral scalar line is exact"
+              Expect.equal astralScalarError.Position.Column 6L "the astral scalar closing-column position is exact"
+
+              let scalarError =
+                  match Limits.precheck scalarLimits "'ééa'" with
+                  | Error e -> e
+                  | Ok() -> failtest "expected the UTF-8 scalar byte limit to reject"
+
+              Expect.equal scalarError.Code ScalarTooLong "five UTF-8 content bytes cross a four-byte scalar limit"
+              Expect.equal
+                  scalarError.Message
+                  "string literal exceeds 4 UTF-8 bytes"
+                  "the scalar limit names its encoding"
+
+              let unterminatedError =
+                  match Limits.precheck scalarLimits "'ééa" with
+                  | Error e -> e
+                  | Ok() -> failtest "expected an overlong unterminated scalar"
+
+              Expect.isOk (Limits.precheck scalarLimits "'éé") "an unterminated scalar may fit exactly"
+              Expect.equal unterminatedError.Code ScalarTooLong "an unterminated scalar is bounded before parsing"
+              Expect.equal unterminatedError.Position.Line 1L "the unterminated scalar EOF line is exact"
+              Expect.equal unterminatedError.Position.Column 5L "the unterminated scalar EOF column is exact"
+              Expect.equal
+                  unterminatedError.Message
+                  "string literal exceeds 4 UTF-8 bytes"
+                  "the unterminated scalar reports the exact UTF-8 limit"
+
+              Expect.isOk (Limits.precheck scalarLimits "'😀") "an unterminated astral scalar fits exactly"
+
+              let unterminatedAstralError =
+                  match Limits.precheck scalarLimits "'😀a" with
+                  | Error e -> e
+                  | Ok() -> failtest "expected overlong unterminated astral content"
+
+              Expect.equal unterminatedAstralError.Position.Column 5L "astral EOF counts source columns, not bytes"
           }
 
           test "deep nesting is rejected before the grammar recurses" {
@@ -72,7 +152,7 @@ let admissionLimits =
           }
 
           test "a pathological brace bomb terminates and is named" {
-              // 40k braces: the precheck is a single linear scan, so this must
+              // 40k braces: the precheck uses bounded linear passes, so this must
               // return a verdict rather than exhaust the stack.
               let bomb = String.replicate 40_000 "{"
               let e = err ("pipeline " + bomb)
@@ -273,9 +353,9 @@ let sourceExcerpts =
               // The per-code goldens above render a FABRICATED error. These go through
               // the real parser, so the position each producer records is what lands
               // under the caret. Admission limits are shrunk so the offending line stays
-              // readable rather than clipped. The four limit carets sit one column PAST
-              // the byte that crossed the limit: `Limits.precheck` advances the column
-              // before classifying the byte, and FG-004b pins that position exactly.
+              // readable rather than clipped. The scanned-limit carets sit one source
+              // column past the character that crosses a count or closes an overlong
+              // scalar; FG-004b pins those positions exactly.
               // The MalformedSyntax case uses a `refuse` message Fogell owns rather
               // than FParsec's expectation list, which changes with every grammar edit.
               let tiny =
@@ -297,13 +377,13 @@ let sourceExcerpts =
                   [ "source_too_large",
                     tiny,
                     "pipeline { x }",
-                    "source_too_large at 1:1: source is 14 bytes, limit is 12\npipeline { x }\n^"
+                    "source_too_large at 1:1: source is 14 UTF-8 bytes, limit is 12\npipeline { x }\n^"
                     "nesting_too_deep", tiny, "a\n{{{", "nesting_too_deep at 2:4: nesting depth 3 exceeds limit 2\n{{{\n   ^"
                     "too_many_nodes", tiny, "a b\nc d e", "too_many_nodes at 2:6: node count exceeds 4\nc d e\n     ^"
                     "scalar_too_long",
                     tiny,
                     "x\n'abcd'",
-                    "scalar_too_long at 2:7: string literal exceeds 3 bytes\n'abcd'\n      ^"
+                    "scalar_too_long at 2:7: string literal exceeds 3 UTF-8 bytes\n'abcd'\n      ^"
                     "empty_source", Limits.defaults, "  \n\t", "empty_source at 1:1: source is empty\n  \n^"
                     "no_pipeline_block",
                     Limits.defaults,
@@ -344,6 +424,12 @@ let admissionNegativeSweep =
         let escapedQuoteScalar =
             "'a\\'" + String.replicate Limits.defaults.MaxScalarBytes "b" + "'"
 
+        let utf8SourceExact =
+            String.replicate ((Limits.defaults.MaxSourceBytes - 2) / 2) "é" + "aa"
+
+        let utf8ScalarExact =
+            String.replicate ((Limits.defaults.MaxScalarBytes - 2) / 2) "é" + "aa"
+
         [ exact "empty" "empty-or-trivia" "" EmptySource 1L 1L
           exact "trivia" "empty-or-trivia" " \t\r\n" EmptySource 1L 1L
           exact "no-pipeline" "no-pipeline" "node { echo 'x' }" NoPipelineBlock 1L 1L
@@ -358,6 +444,20 @@ let admissionNegativeSweep =
               "source-limit-plus-one"
               "source-limit"
               (String.replicate (Limits.defaults.MaxSourceBytes + 1) "x")
+              SourceTooLarge
+              1L
+              1L
+          exact
+              "utf8-source-limit-exact"
+              "source-limit"
+              utf8SourceExact
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "utf8-source-limit-plus-one"
+              "source-limit"
+              (utf8SourceExact + "a")
               SourceTooLarge
               1L
               1L
@@ -435,9 +535,9 @@ let admissionNegativeSweep =
               "single-scalar-content-limit"
               "single-scalar-limit"
               ("'" + String.replicate Limits.defaults.MaxScalarBytes "a" + "'")
-              ScalarTooLong
+              NoPipelineBlock
               1L
-              (int64 Limits.defaults.MaxScalarBytes + 3L)
+              1L
           exact
               "single-scalar-limit-plus-one"
               "single-scalar-limit"
@@ -445,6 +545,20 @@ let admissionNegativeSweep =
               ScalarTooLong
               1L
               (int64 Limits.defaults.MaxScalarBytes + 4L)
+          exact
+              "utf8-single-scalar-content-limit"
+              "single-scalar-limit"
+              ("'" + utf8ScalarExact + "'")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "utf8-single-scalar-limit-plus-one"
+              "single-scalar-limit"
+              ("'" + utf8ScalarExact + "a'")
+              ScalarTooLong
+              1L
+              (int64 utf8ScalarExact.Length + 4L)
           exact
               "escaped-quote-keeps-scalar-open"
               "single-scalar-limit"
@@ -602,7 +716,7 @@ let admissionNegativeSweep =
               Expect.equal replayDigest firstDigest "the complete length-delimited corpus replays byte-for-byte"
               Expect.equal
                   firstDigest
-                  "774ac3ced0365dff265edef6cd1977a91ddd3654af584421beba0d8e706634ae"
+                  "31d944f3af50640f81904787bc753d2b0e1d4bd6e315184db2880bddaf5fb7b0"
                   "the fixed seed and recipe corpus are pinned"
 
               Expect.equal
