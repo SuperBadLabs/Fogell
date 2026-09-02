@@ -36,6 +36,31 @@ module Limits =
 
         precedingBackslashes % 2 = 1
 
+    let private endsExpression c =
+        System.Char.IsLetterOrDigit c
+        || c = '_'
+        || c = ')'
+        || c = ']'
+        || c = '}'
+        || c = '\''
+        || c = '"'
+
+    let private slashyClosingIndex (source: string) openerIndex =
+        let mutable i = openerIndex + 1
+        let mutable closingIndex = -1
+
+        while closingIndex < 0 && i < source.Length && source.[i] <> '\n' do
+            if source.[i] = '\\' then
+                // Slashy escapes consume the following character. In
+                // particular, \/ is content while \\/ ends at the slash.
+                i <- i + 2
+            elif source.[i] = '/' then
+                closingIndex <- i
+            else
+                i <- i + 1
+
+        closingIndex
+
     /// Cheap pre-parse guard. Performs a UTF-8 byte-count pass, then counts
     /// brace depth and token-ish nodes with a second linear scan. Neither pass
     /// recurses, so this guard cannot itself exhaust the stack. It is
@@ -61,8 +86,12 @@ module Limits =
             let mutable nodes = 0
             let mutable line = 1L
             let mutable column = 1L
-            let mutable scalarStart = -1
+            let mutable scalarContentStart = -1
             let mutable quote = '\000'
+            let mutable delimiterLength = 0
+            let mutable lineComment = false
+            let mutable blockComment = false
+            let mutable lastSignificant = ' '
             let mutable err = None
             let mutable i = 0
 
@@ -75,11 +104,35 @@ module Limits =
                 else
                     column <- column + 1L
 
-                if quote <> '\000' then
-                    // inside a string literal: only look for its terminator
-                    if c = quote && not (quoteIsEscaped source i) then
+                if lineComment then
+                    if c = '\n' then
+                        lineComment <- false
+                        lastSignificant <- ' '
+                elif blockComment then
+                    if c = '*' && i + 1 < source.Length && source.[i + 1] = '/' then
+                        i <- i + 1
+                        column <- column + 1L
+                        blockComment <- false
+                elif quote <> '\000' then
+                    let closes =
+                        if delimiterLength = 3 then
+                            c = quote
+                            && i + 2 < source.Length
+                            && source.[i + 1] = quote
+                            && source.[i + 2] = quote
+                            && not (quoteIsEscaped source i)
+                        else
+                            c = quote && not (quoteIsEscaped source i)
+
+                    if closes then
+                        let closingStart = i
+
+                        if delimiterLength = 3 then
+                            i <- i + 2
+                            column <- column + 2L
+
                         let scalarBytes =
-                            Encoding.UTF8.GetByteCount(source, scalarStart + 1, i - scalarStart - 1)
+                            Encoding.UTF8.GetByteCount(source, scalarContentStart, closingStart - scalarContentStart)
 
                         if scalarBytes > limits.MaxScalarBytes then
                             err <-
@@ -91,13 +144,45 @@ module Limits =
                                         $"string literal exceeds {limits.MaxScalarBytes} UTF-8 bytes"
                                 )
 
+                        let completedQuote = quote
                         quote <- '\000'
-                        scalarStart <- -1
+                        scalarContentStart <- -1
+                        delimiterLength <- 0
+                        // A slashy literal ends an expression just like a quoted
+                        // literal. `/` itself is not in [endsExpression], because
+                        // outside a completed span it may instead be division.
+                        lastSignificant <- if completedQuote = '/' then '\'' else c
                 else
                     match c with
+                    | '/' when i + 1 < source.Length && source.[i + 1] = '/' ->
+                        lineComment <- true
+                        i <- i + 1
+                        column <- column + 1L
+                    | '/' when i + 1 < source.Length && source.[i + 1] = '*' ->
+                        blockComment <- true
+                        i <- i + 1
+                        column <- column + 1L
                     | '\'' | '"' ->
                         quote <- c
-                        scalarStart <- i
+                        delimiterLength <-
+                            if i + 2 < source.Length && source.[i + 1] = c && source.[i + 2] = c then
+                                3
+                            else
+                                1
+
+                        scalarContentStart <- i + delimiterLength
+                        nodes <- nodes + 1
+
+                        if delimiterLength = 3 then
+                            i <- i + 2
+                            column <- column + 2L
+                    | '/'
+                        when (i = 0 || (source.[i - 1] <> '/' && source.[i - 1] <> '*'))
+                             && not (endsExpression lastSignificant)
+                             && slashyClosingIndex source i >= 0 ->
+                        quote <- '/'
+                        delimiterLength <- 1
+                        scalarContentStart <- i + 1
                         nodes <- nodes + 1
                     | '{' | '[' | '(' ->
                         depth <- depth + 1
@@ -124,6 +209,17 @@ module Limits =
                             nodes <- nodes + 1
                     | _ -> ()
 
+                    if
+                        quote = '\000'
+                        && not lineComment
+                        && not blockComment
+                        && c <> ' '
+                        && c <> '\t'
+                        && c <> '\r'
+                        && c <> '\n'
+                    then
+                        lastSignificant <- c
+
                     if err.IsNone && nodes > limits.MaxNodes then
                         err <-
                             Some(
@@ -138,7 +234,7 @@ module Limits =
 
             if err.IsNone && quote <> '\000' then
                 let scalarBytes =
-                    Encoding.UTF8.GetByteCount(source, scalarStart + 1, source.Length - scalarStart - 1)
+                    Encoding.UTF8.GetByteCount(source, scalarContentStart, source.Length - scalarContentStart)
 
                 if scalarBytes > limits.MaxScalarBytes then
                     err <-

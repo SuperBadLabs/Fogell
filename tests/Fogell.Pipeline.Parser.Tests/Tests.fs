@@ -165,6 +165,10 @@ let admissionLimits =
                   (Limits.precheck limits "'aa\\'")
                   "one trailing backslash escapes the quote and leaves four exact content bytes at EOF"
 
+              Expect.isOk
+                  (Limits.precheck limits "\"aa\\\"")
+                  "one trailing backslash escapes the double quote and leaves four exact content bytes at EOF"
+
               let oddRunError =
                   match Limits.precheck limits "'aa\\'a" with
                   | Error e -> e
@@ -172,6 +176,71 @@ let admissionLimits =
 
               Expect.equal oddRunError.Code ScalarTooLong "an odd run keeps the quote in unterminated content"
               Expect.equal oddRunError.Position.Column 7L "the odd-run refusal points at EOF"
+
+              let oddDoubleRunError =
+                  match Limits.precheck limits "\"aa\\\"a" with
+                  | Error e -> e
+                  | Ok() -> failtest "expected escaped double-quote content plus ASCII to cross the limit"
+
+              Expect.equal oddDoubleRunError.Code ScalarTooLong "an odd run keeps the double quote in content"
+              Expect.equal oddDoubleRunError.Position.Column 7L "the double-quote odd-run refusal points at EOF"
+          }
+
+          test "all parser-supported scalar delimiters enforce UTF-8 content bytes" {
+              let limits =
+                  { Limits.defaults with
+                      MaxSourceBytes = 1_000
+                      MaxScalarBytes = 4 }
+
+              let pipeline scalar =
+                  mk ("    stage('B') { steps { sh(" + scalar + ") } }")
+
+              let expectAccepted label scalar =
+                  match Parser.parseWithLimits limits (pipeline scalar) with
+                  | Ok _ -> ()
+                  | Error e -> failtestf "%s should parse at the exact scalar boundary, got %A" label e
+
+              let expectScalarTooLong label scalar =
+                  match Parser.parseWithLimits limits (pipeline scalar) with
+                  | Error e -> Expect.equal e.Code ScalarTooLong $"{label} is refused by the scalar limit"
+                  | Ok _ -> failtestf "%s bypassed the scalar limit" label
+
+              let tripleSingle content = "'''" + content + "'''"
+              let tripleDouble content = "\"\"\"" + content + "\"\"\""
+
+              expectAccepted "triple-single" (tripleSingle "aa'a")
+              expectScalarTooLong "triple-single" (tripleSingle "aaaa'bbbb'cccc")
+              expectAccepted "UTF-8 triple-single" (tripleSingle "éé")
+              expectScalarTooLong "UTF-8 triple-single" (tripleSingle "ééa")
+              expectAccepted "triple-double" (tripleDouble "aa\"a")
+              expectScalarTooLong "triple-double" (tripleDouble "aaaa\"bbbb\"cccc")
+              expectAccepted "UTF-8 triple-double" (tripleDouble "éé")
+              expectScalarTooLong "UTF-8 triple-double" (tripleDouble "ééa")
+              expectAccepted "slashy" "/aaaa/"
+              expectScalarTooLong "slashy" "/aaaaa/"
+              expectAccepted "UTF-8 slashy" "/éé/"
+              expectScalarTooLong "UTF-8 slashy" "/ééa/"
+
+              Expect.isOk (Limits.precheck limits "10 / 2 / 5") "division operators do not open slashy spans"
+
+              Expect.isOk
+                  (Limits.precheck limits "// /aaaaa/\nnode")
+                  "slashy-looking text in a line comment is ignored"
+
+              Expect.isOk
+                  (Limits.precheck limits "/* /aaaaa/ */ node")
+                  "slashy-looking text in a block comment is ignored"
+
+              Expect.isOk
+                  (Limits.precheck limits "/aaaaa\nnode")
+                  "an unterminated same-line slashy candidate falls back to ordinary text"
+
+              let fallbackNodeError =
+                  match Limits.precheck { limits with MaxNodes = 2 } "/ a b c\n" with
+                  | Error e -> e
+                  | Ok() -> failtest "expected raw text after an unterminated slashy candidate to count nodes"
+
+              Expect.equal fallbackNodeError.Code TooManyNodes "slashy fallback cannot bypass the node limit"
           }
 
           test "deep nesting is rejected before the grammar recurses" {
@@ -609,6 +678,48 @@ let admissionNegativeSweep =
               1L
               (int64 Limits.defaults.MaxScalarBytes + 4L)
           exact
+              "triple-single-scalar-content-limit"
+              "single-scalar-limit"
+              ("'''" + String.replicate Limits.defaults.MaxScalarBytes "a" + "'''")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "triple-single-scalar-limit-plus-one"
+              "single-scalar-limit"
+              ("'''" + String.replicate (Limits.defaults.MaxScalarBytes + 1) "a" + "'''")
+              ScalarTooLong
+              1L
+              (int64 Limits.defaults.MaxScalarBytes + 8L)
+          exact
+              "triple-double-scalar-content-limit"
+              "double-scalar-limit"
+              ("\"\"\"" + String.replicate Limits.defaults.MaxScalarBytes "a" + "\"\"\"")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "triple-double-scalar-limit-plus-one"
+              "double-scalar-limit"
+              ("\"\"\"" + String.replicate (Limits.defaults.MaxScalarBytes + 1) "a" + "\"\"\"")
+              ScalarTooLong
+              1L
+              (int64 Limits.defaults.MaxScalarBytes + 8L)
+          exact
+              "slashy-scalar-content-limit"
+              "slashy-scalar-limit"
+              ("/" + String.replicate Limits.defaults.MaxScalarBytes "a" + "/")
+              NoPipelineBlock
+              1L
+              1L
+          exact
+              "slashy-scalar-limit-plus-one"
+              "slashy-scalar-limit"
+              ("/" + String.replicate (Limits.defaults.MaxScalarBytes + 1) "a" + "/")
+              ScalarTooLong
+              1L
+              (int64 Limits.defaults.MaxScalarBytes + 4L)
+          exact
               "lf-resets-depth-position"
               "lf-depth"
               (depthSource "x\n" "{")
@@ -727,6 +838,7 @@ let admissionNegativeSweep =
               "node-limit"
               "single-scalar-limit"
               "double-scalar-limit"
+              "slashy-scalar-limit"
               "lf-depth"
               "crlf-depth" ]
 
@@ -751,7 +863,7 @@ let admissionNegativeSweep =
               Expect.equal replayDigest firstDigest "the complete length-delimited corpus replays byte-for-byte"
               Expect.equal
                   firstDigest
-                  "31d944f3af50640f81904787bc753d2b0e1d4bd6e315184db2880bddaf5fb7b0"
+                  "bffdbf2d78c3c4ba2cd5fee2ffd94652804d2fb377ce5ee00bebaee8da00d171"
                   "the fixed seed and recipe corpus are pinned"
 
               Expect.equal
