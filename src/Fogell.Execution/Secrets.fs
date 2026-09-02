@@ -30,9 +30,15 @@ type SecretForms =
 /// that exact snapshot. The representation is opaque outside this assembly so a
 /// caller cannot pair forms for one value with bytes from another.
 [<Sealed>]
-type PreparedFileCredential internal (fileName: string, content: byte[], forms: Lazy<SecretForms>) =
+type PreparedFileCredential internal (
+    fileName: string,
+    content: byte[],
+    containsTextLineBreak: Lazy<bool>,
+    forms: Lazy<SecretForms>
+) =
     member internal _.FileName = fileName
     member internal _.Content = content
+    member internal _.ContainsTextLineBreak = containsTextLineBreak.Value
     member internal _.Forms = forms.Value
     member internal _.FormsCreated = forms.IsValueCreated
 
@@ -74,10 +80,27 @@ type Leak =
 module Secrets =
 
     [<Literal>]
+    let UnsupportedMultilineCredentialCode = "unsupported_multiline_credential"
+
+    [<Literal>]
     let private MinimumBinaryEncodingBytes = 8
 
     [<Literal>]
     let private MinimumBinaryDistinctBytes = 4
+
+    /// ProcessGroup publishes physical lines after .NET has removed their CR/LF
+    /// terminators. A credential containing either character cannot be matched as
+    /// one registered form on that progressive path. Reject it before binding until
+    /// masking moves to the raw byte streams ahead of line framing (FG-235).
+    let containsPhysicalLineBreak (value: string) =
+        not (isNull value)
+        && value.IndexOfAny([| '\r'; '\n' |]) >= 0
+
+    let private validateProgressiveText parameterName value =
+        if containsPhysicalLineBreak value then
+            invalidArg
+                parameterName
+                $"{UnsupportedMultilineCredentialCode}: credential text must contain neither CR nor LF while progressive output masking is line-framed"
 
     type internal SecretFilePhase =
         | Opened
@@ -218,7 +241,16 @@ module Secrets =
         // Derivation is lazy: resolving one store entry must not retain encodings for
         // every other file credential in the store.
         let snapshot = Array.copy content
-        PreparedFileCredential(fileName, snapshot, lazy (prepareBinaryForms snapshot))
+        let textValue = lazy (textValueOfBytes snapshot)
+
+        PreparedFileCredential(
+            fileName,
+            snapshot,
+            lazy (containsPhysicalLineBreak textValue.Value),
+            lazy (prepareForms true textValue.Value snapshot))
+
+    let preparedFileContainsPhysicalLineBreak (credential: PreparedFileCredential) =
+        credential.ContainsTextLineBreak
 
     let private validateVariableName (variableName: string) =
         // System.Diagnostics.Process environment keys cannot be empty or contain
@@ -233,6 +265,7 @@ module Secrets =
 
     let internal inMemoryTextBinding (variableName: string) (value: string) =
         validateVariableName variableName
+        validateProgressiveText (nameof value) value
         let bytes = Text.Encoding.UTF8.GetBytes value
 
         { ValueVariable = variableName
@@ -254,6 +287,7 @@ module Secrets =
         (forms: SecretForms)
         : SecretBinding =
         validateVariableName variableName
+        validateProgressiveText "bytes" forms.TextValue
         let path = createSecretFile directory bytes
 
         { ValueVariable = variableName
@@ -276,6 +310,10 @@ module Secrets =
         // Validate before forcing the lazy forms: a refused environment key must
         // neither touch disk nor retain derived strings for an otherwise-unused ID.
         validateVariableName variableName
+        if credential.ContainsTextLineBreak then
+            invalidArg
+                (nameof credential)
+                $"{UnsupportedMultilineCredentialCode}: credential text must contain neither CR nor LF while progressive output masking is line-framed"
         bindBytesPrepared directory variableName credential.Content credential.Forms
 
     let bind (directory: string) (variableName: string) (value: string) : SecretBinding =
@@ -285,6 +323,7 @@ module Secrets =
         // revoking the inner deleted the file the outer's variable still pointed at.
         // Jenkins allocates a fresh temporary path per binding; so do we.
         validateVariableName variableName
+        validateProgressiveText (nameof value) value
         let bytes = Text.Encoding.UTF8.GetBytes value
         let forms = prepareForms false value bytes
         let path = createSecretFile directory bytes

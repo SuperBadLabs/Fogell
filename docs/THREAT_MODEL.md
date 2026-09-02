@@ -235,12 +235,31 @@ broader than mode 0600, restore exact owner read/write through the open descript
 before writing any secret byte even under a restrictive umask, scope environment
 bindings, and attempt best-effort revocation on lexical exit including catchable
 host failures. They mask registered text literal/case-folded/base64 forms plus
-the exact base64 of binary file credentials at least eight bytes long on
-streaming and buffered output, and warn on detectable text
+an unbroken exact base64 form of binary file credentials at least eight bytes
+long on streaming and buffered output, and warn on detectable text
 reverse/hex/char-split forms plus binary-file hex when that length floor also
 contains at least four distinct byte values
 (`src/Fogell.Execution/Secrets.fs` and
 `src/Fogell.Execution/Executor.fs`; FG-070/FG-071).
+
+FG-235 closes a line-framing hole in that statement. The process callbacks
+remove CR/LF before progressive masking, so a registered multiline literal
+could previously be published one unmasked fragment at a time (and a CR case
+also escaped the buffered pass). The current tree refuses a **selected** text,
+username, password, or valid-UTF-8 file credential containing CR or LF with
+`unsupported_multiline_credential`, before any sibling binding or filesystem
+effect. Unused store values and opaque invalid-UTF-8 binary files remain
+admitted. This is fail-closed confidentiality, not multiline-credential
+compatibility; restoring the latter requires raw stdout/stderr redaction before
+physical-line parsing.
+
+FG-235 does not close separator-inserting transformations of otherwise
+single-line registered forms. FG-236 records the reproduced cases: GNU
+`base64` wraps the 120-character encoding of both a long text credential and a
+binary file credential at column 76, and both physical fragments pass
+line-local masking and detection silently while `base64 -w0` masks the same
+registered form. Closing that broader class requires the same raw-stream
+boundary; until then, only unbroken exact forms carry the masking claim above.
 
 File-credential byte-derived forms are immutable strings prepared lazily on the
 first requested binding from an owned byte snapshot and shared by its repeated

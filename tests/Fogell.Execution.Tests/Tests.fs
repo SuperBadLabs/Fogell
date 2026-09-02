@@ -5670,6 +5670,46 @@ let maskingOnOutputPath =
               Expect.stringContains streamedText "leaking" "the rest of the line survives"
           }
 
+          test "multiline text secrets refuse before binding or filesystem effects" {
+              let root = tempRoot ()
+
+              for label, secret in [ "LF", "alpha-line\nbeta-line"; "CR", "alpha-line\rbeta-line" ] do
+                  Expect.throwsT<ArgumentException>
+                      (fun () -> Secrets.inMemoryTextBinding "TOKEN" secret |> ignore)
+                      $"{label}: an in-memory binding cannot bypass the progressive-output boundary"
+
+                  Expect.throwsT<ArgumentException>
+                      (fun () -> Secrets.bind root "TOKEN" secret |> ignore)
+                      $"{label}: a materialized text binding is refused"
+
+              let files =
+                  if Directory.Exists root then Directory.GetFiles(root, "*", SearchOption.AllDirectories) else [||]
+
+              Expect.isEmpty files "line-break refusal happens before a companion file is created"
+          }
+
+          test "a multiline UTF-8 file credential refuses before forms or files are materialized" {
+              let root = tempRoot ()
+
+              let credential =
+                  Secrets.prepareFileCredential
+                      "private-key.pem"
+                      (Text.Encoding.UTF8.GetBytes "-----BEGIN KEY-----\nsecret-body\n-----END KEY-----\n")
+
+              Expect.isFalse credential.FormsCreated "the store keeps unused file-derived forms lazy"
+
+              Expect.throwsT<ArgumentException>
+                  (fun () -> Secrets.bindPreparedFile root "CERT" credential |> ignore)
+                  "a selected multiline UTF-8 file cannot enter line-framed output"
+
+              Expect.isFalse credential.FormsCreated "refusal does not force full-file mask encodings"
+
+              let files =
+                  if Directory.Exists root then Directory.GetFiles(root, "*", SearchOption.AllDirectories) else [||]
+
+              Expect.isEmpty files "refusal happens before the file credential is materialized"
+          }
+
           test "an encoding masking cannot cover is NAMED in the output" {
               // The FG-071 promise is not that nothing leaks — it is that a leak
               // is never silent. `rev` defeats the mask, so the engine must say so.

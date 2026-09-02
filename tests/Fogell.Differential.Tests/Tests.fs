@@ -8938,6 +8938,167 @@ let credentialKeyBoundaryRefusal =
                     "the ordinary successor ran")
           } ]
 
+/// FG-235. Progressive process output is line-framed before the masker sees it,
+/// so CR/LF-bearing literal credentials must be refused before any sibling is
+/// materialized. Raw-stream masking is the separate compatibility-restoration
+/// boundary; this slice proves the current refusal is atomic and non-secret.
+let credentialLineBreakRefusal =
+    let credentials =
+        Map.ofList
+            [ "safe-text", SecretText "single-line-safe"
+              "unsafe-lf", SecretText "alpha-line\nbeta-line"
+              "unsafe-cr", SecretText "gamma-line\rdelta-line"
+              "unsafe-user", UsernamePassword("user-one\nuser-two", "safe-password")
+              "unsafe-pass", UsernamePassword("safe-user", "pass-one\rpass-two")
+              "unsafe-file",
+              Credentials.secretFile
+                  "private-key.pem"
+                  (Text.Encoding.UTF8.GetBytes "-----BEGIN KEY-----\nsecret-body\n-----END KEY-----\n")
+              // Invalid UTF-8 has no registered literal text form. Embedded raw
+              // newline bytes therefore do not create the direct-literal mismatch
+              // this refusal addresses. Make it long enough to exercise retained
+              // exact-base64 masking; separator-inserting transforms are FG-236.
+              "binary-file",
+              Credentials.secretFile
+                  "opaque.bin"
+                  [| for i in 0 .. 89 -> if i = 0 then 0xFFuy else byte i |] ]
+
+    let pipeline bindings body successor =
+        "pipeline { agent any stages { stage('credentials') { steps { "
+        + "sh 'touch before-wrapper.txt'; "
+        + $"withCredentials([{bindings}]) {{ sh '{body}' }}; "
+        + $"sh '{successor}' "
+        + "} } } }"
+
+    let run label source check =
+        let root =
+            IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg235-{label}-{Guid.NewGuid():N}")
+
+        let workspace = IO.Path.Combine(root, "job")
+
+        try
+            match FogellSide.runWithCredentials credentials [] root "job" source with
+            | Error why -> failtestf "%s pipeline refused outside execution: %s" label why
+            | Ok trace -> check root workspace trace
+        finally
+            if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+
+    testList
+        "FG-235 multiline credential progressive-output refusal"
+        [ test "mixed safe and multiline requests refuse atomically in either sibling order" {
+              let safe = "string(credentialsId: 'safe-text', variable: 'SAFE')"
+
+              let cases =
+                  [ "text-lf",
+                    "unsafe-lf",
+                    "text",
+                    "string(credentialsId: 'unsafe-lf', variable: 'TOKEN')",
+                    [ "alpha-line"; "beta-line" ]
+                    "text-cr",
+                    "unsafe-cr",
+                    "text",
+                    "string(credentialsId: 'unsafe-cr', variable: 'TOKEN')",
+                    [ "gamma-line"; "delta-line" ]
+                    "username",
+                    "unsafe-user",
+                    "username",
+                    "usernamePassword(credentialsId: 'unsafe-user', usernameVariable: 'USER', passwordVariable: 'PASS')",
+                    [ "user-one"; "user-two" ]
+                    "password",
+                    "unsafe-pass",
+                    "password",
+                    "usernamePassword(credentialsId: 'unsafe-pass', usernameVariable: 'USER', passwordVariable: 'PASS')",
+                    [ "pass-one"; "pass-two" ]
+                    "file",
+                    "unsafe-file",
+                    "file",
+                    "file(credentialsId: 'unsafe-file', variable: 'CERT')",
+                    [ "BEGIN KEY"; "secret-body"; "END KEY" ] ]
+
+              for label, id, field, unsafe, secretFragments in cases do
+                  let expected =
+                      $"ERROR: {Secrets.UnsupportedMultilineCredentialCode}: credential '{id}' {field} contains a line break that progressive masking cannot safely protect; refusing to bind credentials"
+
+                  Expect.equal
+                      (WalkerOrchestration.credentialLineBreakRefusalErrors
+                          credentials
+                          (Credentials.parseRequests unsafe))
+                      [ expected ]
+                      $"{label}: the operator diagnostic is stable and contains no value"
+
+                  for order, bindings in
+                      [ "unsafe-first", unsafe + ", " + safe
+                        "safe-first", safe + ", " + unsafe ] do
+                      let body = $"touch {label}-{order}-body.txt"
+                      let successor = $"touch {label}-{order}-successor.txt"
+
+                      run (label + "-" + order) (pipeline bindings body successor) (fun root workspace trace ->
+                          Expect.equal trace.Result "failure" $"{label}/{order}: wrapper refuses"
+                          Expect.isTrue trace.ReportedFailureReason $"{label}/{order}: refusal is explained"
+
+                          Expect.isFalse
+                              (trace.Output
+                               |> List.exists (fun line ->
+                                   line.StartsWith("Masking supported pattern matches", StringComparison.Ordinal)))
+                              $"{label}/{order}: binding narration was never reached"
+
+                          for fragment in secretFragments do
+                              Expect.isFalse
+                                  (trace.Output |> List.exists (fun line -> line.Contains fragment))
+                                  $"{label}/{order}: diagnostic never contains secret fragment {fragment}"
+
+                          Expect.isTrue
+                              (IO.File.Exists(IO.Path.Combine(workspace, "before-wrapper.txt")))
+                              $"{label}/{order}: refusal occurs at runtime after prior ordinary effects"
+                          Expect.isFalse
+                              (IO.Directory.Exists(IO.Path.Combine(root, "_secrets")))
+                              $"{label}/{order}: no sibling credential was materialized"
+                          Expect.isFalse
+                              (IO.File.Exists(IO.Path.Combine(workspace, $"{label}-{order}-body.txt")))
+                              $"{label}/{order}: wrapper body did not run"
+                          Expect.isFalse
+                              (IO.File.Exists(IO.Path.Combine(workspace, $"{label}-{order}-successor.txt")))
+                              $"{label}/{order}: successor did not run")
+          }
+
+          test "unused multiline values and selected opaque binary files remain admitted" {
+              let bindings =
+                  String.concat
+                      ", "
+                      [ "string(credentialsId: 'safe-text', variable: 'SAFE')"
+                        "file(credentialsId: 'binary-file', variable: 'CERT')" ]
+
+              let binaryBytes = [| for i in 0 .. 89 -> if i = 0 then 0xFFuy else byte i |]
+              let binaryBase64 = Convert.ToBase64String binaryBytes
+
+              let body =
+                  "test -n \"$SAFE\" && test -f \"$CERT\" && base64 -w0 \"$CERT\" && touch admitted-control.txt"
+
+              run "controls" (pipeline bindings body "touch control-successor.txt") (fun root workspace trace ->
+                  Expect.equal trace.Result "success" "only selected literal values are checked"
+                  Expect.isTrue
+                      (trace.Output |> List.exists (fun line -> line.Contains "****"))
+                      "the selected opaque binary still masks its unbroken exact base64 form"
+                  Expect.isFalse
+                      (trace.Output |> List.exists (fun line -> line.Contains binaryBase64))
+                      "the unbroken registered binary form is absent from output"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "admitted-control.txt")))
+                      "the selected single-line and opaque binary credentials bind"
+                  Expect.isTrue
+                      (IO.File.Exists(IO.Path.Combine(workspace, "control-successor.txt")))
+                      "the ordinary successor runs"
+
+                  let leftovers =
+                      let secretRoot = IO.Path.Combine(root, "_secrets")
+                      if IO.Directory.Exists secretRoot then
+                          IO.Directory.GetFiles(secretRoot, "*", IO.SearchOption.AllDirectories)
+                      else
+                          [||]
+
+                  Expect.isEmpty leftovers "admitted controls still revoke their companion files")
+          } ]
+
 /// FG-073. Credential files are controller-side state, so cleanup must cover
 /// failures that bypass ordinary wrapper completion: partial binding construction
 /// and a host callback throwing while the bound body is active.
@@ -9770,6 +9931,7 @@ let main argv =
               credentialStoreDecoding
               credentialEchoMasking
               credentialKeyBoundaryRefusal
+              credentialLineBreakRefusal
               credentialExceptionalCleanup
               credentialCompanionPreservation
               stashDefaultExcludes
