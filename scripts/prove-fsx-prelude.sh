@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # FG-226. Proves `scripts/fsx/prelude.fsx` reproduces the java.util.regex and
-# java.lang.String semantics the eight ported audits were written against.
+# java.lang.String semantics the eight ported audits were written against (a
+# ninth, audit-gate-lanes, shares the prelude without being a port).
 #
 # WHY THIS EXISTS AND WHY IT IS NOT A COMPARISON AGAINST BABASHKA. The port
 # replaced babashka, so a proof that shells out to `bb` would pin the new tools
