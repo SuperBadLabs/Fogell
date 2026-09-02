@@ -552,7 +552,8 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                             // Both grammar-owned slashy parsers are single-line.
                             // A broader structural scanner could let a later `/`
                             // shield this balanced region's real closing brace,
-                            // admitting an opaque section Groovy rejects.
+                            // then reinterpret source that Jenkins keeps inside
+                            // one multiline slashy as surrounding structure.
                             crossedLine <- true
                         elif d = '/' then
                             stream.Skip()
@@ -573,7 +574,7 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                         // be division. Rewinding it to an ordinary character lets
                         // a collection or opaque block close at the line break and
                         // the following text become another grammar item — a
-                        // compile-invalid Jenkinsfile admitted as runnable work.
+                        // single Jenkins slashy reinterpreted as runnable work.
                         // Persist the semantic refusal through enclosing attempts,
                         // matching rawArgValue's same-boundary contract.
                         if stream.UserState.Refusal.Value.IsNone then
