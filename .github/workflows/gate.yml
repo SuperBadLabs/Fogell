@@ -326,7 +326,7 @@ jobs:
           rg -F 'tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj: EXPECTO!' "$RUNNER_TEMP/gate.log"
 
       - name: stop PostgreSQL
-        if: always() && matrix.lane == 'build'
+        if: always() && matrix.lane == 'build' && env.FOGELL_PG_CONTAINER != ''
         run: ./scripts/ci-postgres.sh stop
 
   controller:
@@ -430,7 +430,7 @@ jobs:
         run: ./scripts/prove-fg232-controller-inotify.sh
 
       - name: stop PostgreSQL
-        if: always()
+        if: always() && env.FOGELL_PG_CONTAINER != ''
         run: ./scripts/ci-postgres.sh stop
 
   hang-proof:
@@ -494,7 +494,7 @@ jobs:
           ./scripts/prove-fg231-proof-bounds.sh
 
       - name: stop PostgreSQL
-        if: always()
+        if: always() && env.FOGELL_PG_CONTAINER != ''
         run: ./scripts/ci-postgres.sh stop
 
   database:
@@ -529,7 +529,7 @@ jobs:
           ./scripts/migration-rollback-drill.sh
 
       - name: stop PostgreSQL
-        if: always()
+        if: always() && env.FOGELL_PG_CONTAINER != ''
         run: ./scripts/ci-postgres.sh stop
 
   gate:

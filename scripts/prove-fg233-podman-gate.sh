@@ -20,7 +20,7 @@ check_candidate() {
   local candidate_postgres=$2
   local forbidden_runtime=dock
   forbidden_runtime+=er
-  local starts stops selected
+  local starts stops guarded_stops selected
 
   if rg -q '^\s+services:' "$candidate_workflow"; then
     refuse "Actions service containers select the runner runtime implicitly"
@@ -42,6 +42,9 @@ check_candidate() {
   stops=$(rg -c '^\s+run: \./scripts/ci-postgres\.sh stop$' "$candidate_workflow" || true)
   [[ "$starts" = 4 && "$stops" = 4 ]] \
     || { refuse "expected four PostgreSQL starts and stops, found $starts starts and $stops stops"; return 1; }
+  guarded_stops=$(rg -U -c "if: always\\(\\)( && matrix\\.lane == 'build')? && env\\.FOGELL_PG_CONTAINER != ''\\n\\s+run: \\./scripts/ci-postgres\\.sh stop" "$candidate_workflow" || true)
+  [[ "$guarded_stops" = 4 ]] \
+    || { refuse "every PostgreSQL cleanup must require an exported container name (found $guarded_stops guarded stops)"; return 1; }
 
   rg -q -- '--publish 127\.0\.0\.1::5432' "$candidate_postgres" \
     || { refuse "PostgreSQL does not request a runtime-allocated host port"; return 1; }
@@ -62,7 +65,7 @@ expect_refusal() {
   printf '  killed: %s\n' "$name"
 }
 
-for name in service-container fixed-port missing-job-runtime; do
+for name in service-container fixed-port missing-job-runtime missing-cleanup-guard; do
   cp "$workflow" "$scratch/$name-gate.yml"
   cp "$postgres" "$scratch/$name-postgres.sh"
 done
@@ -76,5 +79,8 @@ expect_refusal fixed-port 'does not request a runtime-allocated host port'
 sed -i '0,/^  FOGELL_CONTAINER_RUNTIME: podman$/d' "$scratch/missing-job-runtime-gate.yml"
 expect_refusal missing-job-runtime 'must select Podman exactly once'
 
+sed -i "0,/if: always() && env.FOGELL_PG_CONTAINER != ''/s//if: always()/" "$scratch/missing-cleanup-guard-gate.yml"
+expect_refusal missing-cleanup-guard 'every PostgreSQL cleanup must require an exported container name'
+
 check_candidate "$workflow" "$postgres"
-echo "FG-233 PROOF PASS: Podman is explicit, Actions services are absent, four jobs own disposable PostgreSQL, and every host port is runtime-allocated"
+echo "FG-233 PROOF PASS: Podman is explicit, Actions services are absent, four jobs own guarded disposable PostgreSQL lifecycles, and every host port is runtime-allocated"
