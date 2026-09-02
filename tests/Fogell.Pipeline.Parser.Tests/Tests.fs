@@ -431,7 +431,8 @@ let admissionLimits =
                   [ "direct pipeline body", "      echo /bbbbbb/"
                     "raw pipeline body", "      echo /bbbbbb/ + env.X"
                     "balanced pipeline body", "      echo [/bbbbbb/]"
-                    "parenthesised pipeline body", "      echo(/bbbbbb/)" ] do
+                    "parenthesised pipeline body", "      echo(/bbbbbb/)"
+                    "script pipeline body", "      script { def later = /bbbbbb/ }" ] do
                   let preambleThenBody = "def first = /aaaaa/\n" + pipelineWithSteps laterStep
 
                   Expect.equal
@@ -439,6 +440,23 @@ let admissionLimits =
                        |> positionedScalarError label)
                       firstPreambleError
                       $"{label}: delayed preamble validation must restore source order"
+
+              let preambleThenWhenBody =
+                  "def first = /aaaaa/\n"
+                  + mk "    stage('B') { when { expression { def later = /bbbbbb/ } } steps { echo 'x' } }"
+
+              Expect.equal
+                  (Parser.parseWithLimits limits preambleThenWhenBody
+                   |> positionedScalarError "when-expression pipeline body")
+                  firstPreambleError
+                  "delayed preamble validation precedes a later when-expression refusal"
+
+              let boundedPreambleThenBody =
+                  "def first = /aaaa/\n" + pipelineWithSteps "      echo /bbbbbb/"
+
+              expectPositionedScalar
+                  "bounded preamble before overlong body"
+                  boundedPreambleThenBody
 
               let preambleThenEpilogue = firstPreamble + "\ndef later = /bbbbbb/"
 
