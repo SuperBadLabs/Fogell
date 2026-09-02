@@ -529,7 +529,7 @@ module Limits =
                         // where an opener would otherwise be expected. It is
                         // not an authoritative Groovy opener, so keep walking
                         // the DFA instead of shielding through its hint. This
-                        // reconstructs operand context at the cached closer:
+                        // reconstructs operand context at the cached delimiter:
                         // `\\/ /x/` reaches a real slashy, while
                         // `\\/ amount / x / 2` keeps both later slashes as
                         // division. The parser table retains its O(1) hint.
