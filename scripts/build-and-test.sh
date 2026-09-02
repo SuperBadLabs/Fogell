@@ -2,6 +2,38 @@
 # FG-000/FG-001 — the gate every ticket must pass before its PR.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+
+# ONE NUGET PACKAGE CACHE FOR THE WHOLE GATE. prove-dependency-locks.sh fills it
+# from empty — that emptiness is part of its proof — and every later dotnet
+# invocation reads the same directory, so the assets files its no-restore build
+# wrote stay valid and the plain `dotnet build` calls further down (FG-207, the
+# restart lane, the approval lane) are incremental no-ops rather than a second
+# full compile of the solution behind a cache that had been deleted under them.
+# Measured locally on 2026-09-01: the next solution build after the proof ran 0
+# compiler invocations with the cache kept, 26 with it deleted. The hosted
+# timing of the downstream steps is UNMEASURED until the first run carries this.
+# Run-scoped and removed at exit: a stale cache is never reused across runs and
+# the gate never writes a developer's own ~/.nuget/packages. The cost moves to
+# AFTER the gate: the assets files then name a deleted cache, so a developer's
+# next plain `dotnet build` restores into ~/.nuget/packages and recompiles once.
+# That is the rebuild that used to happen inside the gate, not a new one.
+# Resolved with `pwd -P` to match the proof's own resolution of the same path;
+# a symlinked /tmp would otherwise hash two spellings of one cache as different.
+# Fail closed: this script runs without `-e`, and an empty NUGET_PACKAGES from a
+# failed mktemp or cd would silently fall back to ~/.nuget/packages — the exact
+# behaviour this block exists to remove, with nothing in the log to say so.
+gate_package_cache_created="$(mktemp -d /tmp/fogell-gate-nuget.XXXXXX)" \
+  || { echo "GATE PACKAGE CACHE: mktemp failed"; exit 1; }
+gate_package_cache="$(cd -- "$gate_package_cache_created" && pwd -P)" \
+  || { echo "GATE PACKAGE CACHE: could not resolve $gate_package_cache_created"
+       rm -rf -- "$gate_package_cache_created"; exit 1; }
+[ -n "$gate_package_cache" ] \
+  || { echo "GATE PACKAGE CACHE: resolved to an empty path"
+       rm -rf -- "$gate_package_cache_created"; exit 1; }
+trap 'rm -rf -- "$gate_package_cache"' EXIT
+export FOGELL_LOCK_PROOF_PACKAGE_CACHE="$gate_package_cache"
+export NUGET_PACKAGES="$gate_package_cache"
+
 echo "=== sdk ==="; dotnet --version
 ./scripts/prove-dependency-locks.sh \
   || { echo "DEPENDENCY-LOCK/SOURCE-CLEARED BUILD PROOF FAILED"; exit 1; }
