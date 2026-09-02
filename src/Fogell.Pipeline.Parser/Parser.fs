@@ -642,6 +642,28 @@ let private rebaseAdmissionError (strippedColumns: int64) (origin: FParsec.Posit
 
     { error with Position = rebased }
 
+let private earlierScalarRefusal (left: AdmissionError) (right: AdmissionError) =
+    if
+        left.Position.Line < right.Position.Line
+        || (left.Position.Line = right.Position.Line && left.Position.Column <= right.Position.Column)
+    then
+        left
+    else
+        right
+
+let private firstScalarRefusal (state: ParserState) =
+    match state.ScalarRefusal, state.CommittedScalarRefusal.Value with
+    | Some ordinary, Some committed -> Some(earlierScalarRefusal ordinary committed)
+    | Some ordinary, None -> Some ordinary
+    | None, Some committed -> Some committed
+    | None, None -> None
+
+let private commitScalarRefusal (state: ParserState) (refusal: AdmissionError) =
+    state.CommittedScalarRefusal.Value <-
+        match state.CommittedScalarRefusal.Value with
+        | Some existing -> Some(earlierScalarRefusal existing refusal)
+        | None -> Some refusal
+
 let private parenArgs (stateBeforeScan: ParserState) (origin: FParsec.Position) (raw: string) =
     let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
 
@@ -664,7 +686,18 @@ let private parenArgs (stateBeforeScan: ParserState) (origin: FParsec.Position) 
                 | None, None -> preturn v
             | ParserResult.Failure(_, _, failedState) ->
                 match failedState.ScalarRefusal, failedState.Refusal.Value with
-                | Some e, _ ->
+                | Some e, Some _ ->
+                    let rebased = rebaseAdmissionError 1L origin e
+                    let committed = (keepFirstScalarRefusal stateBeforeScan rebased).ScalarRefusal.Value
+                    // The inner semantic refusal proves this argument branch;
+                    // outer attempts may rewind immutable state but must not
+                    // erase its first committed scalar behind a generic section
+                    // fallback. The separate cell is intentionally not written
+                    // for ordinary grammar failure below.
+                    commitScalarRefusal outerState committed
+                    setUserState (keepFirstScalarRefusal stateBeforeScan rebased)
+                    >>. fail "parenthesised argument contains an overlong scalar"
+                | Some e, None ->
                     let rebased = rebaseAdmissionError 1L origin e
                     // This branch fails immediately, so the enclosing attempt
                     // rewinds the immutable scalar state with the parse.
@@ -1903,38 +1936,40 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, Admissi
             Result.Error(AdmissionError.at NoPipelineBlock 1L 1L "no declarative `pipeline { }` block found")
         else
             match runParserOnString (pipelineParser .>> eof) (parserStateWithLimits limits) "Jenkinsfile" source with
-            | ParserResult.Success(_, state, _) when state.ScalarRefusal.IsSome ->
-                Result.Error state.ScalarRefusal.Value
             | ParserResult.Success(p, state, _) ->
-                match state.Refusal.Value with
-                | Some(message, position) ->
-                    Result.Error(refusalError message position)
-                | None when List.isEmpty p.Stages ->
-                    Result.Error(AdmissionError.at NoStages 1L 1L "pipeline declares no stages")
+                match firstScalarRefusal state with
+                | Some scalar -> Result.Error scalar
                 | None ->
-                    match scriptBodyErrors limits p with
-                    | NestedAdmission e :: _ -> Result.Error e
-                    | NestedSyntax(why, position) :: _ ->
-                        Result.Error
-                            { Code = MalformedSyntax
-                              Message = why
-                              Position = position }
-                    | [] -> Result.Ok p
-            | ParserResult.Failure(_, _, state) when state.ScalarRefusal.IsSome ->
-                Result.Error state.ScalarRefusal.Value
+                    match state.Refusal.Value with
+                    | Some(message, position) ->
+                        Result.Error(refusalError message position)
+                    | None when List.isEmpty p.Stages ->
+                        Result.Error(AdmissionError.at NoStages 1L 1L "pipeline declares no stages")
+                    | None ->
+                        match scriptBodyErrors limits p with
+                        | NestedAdmission e :: _ -> Result.Error e
+                        | NestedSyntax(why, position) :: _ ->
+                            Result.Error
+                                { Code = MalformedSyntax
+                                  Message = why
+                                  Position = position }
+                        | [] -> Result.Ok p
             | ParserResult.Failure(msg, err, state) ->
-                match state.Refusal.Value with
-                | Some(message, position) ->
-                    Result.Error(refusalError message position)
+                match firstScalarRefusal state with
+                | Some scalar -> Result.Error scalar
                 | None ->
-                    let pos = err.Position
+                    match state.Refusal.Value with
+                    | Some(message, position) ->
+                        Result.Error(refusalError message position)
+                    | None ->
+                        let pos = err.Position
 
-                    let firstLine =
-                        msg.Split('\n')
-                        |> Array.filter (fun l -> l.Trim() <> "")
-                        |> Array.tryLast
-                        |> Option.defaultValue "unparsable"
+                        let firstLine =
+                            msg.Split('\n')
+                            |> Array.filter (fun l -> l.Trim() <> "")
+                            |> Array.tryLast
+                            |> Option.defaultValue "unparsable"
 
-                    Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
+                        Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
 
 let parse (source: string) : Result<Pipeline, AdmissionError> = parseWithLimits Limits.defaults source

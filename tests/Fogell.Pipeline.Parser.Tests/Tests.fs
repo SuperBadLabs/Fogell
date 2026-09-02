@@ -389,6 +389,8 @@ let admissionLimits =
                     "raw positional expression", "      echo /bbbbbb/ + env.X"
                     "successful parenthesised reparse", "      echo(/bbbbbb/)"
                     "failed parenthesised reparse", "      echo(/bbbbbb/ +)"
+                    "semantically failed parenthesised reparse",
+                    "      sh(script: /bbbbbb/, returnStatus: true, returnStatus: false)"
                     "nested script validation", "      script { def later = /bbbbbb/ }" ] do
                   let source = pipelineWithSteps (firstPipelineBody + "\n" + laterStep)
 
@@ -397,6 +399,19 @@ let admissionLimits =
                        |> positionedScalarError label)
                       firstPipelineError
                       $"{label}: a later scalar cannot displace the first positioned refusal"
+
+              expectPositionedScalar
+                  "semantic failure commits its own scalar without an earlier refusal"
+                  (pipelineWithSteps "      sh(script: /bbbbbb/, returnStatus: true, returnStatus: false)")
+
+              let boundedScalarDuplicate =
+                  pipelineWithSteps "      sh(script: /bbbb/, returnStatus: true, returnStatus: false)"
+
+              match Parser.parseWithLimits limits boundedScalarDuplicate with
+              | Error e ->
+                  Expect.equal e.Code MalformedSyntax "an in-bound scalar leaves duplicate-name refusal authoritative"
+                  Expect.stringContains e.Message "duplicate named argument `returnStatus`" "the duplicate key survives"
+              | Ok _ -> failtest "a bounded duplicate named argument parsed"
 
               let pipelineWithWhenScalar scalar =
                   mk

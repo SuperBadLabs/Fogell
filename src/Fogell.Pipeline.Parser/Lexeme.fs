@@ -19,16 +19,21 @@ open Fogell.Ir
 /// ScalarRefusal is deliberately the opposite: an overlong slashy discovered
 /// on an abandoned grammar branch must rewind with that branch, so only the
 /// scalar interpretation the parser actually commits can refuse admission.
+/// CommittedScalarRefusal is narrower: when an isolated nested parse has both a
+/// scalar refusal and a persistent semantic refusal, outer grammar backtracking
+/// cannot make that proven scalar disappear behind a generic section fallback.
 type ParserState =
     { Refusal: (string * Fogell.Ir.Position) option ref
       Limits: Limits
       ScalarRefusal: AdmissionError option
+      CommittedScalarRefusal: AdmissionError option ref
       RawArgumentLineBoundary: bool }
 
 let parserStateWithLimits (limits: Limits) =
     { Refusal = ref None
       Limits = limits
       ScalarRefusal = None
+      CommittedScalarRefusal = ref None
       RawArgumentLineBoundary = false }
 
 let parserState () = parserStateWithLimits Limits.defaults
