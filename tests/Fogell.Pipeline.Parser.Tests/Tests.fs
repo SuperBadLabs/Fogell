@@ -776,6 +776,45 @@ let admissionLimits =
               // FParsec accepts LF, CRLF and bare CR as physical line endings.
               // Raw arguments and balanced capture must end on the same three forms.
               for newlineLabel, newline in [ "LF", "\n"; "CRLF", "\r\n"; "bare CR", "\r" ] do
+                  let commentSeparatedExpression =
+                      "pipeline { agent any stages { stage('B') { steps { echo 1 /* comment"
+                      + newline
+                      + "*/ 2 } } } }"
+
+                  match Parser.parseWithLimits Limits.defaults commentSeparatedExpression with
+                  | Error e ->
+                      Expect.equal
+                          e.Code
+                          MalformedSyntax
+                          $"{newlineLabel} inside a block comment ends the raw argument"
+                  | Ok _ -> failtestf "%s inside a block comment swallowed a new statement" newlineLabel
+
+                  let commentSeparatedSteps =
+                      "pipeline { agent any stages { stage('B') { steps { echo 1 /* comment"
+                      + newline
+                      + "*/ input /aaaaa/ } } } }"
+
+                  match Parser.parseWithLimits Limits.defaults commentSeparatedSteps with
+                  | Ok pipeline ->
+                      Expect.equal
+                          pipeline.Stages.[0].Steps.Length
+                          2
+                          $"{newlineLabel} inside a block comment preserves the following step"
+
+                      Expect.equal
+                          pipeline.Stages.[0].Steps.[1].Name
+                          "input"
+                          $"{newlineLabel} inside a block comment retains the approval gate"
+                  | Error e -> failtestf "%s block-comment-separated steps did not parse: %A" newlineLabel e
+
+                  match Parser.parseWithLimits limits commentSeparatedSteps with
+                  | Error e ->
+                      Expect.equal
+                          e.Code
+                          ScalarTooLong
+                          $"{newlineLabel} inside a block comment exposes the following gate scalar"
+                  | Ok _ -> failtestf "%s inside a block comment swallowed the approval gate" newlineLabel
+
                   let slashyMultiline =
                       "pipeline { agent any stages { stage('B') { steps { echo(/before"
                       + newline
@@ -909,6 +948,14 @@ let admissionLimits =
                       | Error e ->
                           Expect.equal e.Code ScalarTooLong $"{newlineLabel} after {firstLabel} exposes the gate's scalar"
                       | Ok _ -> failtestf "%s after %s swallowed the approval gate" newlineLabel firstLabel
+
+                  let sameLineComment =
+                      "pipeline { agent any stages { stage('B') { steps { echo 1 /* comment */ + 2 } } } }"
+
+                  match Parser.parseWithLimits Limits.defaults sameLineComment with
+                  | Ok pipeline ->
+                      Expect.equal pipeline.Stages.[0].Steps.Length 1 "a same-line block comment stays inside one argument"
+                  | Error e -> failtestf "same-line block comment failed in %s control: %A" newlineLabel e
 
                   for quoteLabel, quote in [ "single", "'"; "double", "\"" ] do
                       let ordinaryMultiline =

@@ -153,15 +153,26 @@ let private rawArgValue (allowCommandHead: bool) (stops: char list) : P<string> 
             elif c = '/' && stream.Peek(1) = '*' then
                 stream.Skip(2)
                 let mutable closed = false
+                let mutable crossedPhysicalLine = false
 
                 while not closed && not stream.IsEndOfStream do
                     if stream.Peek() = '*' && stream.Peek(1) = '/' then
                         stream.Skip(2)
                         closed <- true
                     else
+                        if stream.Peek() = '\r' || stream.Peek() = '\n' then
+                            crossedPhysicalLine <- true
+
                         stream.Skip()
 
-                if not closed then failed <- true
+                if not closed then
+                    failed <- true
+                elif crossedPhysicalLine then
+                    // Groovy whitespace retains physical breaks inside block
+                    // comments as statement boundaries. Consume the complete
+                    // comment, then end this raw argument at that same seam so
+                    // the following token cannot be swallowed into it.
+                    finished <- true
             elif c = '/' then
                 let slashIndex = stream.Index
 
