@@ -156,6 +156,15 @@ dotnet restore --locked-mode
 dotnet build -c Release --no-restore
 ```
 
+If the restore fails with `NU1403` for `FSharp.Core.10.1.301` on a machine that
+restored Fogell before 2026-09-02, evict the package the SDK's library-pack
+source left in the global folder and restore again (FG-237; the lock now
+records the nuget.org package, and the two copies cannot share one folder):
+
+```bash
+rm -rf ~/.nuget/packages/fsharp.core/10.1.301
+```
+
 Export the required variables above, then start the controller:
 
 ```bash

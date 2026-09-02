@@ -10,6 +10,13 @@
          opts out of locked mode and forces NuGet to reevaluate the graph. -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestoreLockedMode>true</RestoreLockedMode>
+    <!-- FG-237. The F# SDK injects its bundled `FSharp/library-packs` folder as
+         an implicit package source, and the FSharp.Core nupkg in it is not the
+         same bytes as the nuget.org package. A lock generated on a machine with
+         that folder pins the SDK copy's hash, and every other machine fails
+         locked restore with NU1403. Disable the folder so every lock records the
+         nuget.org hash and restores identically everywhere. -->
+    <DisableImplicitLibraryPacksFolder>true</DisableImplicitLibraryPacksFolder>
     <!-- Incomplete matches are errors, not warnings: an unhandled DU case in a
          parser or interpreter is a silent compatibility bug. Inherited from
          Forge, which learned it the hard way. -->
