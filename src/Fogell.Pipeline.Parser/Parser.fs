@@ -529,6 +529,33 @@ let private stepBlock: P<Step list> =
 /// Fogell cannot parse, it must be a REFUSAL that gets a ticket, not a silent guess at
 /// what the author meant.
 
+/// FG-121. An `options` entry must be a CALL. Jenkins' Declarative parser matches
+/// each entry as a method call and reports `Expected an option` for a bare
+/// identifier — `timestamps` alone is a property read, not `timestamps()` — while
+/// this grammar parsed the bare form as a zero-argument step and RAN the build.
+/// The guard reads the bytes after the name: horizontal space and block comments
+/// are skipped as the trivia Groovy's lexer discards, so `timestamps /* x */ ()` is
+/// the call it is; a name then followed by a line end, line comment, `;`, `}` or
+/// EOF is bare. Command-form arguments (`timeout time: 1`) and a trailing block
+/// are still calls and reach the ordinary step grammar, where the walker judges
+/// them. MEASURED on Jenkins 2.568.1 for `timestamps` by FG-053's verifier;
+/// UNPROVEN by receipt (FG-129: a compile-shaped refusal seals none).
+let private optionsBlock: P<Step list> =
+    let bareEntry =
+        attempt (
+            identifierBare .>> skipMany (choice [ skipMany1 (anyOf " \t"); blockComment ])
+            .>> lookAhead (choice [ skipNewline; skipChar ';'; skipChar '}'; lineComment; eof ])
+        )
+
+    let entry =
+        (lookAhead bareEntry
+         >>= fun name -> refuse $"options entry `{name}` is not a call: Jenkins reports `Expected an option`")
+        <|> stepParser
+
+    let separators = skipMany (symbol ";")
+
+    between (symbol "{") (symbol "}") (ws >>. separators >>. many (attempt (entry .>> separators)))
+
 let private rebaseAdmissionError (strippedColumns: int64) (origin: FParsec.Position) (error: AdmissionError) =
     let rebased =
         { Line = origin.Line + error.Position.Line - 1L
@@ -1256,7 +1283,7 @@ stageRef.Value <-
                       attempt (structuralSection "stages" >>. stagesBody |>> fun ss -> SecNested(ss, false))
                       attempt (keyword "parallel" >>. stagesBody |>> fun ss -> SecNested(ss, true))
                       attempt (failFastDirective |>> SecFailFast)
-                      attempt (keyword "options" >>. stepBlock |>> SecOptions)
+                      attempt (keyword "options" >>. optionsBlock |>> SecOptions)
                       attempt (toolsSection |>> SecTools)
                       attempt (keyword "matrix" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "matrix")
                       attempt (keyword "axes" >>. balancedRaw '{' '}' |>> fun _ -> SecOther "axes")
@@ -1355,7 +1382,7 @@ let private topSection: P<TopSection> =
         [ attempt (agentSpec |>> TopAgent)
           attempt (environmentSection |>> TopEnv)
           attempt (toolsSection |>> TopTools)
-          attempt (keyword "options" >>. stepBlock |>> TopOptions)
+          attempt (keyword "options" >>. optionsBlock |>> TopOptions)
           attempt (keyword "parameters" >>. stepBlock |>> TopParameters)
           attempt (keyword "triggers" >>. stepBlock |>> TopTriggers)
           attempt (structuralSection "stages" >>. stagesBody |>> TopStages)

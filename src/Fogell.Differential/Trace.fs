@@ -753,9 +753,31 @@ module Trace =
         let orderedTrace = order traceOnlyReplacements
 
         let canonical (line: TaggedLine) =
+            // FG-121. Under `options { timestamps() }` the engine's own stamp leads
+            // the line, and a replacement VALUE can occur inside it — an env value
+            // `2026` rewrote `[2026-08-03T…Z]` into `[${YEAR}-08-03T…Z]`, which the
+            // strip below no longer recognised, so the row kept a mangled prefix.
+            // Split the stamp off once, canonicalise the BODY only, and put the
+            // untouched stamp back so the strip downstream still sees the exact
+            // stamp. The split and the folds run on the ANSI-stripped text, the
+            // same text `hasTimestampPrefix` and `stripDecoration` read: compared
+            // output never carries decoration (`stripDecoration` removes it
+            // unconditionally), so nothing is lost, and decoration can no longer
+            // hide a stamp from the split or a `+ ` from the xtrace test. A build's
+            // own column-zero stamp on an undeclared pipeline is ordinary text and
+            // is not split.
+            let raw = stripAnsi line.Text
+
+            let stamp, body =
+                if stripTimestamps then
+                    let body = timestampPrefix.Replace(raw, "")
+                    raw.Substring(0, raw.Length - body.Length), body
+                else
+                    "", raw
+
             let g =
                 orderedGlobal
-                |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) line.Text
+                |> List.fold (fun (acc: string) (v, token) -> acc.Replace(v, token)) body
 
             // ENV values rewrite only on xtrace rows — engine-generated lines where
             // expansions actually appear. Ordinary output keeps its literals, which
@@ -771,7 +793,7 @@ module Trace =
                 else
                     g
 
-            { line with Text = text }
+            { line with Text = stamp + text }
 
         normaliseOutputInnerTaggedWhen stripTimestamps (lines |> Seq.map canonical)
 
