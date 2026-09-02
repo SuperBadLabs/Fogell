@@ -34,8 +34,8 @@ type SlashySpanBoundary =
     | Incomplete of PhysicalEndIndex: int
 
 [<Sealed>]
-type SlashySpans internal (boundaries: SlashySpanBoundary array) =
-    static member Empty = SlashySpans Array.empty
+type SlashySpans internal (boundaries: SlashySpanBoundary array, recoveryBoundaries: SlashySpanBoundary array) =
+    static member Empty = SlashySpans(Array.empty, Array.empty)
 
     member _.Length = boundaries.Length
 
@@ -44,6 +44,15 @@ type SlashySpans internal (boundaries: SlashySpanBoundary array) =
             Unclassified
         else
             boundaries.[index]
+
+    /// Complete slashies that admission can treat as authoritative after the
+    /// grammar has failed before reaching them. Parser-only hints, including
+    /// the ambiguous return-command fallback, are deliberately excluded.
+    member _.RecoveryBoundary(index: int) =
+        if index < 0 || index >= recoveryBoundaries.Length then
+            Unclassified
+        else
+            recoveryBoundaries.[index]
 
     member _.Slice(start: int, length: int) =
         if length <= 0 then
@@ -64,7 +73,22 @@ type SlashySpans internal (boundaries: SlashySpanBoundary array) =
                             Incomplete(min length (max 0 (outerPhysicalEnd - start)))
                         | _ -> Unclassified)
 
-            SlashySpans sliced
+            let recoverySliced =
+                Array.init length (fun relativeIndex ->
+                    let outerIndex = start + relativeIndex
+
+                    if outerIndex < 0 || outerIndex >= recoveryBoundaries.Length then
+                        Unclassified
+                    else
+                        match recoveryBoundaries.[outerIndex] with
+                        | Complete outerCloser when outerCloser >= start && outerCloser < start + length ->
+                            Complete(outerCloser - start)
+                        | Complete outerCloser when outerCloser >= start + length -> Incomplete length
+                        | Incomplete outerPhysicalEnd ->
+                            Incomplete(min length (max 0 (outerPhysicalEnd - start)))
+                        | _ -> Unclassified)
+
+            SlashySpans(sliced, recoverySliced)
 
 module Limits =
 
@@ -133,6 +157,7 @@ module Limits =
             // structural subscanner can then share this exact slashy/division
             // decision instead of growing a second, drifting lookbehind rule.
             let recognizedSlashyBoundaries = Array.create source.Length Unclassified
+            let recoverySlashyBoundaries = Array.create source.Length Unclassified
             let mutable depth = 0
             let mutable nodes = 0
             let mutable line = 1L
@@ -156,6 +181,7 @@ module Limits =
             let mutable awaitingControlParen = false
             let mutable returnFallbackPending = false
             let mutable returnCommandHead = false
+            let mutable returnCommandHeadEnd = -1
             // Fogell.Groovy.Parser's unary production recursively invokes
             // itself once for every prefix `!` or `-`. Trivia does not break
             // that recursion (`! /* c */ - value`), so charge the consecutive
@@ -494,6 +520,21 @@ module Limits =
                             i <- i + 2
                             column <- column + 2L
                     | '/'
+                        when i > 0
+                             && source.[i - 1] = '\\'
+                             && slashyClosers.[i] >= 0
+                             && (needsOperand || statementHead || commandHead) ->
+                        // Raw/balanced parser consumers need the cached hint
+                        // even when malformed source presents an escaped slash
+                        // where an opener would otherwise be expected. It is
+                        // not an authoritative Groovy opener, so keep walking
+                        // the DFA instead of shielding through its hint. This
+                        // reconstructs operand context at the cached closer:
+                        // `\\/ /x/` reaches a real slashy, while
+                        // `\\/ amount / x / 2` keeps both later slashes as
+                        // division. The parser table retains its O(1) hint.
+                        recognizedSlashyBoundaries.[i] <- Complete slashyClosers.[i]
+                    | '/'
                         when slashyClosers.[i] >= 0
                              && returnCommandHead
                              && not needsOperand
@@ -513,6 +554,20 @@ module Limits =
 
                         if err.IsNone then
                             recognizedSlashyBoundaries.[i] <- Complete slashyClosers.[i]
+
+                            // With same-line parser trivia between the
+                            // return-command head and slash, the Groovy grammar
+                            // abandons speculative division and parses the
+                            // following command call's slashy argument. The
+                            // scanner already preserves returnCommandHead over
+                            // spaces, tabs and block comments, so the source
+                            // gap covers all of that trivia without rescanning.
+                            // Without a gap (`tool/x/+1`) the same characters
+                            // remain a division chain. A physical break cannot
+                            // continue the command form.
+                            if i > returnCommandHeadEnd + 1 && not sawLineBreak then
+                                recoverySlashyBoundaries.[i] <- Complete slashyClosers.[i]
+
                             needsOperand <- true
                             statementHead <- false
                             commandHead <- false
@@ -537,6 +592,8 @@ module Limits =
                         if err.IsNone then
                             let closingIndex = slashyClosers.[i]
                             recognizedSlashyBoundaries.[i] <- Complete closingIndex
+                            recoverySlashyBoundaries.[i] <- Complete closingIndex
+
                             column <- column + int64 (closingIndex - i)
                             i <- closingIndex
                             needsOperand <- false
@@ -847,6 +904,8 @@ module Limits =
 
                                 returnCommandHead <-
                                     followsReturn && identifierHead && not returnCrossedLine
+
+                                if returnCommandHead then returnCommandHeadEnd <- i
                                 needsOperand <- false
                                 statementHead <- false
 
@@ -1050,7 +1109,59 @@ module Limits =
 
             match err with
             | Some e -> Error e
-            | None -> Ok(SlashySpans recognizedSlashyBoundaries)
+            | None -> Ok(SlashySpans(recognizedSlashyBoundaries, recoverySlashyBoundaries))
+
+    /// On a grammar failure, recover only the scalar fact already classified
+    /// by the admission DFA. Successful parses remain authoritative for
+    /// slashy-versus-division; this fallback prevents an earlier unsupported
+    /// token from hiding a later, complete over-limit slashy span.
+    let firstOverlongClassifiedSlashy
+        (limits: Limits)
+        (source: string)
+        (spans: SlashySpans)
+        : AdmissionError option =
+        if isNull source || spans.Length <> source.Length then
+            None
+        else
+            let mutable opener = 0
+            let mutable overlong: (int * int) option = None
+
+            while overlong.IsNone && opener < source.Length do
+                match spans.RecoveryBoundary opener with
+                | Complete closingIndex when closingIndex > opener && closingIndex < source.Length ->
+                    let contentBytes =
+                        Encoding.UTF8.GetByteCount(source, opener + 1, closingIndex - opener - 1)
+
+                    if contentBytes > limits.MaxScalarBytes then
+                        overlong <- Some(closingIndex, contentBytes)
+
+                    opener <- closingIndex + 1
+                | _ -> opener <- opener + 1
+
+            match overlong with
+            | None -> None
+            | Some(closingIndex, _) ->
+                let mutable line = 1L
+                let mutable column = 1L
+
+                for index in 0 .. closingIndex do
+                    match source.[index] with
+                    | '\r' ->
+                        line <- line + 1L
+                        column <- 1L
+                    | '\n' ->
+                        if index = 0 || source.[index - 1] <> '\r' then line <- line + 1L
+
+                        column <- 1L
+                    | _ -> column <- column + 1L
+
+                Some(
+                    AdmissionError.at
+                        ScalarTooLong
+                        line
+                        column
+                        $"string literal exceeds {limits.MaxScalarBytes} UTF-8 bytes"
+                )
 
     let precheck (limits: Limits) (source: string) : Result<unit, AdmissionError> =
         precheckWithSlashySpans limits source |> Result.map ignore

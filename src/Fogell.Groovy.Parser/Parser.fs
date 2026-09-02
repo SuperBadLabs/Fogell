@@ -858,9 +858,9 @@ let private shebang: P<unit> =
 let private program: P<Script> = opt shebang >>. ws >>. many (attempt stmtRef) .>> ws .>> eof
 
 let parseWithLimits (limits: Limits) (source: string) : Result<Script, AdmissionError> =
-    match Limits.precheck limits source with
+    match Limits.precheckWithSlashySpans limits source with
     | Result.Error e -> Result.Error e
-    | Result.Ok() ->
+    | Result.Ok slashySpans ->
         match runParserOnString program (initialState limits) "script" source with
         | ParserResult.Success(_, state, _) when state.ScalarRefusal.IsSome ->
             Result.Error state.ScalarRefusal.Value
@@ -868,12 +868,15 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Script, Admission
         | ParserResult.Failure(_, _, state) when state.ScalarRefusal.IsSome ->
             Result.Error state.ScalarRefusal.Value
         | ParserResult.Failure(msg, err, _) ->
-            let firstLine =
-                msg.Split('\n')
-                |> Array.filter (fun l -> l.Trim() <> "")
-                |> Array.tryLast
-                |> Option.defaultValue "unparsable"
+            match Limits.firstOverlongClassifiedSlashy limits source slashySpans with
+            | Some scalar -> Result.Error scalar
+            | None ->
+                let firstLine =
+                    msg.Split('\n')
+                    |> Array.filter (fun l -> l.Trim() <> "")
+                    |> Array.tryLast
+                    |> Option.defaultValue "unparsable"
 
-            Result.Error(AdmissionError.at MalformedSyntax err.Position.Line err.Position.Column (firstLine.Trim()))
+                Result.Error(AdmissionError.at MalformedSyntax err.Position.Line err.Position.Column (firstLine.Trim()))
 
 let parse (source: string) : Result<Script, AdmissionError> = parseWithLimits Limits.defaults source

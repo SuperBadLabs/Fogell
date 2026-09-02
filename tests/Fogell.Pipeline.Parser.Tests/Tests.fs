@@ -1123,6 +1123,95 @@ let admissionLimits =
                     "same-line epilogue", basePipeline + " echo /aaaaa/" ] do
                   expectPositionedScalar label source
 
+              let malformedBefore scalar = ")\ndef later = " + scalar + "\n"
+
+              for label, source in
+                  [ "malformed preamble before slashy", malformedBefore "/aaaaa/" + basePipeline
+                    "malformed epilogue before slashy", basePipeline + "\n" + malformedBefore "/aaaaa/" ] do
+                  expectPositionedScalar label source
+
+              for label, source in
+                  [ "bounded slashy after malformed preamble", malformedBefore "/aaaa/" + basePipeline
+                    "bounded slashy after malformed epilogue", basePipeline + "\n" + malformedBefore "/aaaa/"
+                    "division after malformed preamble", ")\ndef later = amount / aaaaa / 2\n" + basePipeline
+                    "return division after malformed preamble",
+                    ")\nreturn tool/ aaaaa /+1\n" + basePipeline
+                    "masked division after malformed preamble",
+                    ")\ndef later = \\/ amount / aaaaa / 2\n" + basePipeline
+                    "masked return division after malformed preamble",
+                    ")\ndef later = \\/ return tool/ aaaaa /+1\n" + basePipeline
+                    "slashy-looking comments after malformed preamble",
+                    ")\n// /aaaaa/\n/* /aaaaa/ */\n" + basePipeline ] do
+                  Expect.isOk
+                      (Parser.parseWithLimits limits source)
+                      $"{label}: recovery preserves surrounding-source tolerance without inventing a scalar"
+
+              match Fogell.Groovy.Parser.Parser.parseWithLimits limits (malformedBefore "/aaaaa/") with
+              | Error e ->
+                  Expect.equal e.Code ScalarTooLong "direct Groovy recovery enforces the classified slashy cap"
+                  Expect.equal e.Position { Line = 2L; Column = 20L } "the recovered closer position is exact"
+              | Ok _ -> failtest "malformed Groovy hid a later overlong classified slashy"
+
+              match Fogell.Groovy.Parser.Parser.parseWithLimits limits ")\nreturn tool/ aaaaa /+1" with
+              | Error e ->
+                  Expect.equal e.Code MalformedSyntax "an ambiguous return-command boundary remains division"
+              | Ok _ -> failtest "the malformed return-division control unexpectedly parsed"
+
+              let poisonedSlashy scalar = ")\ndef later = \\/ " + scalar + "\n"
+
+              for label, source in
+                  [ "masked slashy in malformed preamble", poisonedSlashy "/aaaaa/" + basePipeline
+                    "masked slashy in malformed epilogue", basePipeline + "\n" + poisonedSlashy "/aaaaa/" ] do
+                  expectPositionedScalar label source
+
+              let terminalReturnSlashy = ")\ndef helper() { return tool /aaaaa/; }\n"
+              let commentedReturnSlashy = ")\ndef helper() { return tool/*c*//aaaaa/; }\n"
+              let boundedCommentedReturnSlashy = ")\ndef helper() { return tool/*c*//aaaa/; }\n"
+
+              for label, source in
+                  [ "terminal return slashy in malformed preamble", terminalReturnSlashy + basePipeline
+                    "terminal return slashy in malformed epilogue", basePipeline + "\n" + terminalReturnSlashy
+                    "commented return slashy in malformed preamble", commentedReturnSlashy + basePipeline
+                    "commented return slashy in malformed epilogue",
+                    basePipeline + "\n" + commentedReturnSlashy ] do
+                  expectPositionedScalar label source
+
+              for label, source in
+                  [ "bounded commented return slashy in malformed preamble",
+                    boundedCommentedReturnSlashy + basePipeline
+                    "bounded commented return slashy in malformed epilogue",
+                    basePipeline + "\n" + boundedCommentedReturnSlashy ] do
+                  Expect.isOk
+                      (Parser.parseWithLimits limits source)
+                      $"{label}: parser-equivalent inline trivia preserves a bounded slashy"
+
+              for label, source in
+                  [ "bounded masked slashy in malformed preamble", poisonedSlashy "/aaaa/" + basePipeline
+                    "bounded masked slashy in malformed epilogue",
+                    basePipeline + "\n" + poisonedSlashy "/aaaa/" ] do
+                  Expect.isOk
+                      (Parser.parseWithLimits limits source)
+                      $"{label}: recovery resynchronization preserves a bounded scalar"
+
+              let recoveryLimits =
+                  { limits with
+                      MaxSourceBytes = 100_000
+                      MaxNodes = 100_000 }
+
+              let recoveryAdversary = ")\n" + String.replicate 10_000 "x=/a/;"
+              let recoveryStarted = Diagnostics.Stopwatch.StartNew()
+              let recoveryResult = Fogell.Groovy.Parser.Parser.parseWithLimits recoveryLimits recoveryAdversary
+              recoveryStarted.Stop()
+
+              match recoveryResult with
+              | Error e -> Expect.equal e.Code MalformedSyntax "bounded classified spans do not become scalar errors"
+              | Ok _ -> failtest "the malformed recovery adversary unexpectedly parsed"
+
+              Expect.isLessThan
+                  recoveryStarted.Elapsed.TotalSeconds
+                  2.0
+                  "grammar-failure slashy recovery walks cached complete spans once"
+
               let positionedScalarError label result =
                   match result with
                   | Error e when e.Code = ScalarTooLong -> e
