@@ -767,10 +767,10 @@ let private parenArgs (stateBeforeScan: ParserState) (origin: FParsec.Position) 
                     >>. fail "parenthesised argument contains an overlong scalar"
                 | Some e, None ->
                     let rebased = rebaseAdmissionError 1L origin e
-                    // Preserve any earlier refusal already committed in the
-                    // enclosing parse; only the first positioned scalar refusal
-                    // is authoritative for this branch.
-                    setUserState (keepFirstScalarRefusal outerState rebased)
+                    // Retain a refusal that preceded this parenthesised scan,
+                    // but replace balancedRaw's provisional position for this
+                    // same body with the isolated grammar's exact position.
+                    setUserState (keepFirstScalarRefusal stateBeforeScan rebased)
                     >>. fail "parenthesised argument contains an overlong scalar"
                 | None, Some(message, _) -> refuse message
                 | None, None ->

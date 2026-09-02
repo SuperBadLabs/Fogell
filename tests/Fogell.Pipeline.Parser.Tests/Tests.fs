@@ -1155,6 +1155,8 @@ let admissionLimits =
               for label, source in
                   [ "parenthesised reparse",
                     "pipeline { agent any stages { stage('B') { steps { echo(/aaaaa/) } } } }"
+                    "failed parenthesised reparse",
+                    "pipeline { agent any stages { stage('B') { steps { echo(/aaaaa/ +) } } } }"
                     "parenthesised CRLF reparse",
                     "pipeline { agent any stages { stage('B') { steps { echo(\r\n /aaaaa/\r\n) } } } }"
                     "nested script",
