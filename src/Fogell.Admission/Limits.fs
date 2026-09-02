@@ -42,7 +42,7 @@ module Limits =
     /// immediately preceding character is a backslash is content, while a
     /// backslash before any other character is just raw content.
     ///
-    /// Computing this table once is load-bearing. Looking for a closer from
+    /// Computing this table once is load-bearing. Looking for a closing slash from
     /// every possible opener makes a line of repeated escaped slashes
     /// quadratic; the source cap bounds memory and this pass stays O(n).
     let private nextSlashyClosers (source: string) =
@@ -228,8 +228,8 @@ module Limits =
                              && (needsOperand || statementHead || commandHead) ->
                         // Comments won above. A complete candidate in an
                         // operand or command-argument position shields every
-                        // quote and delimiter through its cached closer. If no
-                        // closer exists this arm is not entered: the slash is
+                        // quote and delimiter through its cached closing index. If no
+                        // closing slash exists this arm is not entered: the slash is
                         // processed as ordinary code and all fallback
                         // node/depth accounting remains visible.
                         recordNode ()
@@ -425,7 +425,7 @@ module Limits =
                                 $"string literal exceeds {limits.MaxScalarBytes} UTF-8 bytes"
                         )
 
-            // An unterminated block comment is already conclusively malformed.
+            // An unclosed block comment is already conclusively malformed.
             // Refuse it in this single linear pass instead of handing a suffix
             // containing many `/*` candidates to backtracking raw scanners,
             // where each candidate could otherwise rescan to EOF.

@@ -325,7 +325,7 @@ module GString =
                     match findClose value i with
                     | -1 ->
                         if strict then
-                            // an unterminated `${` is invalid Groovy — Jenkins refuses
+                            // an unclosed `${` is invalid Groovy — Jenkins refuses
                             // the file before any step runs; copying it verbatim let a
                             // build succeed that Jenkins never builds
                             raise (UnsupportedExpression $"unterminated interpolation placeholder in '{value}'")

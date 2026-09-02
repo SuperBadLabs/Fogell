@@ -380,7 +380,7 @@ let endsExpression (c: char) =
 /// FG-141. Slashy spans are skipped too, when the position says slashy (see
 /// [endsExpression]): `def pattern = /}/` inside a `script { }` body counted
 /// the brace and ended the block early, rejecting the whole pipeline as
-/// `opaque section` — a false refusal of valid Groovy. An unterminated
+/// `opaque section` — a false refusal of valid Groovy. An unclosed
 /// candidate span falls back to the ordinary single character, which is
 /// exactly the pre-FG-141 reading — the fix can only remove derailments.
 let balancedRaw (opening: char) (closing: char) : P<string> =
@@ -507,7 +507,7 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                     )
                 then
                     // FG-141: no left operand, so this `/` can only open a
-                    // slashy. Skip its span; on no closer, rewind and read the
+                    // slashy. Skip its span; without a closing slash, rewind and read the
                     // `/` as the ordinary character it always was.
                     let before = stream.Index
                     stream.Skip()

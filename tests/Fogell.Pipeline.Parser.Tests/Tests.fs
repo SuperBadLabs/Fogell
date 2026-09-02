@@ -655,7 +655,7 @@ let admissionLimits =
                       | Ok _ -> ()
                       | Error e -> failtestf "%s comment content %s escaped the comment: %A" newlineLabel literalLooking e
 
-              // Refusing an unterminated block comment in the linear precheck
+              // Refusing an unclosed block comment in the linear precheck
               // prevents raw-parser alternatives from rescanning each suffix.
               let unterminatedComments =
                   "pipeline { agent any stages { stage('B') { steps { echo "
