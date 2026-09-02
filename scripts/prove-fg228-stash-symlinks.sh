@@ -29,7 +29,8 @@ dotnet run --project "$project" -c Release --no-build -- \
   --filter-test-list "$filter" >/dev/null
 
 selector='let private entryIsSymbolicLink (entry: FileSystemInfo) ='
-child_opener='let openChildDirectoryWithoutLinks'
+# FG-238: the flag bits come from LinuxOpenFlags; the no-follow guard is `table.NoFollow`.
+child_opener='let private openChildDirectoryWithoutLinksUsing'
 opener='match Native.openFileWithoutLinks workspace relative with'
 [[ "$(rg -F -c "$selector" "$publish")" == 1 ]] \
   || { echo 'FG-228 proof: selector mutation target is not unique' >&2; exit 1; }
@@ -42,9 +43,9 @@ opener='match Native.openFileWithoutLinks workspace relative with'
 # drop O_NOFOLLOW from the child-directory open so its target is entered, then
 # replace the source descriptor boundary with a pathname open that follows it.
 sed -i '/let private entryIsSymbolicLink (entry: FileSystemInfo) =/{n;s/not (isNull entry.LinkTarget)/false/;}' "$publish"
-guards_before="$(rg -F -c '||| OpenNoFollow' "$native")"
-sed -i '/let openChildDirectoryWithoutLinks/,/if descriptor < 0/{/||| OpenNoFollow/d;}' "$native"
-guards_after="$(rg -F -c '||| OpenNoFollow' "$native")"
+guards_before="$(rg -F -c '||| table.NoFollow' "$native")"
+sed -i '/let private openChildDirectoryWithoutLinksUsing/,/if descriptor < 0/{/||| table.NoFollow/d;}' "$native"
+guards_after="$(rg -F -c '||| table.NoFollow' "$native")"
 sed -i 's/match Native.openFileWithoutLinks workspace relative with/match Ok(File.OpenRead(Path.Combine(workspace, relative))) with/' "$publish"
 
 rg -F '        false' "$publish" >/dev/null \

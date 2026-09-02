@@ -3306,6 +3306,52 @@ let stashSymlinkContainment =
     else
         ptestList "FG-228 stash symlink containment" tests
 
+/// FG-238. The descriptor policy must open a real directory on the machine it
+/// runs on. With the asm-generic O_DIRECTORY|O_NOFOLLOW bits hardcoded, this
+/// test fails EINVAL on arm64 (the bits mean O_DIRECT|O_LARGEFILE there) — the
+/// FG-228 suite above fails the same way, but only this test says why.
+let descriptorPolicyArchitecture =
+    let tests =
+        [ test "the running architecture has an open(2) flag table" {
+              Expect.isOk
+                  LinuxOpenFlags.current
+                  $"%A{System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture} must be tabulated"
+          }
+
+          test "a plain directory opens under the resolved no-follow policy" {
+              let root = tempRoot ()
+              Directory.CreateDirectory root |> ignore
+
+              try
+                  match Native.openDirectoryWithoutLinks root with
+                  | Ok handle -> handle.Dispose()
+                  | Error why -> failtestf "the policy could not open a plain directory: %s" why
+              finally
+                  Directory.Delete(root, true)
+          }
+
+          test "a linked directory is still refused under the resolved policy" {
+              let root = tempRoot ()
+              let target = Path.Combine(root, "target")
+              let link = Path.Combine(root, "link")
+              Directory.CreateDirectory target |> ignore
+              Directory.CreateSymbolicLink(link, target) |> ignore
+
+              try
+                  match Native.openDirectoryWithoutLinks link with
+                  | Ok handle ->
+                      handle.Dispose()
+                      failtest "a symlinked scan root was opened"
+                  | Error _ -> ()
+              finally
+                  Directory.Delete(root, true)
+          } ]
+
+    if OperatingSystem.IsLinux() then
+        testList "FG-238 descriptor policy per architecture" tests
+    else
+        ptestList "FG-238 descriptor policy per architecture" tests
+
 /// FG-070/071. The properties that make secret handling better than Jenkins',
 /// each asserted against a real subprocess.
 let secrets =
@@ -5807,6 +5853,7 @@ let main argv =
                       credentialKeyBoundaries
                       stashDefaultExcludes
                       stashSymlinkContainment
+                      descriptorPolicyArchitecture
                       secrets
                       deadProcessDetection
                       externalInterrupt
