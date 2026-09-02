@@ -26,6 +26,16 @@ type Limits =
 
 module Limits =
 
+    let private quoteIsEscaped (source: string) quoteIndex =
+        let mutable precedingBackslashes = 0
+        let mutable i = quoteIndex - 1
+
+        while i >= 0 && source.[i] = '\\' do
+            precedingBackslashes <- precedingBackslashes + 1
+            i <- i - 1
+
+        precedingBackslashes % 2 = 1
+
     /// Cheap pre-parse guard. Performs a UTF-8 byte-count pass, then counts
     /// brace depth and token-ish nodes with a second linear scan. Neither pass
     /// recurses, so this guard cannot itself exhaust the stack. It is
@@ -67,7 +77,7 @@ module Limits =
 
                 if quote <> '\000' then
                     // inside a string literal: only look for its terminator
-                    if c = quote && (i = 0 || source.[i - 1] <> '\\') then
+                    if c = quote && not (quoteIsEscaped source i) then
                         let scalarBytes =
                             Encoding.UTF8.GetByteCount(source, scalarStart + 1, i - scalarStart - 1)
 

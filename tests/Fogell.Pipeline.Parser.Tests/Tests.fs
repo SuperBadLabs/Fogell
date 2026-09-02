@@ -139,6 +139,41 @@ let admissionLimits =
               Expect.equal unterminatedAstralError.Position.Column 5L "astral EOF counts source columns, not bytes"
           }
 
+          test "closing quotes use complete backslash-run parity" {
+              let limits =
+                  { Limits.defaults with
+                      MaxSourceBytes = 100
+                      MaxScalarBytes = 4 }
+
+              Expect.isOk
+                  (Limits.precheck limits "'aa\\\\'")
+                  "two trailing backslashes leave the single quote as a delimiter"
+
+              Expect.isOk
+                  (Limits.precheck limits "\"aa\\\\\"")
+                  "two trailing backslashes leave the double quote as a delimiter"
+
+              let evenRunError =
+                  match Limits.precheck { limits with MaxScalarBytes = 3 } "'aa\\\\'" with
+                  | Error e -> e
+                  | Ok() -> failtest "expected four content bytes to cross a three-byte limit"
+
+              Expect.equal evenRunError.Code ScalarTooLong "the closing delimiter is excluded after an even run"
+              Expect.equal evenRunError.Position.Column 7L "the even-run refusal points after the closing quote"
+
+              Expect.isOk
+                  (Limits.precheck limits "'aa\\'")
+                  "one trailing backslash escapes the quote and leaves four exact content bytes at EOF"
+
+              let oddRunError =
+                  match Limits.precheck limits "'aa\\'a" with
+                  | Error e -> e
+                  | Ok() -> failtest "expected escaped-quote content plus ASCII to cross the limit"
+
+              Expect.equal oddRunError.Code ScalarTooLong "an odd run keeps the quote in unterminated content"
+              Expect.equal oddRunError.Position.Column 7L "the odd-run refusal points at EOF"
+          }
+
           test "deep nesting is rejected before the grammar recurses" {
               let deep = String.replicate 200 "{" + String.replicate 200 "}"
               let e = err ("pipeline " + deep)
