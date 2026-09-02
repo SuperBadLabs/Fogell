@@ -23,6 +23,7 @@ BIN=scripts/bin
 TOOLS=(
   audit-board-numbers
   audit-claims
+  audit-gate-lanes
   audit-stale-refs
   count-options
   generate-scorecard
@@ -109,7 +110,7 @@ ensure_link_prereqs() {
   done
 }
 
-# `--preflight` proves the toolchain LINKS, in ~3s, without compiling the eight
+# `--preflight` proves the toolchain LINKS, in ~3s, without compiling the nine
 # tools. CI runs it straight after installing fflat: the failure it catches
 # otherwise surfaces seven minutes in, after the full test suite, because the
 # audit build sits at the end of the gate. A trivial .fsx is enough — the brotli
@@ -155,7 +156,7 @@ ensure_link_prereqs
 mkdir -p "$BIN"
 
 # COMPILED IN PARALLEL. Each fflat invocation saturates roughly three cores, and
-# there are eight independent tools; run sequentially they cost ~58s of wall time
+# there are nine independent tools; run sequentially the original eight cost ~58s of wall time
 # on a 32-core host that is idle for most of it. The jobs are capped rather than
 # unbounded so this does not thrash a small runner — GitHub's are 4-core, where
 # the cap is what keeps it from being SLOWER than sequential.
@@ -180,7 +181,7 @@ for t in "${TOOLS[@]}"; do
     # #181 for naming bflat where the script invokes fflat; the naming is
     # defensible (fflat wraps bflat) but the premise was not, and the decline
     # first written for it repeated the unmeasured claim. The capture is still
-    # right — a parallel build interleaves eight streams — so only the reason
+    # right — a parallel build interleaves nine streams — so only the reason
     # changed.
     if fflat "$SRC/$t.fsx" -o "$BIN/$t" >"$LOGS/$t.log" 2>&1; then
       : > "$LOGS/$t.ok"
