@@ -1,6 +1,7 @@
 module Fogell.Pipeline.Parser.Lexeme
 
 open FParsec
+open Fogell.Admission
 open Fogell.Ir
 
 /// Shared lexing for the Declarative grammar.
@@ -13,22 +14,75 @@ open Fogell.Ir
 /// Semantic refusals are different from ordinary grammar misses. FParsec's
 /// `attempt` correctly rewinds the latter so a deliberate opaque fallback can
 /// fail closed, but the former must survive that rewind and reach admission.
-/// The mutable cell is intentional: stream backtracking restores the user-state
-/// value, not mutations made through the same referenced object.
+/// The semantic-refusal cell is intentional: stream backtracking restores the
+/// user-state value, not mutations made through the same referenced object.
+/// ScalarRefusal is deliberately the opposite: an overlong slashy discovered
+/// on an abandoned grammar branch must rewind with that branch, so only the
+/// scalar interpretation the parser actually commits can refuse admission.
+/// CommittedScalarRefusal is narrower: when an isolated nested parse has both a
+/// scalar refusal and a persistent semantic refusal, outer grammar backtracking
+/// cannot make that proven scalar disappear behind a generic section fallback.
 type ParserState =
-    { mutable Refusal: (string * Fogell.Ir.Position) option }
+    { Refusal: (string * Fogell.Ir.Position) option ref
+      Limits: Limits
+      ScalarRefusal: AdmissionError option
+      CommittedScalarRefusal: AdmissionError option ref
+      // Read-only opener classifications produced by the admission DFA for
+      // this exact parser input. Empty is reserved for focused scalar parsers
+      // that never invoke balancedRaw.
+      BalancedSlashySpans: SlashySpans
+      RawArgumentLineBoundary: bool }
 
-let parserState () = { Refusal = None }
+let parserStateWithLimitsAndSlashySpans (limits: Limits) (slashySpans: SlashySpans) =
+    { Refusal = ref None
+      Limits = limits
+      ScalarRefusal = None
+      CommittedScalarRefusal = ref None
+      BalancedSlashySpans = slashySpans
+      RawArgumentLineBoundary = false }
+
+let parserStateWithLimits (limits: Limits) =
+    parserStateWithLimitsAndSlashySpans limits SlashySpans.Empty
+
+let parserState () = parserStateWithLimits Limits.defaults
 
 type P<'a> = Parser<'a, ParserState>
+
+/// Scalar refusals follow source order on the parser branch that survives.
+/// The state is immutable so `attempt` can still rewind an abandoned branch;
+/// within one committed branch, later literals must not displace the first
+/// positioned refusal.
+let keepFirstScalarRefusal (state: ParserState) refusal =
+    if state.ScalarRefusal.IsNone then
+        { state with ScalarRefusal = Some refusal }
+    else
+        state
+
+/// Record a scalar refusal at the point its grammar/scanner has committed to a
+/// literal span. Keeping this state immutable is load-bearing: an enclosing
+/// `attempt` must rewind a scalar interpretation that the grammar abandons.
+let recordScalarContent (rawContent: string) (stream: CharStream<ParserState>) =
+    let scalarBytes = System.Text.Encoding.UTF8.GetByteCount rawContent
+
+    if scalarBytes > stream.UserState.Limits.MaxScalarBytes then
+        let position = stream.Position
+
+        let refusal =
+            AdmissionError.at
+                ScalarTooLong
+                position.Line
+                position.Column
+                $"string literal exceeds {stream.UserState.Limits.MaxScalarBytes} UTF-8 bytes"
+
+        stream.UserState <- keepFirstScalarRefusal stream.UserState refusal
 
 /// Record a semantic refusal before failing the current parser branch. The
 /// fallback may still parse, but admission reads this cell before returning it.
 let refuse (message: string) : P<'a> =
     getPosition .>>. getUserState
     >>= fun (position, state) ->
-            if state.Refusal.IsNone then
-                state.Refusal <-
+            if state.Refusal.Value.IsNone then
+                state.Refusal.Value <-
                     Some(
                         message,
                         { Line = position.Line
@@ -166,6 +220,24 @@ let private decodedEscape: P<char> =
 let private escapedChar: P<char> =
     skipChar '\\' >>. decodedEscape
 
+/// A backslash immediately followed by a physical line ending is Groovy's
+/// line-continuation spelling, not an escaped newline character. Jenkins drops
+/// the whole pair before constructing the string: `echo 'first\\\nsecond'`
+/// receives `firstsecond`. This has to precede [escapedChar], whose historical
+/// catch-all quite correctly maps an escaped *letter* `n` to LF but would also
+/// accept a physical LF through [anyChar] and retain it.
+///
+/// Keep all three line-ending forms explicit. FParsec recognises LF, CRLF and
+/// bare CR as newlines, and the surrounding scanners already promise identical
+/// boundaries for those forms. The outer [attempt] restores the backslash when
+/// it is not a continuation so the ordinary escape parser can consume it.
+let private escapedPhysicalContinuation: P<string> =
+    // FParsec normalizes each physical LF, CRLF or bare CR into ONE logical
+    // newline. In particular, `skipChar '\r'` and `skipChar '\n'` each accept
+    // any of those complete forms; composing them as a CRLF parser consumes two
+    // adjacent physical endings. [skipNewline] is the exact one-ending parser.
+    attempt (skipChar '\\' >>. skipNewline >>% "")
+
 /// The ONLY thing that separates [escapedCharKeepingDollar] from [escapedChar].
 ///
 /// A NUL sentinel, not "\$": REVIEW FIX (Codex, PR #14 round 9). `"\\$X"` is an
@@ -185,11 +257,17 @@ let private keepDollar (c: char) : string =
 
 let private quoted (q: string) : P<string> =
     between (skipString q) (skipString q) (
-        manyChars (escapedChar <|> satisfy (fun c -> c <> q.[0] && c <> '\n')))
+        manyStrings (
+            escapedPhysicalContinuation
+            <|> (escapedChar |>> string)
+            <|> (satisfy (fun c -> c <> q.[0] && c <> '\r' && c <> '\n') |>> string)))
 
 let private tripleQuoted (q: string) : P<string> =
     between (skipString q) (skipString q) (
-        manyCharsTill (escapedChar <|> anyChar) (lookAhead (skipString q)))
+        manyTill
+            (escapedPhysicalContinuation <|> (escapedChar |>> string) <|> (anyChar |>> string))
+            (lookAhead (skipString q))
+        |>> String.concat "")
 
 /// FG-125. A SLASHY string is the one form whose escapes are NOT Java's: it
 /// escapes only its `/` delimiter and preserves every other backslash sequence
@@ -206,10 +284,35 @@ let private tripleQuoted (q: string) : P<string> =
 /// no parentheses is REFUSED by Jenkins at compile time, and the probe that used
 /// it proved nothing while looking like evidence.
 let private slashyQuoted: P<string> =
-    between (skipString "/") (skipString "/") (
+    let content =
         manyStrings (
-            (skipChar '\\' >>. (anyChar |>> fun c -> if c = '/' then "/" else "\\" + string c))
-            <|> (satisfy (fun c -> c <> '/' && c <> '\n') |>> string)))
+            (attempt (skipString "\\/" >>% "/"))
+            <|> (satisfy (fun c -> c <> '/' && c <> '\r' && c <> '\n') |>> string))
+
+    let captured =
+        between
+            (skipString "/")
+            (skipString "/")
+            (withSkippedString (fun skipped decoded -> decoded, skipped) content)
+
+    // Slashy-versus-division is decided by the surrounding grammar. Capturing
+    // the raw content here applies the caller's byte cap only after that
+    // decision, without decoding escapes or guessing in Limits.precheck.
+    captured .>>. getPosition .>>. getUserState
+    >>= fun (((decoded, raw), position), state) ->
+            let scalarBytes = System.Text.Encoding.UTF8.GetByteCount raw
+
+            if scalarBytes > state.Limits.MaxScalarBytes then
+                let refusal =
+                    AdmissionError.at
+                        ScalarTooLong
+                        position.Line
+                        position.Column
+                        $"string literal exceeds {state.Limits.MaxScalarBytes} UTF-8 bytes"
+
+                setUserState (keepFirstScalarRefusal state refusal) >>% decoded
+            else
+                preturn decoded
 
 /// As [escapedChar], but an escaped $ keeps its backslash.
 ///
@@ -226,11 +329,16 @@ let private escapedCharKeepingDollar: P<string> =
 /// Variants used where interpolation provenance matters, so \$ is preserved.
 let private quotedKeepingDollar (q: string) : P<string> =
     between (skipString q) (skipString q) (
-        manyStrings (escapedCharKeepingDollar <|> (satisfy (fun c -> c <> q.[0] && c <> '\n') |>> string)))
+        manyStrings (
+            escapedPhysicalContinuation
+            <|> escapedCharKeepingDollar
+            <|> (satisfy (fun c -> c <> q.[0] && c <> '\r' && c <> '\n') |>> string)))
 
 let private tripleQuotedKeepingDollar (q: string) : P<string> =
     between (skipString q) (skipString q) (
-        manyTill (escapedCharKeepingDollar <|> (anyChar |>> string)) (lookAhead (skipString q))
+        manyTill
+            (escapedPhysicalContinuation <|> escapedCharKeepingDollar <|> (anyChar |>> string))
+            (lookAhead (skipString q))
         |>> String.concat "")
 
 /// Any Groovy string form Jenkinsfiles use, including slashy strings.
@@ -304,102 +412,6 @@ let stringLiteralBare: P<string> =
 
 let stringLiteral: P<string> = lexeme stringLiteralBare
 
-/// The RAW SOURCE of a Groovy string literal — the FIVE forms this lexer knows
-/// (triple-single, triple-double, single, double, slashy), escapes respected.
-/// NOT dollar-slashy `$/.../$`, which nothing here parses; a `;` inside one is
-/// unprotected. "every form" is what this said, and it was never true.
-///
-/// FG-138. `Lexeme` is where this codebase knows what a Groovy string IS —
-/// [stringLiteral] above enumerates triple-single, triple-double, single, double
-/// and slashy. [balancedRaw] below skips `'`, `"`, comments AND — since FG-141
-/// landed 2026-08-18 — position-decided slashy spans. The gap this paragraph
-/// used to document as OPEN: a slashy carrying the active closing delimiter,
-/// such as `/a}b/` inside a `when { expression { … } }`, was counted as a brace
-/// and ended the balanced region early (measured then against the host as
-/// `no_stages: pipeline declares no stages`, the whole structure collapsed).
-/// PROVEN NOW by receipts `when-slashy-brace` and `script-slashy-brace`, the
-/// receipts this note promised would arrive with the fix. FG-140. `Parser` needed the same knowledge to
-/// stop a raw argument at a `;` OUTSIDE a literal, and grew its own character
-/// scanner instead. Five review rounds found five forms it had missed, and two
-/// intermediate states produced SILENT no-ops — a build exiting 0 with no
-/// `step-started` and no files.
-///
-/// Three scanners disagreeing about what a string is was the defect; the
-/// semicolons only exposed it. This is the one implementation, here, where the
-/// other two already live.
-///
-/// Returns the literal's SOURCE including delimiters, because a caller
-/// reassembling a raw expression needs the text back exactly as written —
-/// [stringLiteral] decodes, which is the wrong thing for that job.
-let stringSpanRaw: P<string> =
-    let scan (stream: CharStream<ParserState>) =
-        let start = stream.Index
-        let c = stream.Peek()
-
-        let readDelimited (q: char) (tripled: bool) =
-            let closer = if tripled then System.String(q, 3) else string q
-            for _ in 1 .. closer.Length do stream.Skip()
-            let mutable closed = false
-            let mutable unterminated = false
-
-            while not closed && not stream.IsEndOfStream do
-                let d = stream.Peek()
-
-                if d = '\\' then
-                    stream.Skip()
-                    if not stream.IsEndOfStream then stream.Skip()
-                elif not tripled && d = q then
-                    stream.Skip()
-                    closed <- true
-                elif tripled && stream.PeekString 3 = closer then
-                    for _ in 1 .. 3 do stream.Skip()
-                    closed <- true
-                elif d = '\n' && not tripled && q <> '/' then
-                    // AN UNTERMINATED SINGLE-LINE LITERAL IS AN ERROR, not a span.
-                    // This used to report `closed`, so the caller received raw source
-                    // MISSING ITS CLOSING DELIMITER while the contract above promises
-                    // the delimiters are included. A malformed literal was then partly
-                    // accepted instead of failing closed — the same preference for
-                    // guessing over refusing that FG-143/145/147 each had to remove.
-                    unterminated <- true
-                    closed <- true
-                else
-                    stream.Skip()
-
-            closed && not unterminated
-
-        if c = '\'' || c = '"' then
-            let tripled = stream.PeekString 3 = System.String(c, 3)
-            if readDelimited c tripled then
-                let len = int (stream.Index - start)
-                stream.Seek start
-                Reply(stream.Read len)
-            else
-                stream.Seek start
-                Reply(Error, expected "a terminated string literal")
-        elif c = '/' then
-            // SLASHY, ASSUMED NOT DIVISION. This scanner treats any `/` as a slashy
-            // opener and does NOT decide between a literal and a division operator.
-            //
-            // NO CALLER SENDS `/` HERE ANY MORE. `rawArgValue` reaches this only
-            // after `'` or `"`; it once excluded `/` from plain text and tried
-            // here, and that was an APPROVAL BYPASS — `input message: 10 / 2` found
-            // no closing delimiter, the argument failed to parse, `steps` backtracked
-            // to EMPTY, and the build reported success with no prompt published
-            // (FG-141, approval-lane scenario W). This comment described that
-            // removed caller path for a round after it was gone.
-            if readDelimited '/' false then
-                let len = int (stream.Index - start)
-                stream.Seek start
-                Reply(stream.Read len)
-            else
-                stream.Seek start
-                Reply(Error, expected "a terminated slashy string")
-        else
-            Reply(Error, expected "a string literal")
-
-    scan
-
 // --- balanced raw capture --------------------------------------------------
 
 /// FG-141. Can the character ending the text so far END an expression? This is
@@ -422,9 +434,12 @@ let endsExpression (c: char) =
 /// FG-141. Slashy spans are skipped too, when the position says slashy (see
 /// [endsExpression]): `def pattern = /}/` inside a `script { }` body counted
 /// the brace and ended the block early, rejecting the whole pipeline as
-/// `opaque section` — a false refusal of valid Groovy. An unterminated
-/// candidate span falls back to the ordinary single character, which is
-/// exactly the pre-FG-141 reading — the fix can only remove derailments.
+/// `opaque section` — a false refusal of valid Groovy. A candidate that reaches
+/// EOF falls back to the ordinary slash reading. A candidate that reaches a
+/// physical line ending is different: Groovy permits multiline slashies, but
+/// Fogell's current grammar does not model them, so balanced capture records a
+/// semantic refusal rather than splitting one Jenkins expression into later
+/// runnable grammar items.
 let balancedRaw (opening: char) (closing: char) : P<string> =
     let inner (stream: CharStream<ParserState>) =
         if stream.Peek() <> opening then
@@ -437,9 +452,48 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
             // the region opener starts an expression context; a `/` first thing
             // in the body is a slashy opener
             let mutable lastSig = ' '
+            let mutable priorSig = ' '
+            let mutable thirdSig = ' '
+            let mutable lastSigIndex = -1L
+            let mutable priorSigIndex = -1L
+
+            let recordSignificant c index =
+                thirdSig <- priorSig
+                priorSig <- lastSig
+                priorSigIndex <- lastSigIndex
+                lastSig <- c
+                lastSigIndex <- index
+
+            let skipOne () =
+                if stream.Peek() = '\r' || stream.Peek() = '\n' then
+                    stream.SkipNewline() |> ignore
+                else
+                    stream.Skip()
+
+            let skipEscapedCharacter () =
+                stream.Skip()
+
+                if not stream.IsEndOfStream then
+                    if stream.Peek() = '\r' || stream.Peek() = '\n' then
+                        stream.SkipNewline() |> ignore
+                    else
+                        stream.Skip()
 
             while depth > 0 && not failed && not (stream.IsEndOfStream) do
                 let c = stream.Peek()
+                let slashySpanIndex = int stream.Index
+
+                let dfaSlashyBoundary =
+                    stream.UserState.BalancedSlashySpans.Boundary slashySpanIndex
+
+                let fallbackClassifiesSlashy =
+                    not (
+                        endsExpression lastSig
+                        || (((lastSig = '+' && priorSig = '+')
+                             || (lastSig = '-' && priorSig = '-'))
+                            && lastSigIndex = priorSigIndex + 1L
+                            && endsExpression thirdSig)
+                    )
 
                 if c = '\'' || c = '"' then
                     // TRIPLE-QUOTED SPANS FIRST. Treating `"""` as an empty string
@@ -463,39 +517,46 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                             let d = stream.Peek()
 
                             if d = '\\' then
-                                stream.Skip()
-                                if not stream.IsEndOfStream then stream.Skip()
+                                skipEscapedCharacter ()
                             elif d = q && stream.Peek(1) = q && stream.Peek(2) = q then
                                 stream.Skip(3)
                                 closed <- true
                             else
-                                stream.Skip()
+                                skipOne ()
 
                         if not closed then failed <- true
-                        lastSig <- q // a completed literal ends an expression
+                        recordSignificant q (stream.Index - 1L) // a completed literal ends an expression
                     else
 
                     stream.Skip()
 
                     let mutable closed = false
 
-                    while not closed && not stream.IsEndOfStream do
+                    while not closed && not failed && not stream.IsEndOfStream do
                         let d = stream.Peek()
 
                         if d = '\\' then
-                            stream.Skip()
-                            if not stream.IsEndOfStream then stream.Skip()
+                            skipEscapedCharacter ()
                         elif d = q then
                             stream.Skip()
                             closed <- true
-                        elif d = '\n' && q = '\'' then
-                            closed <- true // unterminated single-quote: bail
+                        elif d = '\r' || d = '\n' then
+                            // Ordinary single- and double-quoted Groovy strings
+                            // cannot cross an unescaped physical line ending.
+                            // CRLF is observed at its CR, and bare CR must behave
+                            // exactly like LF. Triple-quoted spans took the branch
+                            // above and retain their multiline contract.
+                            failed <- true
                         else
                             stream.Skip()
 
-                    lastSig <- q // a completed literal ends an expression
+                    recordSignificant q (stream.Index - 1L) // a completed literal ends an expression
                 elif c = '/' && stream.Peek(1) = '/' then
-                    while not stream.IsEndOfStream && stream.Peek() <> '\n' do
+                    while
+                        not stream.IsEndOfStream
+                        && stream.Peek() <> '\r'
+                        && stream.Peek() <> '\n'
+                        do
                         stream.Skip()
                 elif c = '/' && stream.Peek(1) = '*' then
                     stream.Skip()
@@ -509,40 +570,109 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                             stream.Skip()
                             ended <- true
                         else
-                            stream.Skip()
-                elif c = '/' && not (endsExpression lastSig) then
-                    // FG-141: no left operand, so this `/` can only open a
-                    // slashy. Skip its span; on no closer, rewind and read the
-                    // `/` as the ordinary character it always was.
-                    let before = stream.Index
-                    stream.Skip()
-                    let mutable closed = false
-
-                    while not closed && not stream.IsEndOfStream do
-                        let d = stream.Peek()
-
-                        if d = '\\' then
-                            stream.Skip()
-                            if not stream.IsEndOfStream then stream.Skip()
-                        elif d = '/' then
-                            stream.Skip()
-                            closed <- true
+                            skipOne ()
+                elif
+                    c = '/'
+                    && (if stream.UserState.BalancedSlashySpans.Length = 0 then
+                            fallbackClassifiesSlashy
                         else
-                            stream.Skip()
+                            dfaSlashyBoundary <> Unclassified)
+                then
+                    let before = stream.Index
 
-                    if closed then
-                        lastSig <- '\'' // a completed literal ends an expression
-                    else
-                        stream.Seek(before)
+                    let recordComplete () =
+                        let finish = stream.Index
+                        let contentLength = int (finish - before - 2L)
+                        stream.Seek(before + 1L)
+                        let rawContent = stream.Read contentLength
+                        stream.Seek finish
+                        recordScalarContent rawContent stream
+                        recordSignificant '\'' (finish - 1L) // a completed literal ends an expression
+
+                    let refuseAtPhysicalEnd physicalEnd =
+                        stream.Seek(int64 physicalEnd)
+
+                        // This position has no left operand, so the slash cannot
+                        // be division. Rewinding it to an ordinary character lets
+                        // a collection or opaque block close at the line break and
+                        // the following text become another grammar item — a
+                        // single Jenkins slashy reinterpreted as runnable work.
+                        // Persist the semantic refusal through enclosing attempts,
+                        // matching rawArgValue's same-boundary contract.
+                        if stream.UserState.Refusal.Value.IsNone then
+                            let position = stream.Position
+
+                            stream.UserState.Refusal.Value <-
+                                Some(
+                                    "multiline slashy literals are unsupported inside balanced regions",
+                                    { Line = position.Line
+                                      Column = position.Column }
+                                )
+
+                        failed <- true
+
+                    match dfaSlashyBoundary with
+                    | NonConsuming ->
+                        // This slash was immediately escaped in malformed raw
+                        // source. It is a constant-time non-opener hint; do not
+                        // seek through the independently classified next slash.
                         stream.Skip()
-                        lastSig <- '/'
+                        recordSignificant '/' before
+                    | Complete closingIndex ->
+                        // Admission has already proved the exact same-line
+                        // delimiter. Consume it directly instead of searching
+                        // this suffix a second time.
+                        stream.Seek(int64 closingIndex + 1L)
+                        recordComplete ()
+                    | Incomplete physicalEnd when physicalEnd < stream.UserState.BalancedSlashySpans.Length ->
+                        // The precheck also cached the first physical ending.
+                        // Seeking to it preserves the old refusal coordinate
+                        // without rescanning every later incomplete candidate.
+                        refuseAtPhysicalEnd physicalEnd
+                    | Incomplete _ ->
+                        // No delimiter or physical ending remains in this exact
+                        // parser input. The historical fallback reads the slash
+                        // as ordinary source; the cached EOF boundary makes that
+                        // decision constant-time.
+                        stream.Skip()
+                        recordSignificant '/' before
+                    | Unclassified ->
+                        // Focused parsers use an empty DFA table. Retain their
+                        // local lexical fallback, while public admission always
+                        // takes one of the cached branches above.
+                        stream.Skip()
+                        let mutable closed = false
+                        let mutable crossedLine = false
+
+                        while not closed && not crossedLine && not stream.IsEndOfStream do
+                            let d = stream.Peek()
+
+                            if d = '\\' && stream.Peek(1) = '/' then
+                                stream.Skip(2)
+                            elif d = '\r' || d = '\n' then
+                                crossedLine <- true
+                            elif d = '/' then
+                                stream.Skip()
+                                closed <- true
+                            else
+                                stream.Skip()
+
+                        if closed then
+                            recordComplete ()
+                        elif crossedLine then
+                            refuseAtPhysicalEnd (int stream.Index)
+                        else
+                            stream.Seek(before)
+                            stream.Skip()
+                            recordSignificant '/' before
                 else
+                    let significantIndex = stream.Index
                     if c = opening then depth <- depth + 1
                     elif c = closing then depth <- depth - 1
-                    stream.Skip()
+                    skipOne ()
 
                     if c <> ' ' && c <> '\t' && c <> '\r' && c <> '\n' then
-                        lastSig <- c
+                        recordSignificant c significantIndex
 
             if depth <> 0 then
                 Reply(Error, messageError $"unbalanced '{opening}'")

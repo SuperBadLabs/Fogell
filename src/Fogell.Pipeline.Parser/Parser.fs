@@ -20,24 +20,22 @@ let private stepParser, private stepRef = createParserForwardedToRef<Step, Parse
 
 /// A named argument, carrying whether its value was SINGLE-quoted (literal) so a step
 /// that renders text itself can honour Groovy's quoting. See Step.LiteralNamedArgs.
-/// FG-138. A raw (unquoted) argument value: single- and double-quoted SPANS consumed
-/// whole via `Lexeme.stringSpanRaw`, slashy spans consumed whole when position says
-/// slashy (FG-141), everything else scanned to a stop character. Dollar-slashy
-/// stays unparsed everywhere.
+/// FG-138. A raw (unquoted) argument value: ordinary/triple-quoted spans,
+/// comments and position-decided slashies are consumed whole; everything else
+/// is scanned to a stop character. Dollar-slashy stays unparsed everywhere.
 ///
 /// The stop set can therefore include `;` without truncating an expression that
 /// carries one INSIDE a literal — `env.PART + '; echo b'`, `"printf 'x\"; …'"`,
-/// and since FG-141 a slashy `/; …/` too. Five review rounds on FG-134 each found another string
-/// form a hand-rolled character test had missed, and two of the intermediate
-/// states produced SILENT no-ops. `Lexeme` knew MORE forms than the hand-rolled test
-/// did, and asking it beat enumerating again.
-let private rawArgValue (stops: char list) : P<string> =
-    // A `/` IS DIVISION OR A SLASHY OPENER, DECIDED BY POSITION — see `slash`
-    // below. The history that shaped the rule, kept because both failure
-    // directions actually shipped:
+/// and since FG-141 a slashy `/; …/` too. The lexical state moves only forward:
+/// reconstructing it with character lookbehind misread comments containing
+/// `/*` and operator runs longer than two characters.
+let private rawArgValue (allowCommandHead: bool) (stops: char list) : P<string> =
+    // A `/` IS DIVISION OR A SLASHY OPENER, DECIDED BY FORWARD TOKEN CONTEXT.
+    // The history that shaped the rule is kept because both failure directions
+    // actually shipped:
     //
     // Treating EVERY `/` as a span opener was an APPROVAL BYPASS. `input
-    // message: 10 / 2` — plain division — sent `/` into `stringSpanRaw`, which
+    // message: 10 / 2` — plain division — sent `/` into the old delimiter scanner, which
     // found no closing delimiter, so the argument failed to parse; `steps` is
     // wrapped in `attempt`, that failure backtracked, the section became
     // EMPTY, and the build reported SUCCESS having never published a prompt.
@@ -50,76 +48,284 @@ let private rawArgValue (stops: char list) : P<string> =
     //
     // Treating NO `/` as an opener — the interim FG-141 state — truncated a
     // slashy at any stop character inside it and refused valid pipelines.
-    // The position test (one character of lookbehind) is what lets both
-    // scenario W and the slashy gates Z2/Z3 hold at once.
-    let plain: P<string> =
-        many1Satisfy (fun c -> not (List.contains c stops) && c <> '\'' && c <> '"' && c <> '/')
+    // The forward scanner starts exactly where the surrounding argument grammar
+    // has established an operand position. Comments preserve the token state;
+    // quoted/slashy spans become expression enders; ordinary operators update it.
+    let scan (stream: CharStream<ParserState>) =
+        let start = stream.Index
+        let mutable lastSig = ' '
+        let mutable priorSig = ' '
+        let mutable thirdSig = ' '
+        let mutable lastSigIndex = -1L
+        let mutable priorSigIndex = -1L
+        let mutable commandHead = false
+        let mutable finished = false
+        let mutable failed = false
+        let mutable scalarRefusal = None
+        let mutable crossedBlockCommentLine = false
 
-    let quotedSpan: P<string> = attempt (lookAhead (anyOf "'\"") >>. stringSpanRaw)
+        let recordSignificant c index =
+            thirdSig <- priorSig
+            priorSig <- lastSig
+            priorSigIndex <- lastSigIndex
+            lastSig <- c
+            lastSigIndex <- index
 
-    // FG-141. The context this scanner "does not have" is one character of
-    // lookbehind: a `/` after something that can END an expression is division
-    // and stays ordinary text — `input message: 10 / 2` is scenario W's
-    // approval bypass and must never change reading. A `/` with NO left
-    // operand can only open a slashy, whose span is consumed whole so a stop
-    // character inside it (`/a}b/`, `/a;b/`) cannot truncate the argument.
-    // The span must CLOSE ON ITS OWN LINE — a raw argument is line-bounded,
-    // and letting a candidate span hunt across lines for a closer would
-    // swallow later statements on a typo. Unterminated falls back to the
-    // ordinary character, the exact pre-FG-141 reading.
-    let slash: P<string> =
-        fun stream ->
-            if stream.Peek() <> '/' then
-                Reply(Error, expected "'/'")
-            else
-                let here = stream.Index
-                let mutable i = here - 1L
-                let mutable lastSig = ' '
-                let mutable scanning = true
+        let recordRawScalar (contentStart: int64) (contentLength: int) (finish: int64) =
+            stream.Seek contentStart
+            let content = stream.Read contentLength
+            stream.Seek finish
 
-                while scanning && i >= 0L do
-                    stream.Seek i
-                    let ch = stream.Peek()
+            if scalarRefusal.IsNone then
+                let scalarBytes = System.Text.Encoding.UTF8.GetByteCount content
 
-                    if ch = ' ' || ch = '\t' then
-                        i <- i - 1L
-                    else
-                        lastSig <- ch
-                        scanning <- false
+                if scalarBytes > stream.UserState.Limits.MaxScalarBytes then
+                    let position = stream.Position
 
-                stream.Seek here
+                    scalarRefusal <-
+                        Some(
+                            AdmissionError.at
+                                ScalarTooLong
+                                position.Line
+                                position.Column
+                                $"string literal exceeds {stream.UserState.Limits.MaxScalarBytes} UTF-8 bytes"
+                        )
 
-                if Lexeme.endsExpression lastSig then
+        let skipEscapedCharacter () =
+            stream.Skip()
+
+            if not stream.IsEndOfStream then
+                if stream.Peek() = '\r' then
                     stream.Skip()
-                    Reply("/") // division: the ordinary character
+                    if not stream.IsEndOfStream && stream.Peek() = '\n' then stream.Skip()
                 else
-                    let sb = System.Text.StringBuilder()
-                    sb.Append(stream.Read(1)) |> ignore
-                    let mutable closed = false
-                    let mutable bad = false
+                    stream.Skip()
 
-                    while not closed && not bad && not stream.IsEndOfStream do
-                        let d = stream.Peek()
+        while not finished && not failed && not stream.IsEndOfStream do
+            let c = stream.Peek()
 
-                        if d = '\\' then
-                            sb.Append(stream.Read(1)) |> ignore
-                            if not stream.IsEndOfStream then sb.Append(stream.Read(1)) |> ignore
-                        elif d = '/' then
-                            sb.Append(stream.Read(1)) |> ignore
-                            closed <- true
-                        elif d = '\n' then
-                            bad <- true
-                        else
-                            sb.Append(stream.Read(1)) |> ignore
+            // Physical line endings terminate every raw argument surface. Keep
+            // this invariant here rather than relying only on each caller's stop
+            // list: FParsec accepts LF, CRLF and bare CR as line boundaries.
+            if c = '\r' || c = '\n' || List.contains c stops then
+                finished <- true
+            elif c = '\'' || c = '"' then
+                let literalStart = stream.Index
+                let q = c
+                let tripled = stream.Peek(1) = q && stream.Peek(2) = q
+                let delimiterLength = if tripled then 3 else 1
+                stream.Skip delimiterLength
+                let mutable closed = false
 
-                    if closed then
-                        Reply(sb.ToString())
-                    else
-                        stream.Seek here
+                while not closed && not failed && not stream.IsEndOfStream do
+                    let d = stream.Peek()
+
+                    if d = '\\' then
+                        skipEscapedCharacter ()
+                    elif tripled && d = q && stream.Peek(1) = q && stream.Peek(2) = q then
+                        stream.Skip(3)
+                        closed <- true
+                    elif not tripled && d = q then
                         stream.Skip()
-                        Reply("/")
+                        closed <- true
+                    elif not tripled && (d = '\r' || d = '\n') then
+                        failed <- true
+                    else
+                        stream.Skip()
 
-    many1Strings (quotedSpan <|> plain <|> slash)
+                if closed then
+                    let finish = stream.Index
+                    let contentStart = literalStart + int64 delimiterLength
+                    let contentLength = int (finish - literalStart - int64 (2 * delimiterLength))
+                    recordRawScalar contentStart contentLength finish
+                    recordSignificant q (finish - 1L)
+                    commandHead <- false
+                else
+                    failed <- true
+            elif c = '/' && stream.Peek(1) = '/' then
+                stream.Skip(2)
+
+                while
+                    not stream.IsEndOfStream
+                    && stream.Peek() <> '\r'
+                    && stream.Peek() <> '\n'
+                    do
+                    stream.Skip()
+            elif c = '/' && stream.Peek(1) = '*' then
+                stream.Skip(2)
+                let mutable closed = false
+
+                while not closed && not stream.IsEndOfStream do
+                    if stream.Peek() = '*' && stream.Peek(1) = '/' then
+                        stream.Skip(2)
+                        closed <- true
+                    else
+                        if stream.Peek() = '\r' || stream.Peek() = '\n' then
+                            crossedBlockCommentLine <- true
+
+                        stream.Skip()
+
+                if not closed then
+                    failed <- true
+                elif crossedBlockCommentLine then
+                    // Groovy whitespace retains physical breaks inside block
+                    // comments as statement boundaries. Consume the complete
+                    // comment, then end this raw argument at that same seam so
+                    // the following token cannot be swallowed into it.
+                    finished <- true
+            elif c = '/' then
+                let slashIndex = stream.Index
+
+                let postfixDivision =
+                    ((lastSig = '+' && priorSig = '+')
+                     || (lastSig = '-' && priorSig = '-'))
+                    && lastSigIndex = priorSigIndex + 1L
+                    && Lexeme.endsExpression thirdSig
+
+                if not commandHead && (Lexeme.endsExpression lastSig || postfixDivision) then
+                    stream.Skip()
+                    recordSignificant '/' slashIndex
+                    commandHead <- false
+                else
+                    let recordComplete () =
+                        let finish = stream.Index
+                        let contentStart = slashIndex + 1L
+                        let contentLength = int (finish - contentStart - 1L)
+                        recordRawScalar contentStart contentLength finish
+                        recordSignificant '\'' (finish - 1L)
+                        commandHead <- false
+
+                    let refuseAtPhysicalEnd physicalEnd =
+                        stream.Seek(int64 physicalEnd)
+
+                        // At an operand position this slash can only begin a
+                        // slashy literal. Falling back at a physical line ending
+                        // lets the enclosing grammar reinterpret the next line as
+                        // another step/condition and bypass this value's limits.
+                        if stream.UserState.Refusal.Value.IsNone then
+                            let position = stream.Position
+
+                            stream.UserState.Refusal.Value <-
+                                Some(
+                                    "a slashy literal cannot cross a raw physical line ending",
+                                    { Line = position.Line
+                                      Column = position.Column }
+                                )
+
+                        failed <- true
+
+                    match stream.UserState.BalancedSlashySpans.Boundary(int slashIndex) with
+                    | NonConsuming ->
+                        // Admission classified this as an escaped parser hint,
+                        // not an opener. Consume only this slash so a later,
+                        // independently classified opener remains visible.
+                        stream.Skip()
+                        recordSignificant '/' slashIndex
+                        commandHead <- false
+                    | Complete closingIndex ->
+                        // Admission already proved this exact delimiter. The
+                        // boundary is source-relative here and slice-relative
+                        // inside isolated parenthesized argument reparses.
+                        stream.Seek(int64 closingIndex + 1L)
+                        recordComplete ()
+                    | Incomplete physicalEnd when physicalEnd < stream.UserState.BalancedSlashySpans.Length ->
+                        // Preserve the historical refusal coordinate at the
+                        // first physical ending without searching this suffix.
+                        refuseAtPhysicalEnd physicalEnd
+                    | Incomplete _ ->
+                        // Admission proved there is neither a delimiter nor a
+                        // physical ending in this parser input. Consume the
+                        // ordinary slash once; later candidates use their own
+                        // cached EOF boundary instead of rescanning to EOF.
+                        stream.Skip()
+                        recordSignificant '/' slashIndex
+                        commandHead <- false
+                    | Unclassified ->
+                        // Focused parsers and a local token context that differs
+                        // from admission retain the established lexical scan.
+                        stream.Skip()
+                        let mutable closed = false
+                        let mutable searching = true
+
+                        while not closed && searching && not stream.IsEndOfStream do
+                            let d = stream.Peek()
+
+                            if d = '\\' && stream.Peek(1) = '/' then
+                                stream.Skip(2)
+                            elif d = '/' then
+                                stream.Skip()
+                                closed <- true
+                            elif d = '\r' || d = '\n' then
+                                searching <- false
+                            else
+                                stream.Skip()
+
+                        if closed then
+                            recordComplete ()
+                        elif
+                            not stream.IsEndOfStream
+                            && (stream.Peek() = '\r' || stream.Peek() = '\n')
+                        then
+                            refuseAtPhysicalEnd (int stream.Index)
+                        else
+                            stream.Seek(slashIndex + 1L)
+                            recordSignificant '/' slashIndex
+                            commandHead <- false
+            elif isIdentStart c then
+                let beganAtArgument = lastSigIndex < 0L
+                let token = System.Text.StringBuilder()
+                let mutable tokenEnd = stream.Index
+                let mutable tokenLast = c
+
+                while not stream.IsEndOfStream && isIdentCont (stream.Peek()) do
+                    tokenEnd <- stream.Index
+                    tokenLast <- stream.Peek()
+                    token.Append(stream.Read(1)) |> ignore
+
+                recordSignificant tokenLast tokenEnd
+                let word = token.ToString()
+
+                commandHead <-
+                    allowCommandHead
+                    && beganAtArgument
+                    && word <> "true"
+                    && word <> "false"
+                    && word <> "null"
+            else
+                let index = stream.Index
+                stream.Skip()
+
+                if c <> ' ' && c <> '\t' && c <> '\r' && c <> '\n' then
+                    recordSignificant c index
+                    commandHead <- false
+
+        let finish = stream.Index
+
+        if failed then
+            stream.Seek start
+            Reply(Error, expected "a raw argument value")
+        elif finish = start then
+            Reply(Error, expected "a raw argument value")
+        else
+            let length = int (finish - start)
+            stream.Seek start
+            let raw = stream.Read length
+
+            let stateWithScalarRefusal =
+                match scalarRefusal with
+                | Some refusal -> keepFirstScalarRefusal stream.UserState refusal
+                | None -> stream.UserState
+
+            stream.UserState <-
+                if crossedBlockCommentLine then
+                    { stateWithScalarRefusal with
+                        RawArgumentLineBoundary = true }
+                else
+                    stateWithScalarRefusal
+
+            Reply(raw)
+
+    scan
 
 /// A string literal wins ONLY when it is the WHOLE value.
 ///
@@ -225,7 +431,7 @@ let private namedArgWithKind: P<string * string * string * bool> =
             // to raw text on an unclosed collection would admit `target: [` as an
             // expression and parse the following line as another step.
             <|> (notFollowedBy (pchar '[')
-                 >>. rawArgValue [ ','; ')'; '\n'; '}'; ';' ] .>> ws
+                 >>. rawArgValue false [ ','; ')'; '\r'; '\n'; '}'; ';' ] .>> ws
                  |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)))
     |>> fun (n, (v, escaped, isLiteral)) -> n, v, escaped, isLiteral
 
@@ -233,7 +439,7 @@ let private namedArg: P<string * string> =
     attempt (
         identifier .>>? symbol ":" .>>. (
             (stringLiteral |>> id)
-            <|> (rawArgValue [ ','; ')'; '\n'; '}'; ';' ] .>> ws
+            <|> (rawArgValue false [ ','; ')'; '\r'; '\n'; '}'; ';' ] .>> ws
                  |>> fun s -> s.Trim())))
 
 /// A positional argument with its quote kind. `input 'Deploy ${TARGET}?'` is LITERAL on
@@ -244,7 +450,7 @@ let private namedArg: P<string * string> =
 /// `+ env.TARGET`, backtracked `steps` to EMPTY and shipped past the gate with no
 /// prompt — a THIRD route to the same bypass, fixed one branch at a time because
 /// I fixed the instance in front of me and described the class.
-let private positionalArgWithKind: P<string * string * bool> =
+let private positionalArgWithKind allowCommandHead : P<string * string * bool> =
     (wholeValue stringLiteralWithKindBoth
      |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
     <|> (balancedRaw '[' ']' |>> fun v -> v, v, false)
@@ -271,13 +477,13 @@ let private positionalArgWithKind: P<string * string * bool> =
     <|> attempt (
         identifier .>>. balancedRaw '(' ')' .>> ws
         |>> fun (n, raw) -> n + raw, "\u0001" + n + raw, false)
-    <|> (rawArgValue [ ','; ')'; '\n'; '{'; '}'; ';' ] .>> ws
+    <|> (rawArgValue allowCommandHead [ ','; ')'; '\r'; '\n'; '{'; '}'; ';' ] .>> ws
          |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)
 
 let private positionalArg: P<string> =
     stringLiteral
     <|> (balancedRaw '[' ']')
-    <|> (rawArgValue [ ','; ')'; '\n'; '{'; '}'; ';' ] .>> ws
+    <|> (rawArgValue false [ ','; ')'; '\r'; '\n'; '{'; '}'; ';' ] .>> ws
          |>> fun s -> s.Trim())
 
 /// FG-134 / FG-138. A `;` TERMINATES a raw (unquoted) argument, outside literals.
@@ -288,19 +494,19 @@ let private positionalArg: P<string> =
 /// the story about the other one; a stale rationale reads as intent and makes the
 /// code look like the anomaly.
 ///
-/// What holds now: literal SPANS are consumed whole by `Lexeme.stringSpanRaw`, so
-/// `;` is a stop character for the raw text BETWEEN literals and never truncates
+/// What holds now: the forward raw scanner consumes literal/comment spans whole,
+/// so `;` is a stop character for the raw text BETWEEN spans and never truncates
 /// an expression carrying one inside quotes. Receipt
 /// `steps-semicolon-after-raw-arg`, proven to discriminate by mutation.
 
-let private argList
+let private argList allowCommandHead
     : P<(string * string) list * string list * Set<string> * Set<int> * (string * string) list * Set<string> * string list> =
     let namedCollectionPrefix =
         attempt (identifier .>>? symbol ":" >>. lookAhead (pchar '['))
 
     let one =
         (namedArgWithKind |>> Choice1Of2)
-        <|> (notFollowedBy namedCollectionPrefix >>. positionalArgWithKind |>> Choice2Of2)
+        <|> (notFollowedBy namedCollectionPrefix >>. positionalArgWithKind allowCommandHead |>> Choice2Of2)
 
     // Once `name: [` is present, failure of the balanced value is a refusal. It
     // must not be reinterpreted as one positional expression containing the
@@ -462,25 +668,155 @@ let private optionsBlock: P<Step list> =
 
     between (symbol "{") (symbol "}") (ws >>. separators >>. many (attempt (entry .>> separators)))
 
-let private parenArgs (raw: string) =
-    let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
-    let state = parserState ()
+let private rebaseAdmissionError (strippedColumns: int64) (origin: FParsec.Position) (error: AdmissionError) =
+    let rebased =
+        { Line = origin.Line + error.Position.Line - 1L
+          Column =
+            if error.Position.Line = 1L then
+                origin.Column + strippedColumns + error.Position.Column - 1L
+            else
+                error.Position.Column }
 
-    match runParserOnString (ws >>. argList .>> eof) state "args" body with
-    | ParserResult.Success(v, parsedState, _) ->
-        match parsedState.Refusal with
-        | Some(message, _) -> refuse message
-        | None -> preturn v
-    | ParserResult.Failure(_, _, failedState) ->
-        match failedState.Refusal with
-        | Some(message, _) -> refuse message
+    { error with Position = rebased }
+
+let private earlierScalarRefusal (left: AdmissionError) (right: AdmissionError) =
+    if
+        left.Position.Line < right.Position.Line
+        || (left.Position.Line = right.Position.Line && left.Position.Column <= right.Position.Column)
+    then
+        left
+    else
+        right
+
+let private firstScalarRefusal (state: ParserState) =
+    match state.ScalarRefusal, state.CommittedScalarRefusal.Value with
+    | Some ordinary, Some committed -> Some(earlierScalarRefusal ordinary committed)
+    | Some ordinary, None -> Some ordinary
+    | None, Some committed -> Some committed
+    | None, None -> None
+
+let private commitScalarRefusal (state: ParserState) (refusal: AdmissionError) =
+    state.CommittedScalarRefusal.Value <-
+        match state.CommittedScalarRefusal.Value with
+        | Some existing -> Some(earlierScalarRefusal existing refusal)
+        | None -> Some refusal
+
+/// Preserve state produced after an enclosing scan while refining only its
+/// provisional scalar position from an isolated nested parse. A refusal that
+/// predates the scan remains source-authoritative.
+let internal refineScalarAfterIsolatedReparse
+    (stateBeforeScan: ParserState)
+    (stateAfterScan: ParserState)
+    (authoritative: AdmissionError)
+    =
+    let selected = (keepFirstScalarRefusal stateBeforeScan authoritative).ScalarRefusal
+    { stateAfterScan with ScalarRefusal = selected }
+
+let private commitRebasedScalarRefusal
+    (stateBeforeScan: ParserState)
+    (outerState: ParserState)
+    (origin: FParsec.Position)
+    (error: AdmissionError)
+    =
+    let rebased = rebaseAdmissionError 1L origin error
+    let stateWithScalar = refineScalarAfterIsolatedReparse stateBeforeScan outerState rebased
+
+    let committed =
+        match outerState.CommittedScalarRefusal.Value with
         | None ->
-            refuse "a parenthesised argument body that does not parse is refused, never downgraded to one positional value"
+            // The first durable write must also preserve an ordinary refusal
+            // that preceded this whole section and may be rewound with it.
+            stateWithScalar.ScalarRefusal.Value
+        | Some _ ->
+            // Once durability exists, compare the newly proven location with
+            // the cell itself; feeding its old value back would make the
+            // existing-vs-new ordering branch vacuous.
+            rebased
+
+    commitScalarRefusal outerState committed
+    stateWithScalar
+
+let private parenArgs (stateBeforeScan: ParserState) (origin: FParsec.Position) (raw: string) =
+    let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
+
+    getUserState
+    >>= fun outerState ->
+            let bodySlashySpans =
+                outerState.BalancedSlashySpans.Slice(int origin.Index + 1, body.Length)
+
+            let state =
+                parserStateWithLimitsAndSlashySpans outerState.Limits bodySlashySpans
+
+            match runParserOnString (ws >>. argList false .>> eof) state "args" body with
+            | ParserResult.Success(v, parsedState, _) ->
+                match parsedState.ScalarRefusal, parsedState.Refusal.Value with
+                | Some e, Some _ ->
+                    let committedState = commitRebasedScalarRefusal stateBeforeScan outerState origin e
+                    // An attempted inner branch may leave a semantic refusal
+                    // even when raw fallback completes the isolated parse.
+                    // That proof makes the scalar commitment just as durable
+                    // as the failed-parse case below.
+                    setUserState committedState >>% v
+                | Some e, None ->
+                    let rebased = rebaseAdmissionError 1L origin e
+                    // balancedRaw has already scanned this same body and may
+                    // hold a provisional end-of-span position. Replace that
+                    // provisional value with the inner grammar's exact one,
+                    // while retaining any refusal that preceded the call.
+                    setUserState (refineScalarAfterIsolatedReparse stateBeforeScan outerState rebased) >>% v
+                | None, Some(message, _) -> refuse message
+                | None, None -> preturn v
+            | ParserResult.Failure(_, _, failedState) ->
+                match failedState.ScalarRefusal, failedState.Refusal.Value with
+                | Some e, Some _ ->
+                    // The inner semantic refusal proves this argument branch;
+                    // outer attempts may rewind immutable state but must not
+                    // erase its first committed scalar behind a generic section
+                    // fallback. The separate cell is intentionally not written
+                    // for ordinary grammar failure below.
+                    setUserState (commitRebasedScalarRefusal stateBeforeScan outerState origin e)
+                    >>. fail "parenthesised argument contains an overlong scalar"
+                | Some e, None ->
+                    let rebased = rebaseAdmissionError 1L origin e
+                    // Retain a refusal that preceded this parenthesised scan,
+                    // but replace balancedRaw's provisional position for this
+                    // same body with the isolated grammar's exact position.
+                    setUserState (refineScalarAfterIsolatedReparse stateBeforeScan outerState rebased)
+                    >>. fail "parenthesised argument contains an overlong scalar"
+                | None, Some(message, _) -> refuse message
+                | None, None ->
+                    refuse "a parenthesised argument body that does not parse is refused, never downgraded to one positional value"
 
 let private hspaces: P<unit> = skipMany (anyOf " \t")
 
+let private validateNestedScalarFrom
+    (stateBeforeScan: ParserState)
+    (strippedColumns: int64)
+    (origin: FParsec.Position)
+    (source: string)
+    : P<string> =
+    getUserState
+    >>= fun state ->
+            match Fogell.Groovy.Parser.Parser.parseWithLimits state.Limits source with
+            | Result.Error e when e.Code = ScalarTooLong ->
+                let rebased = rebaseAdmissionError strippedColumns origin e
+                // balancedBody may have recorded the same scalar at its span
+                // boundary. Prefer the nested grammar's accurate location, but
+                // never replace a refusal that existed before this body began.
+                setUserState (keepFirstScalarRefusal stateBeforeScan rebased) >>% source
+            | _ -> preturn source
+
+let private validateNestedScalar (strippedColumns: int64) (origin: FParsec.Position) (source: string) : P<string> =
+    getUserState
+    >>= fun state -> validateNestedScalarFrom state strippedColumns origin source
+
+let private validatedBalancedBody strippedColumns openChar closeChar =
+    getUserState .>>. getPosition .>>. balancedBody openChar closeChar
+    >>= fun ((stateBeforeScan, origin), raw) ->
+            validateNestedScalarFrom stateBeforeScan strippedColumns origin raw
+
 let private nonEmptyInlineArgs =
-    hspaces >>. argList
+    hspaces >>. argList true
     >>= fun ((_, _, _, _, _, _, order) as args) ->
         if List.isEmpty order then fail "no inline argument parsed" else preturn args
 
@@ -500,7 +836,8 @@ stepRef.Value <-
             // workspace, nothing else. Any zero-argument call form was affected —
             // `deleteDir()`, `cleanWs()`, and so on.
             (choice
-                [ attempt (balancedRaw '(' ')') >>= parenArgs
+                [ attempt (getUserState .>>. getPosition .>>. balancedRaw '(' ')')
+                  >>= fun ((stateBeforeScan, origin), raw) -> parenArgs stateBeforeScan origin raw
                   attempt nonEmptyInlineArgs
                   notFollowedBy (attempt (hspaces >>. identifier .>>? symbol ":" >>. lookAhead (pchar '[')))
                   >>% ([], [], Set.empty, Set.empty, [], Set.empty, []) ])
@@ -513,7 +850,8 @@ stepRef.Value <-
         // walker could never run one. `Fogell.Groovy.Parser` is what understands this
         // text; the walker hands it over at execution.
         if name = "script" then
-            (attempt (balancedBody '{' '}') |>> fun raw -> pos, name, args, [], true, Some raw)
+            (attempt (validatedBalancedBody 1L '{' '}')
+             |>> fun validated -> pos, name, args, [], true, Some validated)
             <|> preturn (pos, name, args, [], false, None)
         else
             opt (attempt stepBlock)
@@ -643,7 +981,7 @@ let private agentSpec: P<AgentSpec> =
             identifierBare
             .>>. withSkippedString
                     (fun skipped args -> skipped, args)
-                    (inlineAgentGap >>. argList)
+                    (inlineAgentGap >>. argList false)
             >>= fun (kind, (source, (_named, positional, _, _, _, _, order))) ->
                     if List.isEmpty order then
                         fail "an inline agent requires at least one named argument"
@@ -721,14 +1059,33 @@ let private postSection: P<(PostCondition * Step list) list> =
 /// argument separators. The ordinary chunk uses the same slashy-aware scanner as
 /// step arguments.
 let private whenRawValue: P<string> =
-    let ordinary =
-        rawArgValue [ ','; '\n'; '}'; ';'; '('; ')'; '['; ']'; '{' ]
+    let clearRawBoundary state =
+        { state with
+            RawArgumentLineBoundary = false }
 
-    many1Strings (
+    let ordinary =
+        rawArgValue false [ ','; '\r'; '\n'; '}'; ';'; '('; ')'; '['; ']'; '{' ]
+
+    let chunk =
         attempt (balancedRaw '(' ')')
         <|> attempt (balancedRaw '[' ']')
         <|> attempt (balancedRaw '{' '}')
-        <|> ordinary)
+        <|> ordinary
+
+    let endValue =
+        (getUserState
+         >>= fun state ->
+                 if state.RawArgumentLineBoundary then preturn () else pzero)
+        <|> lookAhead (eof <|> (anyOf ",\r\n};)]" >>% ()))
+
+    updateUserState clearRawBoundary
+    >>. manyTill chunk endValue
+    >>= fun chunks ->
+            updateUserState clearRawBoundary
+            >>. if List.isEmpty chunks then
+                    fail "a when named argument requires a value"
+                else
+                    preturn (String.concat "" chunks)
     .>> ws
     |>> fun value -> value.Trim()
 
@@ -742,12 +1099,12 @@ let private whenNamedGroupOrParens: P<(string * string) list> =
     attempt (between (symbol "(") (symbol ")") whenNamedGroup)
     <|> whenNamedGroup
 
-let private decodeWhenString (source: string) =
-    match runParserOnString (ws >>. stringLiteral .>> eof) (parserState ()) "when-value" source with
+let private decodeWhenString (limits: Limits) (source: string) =
+    match runParserOnString (ws >>. stringLiteral .>> eof) (parserStateWithLimits limits) "when-value" source with
     | ParserResult.Success(value, _, _) -> Some value
     | ParserResult.Failure _ -> None
 
-let private decodeWhenEqualsOperand (source: string) =
+let private decodeWhenEqualsOperand (limits: Limits) (source: string) =
     let scalar =
         attempt (stringLiteral |>> fun value -> $"'{value}'")
         // Preserve the deliberately narrow scalar grammar that Fogell can
@@ -756,7 +1113,7 @@ let private decodeWhenEqualsOperand (source: string) =
         // equals operands.
         <|> (many1Satisfy (fun c -> isDigit c || c = '-' || c = '.' || c = '_' || isLetter c) .>> ws)
 
-    match runParserOnString (ws >>. scalar .>> eof) (parserState ()) "when-equals-value" source with
+    match runParserOnString (ws >>. scalar .>> eof) (parserStateWithLimits limits) "when-equals-value" source with
     | ParserResult.Success(value, _, _) -> Some value
     | ParserResult.Failure _ -> None
 
@@ -766,10 +1123,11 @@ let private renderWhenPairs pairs =
 let private whenEnvironmentCondition: P<WhenCondition> =
     keyword "environment"
     >>. whenNamedGroupOrParens
-    |>> fun pairs ->
+    .>>. getUserState
+    |>> fun (pairs, state) ->
             let getString k =
                 pairs
-                |> List.tryPick (fun (n, v) -> if n = k then decodeWhenString v else None)
+                |> List.tryPick (fun (n, v) -> if n = k then decodeWhenString state.Limits v else None)
 
             match getString "name", getString "value" with
             | Some n, Some v -> WhenEnvironment(n, v)
@@ -789,15 +1147,15 @@ let private whenNamedOrBareString
     (key: string)
     (modelled: string -> WhenCondition)
     : P<WhenCondition> =
-    let fromNamed pairs =
+    let fromNamed limits pairs =
         match pairs with
         | [ (name, value) ] when name = key ->
-            match decodeWhenString value with
+            match decodeWhenString limits value with
             | Some decoded -> modelled decoded
             | None -> WhenUnmodelled(kind, renderWhenPairs pairs)
         | _ -> WhenUnmodelled(kind, renderWhenPairs pairs)
 
-    let named = whenNamedGroupOrParens |>> fromNamed
+    let named = whenNamedGroupOrParens .>>. getUserState |>> fun (pairs, state) -> fromNamed state.Limits pairs
 
     let positional =
         attempt (between (symbol "(") (symbol ")") stringLiteral)
@@ -822,12 +1180,13 @@ let private whenEqualsCondition: P<WhenCondition> =
     // 2 are distinguishable — Jenkins compares objects, and String != Integer.
     >>. whenNamedGroupOrParens
     .>> ws
-    |>> fun pairs ->
+    .>>. getUserState
+    |>> fun (pairs, state) ->
             let get k = pairs |> List.tryPick (fun (n, v) -> if n = k then Some v else None)
 
             match get "expected", get "actual" with
             | Some e, Some a ->
-                match decodeWhenEqualsOperand e, decodeWhenEqualsOperand a with
+                match decodeWhenEqualsOperand state.Limits e, decodeWhenEqualsOperand state.Limits a with
                 | Some modelledExpected, Some modelledActual -> WhenEquals(modelledExpected, modelledActual)
                 | _ -> WhenUnmodelled("equals", renderWhenPairs pairs)
             | _ -> WhenUnmodelled("equals", renderWhenPairs pairs)
@@ -858,14 +1217,15 @@ let private namedOrBare (kind: string) (key: string) (measuredInvalidKeys: Set<s
     // same shadowing that bit this file once before.
     let named =
         whenNamedGroupOrParens
-        >>= fun pairs ->
+        .>>. getUserState
+        >>= fun (pairs, state) ->
                 match pairs |> List.tryFind (fun (name, _) -> Set.contains name measuredInvalidKeys) with
                 | Some(name, _) ->
                     refuse $"`{kind}` named argument `{name}` is rejected by Jenkins"
                 | None ->
                     match pairs with
                     | [ (k, v) ] when k = key ->
-                        match decodeWhenString v with
+                        match decodeWhenString state.Limits v with
                         | Some decoded -> preturn (Result.Ok decoded)
                         | None -> preturn (Result.Error(renderWhenPairs pairs))
                     | _ -> preturn (Result.Error(renderWhenPairs pairs))
@@ -921,7 +1281,10 @@ let private invalidWhenDirective () : P<'a> =
     >>. manySatisfy (fun c -> c <> '\n' && c <> '}' && c <> ';')
     >>= fun raw -> refuse $"a direct when directive requires `true` or `false`, got: {raw.Trim()}"
 
-let rec private whenCondition: P<WhenCondition> =
+let private whenCondition, private whenConditionRef =
+    createParserForwardedToRef<WhenCondition, ParserState> ()
+
+whenConditionRef.Value <-
     parse {
         let! _ = ws
         return! choice
@@ -948,7 +1311,10 @@ let rec private whenCondition: P<WhenCondition> =
                       attempt whenTagCondition
                       attempt whenEqualsCondition
                       attempt whenEnvironmentCondition
-                      attempt (keyword "expression" >>. balancedBody '{' '}' .>> ws |>> WhenExpression)
+                      attempt (
+                          keyword "expression"
+                          >>. validatedBalancedBody 1L '{' '}'
+                          |>> WhenExpression)
                       attempt (keyword "allOf" >>. between (symbol "{") (symbol "}") (whenSeparators >>. many (attempt (whenCondition .>> whenSeparators))) .>> ws |>> WhenAllOf)
                       attempt (keyword "anyOf" >>. between (symbol "{") (symbol "}") (whenSeparators >>. many (attempt (whenCondition .>> whenSeparators))) .>> ws |>> WhenAnyOf)
                       attempt (keyword "not" >>. between (symbol "{") (symbol "}") whenCondition .>> ws |>> WhenNot)
@@ -1307,7 +1673,16 @@ let private pipelineParser: P<Pipeline> =
     // `withSkippedString` reads exactly what `preamble >>. skipToPipeline` consumed, so
     // the capture cannot drift from the skip: there is no second scanner to keep in
     // agreement with this one.
-    withSkippedString (fun skipped () -> skipped) (preamble >>. skipToPipeline)
+    (getUserState
+     .>>. getPosition
+     .>>. withSkippedString (fun skipped () -> skipped) (preamble >>. skipToPipeline)
+     >>= fun ((stateBeforePreamble, preambleOrigin), capturedPreamble) ->
+             // Validate source in source order. In particular, establish an
+             // earlier preamble refusal before any body attempt can persist a
+             // later semantic+scalar refusal outside immutable backtracking.
+             // The pre-capture checkpoint also lets the nested grammar refine
+             // this preamble's own provisional balanced-scan coordinate.
+             validateNestedScalarFrom stateBeforePreamble 0L preambleOrigin capturedPreamble)
     .>>. (keyword "pipeline"
           >>. between
                   (symbol "{")
@@ -1329,7 +1704,10 @@ let private pipelineParser: P<Pipeline> =
                    // files carry pipeline+stage), and a duplicate STAGE `options` has no
                    // measurement yet.
                    >>= rejectingDuplicateSections "options" (function TopOptions _ -> true | _ -> false)))
-    .>>. manyChars anyChar
+    .>>. (getPosition .>>. manyChars anyChar)
+    >>= fun ((capturedPreamble, sections), (epilogueOrigin, capturedEpilogue)) ->
+            validateNestedScalar 0L epilogueOrigin capturedEpilogue
+            >>% ((capturedPreamble, sections), capturedEpilogue)
     |>> fun ((capturedPreamble, sections), capturedEpilogue) ->
             let pick f = sections |> List.tryPick f
             { Agent = defaultArg (pick (function TopAgent a -> Some a | _ -> None)) AgentNone
@@ -1511,37 +1889,34 @@ module private LoopControl =
 /// it — a submission with an invalid body was accepted and queued, failing only when a
 /// runner picked it up, where the contract promises a 422 at admission.
 ///
-/// Putting it inside `parse` is what makes "which entry points are covered" stop being a
-/// question: there is one.
-let private scriptBodyErrors (pipeline: Pipeline) : (string * Position) list =
+/// Keeping it under `parseWithLimits` is what makes "which entry points are covered" stop
+/// being a question: `parse` only supplies the defaults. Nested Groovy receives the same
+/// caller limits so a slashy inside script/when/preamble/epilogue cannot take a wider path.
+type private NestedSourceError =
+    | NestedAdmission of AdmissionError
+    | NestedSyntax of string * Position
+
+let private scriptBodyErrors (limits: Limits) (pipeline: Pipeline) : NestedSourceError list =
+    let parseNested checkLoopControl label position source =
+        match Fogell.Groovy.Parser.Parser.parseWithLimits limits source with
+        | Result.Error e when e.Code = ScalarTooLong -> [ NestedAdmission e ]
+        | Result.Error e -> [ NestedSyntax($"{label} did not parse as Groovy: {string e}", position) ]
+        | Result.Ok parsed when checkLoopControl ->
+            match LoopControl.misplaced parsed with
+            | keyword :: _ ->
+                [ NestedSyntax(
+                      $"{label}: `{keyword}` outside a loop; Jenkins rejects the pipeline at compile time",
+                      position
+                  ) ]
+            | [] -> []
+        | Result.Ok _ -> []
+
     let rec fromSteps (steps: Step list) =
         steps
         |> List.collect (fun st ->
             let here =
                 match st.ScriptBody with
-                | Some src ->
-                    match Fogell.Groovy.Parser.Parser.parse src with
-                    | Result.Error e -> [ $"script block did not parse as Groovy: {string e}", st.Position ]
-                    | Result.Ok parsed ->
-                        // FG-183. Parsed, and still not admissible.
-                        match LoopControl.misplaced parsed with
-                        | keyword :: _ ->
-                            // NAMES THE ONE THING THIS CHECK KNOWS. It briefly hedged
-                            // across two readings — "not inside a loop, and not a switch
-                            // arm's final statement" — because a lowered `switch` could
-                            // still deliver an arm's `break` here, and Jenkins ACCEPTS
-                            // that one, so claiming a compile rejection would have been
-                            // false. It is true now for a DIFFERENT reason than that hedge
-                            // recorded, and the stale rationale outlived the lowering that
-                            // made it necessary: `LoopControl.misplaced` accounts for
-                            // switch break boundaries itself, so an arm's `break` is legal
-                            // at any depth and never arrives here, while a `continue` with
-                            // no enclosing loop still does. A refusal that misreports its
-                            // reason sends an author to fix the wrong thing, so the reason
-                            // has to move whenever the rule does.
-                            [ $"script block: `{keyword}` outside a loop; Jenkins rejects the pipeline at compile time",
-                              st.Position ]
-                        | [] -> []
+                | Some src -> parseNested true "script block" st.Position src
                 | None -> []
 
             here @ fromSteps st.Block)
@@ -1576,19 +1951,27 @@ let private scriptBodyErrors (pipeline: Pipeline) : (string * Position) list =
         | Some cond ->
             whenSources cond
             |> List.collect (fun src ->
-                match Fogell.Groovy.Parser.Parser.parse src with
-                | Result.Error e ->
-                    let position =
-                        match stage.Steps with
-                        | first :: _ -> first.Position
-                        | [] -> { Line = 1L; Column = 1L }
+                let position =
+                    match stage.Steps with
+                    | first :: _ -> first.Position
+                    | [] -> { Line = 1L; Column = 1L }
 
-                    [ $"when expression did not parse as Groovy: {string e}", position ]
-                | Result.Ok _ -> [])
+                parseNested false "when expression" position src)
 
     let stages = Pipeline.flattenStages pipeline.Stages
 
-    (stages |> List.collect (fun stage -> fromSteps stage.Steps))
+    let surroundingSourceErrors =
+        [ pipeline.Preamble; pipeline.Epilogue ]
+        |> List.choose (fun source ->
+            if System.String.IsNullOrWhiteSpace source then
+                None
+            else
+                match Fogell.Groovy.Parser.Parser.parseWithLimits limits source with
+                | Result.Error e when e.Code = ScalarTooLong -> Some(NestedAdmission e)
+                | _ -> None)
+
+    surroundingSourceErrors
+    @ (stages |> List.collect (fun stage -> fromSteps stage.Steps))
     @ (stages |> List.collect (fun stage -> stage.Post |> List.collect (snd >> fromSteps)))
     @ (pipeline.Post |> List.collect (snd >> fromSteps))
     @ (stages |> List.collect whenErrors)
@@ -1617,40 +2000,53 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, Admissi
           Message = oneLine
           Position = position }
 
-    match Limits.precheck limits source with
+    match Limits.precheckWithSlashySpans limits source with
     | Result.Error e -> Result.Error e
-    | Result.Ok() ->
+    | Result.Ok slashyClosers ->
         if not (looksDeclarative source) then
             Result.Error(AdmissionError.at NoPipelineBlock 1L 1L "no declarative `pipeline { }` block found")
         else
-            match runParserOnString (pipelineParser .>> eof) (parserState ()) "Jenkinsfile" source with
+            match
+                runParserOnString
+                    (pipelineParser .>> eof)
+                    (parserStateWithLimitsAndSlashySpans limits slashyClosers)
+                    "Jenkinsfile"
+                    source
+            with
             | ParserResult.Success(p, state, _) ->
-                match state.Refusal with
-                | Some(message, position) ->
-                    Result.Error(refusalError message position)
-                | None when List.isEmpty p.Stages ->
-                    Result.Error(AdmissionError.at NoStages 1L 1L "pipeline declares no stages")
+                match firstScalarRefusal state with
+                | Some scalar -> Result.Error scalar
                 | None ->
-                    match scriptBodyErrors p with
-                    | (why, position) :: _ ->
-                        Result.Error
-                            { Code = MalformedSyntax
-                              Message = why
-                              Position = position }
-                    | [] -> Result.Ok p
+                    match state.Refusal.Value with
+                    | Some(message, position) ->
+                        Result.Error(refusalError message position)
+                    | None when List.isEmpty p.Stages ->
+                        Result.Error(AdmissionError.at NoStages 1L 1L "pipeline declares no stages")
+                    | None ->
+                        match scriptBodyErrors limits p with
+                        | NestedAdmission e :: _ -> Result.Error e
+                        | NestedSyntax(why, position) :: _ ->
+                            Result.Error
+                                { Code = MalformedSyntax
+                                  Message = why
+                                  Position = position }
+                        | [] -> Result.Ok p
             | ParserResult.Failure(msg, err, state) ->
-                match state.Refusal with
-                | Some(message, position) ->
-                    Result.Error(refusalError message position)
+                match firstScalarRefusal state with
+                | Some scalar -> Result.Error scalar
                 | None ->
-                    let pos = err.Position
+                    match state.Refusal.Value with
+                    | Some(message, position) ->
+                        Result.Error(refusalError message position)
+                    | None ->
+                        let pos = err.Position
 
-                    let firstLine =
-                        msg.Split('\n')
-                        |> Array.filter (fun l -> l.Trim() <> "")
-                        |> Array.tryLast
-                        |> Option.defaultValue "unparsable"
+                        let firstLine =
+                            msg.Split('\n')
+                            |> Array.filter (fun l -> l.Trim() <> "")
+                            |> Array.tryLast
+                            |> Option.defaultValue "unparsable"
 
-                    Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
+                        Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
 
 let parse (source: string) : Result<Pipeline, AdmissionError> = parseWithLimits Limits.defaults source

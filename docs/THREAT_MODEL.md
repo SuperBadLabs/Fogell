@@ -145,12 +145,18 @@ identity remain controller/authentication responsibilities.
 
 ### 3. Untrusted Jenkinsfile to parser and interpreter
 
-**Implemented in this tree.** Default admission limits bound source characters,
-node count, nesting, and scalar length before schema compilation (FG-004,
-[`Limits.fs`](../src/Fogell.Admission/Limits.fs) and
-`Parser.parseWithLimits`). The standing FG-004b sweep sends 10,000 replay-pinned
-inputs guaranteed to be refused by the Declarative parser boundary and requires
-typed positioned refusal.
+**Implemented in this tree.** Default admission limits bound UTF-8 source bytes,
+node count, nesting and UTF-8 scalar-content bytes before a parser result is
+admitted (FG-004, [`Limits.fs`](../src/Fogell.Admission/Limits.fs) and
+`Parser.parseWithLimits`). The non-recursive precheck owns ordinary and
+triple-quoted scalars and uses a bounded token-context DFA to shield complete
+slashies from structural counting. Slashy-versus-division is resolved by the
+grammar, whose slashy productions apply the same caller-selected raw UTF-8 cap.
+Raw arguments are scanned in one forward pass that preserves complete operator
+tokens and Groovy's non-nesting comment semantics; an unterminated block comment
+is refused by the linear guard before backtracking.
+The standing FG-004b sweep sends 10,000 replay-pinned inputs guaranteed to be
+refused by the Declarative parser boundary and requires typed positioned refusal.
 
 The Groovy `Value` graph is transitive-schema audited so an unreviewed CLR host
 carrier cannot hide under an existing union case. Free and member calls deny by

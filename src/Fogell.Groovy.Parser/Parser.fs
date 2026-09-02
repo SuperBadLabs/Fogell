@@ -17,14 +17,24 @@ open Fogell.Admission
 type private TriviaState =
     { BreakInTrivia: bool
       TriviaEndIndex: int64
-      GroupDepth: int }
+      GroupDepth: int
+      MaxScalarBytes: int
+      ScalarRefusal: AdmissionError option }
 
 type private P<'a> = Parser<'a, TriviaState>
 
-let private initialState =
+let private initialState (limits: Limits) =
     { BreakInTrivia = false
       TriviaEndIndex = -1L
-      GroupDepth = 0 }
+      GroupDepth = 0
+      MaxScalarBytes = limits.MaxScalarBytes
+      ScalarRefusal = None }
+
+let private keepFirstScalarRefusal state refusal =
+    if state.ScalarRefusal.IsNone then
+        { state with ScalarRefusal = Some refusal }
+    else
+        state
 
 /// FG-190/192. Consume trivia FORWARD so a non-nesting block comment is read
 /// with the same boundaries as Groovy. Record a break only when trivia was
@@ -202,7 +212,7 @@ let private singleQuoted: P<Expr> =
     between
         (skipString "'")
         (skipString "'")
-        (manyStrings (escaped <|> (satisfy (fun c -> c <> '\'' && c <> '\n') |>> string)))
+        (manyStrings (escaped <|> (satisfy (fun c -> c <> '\'' && c <> '\r' && c <> '\n') |>> string)))
     |>> EStr
 
 let private tripleSingle: P<Expr> =
@@ -222,11 +232,38 @@ let private tripleSingle: P<Expr> =
 /// unreachable. It hid because the existing receipts put `)` directly against
 /// the closing delimiter; the approval lane's Z2 rewrite met the space first.
 let private slashy: P<Expr> =
+    let content =
+        manyChars (
+            attempt (skipString "\\/" >>% '/')
+            <|> satisfy (fun c -> c <> '/' && c <> '\r' && c <> '\n'))
+
+    let captured =
+        between
+            (skipString "/")
+            (skipString "/")
+            (withSkippedString (fun skipped decoded -> decoded, skipped) content)
+
+    // The grammar owns the ambiguous slashy-versus-division decision. The
+    // immutable refusal field rewinds with an abandoned `attempt`, while an
+    // accepted slashy is measured from its raw content before the parse result
+    // can be admitted.
     lexeme (
         attempt (
-            between (skipString "/") (skipString "/") (
-                manyChars (attempt (skipString "\\/" >>% '/') <|> satisfy (fun c -> c <> '/' && c <> '\n')))
-            |>> EStr))
+            captured .>>. getPosition .>>. getUserState
+            >>= fun (((decoded, raw), position), state) ->
+                    let scalarBytes = System.Text.Encoding.UTF8.GetByteCount raw
+
+                    if scalarBytes > state.MaxScalarBytes then
+                        let refusal =
+                            AdmissionError.at
+                                ScalarTooLong
+                                position.Line
+                                position.Column
+                                $"string literal exceeds {state.MaxScalarBytes} UTF-8 bytes"
+
+                        setUserState (keepFirstScalarRefusal state refusal) >>% EStr decoded
+                    else
+                        preturn (EStr decoded)))
 
 let private exprForward = createParserForwardedToRef<Expr, TriviaState> ()
 let private exprRef = fst exprForward
@@ -244,6 +281,8 @@ let private exprOrCommandImpl = snd exprOrCommandForward
 /// GString: literal runs plus `${…}` and `$ref` interpolations, kept apart so
 /// the interpreter — not the lexer — decides what an interpolation means.
 let private gstring (q: string) : P<Expr> =
+    let isTriple = q.Length = 3
+
     let part =
         choice
             [ // FG-180: `"${tool 'M3'}/bin"` — a placeholder holds a whole
@@ -252,7 +291,12 @@ let private gstring (q: string) : P<Expr> =
               attempt (skipChar '$' >>. rawIdent .>>. many (attempt (skipChar '.' >>. rawIdent))
                        |>> fun (h, tail) -> GExpr(List.fold (fun acc n -> EProp(acc, n)) (EVar h) tail))
               (escaped |>> GLit)
-              (many1Satisfy (fun c -> c <> '$' && c <> '\\' && c <> q.[0]) |>> GLit) ]
+              (many1Satisfy (fun c ->
+                  c <> '$'
+                  && c <> '\\'
+                  && c <> q.[0]
+                  && (isTriple || (c <> '\r' && c <> '\n')))
+               |>> GLit) ]
 
     between (skipString q) (skipString q) (many part)
     |>> fun parts ->
@@ -423,18 +467,18 @@ let private primary: P<Expr> =
 /// Postfix chain: property access, indexing, calls, spread-dot, safe-nav,
 /// and a trailing closure that turns `x.each { }` into a call.
 let private postfixChain (start: Expr) : P<Expr> =
-    let step (e: Expr) =
+    let step: P<Expr -> Expr> =
         choice
-            [ attempt (symbol "*." >>. plainIdent |>> fun n -> ESpreadProp(e, n))
+            [ attempt (symbol "*." >>. plainIdent |>> fun n e -> ESpreadProp(e, n))
               attempt (
                   symbol "?." >>. plainIdent .>>. opt (attempt argsInParens) .>>. opt (attempt closure)
-                  |>> fun ((n, args), trailing) ->
+                  |>> fun ((n, args), trailing) e ->
                           match args, trailing with
                           | None, None -> ESafeProp(e, n)
                           | a, t -> ECall(SafeMethodCall(e, n), defaultArg a [], t))
               attempt (
                   symbol "." >>. plainIdent .>>. opt (attempt argsInParens) .>>. opt (attempt closure)
-                  |>> fun ((n, args), trailing) ->
+                  |>> fun ((n, args), trailing) e ->
                           match args, trailing with
                           | None, None -> EProp(e, n)
                           | a, t -> ECall(MethodCall(e, n), defaultArg a [], t))
@@ -451,21 +495,23 @@ let private postfixChain (start: Expr) : P<Expr> =
               // This masked FG-179 for months: every probe of closure capture was written
               // across newlines, so the confound sat in the evidence for both sides of that
               // argument and two observers agreed on a wrong cause.
-              attempt (indexMayContinue >>. expressionGroup "[" "]" exprRef |>> fun i -> EIndex(e, i))
+              attempt (indexMayContinue >>. expressionGroup "[" "]" exprRef |>> fun i e -> EIndex(e, i))
               attempt (argsInParens .>>. opt (attempt closure)
-                       |>> fun (args, t) ->
+                       |>> fun (args, t) e ->
                                match e with
                                | EVar n -> ECall(FreeCall n, args, t)
                                | _ -> ECall(MethodCall(e, "call"), args, t))
-              attempt (closure |>> fun c ->
+              attempt (closure |>> fun c e ->
                           match e with
                           | EVar n -> ECall(FreeCall n, [], Some c)
-                          | _ -> e) ]
+                          | _ -> ECall(MethodCall(e, "call"), [], Some c)) ]
 
-    let rec loop e =
-        (attempt (step e) >>= loop) <|> preturn e
-
-    loop start
+    // `many` owns this flat repetition iteratively. The former recursive loop
+    // invoked itself once per suffix, so a MaxNodes-sized `.x` chain could put
+    // roughly sixteen thousand live parser frames on the process stack even
+    // though it contained no nested grammar at all.
+    many (attempt step)
+    |>> List.fold (fun e applySuffix -> applySuffix e) start
 
 let private unaryForward = createParserForwardedToRef<Expr, TriviaState> ()
 let private unaryRef = fst unaryForward
@@ -812,18 +858,25 @@ let private shebang: P<unit> =
 let private program: P<Script> = opt shebang >>. ws >>. many (attempt stmtRef) .>> ws .>> eof
 
 let parseWithLimits (limits: Limits) (source: string) : Result<Script, AdmissionError> =
-    match Limits.precheck limits source with
+    match Limits.precheckWithSlashySpans limits source with
     | Result.Error e -> Result.Error e
-    | Result.Ok() ->
-        match runParserOnString program initialState "script" source with
+    | Result.Ok slashySpans ->
+        match runParserOnString program (initialState limits) "script" source with
+        | ParserResult.Success(_, state, _) when state.ScalarRefusal.IsSome ->
+            Result.Error state.ScalarRefusal.Value
         | ParserResult.Success(s, _, _) -> Result.Ok s
+        | ParserResult.Failure(_, _, state) when state.ScalarRefusal.IsSome ->
+            Result.Error state.ScalarRefusal.Value
         | ParserResult.Failure(msg, err, _) ->
-            let firstLine =
-                msg.Split('\n')
-                |> Array.filter (fun l -> l.Trim() <> "")
-                |> Array.tryLast
-                |> Option.defaultValue "unparsable"
+            match Limits.firstOverlongClassifiedSlashy limits source slashySpans with
+            | Some scalar -> Result.Error scalar
+            | None ->
+                let firstLine =
+                    msg.Split('\n')
+                    |> Array.filter (fun l -> l.Trim() <> "")
+                    |> Array.tryLast
+                    |> Option.defaultValue "unparsable"
 
-            Result.Error(AdmissionError.at MalformedSyntax err.Position.Line err.Position.Column (firstLine.Trim()))
+                Result.Error(AdmissionError.at MalformedSyntax err.Position.Line err.Position.Column (firstLine.Trim()))
 
 let parse (source: string) : Result<Script, AdmissionError> = parseWithLimits Limits.defaults source

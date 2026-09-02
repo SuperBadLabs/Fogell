@@ -52,17 +52,18 @@ Files: **2**
 - `HariSekhon_Jenkins.Jenkinsfile`
 - `jjasghar_jenkinsfile_cookbook_pipeline.Jenkinsfile`
 
+## ordinary string literal crosses a physical line ending
+
+Files: **2**
+
+- `mjuuso_provisioning_example.Jenkinsfile`
+- `yashpimple_Jenkins-CI-CD-with-GitHub-Integration.Jenkinsfile`
+
 ## 'options', 'parameters', 'post', 'stages', 'tools', 'triggers' or '}'
 
 Files: **1**
 
 - `SumitM01_CI-CD-for-Docker-Kubernetes-using-Jenkins.Jenkinsfile`
-
-## 'true', 'try', 'while' or '{'
-
-Files: **1**
-
-- `mjuuso_provisioning_example.Jenkinsfile`
 
 ## a `agent` section that does not parse is refused, never recorded as an opaque section
 
@@ -75,12 +76,6 @@ Files: **1**
 Files: **1**
 
 - `jerearista_python-jenkinsfile-testing.Jenkinsfile`
-
-## a `steps` section that does not parse is refused, never consumed opaquely
-
-Files: **1**
-
-- `yashpimple_Jenkins-CI-CD-with-GitHub-Integration.Jenkinsfile`
 
 ## script block did not parse as Groovy: malformed_syntax at 13:57: Expecting: '}'
 

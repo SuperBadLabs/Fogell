@@ -404,6 +404,21 @@ let grammar =
                   (Ast.containsSpreadAssignment (parseOk "holder.foo { rows*.name = 'x' }.bar = 1\n"))
                   "the separate statement traversal still sees a write inside a call closure"
           }
+
+          test "a closure suffix on a completed call becomes a call-result invocation" {
+              match parseOk "x() { true } { false }" with
+              | [ SExpr(
+                    ECall(
+                        MethodCall(ECall(FreeCall "x", [], Some first), "call"),
+                        [],
+                        Some second
+                    )
+                ) ] ->
+                  Expect.equal first.Body [ SExpr(EBool true) ] "the first closure remains attached to x"
+                  Expect.equal second.Body [ SExpr(EBool false) ] "the suffix closure is retained on the result call"
+              | other -> failtestf "the second closure was consumed without an AST receiver frame: %A" other
+          }
+
           // FG-174. Both parsers hold this rule, because both produce calls and a rule
           // held by only one of them is the shape of half the findings on this branch.
           test "a duplicate named argument is refused, parenthesised" {
@@ -2993,6 +3008,25 @@ let fg180Grammar =
               | [ SDef("pattern", Some(EStr value)) ] ->
                   Expect.equal value "\\b\\7\\77\\377" "slashy has delimiter-only escaping"
               | other -> failtestf "wrong slashy AST: %A" other
+          }
+
+          test "slashy strings refuse every raw physical line-ending spelling" {
+              for newlineLabel, newline in [ "LF", "\n"; "CRLF", "\r\n"; "bare CR", "\r" ] do
+                  let source = "def value = /before" + newline + "after/\n"
+
+                  Expect.isFalse
+                      (parses source)
+                      $"slashy raw {newlineLabel} crosses Fogell's supported single-line boundary"
+          }
+
+          test "ordinary strings refuse every raw physical line-ending spelling" {
+              for quoteLabel, quote in [ "single", "'"; "double", "\"" ] do
+                  for newlineLabel, newline in [ "LF", "\n"; "CRLF", "\r\n"; "bare CR", "\r" ] do
+                      let source = "def value = " + quote + "before" + newline + "after" + quote + "\n"
+
+                      Expect.isFalse
+                          (parses source)
+                          $"{quoteLabel}-quoted raw {newlineLabel} requires a triple-quoted multiline string"
           }
 
           test "all four quoted consumers remove each physical continuation spelling" {
