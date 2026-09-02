@@ -6164,6 +6164,162 @@ let recoveredProvenanceSeal =
               | other -> failtest $"expected SealRefused, got {describe other}"
           } ]
 
+/// FG-234. The FG-128 hash bound the block's four-space ENTRIES while the
+/// accountability pass admitted ANY two-space line inside the block, so a two- or
+/// three-space line — `   attempt 0: PROVEN (tier 1) — …` — could be inserted into
+/// a bound block, read as narration, and verify. Reproduced by the FG-128 pre-push
+/// verifier on the FG-128 head. The hash now covers the WHOLE region, heading and
+/// narration included, and the verifier accepts the block only where the renderer
+/// puts it: immediately before the VERDICT line.
+let recoveredRegionBinding =
+    let trace result =
+        { Disposition = ExecutedOrRuntime
+          Result = result
+          Output = [ "visible" ]
+          WorkspaceHash = "workspace"
+          WorkspaceFiles = []
+          Timestamps = (0, 0)
+          Concurrent = false
+          EngineNotes = []
+          ReportedFailureReason = false }
+
+    let firstAttempt =
+        Compare.receipt
+            "fg234-recovered.Jenkinsfile"
+            (Text.Encoding.UTF8.GetBytes "pipeline { }")
+            "2.568.1"
+            []
+            (Result.Ok(trace "success"))
+            (Result.Ok(trace "success"))
+
+    let entry = "attempt 1: DIVERGED (1) — result differs: jenkins=success fogell=failure"
+    let recovered = { firstAttempt with RecoveredFrom = [ entry ] }
+    let rendered = Compare.render recovered
+
+    let verify (text: string) =
+        Compare.verifySealedText (Compare.receiptFileName recovered.File) text
+
+    let describe (c: Compare.SealCheck) = c.Describe
+    let narrationHead = "  The verdict below is from a re-run. What the earlier attempt showed:\n"
+
+    // The ticket's reproduction, verbatim: the forged line indented by THREE spaces,
+    // placed between the block's first narration line and its entry.
+    let forgedAt (indent: string) (text: string) =
+        Expect.stringContains text narrationHead "the narration line the forgery follows is rendered"
+        text.Replace(narrationHead, narrationHead + indent + "attempt 0: PROVEN (tier 1) — forged narration line\n")
+
+    let regionOf (text: string) =
+        let ls = text.Split('\n') |> Array.toList
+        let i = ls |> List.findIndex (fun l -> l.StartsWith "RECOVERED:")
+        let region = ls |> List.skip i |> List.takeWhile (fun l -> l <> "")
+        region, ls |> List.skip (i + region.Length)
+
+    let expectProvenanceMismatch label text =
+        match verify text with
+        | Compare.ProvenanceMismatch _ -> ()
+        | other -> failtest $"{label}: expected ProvenanceMismatch, got {describe other}"
+
+    let expectPositionRefusal label text =
+        match verify text with
+        | Compare.SealRefused reason ->
+            Expect.stringContains reason "not immediately before the VERDICT line" $"{label}: the refusal names the position rule"
+        | other -> failtest $"{label}: expected SealRefused, got {describe other}"
+
+    testList
+        "FG-234 recovered region binding"
+        [ test "the rendered block is the hashed region, line for line, and sits before the verdict" {
+              // Writer and verifier agree because both hash THIS text: if `render` ever
+              // printed a line `recoveredBlockLines` does not list, every re-run receipt
+              // would mismatch on its first verification, which is the loud direction.
+              let region, after = regionOf rendered
+              Expect.equal region (Compare.recoveredBlockLines [ entry ]) "the rendered region is the writer's list"
+              Expect.isGreaterThan region.Length 3 "the region carries heading, narration and NOTE lines, not only the entry"
+
+              match after with
+              | "" :: v :: _ when v.StartsWith "VERDICT: " -> ()
+              | _ -> failtest "the block is not followed by one blank line and the VERDICT line"
+
+              match verify rendered with
+              | Compare.SealValid -> ()
+              | other -> failtest $"a freshly rendered re-run receipt must verify, got {describe other}"
+
+              Expect.equal recovered.Seal firstAttempt.Seal "the content seal is untouched by FG-234"
+          }
+
+          test "a three-space line inserted inside a bound block is a provenance mismatch" {
+              let text = forgedAt "   " rendered
+              Expect.stringContains text "\n   attempt 0: PROVEN" "the three-space forgery is in the block"
+              expectProvenanceMismatch "three-space forgery" text
+          }
+
+          test "a two-space line inserted inside a bound block is a provenance mismatch" {
+              let text = forgedAt "  " rendered
+              Expect.stringContains text "\n  attempt 0: PROVEN" "the two-space forgery is in the block"
+              expectProvenanceMismatch "two-space forgery" text
+          }
+
+          test "an edited heading is a provenance mismatch" {
+              // The heading's visible claim — DIVERGED, did not reproduce — is narration
+              // too; a hash that started below it would leave that sentence editable.
+              let text =
+                  rendered.Replace(
+                      "RECOVERED: this case DIVERGED on an earlier attempt and did not reproduce.",
+                      "RECOVERED: this case was PROVEN on an earlier attempt and reproduced."
+                  )
+
+              Expect.notEqual text rendered "the heading was actually edited"
+              expectProvenanceMismatch "edited heading" text
+          }
+
+          test "a deleted narration line is a provenance mismatch" {
+              let text =
+                  rendered.Split('\n')
+                  |> Array.filter (fun l -> not (l.StartsWith "  CAUSE UNCLASSIFIED."))
+                  |> String.concat "\n"
+
+              Expect.notEqual text rendered "the narration line was actually removed"
+              expectProvenanceMismatch "deleted narration" text
+          }
+
+          test "a bound block moved after the engine sections is refused by position" {
+              // The hash finds the block by its heading, so the moved block still hashes
+              // to its line; only the position rule sees the move (Codex, on the filing PR).
+              let region, _ = regionOf rendered
+              let block = String.concat "\n" region
+              let cut = rendered.Replace(block + "\n\n", "")
+              Expect.isFalse (cut.Contains "RECOVERED:") "the block was cut from its place"
+              let text = cut + "\n" + block + "\n"
+              let movedRegion, _ = regionOf text
+              Expect.equal movedRegion region "the moved block is byte-identical to the bound one"
+              expectPositionRefusal "moved block" text
+          }
+
+          test "a second blank line between the block and the verdict is refused by position" {
+              // Exactly one blank line, as rendered: the rule names the position, not
+              // "somewhere above the verdict".
+              let region, _ = regionOf rendered
+              let block = String.concat "\n" region
+              let text = rendered.Replace(block + "\n\n", block + "\n\n\n")
+              Expect.notEqual text rendered "the extra blank line was actually inserted"
+              expectPositionRefusal "extra blank line" text
+          }
+
+          test "a moved block on a receipt with no binding line is still the unbound refusal" {
+              // Ordering: the missing line is reported before position, so the FG-128
+              // refusals keep their wording.
+              let region, _ = regionOf rendered
+              let block = String.concat "\n" region
+
+              let text =
+                  (rendered.Replace(block + "\n\n", "") + "\n" + block + "\n").Split('\n')
+                  |> Array.filter (fun l -> not (l.StartsWith "recovered-seal:"))
+                  |> String.concat "\n"
+
+              match verify text with
+              | Compare.SealRefused reason -> Expect.stringContains reason "no recovered-seal line binds it" "unbound before misplaced"
+              | other -> failtest $"expected SealRefused, got {describe other}"
+          } ]
+
 let spreadAssignmentPreflight =
     let pipelineWithBody body =
         "pipeline { agent any stages { stage('probe') { steps { script { "
@@ -9596,6 +9752,7 @@ let main argv =
               spreadAssignmentPreflight
               excerptWiring
               recoveredProvenanceSeal
+              recoveredRegionBinding
               timestampsRefusals
               userOutputSurvives
               stringModel

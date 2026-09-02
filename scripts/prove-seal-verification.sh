@@ -215,17 +215,22 @@ else
 fi
 
 # 14.1 a correctly bound block is ACCEPTED. The line is sha256 over "seal=<this
-# receipt's content seal>\nrecovered=N\n" plus the entries joined by "\n" — the writer's
-# recipe, recomputed here so the arm cannot pass by copying a value out of the code
-# under test.
+# receipt's content seal>\nrecovered-lines=N\n" plus EVERY line of the block — the
+# heading, the narration and the entries, from `RECOVERED:` to the last line before the
+# blank that ends it — joined by "\n" (FG-234; until then only the four-space entries
+# were hashed, and a two- or three-space line inserted into the block verified). This
+# is the writer's recipe, recomputed here so the arm cannot pass by copying a value out
+# of the code under test. The block is planted immediately before the VERDICT line,
+# which is the only position the verifier accepts (arm 14.9).
 bind_recovered() {
   python3 - "$1" "$2" <<'PY'
 import sys, hashlib, re
 p, entry = sys.argv[1], sys.argv[2]; s=open(p).read()
 seal=re.search(r"^seal:\s+(\S+)$", s, re.M).group(1)
-h=hashlib.sha256(("seal="+seal+"\nrecovered=1\n"+entry).encode()).hexdigest()
+block="RECOVERED: this case DIVERGED on an earlier attempt and did not reproduce.\n  The verdict below is from a re-run. What the earlier attempt showed:\n    "+entry
+h=hashlib.sha256(("seal="+seal+"\nrecovered-lines="+str(len(block.split("\n")))+"\n"+block).encode()).hexdigest()
 s=s.replace("\ncase-digest:", "\nrecovered-seal: "+h+"\ncase-digest:", 1)
-s=s.replace("VERDICT:", "RECOVERED: this case DIVERGED on an earlier attempt and did not reproduce.\n  The verdict below is from a re-run. What the earlier attempt showed:\n    "+entry+"\n\nVERDICT:", 1)
+s=s.replace("VERDICT:", block+"\n\nVERDICT:", 1)
 open(p,"w").write(s)
 PY
 }
@@ -256,7 +261,7 @@ PY
 expect_reject "a recovered-seal line with NO RECOVERED block" "$d" "no RECOVERED provenance block"
 
 # 14.5 a SECOND RECOVERED block appended after a bound one: the hash binds the first
-# block's entries, so without a once-only rule the second was unbound history that
+# block's region, so without a once-only rule the second was unbound history that
 # verified — found by both reviewers on the first PR.
 d=$(lab_with "$SEQ" recovered-second-block); bind_recovered "$d"/*.receipt.txt "$ENTRY"
 python3 - "$d"/*.receipt.txt <<'PY'
@@ -285,6 +290,52 @@ open(p,"w").write(s)
 PY
 { grep -q '^recovered-seal: ' "$t"/*.receipt.txt && grep -q '^RECOVERED:' "$t"/*.receipt.txt; } || { echo "  FAIL: the transplant never landed — this arm would prove nothing"; FAILED=1; }
 expect_reject "a bound RECOVERED block TRANSPLANTED from another receipt" "$t" "PROVENANCE MISMATCH"
+
+# 14.7 FG-234. A THREE-SPACE line inserted inside a bound block. The accountability
+# pass admits any two-space line in the region and the FG-128 hash read only FOUR-space
+# entries, so this line — the FG-128 pre-push verifier's reproduction, verbatim — was
+# admitted by one rule and invisible to the other: it read as narration and was bound
+# by nothing. The hash now covers the whole region, so it is a provenance mismatch.
+plant_in_block() {
+  python3 - "$1" "$2" <<'PY'
+import sys
+p, forged = sys.argv[1], sys.argv[2]; s=open(p).read()
+marker="  The verdict below is from a re-run. What the earlier attempt showed:\n"
+assert marker in s, "the narration line the forgery follows is missing"
+s=s.replace(marker, marker+forged+"\n", 1)
+open(p,"w").write(s)
+PY
+}
+d=$(lab_with "$SEQ" recovered-three-space); bind_recovered "$d"/*.receipt.txt "$ENTRY"
+plant_in_block "$d"/*.receipt.txt "   attempt 0: PROVEN (tier 1) — forged three-space narration line"
+grep -q '^   attempt 0: PROVEN' "$d"/*.receipt.txt || { echo "  FAIL: the three-space line was never inserted — this arm would prove nothing"; FAILED=1; }
+expect_reject "a THREE-SPACE line inserted inside a bound RECOVERED block (FG-234)" "$d" "PROVENANCE MISMATCH"
+
+# 14.8 the same forgery at TWO spaces — the block's own narration indentation.
+d=$(lab_with "$SEQ" recovered-two-space); bind_recovered "$d"/*.receipt.txt "$ENTRY"
+plant_in_block "$d"/*.receipt.txt "  attempt 0: PROVEN (tier 1) — forged two-space narration line"
+grep -q '^  attempt 0: PROVEN' "$d"/*.receipt.txt || { echo "  FAIL: the two-space line was never inserted — this arm would prove nothing"; FAILED=1; }
+expect_reject "a TWO-SPACE line inserted inside a bound RECOVERED block (FG-234)" "$d" "PROVENANCE MISMATCH"
+
+# 14.9 the bound block MOVED. The hash finds the block by its heading, so an unchanged
+# block and line moved elsewhere in the receipt hash the same (Codex, on the FG-234
+# filing PR). The renderer emits the block immediately before the VERDICT line, and
+# that is the only position the verifier accepts: cut from there and appended after the
+# engine sections, the block is refused by name.
+d=$(lab_with "$SEQ" recovered-moved); bind_recovered "$d"/*.receipt.txt "$ENTRY"
+python3 - "$d"/*.receipt.txt <<'PY'
+import sys, re
+p=sys.argv[1]; s=open(p).read()
+block=re.search(r"^RECOVERED:.*?(?=\n\n)", s, re.M|re.S).group(0)
+assert s.count(block+"\n\nVERDICT:") == 1, "the bound block is not where bind_recovered put it"
+s=s.replace(block+"\n\n", "", 1)
+if not s.endswith("\n"): s+="\n"
+s+="\n"+block+"\n"
+open(p,"w").write(s)
+PY
+[ "$(grep -c '^RECOVERED:' "$d"/*.receipt.txt)" = 1 ] || { echo "  FAIL: the block was not moved intact — this arm would prove nothing"; FAILED=1; }
+grep -q '^recovered-seal: ' "$d"/*.receipt.txt || { echo "  FAIL: the moved block lost its line — this arm would refuse for the wrong reason"; FAILED=1; }
+expect_reject "a bound RECOVERED block MOVED away from the VERDICT line (FG-234)" "$d" "not immediately before the VERDICT line"
 
 
 # 14b. A FLIPPED sealed-output MODE. That field decides HOW the verifier hashes, so

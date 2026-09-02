@@ -89,11 +89,15 @@ type Receipt =
       /// consequence, stated because the previous wording ("a receipt cannot be
       /// edited") implied otherwise: the RECOVERED block is not in THIS hash. It
       /// is bound by its own — `recovered-seal:` (FG-128), rendered beside this
-      /// one over THIS content seal and the block's ENTRIES, recomputed by the
-      /// verifier — so the entries cannot be added, removed, altered or lifted from
-      /// another receipt undetected (the block's fixed narration and its position
-      /// are not hashed), while a first-attempt and a re-run proof still carry the
-      /// same content seal. The one edit that identity leaves invisible: deleting
+      /// one over THIS content seal and the block's WHOLE REGION, heading and
+      /// narration included (FG-234), recomputed by the verifier — so no line of
+      /// the block can be added, removed, altered or lifted from another receipt
+      /// undetected, and the verifier accepts the block only at the position the
+      /// renderer gives it (immediately before the VERDICT line), while a
+      /// first-attempt and a re-run proof still carry the same content seal.
+      /// Before FG-234 only the four-space entries were hashed, and a two- or
+      /// three-space line inserted into the block was admitted and bound by
+      /// nothing. The one edit that identity leaves invisible: deleting
       /// the block AND its line together yields a receipt indistinguishable from a
       /// first-attempt one — the content seal is history-blind on purpose, and git
       /// history is the only witness to that removal.
@@ -567,8 +571,10 @@ module Compare =
           "  compared and sealed, so `all (2)` may be edited to `all (999)`. The FG-119"
           "  RECOVERED provenance block is NOT in this seal but IS bound by its own"
           "  `recovered-seal:` line (FG-128), which the verifier recomputes from this seal"
-          "  and the block's entries; removing block and line TOGETHER is not detectable"
-          "  here. For a case compared as a MULTISET the printed ORDER is unsealed too —"
+          "  and the whole block, heading and narration included (FG-234), and accepts"
+          "  only immediately before the VERDICT line; removing block and line TOGETHER"
+          "  is not detectable here. For a case compared as a MULTISET the printed ORDER"
+          "  is unsealed too —"
           "  see the PARALLEL lines below. Everything else printed here is bound."
           "  So `--verify-seals` passing does NOT mean this document is unaltered — it means"
           "  the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document"
@@ -578,8 +584,9 @@ module Compare =
         [ "NOT SEALED, in full: this contract block; the workspace FILE LISTING below"
           "  (the workspace HASH is sealed, the listing under it is not); and any engine"
           "  notes. The FG-119 RECOVERED provenance block is NOT in this seal but IS bound"
-          "  by its own `recovered-seal:` line (FG-128) over this seal and its entries;"
-          "  removing block and line TOGETHER is not detectable here. Output and timestamp evidence"
+          "  by its own `recovered-seal:` line (FG-128) over this seal and the whole block,"
+          "  heading and narration included (FG-234), accepted only immediately before the"
+          "  VERDICT line; removing block and line TOGETHER is not detectable here. Output and timestamp evidence"
           "  are omitted and are neither compared nor sealed when either engine refused."
           "  So `--verify-seals` passing does NOT mean this document is unaltered — it means"
           "  the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document"
@@ -1036,18 +1043,51 @@ module Compare =
         : Receipt =
         receiptWithArtifactReplacements artifactReplacements file caseBytes core envReplacements jenkins fogell
 
+    /// FG-128/FG-234. THE ONE DEFINITION of the RECOVERED block's rendered lines: the
+    /// heading, the fixed narration, the four-space entries and the NOTE lines, exactly
+    /// as `render` prints them and without the blank line that ends the block. The
+    /// writer hashes THIS list; the verifier hashes the region it reads back from the
+    /// heading to the blank line; the two agree because both are this text.
+    let recoveredBlockLines (entries: string list) : string list =
+        [ yield "RECOVERED: this case DIVERGED on an earlier attempt and did not reproduce."
+          yield "  The verdict below is from a re-run. What the earlier attempt showed:"
+          for d in entries do
+              yield $"    {d}"
+          yield "  NOTE: this block is run provenance and is NOT in the content seal above,"
+          yield "  so a re-run proof seals like a first-attempt one; it is bound by the"
+          yield "  `recovered-seal:` line in the header, recomputed from that seal and this"
+          yield "  whole block — heading, narration and entries (FG-128, FG-234) — so no"
+          yield "  line here can be edited, inserted or lifted from another receipt."
+          yield "  CAUSE UNCLASSIFIED. The FG-119 retry re-runs EVERY divergence, not"
+          yield "  only the known `sh -x` pipeline interleaving, and nothing here"
+          yield "  establishes which this was — a genuine intermittent engine mismatch"
+          yield "  that happened to pass on re-run looks exactly the same. Naming the"
+          yield "  trace race would let a real defect read as classified noise. A case"
+          yield "  that recovers REPEATEDLY across runs is a defect report; treat it so." ]
+
     /// FG-128. The provenance hash over a RECOVERED block: THIS receipt's content seal,
-    /// the entry COUNT and the entries, joined — the writer hashes `RecoveredFrom`, the
-    /// verifier hashes the block's four-space-indented lines it reads back, and they
-    /// must agree. The content seal is in it so a genuine block cannot be lifted from
-    /// one receipt into another: over the entries alone the hash was the same value in
-    /// every receipt (found by Codex on the second PR).
-    let recoveredSeal (seal: string) (entries: string list) =
+    /// the region's LINE COUNT and the region's lines, joined. The content seal is in
+    /// it so a genuine block cannot be lifted from one receipt into another: over the
+    /// entries alone the hash was the same value in every receipt (found by Codex on
+    /// the second PR).
+    ///
+    /// FG-234. The region is EVERY line from the heading to the blank line that ends
+    /// the block, not only the four-space entries. Hashing entries alone left the
+    /// narration lines admitted by the accountability pass (any two-space line in the
+    /// region) but invisible to this hash, so a two- or three-space line reading
+    /// `attempt 0: PROVEN (tier 1) …` could be inserted into a bound block and verify.
+    /// Narration is fixed text, so binding it costs nothing in churn, and the content
+    /// seal is untouched. This is the recipe, over lines from either side;
+    /// `recoveredSeal` below feeds it the writer's lines.
+    let recoveredRegionSeal (seal: string) (regionLines: string list) =
         // A trailing CR is canonicalised away: the reader folds `\r\n` to `\n` over the
-        // whole receipt before it splits lines, so an entry ending in `\r` would hash
+        // whole receipt before it splits lines, so a line ending in `\r` would hash
         // differently on the two sides. An interior CR survives both and needs nothing.
-        let canonical = entries |> List.map (fun e -> e.TrimEnd '\r')
-        sha256Text ($"seal={seal}\nrecovered={List.length canonical}\n" + String.concat "\n" canonical)
+        let canonical = regionLines |> List.map (fun e -> e.TrimEnd '\r')
+        sha256Text ($"seal={seal}\nrecovered-lines={List.length canonical}\n" + String.concat "\n" canonical)
+
+    let recoveredSeal (seal: string) (entries: string list) =
+        recoveredRegionSeal seal (recoveredBlockLines entries)
 
     /// Render a receipt as text. Deliberately plain so it can be committed,
     /// diffed and hashed alongside the code.
@@ -1062,12 +1102,14 @@ module Compare =
 
         // FG-128. The RECOVERED block is run provenance, deliberately outside `Seal`
         // so attempt-1 and attempt-2 proofs seal identically. It gets its OWN hash,
-        // over this content seal and the block's entries with their count bound (the
-        // FG-161 lesson), so the block's ENTRIES can no longer be added, removed, edited
-        // or transplanted from another receipt without detection (its fixed narration
-        // lines are not hashed). Absent when there is no block:
-        // a first-attempt receipt's header is unchanged; only the contract prose
-        // below moved, and it is a declared-unsealed region.
+        // over this content seal and the block's lines with their count bound (the
+        // FG-161 lesson), so the block can no longer be added, removed, edited
+        // or transplanted from another receipt without detection. FG-234: EVERY line
+        // of the block is in that hash — heading and narration included, not only
+        // the entries — and the verifier also requires the block at the position
+        // this renderer gives it, immediately before the VERDICT line. Absent when
+        // there is no block: a first-attempt receipt's header is unchanged; only the
+        // contract prose below moved, and it is a declared-unsealed region.
         if not (List.isEmpty r.RecoveredFrom) then
             line $"recovered-seal: {recoveredSeal r.Seal r.RecoveredFrom}"
         // FG-161. Both are MACHINE-READABLE fields a verifier reads back, not decoration.
@@ -1101,22 +1143,13 @@ module Compare =
             | _ -> false
 
         if not (List.isEmpty r.RecoveredFrom) then
-            line "RECOVERED: this case DIVERGED on an earlier attempt and did not reproduce."
-            line "  The verdict below is from a re-run. What the earlier attempt showed:"
+            // FG-234. The block's text is `recoveredBlockLines`, ONE definition shared
+            // with the hash above, so what is printed is what is bound. The blank line
+            // that ends it and the VERDICT line that follows are the position the
+            // verifier demands.
+            for l in recoveredBlockLines r.RecoveredFrom do
+                line l
 
-            for d in r.RecoveredFrom do
-                line $"    {d}"
-
-            line "  NOTE: this block is run provenance and is NOT in the content seal above,"
-            line "  so a re-run proof seals like a first-attempt one; it is bound by the"
-            line "  `recovered-seal:` line in the header, recomputed from that seal and these"
-            line "  entries (FG-128), so they cannot be edited or lifted from another receipt."
-            line "  CAUSE UNCLASSIFIED. The FG-119 retry re-runs EVERY divergence, not"
-            line "  only the known `sh -x` pipeline interleaving, and nothing here"
-            line "  establishes which this was — a genuine intermittent engine mismatch"
-            line "  that happened to pass on re-run looks exactly the same. Naming the"
-            line "  trace race would let a real defect read as classified noise. A case"
-            line "  that recovers REPEATEDLY across runs is a defect report; treat it so."
             line ""
 
         for l in verdictLines r.Verdict workspaceCompared bothRefused do
@@ -1266,9 +1299,10 @@ module Compare =
     /// WHAT IT DOES NOT CHECK, so a valid seal is not over-read: whether the case on disk
     /// still matches `case-digest` (that is freshness, and it needs the case→receipt
     /// mapping), the printed line ORDER of a multiset case, which the receipt declares
-    /// outside the seal, and — the RECOVERED block's entries ARE checked, against the
-    /// `recovered-seal:` line (FG-128) — whether a block was removed TOGETHER with its
-    /// line: that leaves a first-attempt-shaped receipt, and only git history sees it.
+    /// outside the seal, and — the RECOVERED block's whole region IS checked, against
+    /// the `recovered-seal:` line (FG-128, FG-234), and so is its position — whether a
+    /// block was removed TOGETHER with its line: that leaves a first-attempt-shaped
+    /// receipt, and only git history sees it.
     let verifySealedText (onDiskName: string) (text: string) : SealCheck =
         let lines = text.Replace("\r\n", "\n").Split '\n' |> Array.toList
 
@@ -1314,7 +1348,7 @@ module Compare =
               // FG-128. Optional: present only when a RECOVERED block is; never twice.
               "recovered-seal:", false
               // FG-128. And the block itself never twice: the provenance hash binds the
-              // FIRST block's entries, so a second block appended after a bound one was
+              // FIRST block's region, so a second block appended after a bound one was
               // unbound history riding through verification — found by both reviewers.
               "RECOVERED:", false
               "case-digest:", true
@@ -1379,8 +1413,12 @@ module Compare =
                         inRecovered <- false
                         inVerdict <- false
                     elif inRecovered then
-                        // the RECOVERED block is a declared-unsealed region; its body is
-                        // indented and ends at the blank line above.
+                        // the RECOVERED block is outside the CONTENT seal; its body is
+                        // indented and ends at the blank line above. Indentation is all
+                        // this pass checks: every line of the region, whatever its
+                        // indentation, is bound by the `recovered-seal:` hash below
+                        // (FG-234) — before that, a two- or three-space line passed here
+                        // and was invisible to the entries-only hash.
                         if not (l.StartsWith "  ") then bad <- Some l
                     elif l.StartsWith "RECOVERED:" then
                         inRecovered <- true
@@ -1741,37 +1779,49 @@ module Compare =
                         SealMismatch(storedSeal, recomputed)
                     else
                         // FG-128. `--verify-seals` checks the RECOVERED block too, since
-                        // this: its entries must hash, with the content seal just proven,
+                        // this: its lines must hash, with the content seal just proven,
                         // to the `recovered-seal:` line, and the line must not exist
                         // without the block. The content seal is judged FIRST: altered
                         // evidence outranks altered history, and the provenance hash takes
                         // the proven seal as input. Block and line deleted TOGETHER is the
                         // one edit this cannot see.
-                        let recoveredEntries =
+                        //
+                        // FG-234. The REGION is hashed — every line from the heading to the
+                        // blank line that ends the block, whatever its indentation — not the
+                        // four-space entries alone. The entries-only extraction left every
+                        // other line in the region admitted by the accountability pass above
+                        // (any two-space line) and invisible here, so a two- or three-space
+                        // forgery reading `attempt 0: PROVEN (tier 1) …` sat inside a bound
+                        // block and verified. Reproduced by the FG-128 pre-push verifier.
+                        let recoveredRegion =
                             match lines |> List.tryFindIndex (fun l -> l.StartsWith "RECOVERED:") with
-                            | None -> []
+                            | None -> None
                             | Some i ->
-                                lines
-                                |> List.skip (i + 1)
-                                |> List.takeWhile (fun l -> l <> "")
-                                |> List.filter (fun l -> l.StartsWith "    ")
-                                |> List.map (fun l -> l.Substring 4)
+                                let region = lines |> List.skip i |> List.takeWhile (fun l -> l <> "")
+                                Some(region, lines |> List.skip (i + List.length region))
 
-                        let hasBlock = lines |> List.exists (fun l -> l.StartsWith "RECOVERED:")
-
-                        match field "recovered-seal:", hasBlock with
-                        | None, false -> SealValid
-                        | None, true ->
+                        match field "recovered-seal:", recoveredRegion with
+                        | None, None -> SealValid
+                        | None, Some _ ->
                             SealRefused "a RECOVERED provenance block is present but no recovered-seal line binds it"
-                        | Some _, false ->
+                        | Some _, None ->
                             SealRefused "a recovered-seal line is present but there is no RECOVERED provenance block"
-                        | Some stored, true ->
-                            let recomputedProvenance = recoveredSeal storedSeal recoveredEntries
+                        | Some stored, Some(region, after) ->
+                            let recomputedProvenance = recoveredRegionSeal storedSeal region
 
-                            if recomputedProvenance = stored then
-                                SealValid
-                            else
+                            if recomputedProvenance <> stored then
                                 ProvenanceMismatch(stored, recomputedProvenance)
+                            else
+                                // FG-234. POSITION. The hash finds the block by its heading, so
+                                // an unchanged block moved elsewhere in the receipt hashed the
+                                // same (Codex, on the filing PR). `render` emits it immediately
+                                // before the VERDICT line, separated by exactly one blank
+                                // line, and that is the only place it is accepted.
+                                match after with
+                                | "" :: v :: _ when v.StartsWith "VERDICT: " -> SealValid
+                                | _ ->
+                                    SealRefused
+                                        "the RECOVERED provenance block is not immediately before the VERDICT line, where the renderer puts it"
         | _ -> SealUnreadable "missing one of: title, jenkins-core, seal, case-digest"
 
     let seal (directory: string) (r: Receipt) : string =
