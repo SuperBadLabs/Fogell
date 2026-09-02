@@ -3,8 +3,11 @@
 # Discipline is not enforcement: FG-100's evidence was sealed at review round 1 and
 # five rounds of fixes were then pushed on top unsealed, because nothing but habit
 # checks a pushed commit. This workflow makes green a fact about the commit rather
-# than a claim by its author. It runs in ~2-3 minutes — under the PR-review latency,
-# so it adds nothing to cycle time.
+# than a claim by its author. It ran in ~2-3 minutes when written; by 2026-09-01
+# (run 33567174871) a green run took 20 minutes wall clock, 15.6 of them inside
+# the single `gate` step — most of that in fflat compiles that are sequential on
+# a 4-core runner, the rest in the lanes' fixed sleeps. The step list below is
+# ordered for correctness, not speed.
 #
 # What it CANNOT check: the differential receipts (they need the pinned Jenkins on
 # luigi) and the corpus scores (the corpus lives outside the repo). Those remain
@@ -13,12 +16,34 @@
 name: gate
 on:
   push:
-    branches: ["**"]
+    # Only the default branch. A pull request already runs the gate for every
+    # head pushed to its branch; firing on the branch push as well ran the same
+    # commit twice, one run per event, on every PR commit. A branch with no PR
+    # gets no hosted run — merging needs a PR, so no merge can bypass the gate.
+    # The pull_request run checks out the exact head (see the checkout step), so
+    # the one run that remains is the exact-head run the tickets require; the
+    # older tickets' "both hosted gate checks" describes the two events that
+    # existed when they were written.
+    branches: [main]
   pull_request:
+
+# A superseded head on a PR branch is cancelled: its verdict is about a commit
+# nobody will merge, and it holds a runner the replacement then waits for. Runs
+# on main are neither cancelled nor queued behind each other — each is its own
+# group — because every head that reaches main must have its own verdict.
+concurrency:
+  group: ${{ github.ref == 'refs/heads/main' && format('gate-main-{0}', github.run_id) || format('gate-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   gate:
     runs-on: ubuntu-latest
+    env:
+      # The digest-pinned image the PID-1 controller proof runs inside. Named
+      # once here because two steps refer to it: the early background pull and
+      # the proof itself. The native controller step must NOT see it in
+      # FOGELL_FG224_CONTROLLER_IMAGE — that variable selects container mode.
+      FG224_CONTROLLER_IMAGE: mcr.microsoft.com/dotnet/sdk@sha256:ea8bde36c11b6e7eec2656d0e59101d4462f6bd630730f2c8201ed0572b295d5
     services:
       postgres:
         image: postgres:16
@@ -35,6 +60,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # THE EXACT HEAD, not the synthetic merge ref. On a pull_request event
+          # checkout defaults to `refs/pull/N/merge`, a merge of the head into
+          # its base that exists nowhere else. The branch-push run used to be
+          # the one that tested the commit itself; with `push` narrowed to main
+          # (see `on:`), this run is the only hosted gate a PR gets, and the
+          # acceptance contract throughout docs/tickets is an exact-head hosted
+          # gate — so this run must be one. Branch protection requires the head
+          # to be up to date with its base before merging, so the merge ref and
+          # the head hold the same tree at the moment it matters. One semantic
+          # shift while a head is BEHIND its base: the stale-reference audit
+          # diffs the base tip against this tree, so bindings that base added
+          # since the branch point read as removed and a comment naming one
+          # fails the audit. False positives only, and the branch update strict
+          # protection demands anyway is the cure. Empty on a push event, where
+          # checkout then takes its default, the pushed commit.
+          ref: ${{ github.event.pull_request.head.sha }}
           # The stale-reference audit compares against a base ref. checkout's
           # default is a shallow, single-ref clone in which `origin/main` does
           # not exist — the audit then refuses (exit 2) and the blocking gate
@@ -84,7 +125,12 @@ jobs:
               exit 1
             fi
           else
-            BASE="origin/$DEFAULT_BRANCH"
+            # `push` fires only for the default branch (see `on:`), so this arm
+            # has no legitimate caller. An edit that widens the trigger must
+            # also decide the base for the event it adds; refusing here is what
+            # makes it notice, instead of inheriting a guess.
+            echo "::error::no comparison base is defined for event '${GITHUB_EVENT_NAME:-}' on ref '${GITHUB_REF_NAME:-}'"
+            exit 1
           fi
           echo "comparison ref: $BASE"
           echo "FOGELL_STALE_REF_BASE=$BASE" >> "$GITHUB_ENV"
@@ -160,24 +206,45 @@ jobs:
           # runner image happens to prepend ~/.dotnet/tools.
           PATH="$HOME/.dotnet/tools:$PATH" ./scripts/build-audits.sh --preflight
 
+      - name: start pulling the PID-1 controller image
+        # The PID-1 proof below runs the controller inside a digest-pinned image
+        # of ~850 MB. Pulling it inside that step cost ~14 s of its 51 s on run
+        # 33567174871 while the network sat idle through the 15-minute gate step
+        # before it. Start the pull here, detached, so it overlaps the gate. The
+        # PID-1 step still runs its own synchronous `docker pull`, which no-ops
+        # on a finished pull and waits on one in flight, so nothing below
+        # depends on this having completed. Output goes to a file: a background
+        # process holding the step's stdout would keep the step from ending.
+        run: |
+          nohup docker pull "$FG224_CONTROLLER_IMAGE" >"$RUNNER_TEMP/fg224-image-pull.log" 2>&1 &
+
       - name: gate
         env:
           FOGELL_TEST_DATABASE_URL: "Host=127.0.0.1;Port=55440;Username=fogell;Database=fogell"
-        run: ./scripts/build-and-test.sh
+        # The log is kept for the step below. `pipefail` is set explicitly rather
+        # than trusted to the runner's default shell: the exit status this step
+        # reports must be the gate's, never tee's.
+        run: |
+          set -o pipefail
+          ./scripts/build-and-test.sh 2>&1 | tee "$RUNNER_TEMP/gate.log"
 
       - name: store tests actually ran
         # The Store suite self-skips (exit 0, "skipped:" on stderr) when no database
-        # answers, which would let this gate go green while silently testing 26 fewer
-        # things. A skipped suite must fail HERE, where the cause (the service
-        # container) is visible.
-        env:
-          FOGELL_TEST_DATABASE_URL: "Host=127.0.0.1;Port=55440;Username=fogell;Database=fogell"
+        # answers, which would let a gate go green while silently testing 26 fewer
+        # things. A skipped suite prints no Expecto summary at all, and the FG-229
+        # runner refuses any project without one, so the skip fails in the `gate`
+        # step above as `test project produced no Expecto summary` with the
+        # suite's `skipped:` line echoed beside it — the cause (the service
+        # container) is visible there.
+        #
+        # This step re-asserts the positive half from the gate's own log instead
+        # of running the suite a second time (7 s on run 33567174871): the Store
+        # project's summary line, as the runner prints it, must be present. It
+        # does not look for `skipped:` — the runner keeps a passing suite's
+        # output in scratch, so on a green gate that line cannot be in the log
+        # and a check for it would be dead code.
         run: |
-          out=$(dotnet run --project tests/Fogell.Store.Tests -c Release --no-build 2>&1)
-          echo "$out" | tail -2
-          if echo "$out" | grep -q "^skipped:"; then
-            echo "Store tests were SKIPPED — postgres service not reachable"; exit 1
-          fi
+          rg -F 'tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj: EXPECTO!' "$RUNNER_TEMP/gate.log"
 
       - name: runnable controller vertical slice (FG-224)
         # This is the product seam the project suites cannot prove independently:
@@ -199,8 +266,11 @@ jobs:
           FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
           FOGELL_PG_PORT: 55440
           FOGELL_BUILD_CONFIGURATION: Release
-          FOGELL_FG224_CONTROLLER_IMAGE: mcr.microsoft.com/dotnet/sdk@sha256:ea8bde36c11b6e7eec2656d0e59101d4462f6bd630730f2c8201ed0572b295d5
-        run: ./scripts/prove-runnable-controller.sh
+          FOGELL_FG224_CONTROLLER_IMAGE: ${{ env.FG224_CONTROLLER_IMAGE }}
+        run: |
+          # Completes or no-ops the pull started before the gate step.
+          docker pull "$FOGELL_FG224_CONTROLLER_IMAGE" >/dev/null
+          ./scripts/prove-runnable-controller.sh
 
       - name: backup/restore drill and hostile proof (FG-085a)
         # The postgres:16 service is also the client-tool distribution. Keeping
