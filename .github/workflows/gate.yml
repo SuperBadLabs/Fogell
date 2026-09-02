@@ -3,11 +3,40 @@
 # Discipline is not enforcement: FG-100's evidence was sealed at review round 1 and
 # five rounds of fixes were then pushed on top unsealed, because nothing but habit
 # checks a pushed commit. This workflow makes green a fact about the commit rather
-# than a claim by its author. It ran in ~2-3 minutes when written; by 2026-09-01
-# (run 33567174871) a green run took 20 minutes wall clock, 15.6 of them inside
-# the single `gate` step — most of that in fflat compiles that are sequential on
-# a 4-core runner, the rest in the lanes' fixed sleeps. The step list below is
-# ordered for correctness, not speed.
+# than a claim by its author.
+#
+# SHAPE. One job ran the whole script and took 20 minutes wall clock (run
+# 33567174871, 2026-09-01), 15.6 of them inside the script: the fflat compiles
+# — the eight audit tools plus the mutants and fixtures the FG-226, prelude and
+# stale-reference proofs compile — were ~7 minutes, sequential on a 4-core
+# runner, while the dotnet build and the lanes sat waiting behind them. The
+# parts do not depend on each other, so the script now declares LANES and this
+# workflow runs it once per lane in parallel jobs:
+#
+#   plan    reads the lane list FROM THE SCRIPT (`--list-lanes`), so the matrix
+#           below cannot drift from the script
+#   lane    a matrix job per lane, each running build-and-test.sh with
+#           FOGELL_GATE_LANES set to its lane and nothing else; the `audits`
+#           lane also runs the compiled `audit-gate-lanes` tool, which proves
+#           the partition itself (every gate block inside one listed lane), so
+#           a hole in it fails that lane and with it the aggregate below
+#   drills  the postgres-backed proofs that were always separate workflow steps
+#           (runnable controller, its FG-232 inotify bound and FG-231 hang
+#           proof, backup/restore, migration rollback); they need the built
+#           tree, so this job builds it
+#   gate    the one required check, aggregating all of the above; it fails
+#           unless every job succeeded, and is the only name branch protection
+#           looks for
+#
+# Wall clock is now the serial `plan` job (a checkout and one script call;
+# UNMEASURED hosted until the first run) plus the longest lane, rather than the
+# sum. Total runner minutes rise (each job repeats ~1 minute of setup),
+# which is free on a public repo.
+#
+# THREE LANE NAMES ARE HARDCODED in step conditions below (`build` for the
+# store-summary step, `audits`/`stale-refs` for the fflat install). A rename in
+# the script would make those steps silently skip, so the plan job refuses a
+# lane list that lacks any of them.
 #
 # What it CANNOT check: the differential receipts (they need the pinned Jenkins on
 # luigi) and the corpus scores (the corpus lives outside the repo). Those remain
@@ -28,30 +57,85 @@ on:
   pull_request:
 
 # A superseded head on a PR branch is cancelled: its verdict is about a commit
-# nobody will merge, and it holds a runner the replacement then waits for. Runs
+# nobody will merge, and it holds runners the replacement then waits for. Runs
 # on main are neither cancelled nor queued behind each other — each is its own
 # group — because every head that reaches main must have its own verdict.
 concurrency:
   group: ${{ github.ref == 'refs/heads/main' && format('gate-main-{0}', github.run_id) || format('gate-{0}', github.ref) }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+env:
+  # THE EXACT HEAD, not the synthetic merge ref. On a pull_request event checkout
+  # defaults to `refs/pull/N/merge`, a merge of the head into its base that
+  # exists nowhere else. The branch-push run used to be the one that tested the
+  # commit itself; with `push` narrowed to main, this run is the only hosted
+  # gate a PR gets, and the acceptance contract throughout docs/tickets is an
+  # exact-head hosted gate — so this run must be one. Branch protection requires
+  # the head to be up to date with its base before merging, so the merge ref and
+  # the head hold the same tree at the moment it matters. One semantic shift
+  # while a head is BEHIND its base: the stale-reference audit diffs the base
+  # tip against this tree, so bindings that base added since the branch point
+  # read as removed and a comment naming one fails the audit. False positives
+  # only, and the branch update strict protection demands anyway is the cure.
+  # Empty on a push event, where checkout then takes its default, the pushed
+  # commit. Named once here because every job checks out the same thing.
+  GATE_CHECKOUT_REF: ${{ github.event.pull_request.head.sha }}
+  # The digest-pinned image the PID-1 controller proof runs inside. The native
+  # controller step must NOT see it in FOGELL_FG224_CONTROLLER_IMAGE — that
+  # variable selects container mode.
+  FG224_CONTROLLER_IMAGE: mcr.microsoft.com/dotnet/sdk@sha256:ea8bde36c11b6e7eec2656d0e59101d4462f6bd630730f2c8201ed0572b295d5
+
 jobs:
-  gate:
+  plan:
+    # Cheap and first: the lane list comes from the script. The partition proof
+    # is NOT here — it is a compiled audit tool and needs fflat, which only two
+    # lanes install; running it here would put ~40 s of toolchain setup on the
+    # critical path every run. It runs in the `audits` lane instead, where a
+    # hole fails that lane and therefore the aggregate `gate` below.
     runs-on: ubuntu-latest
-    env:
-      # The digest-pinned image the PID-1 controller proof runs inside. Named
-      # once here because two steps refer to it: the early background pull and
-      # the proof itself. The native controller step must NOT see it in
-      # FOGELL_FG224_CONTROLLER_IMAGE — that variable selects container mode.
-      FG224_CONTROLLER_IMAGE: mcr.microsoft.com/dotnet/sdk@sha256:ea8bde36c11b6e7eec2656d0e59101d4462f6bd630730f2c8201ed0572b295d5
-    # A green run took 20m41s on 2026-09-01 (run 33567962039; 18m23s on run
-    # 33571850280 after the pull and build changes above). Without this,
-    # GitHub's 360-minute default applied, and two runs that day (33564807004,
-    # 33567964629) sat in_progress for 77 and 39 minutes after the PID-1
-    # controller proof had already refused (docs/tickets/FG-231.md has the
-    # timestamps). Twice the measured duration is a hang, not a slow run.
-    timeout-minutes: 45
+    timeout-minutes: 10
+    outputs:
+      lanes: ${{ steps.lanes.outputs.lanes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GATE_CHECKOUT_REF }}
+      - id: lanes
+        name: read the lane list from the script
+        run: |
+          set -euo pipefail
+          lanes=$(./scripts/build-and-test.sh --list-lanes | jq -Rcn '[inputs]')
+          echo "lanes: $lanes"
+          # The names this workflow's step conditions hardcode must exist, or
+          # those steps would skip silently (see the header).
+          for required in build audits stale-refs; do
+            jq -e --arg l "$required" 'index($l) != null' <<<"$lanes" >/dev/null \
+              || { echo "::error::the script no longer lists lane '$required', which this workflow's step conditions name"; exit 1; }
+          done
+          echo "lanes=$lanes" >> "$GITHUB_OUTPUT"
+
+  lane:
+    name: lane (${{ matrix.lane }})
+    needs: plan
+    runs-on: ubuntu-latest
+    # Longest lane projected at ~8 minutes from run 33571850280's step timings
+    # (the `build` lane's blocks summed to ~6m47s of script there, plus ~1 min
+    # of job setup); 30 leaves headroom for a slow runner while still bounding
+    # a hang. Without a
+    # bound, GitHub's default is 360 minutes: on 2026-09-01 the PID-1 step hung
+    # for ~39 and ~77 minutes (runs 33567964629 and 33564807004, attempt 1 of
+    # each) and stopped only because a re-run cancelled them.
+    timeout-minutes: 30
+    strategy:
+      # Every lane reports, even when a sibling has already failed: a run that
+      # stops at the first red hides the second defect until the next push.
+      fail-fast: false
+      matrix:
+        lane: ${{ fromJSON(needs.plan.outputs.lanes) }}
     services:
+      # Needed by the `build` lane (Store and Controller.Api suites, FG-026).
+      # Services cannot be conditional per matrix entry; the other lanes carry
+      # it unused at ~16 s each.
       postgres:
         image: postgres:16
         env:
@@ -67,22 +151,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # THE EXACT HEAD, not the synthetic merge ref. On a pull_request event
-          # checkout defaults to `refs/pull/N/merge`, a merge of the head into
-          # its base that exists nowhere else. The branch-push run used to be
-          # the one that tested the commit itself; with `push` narrowed to main
-          # (see `on:`), this run is the only hosted gate a PR gets, and the
-          # acceptance contract throughout docs/tickets is an exact-head hosted
-          # gate — so this run must be one. Branch protection requires the head
-          # to be up to date with its base before merging, so the merge ref and
-          # the head hold the same tree at the moment it matters. One semantic
-          # shift while a head is BEHIND its base: the stale-reference audit
-          # diffs the base tip against this tree, so bindings that base added
-          # since the branch point read as removed and a comment naming one
-          # fails the audit. False positives only, and the branch update strict
-          # protection demands anyway is the cure. Empty on a push event, where
-          # checkout then takes its default, the pushed commit.
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ env.GATE_CHECKOUT_REF }}
           # The stale-reference audit compares against a base ref. checkout's
           # default is a shallow, single-ref clone in which `origin/main` does
           # not exist — the audit then refuses (exit 2) and the blocking gate
@@ -92,6 +161,10 @@ jobs:
           fetch-depth: 0
 
       - name: name the audit's comparison ref
+        # Only the `stale-refs` lane reads FOGELL_STALE_REF_BASE, but the step
+        # runs in every lane so the lane jobs stay identical except for the lane
+        # name and the toolchain install — one thing to reason about.
+        #
         # NAMED here rather than defaulted in the script: on a pull request the
         # base is whatever the PR targets, which is not always `main`, and a
         # checker that guesses its own target is the defect this audit exists
@@ -149,6 +222,8 @@ jobs:
           global-json-file: global.json
 
       - name: cache the fflat toolchain
+        # Only the two lanes that compile audit tools need fflat.
+        if: matrix.lane == 'audits' || matrix.lane == 'stale-refs'
         # FG-226. `fflat` is a 199 MB nupkg that unpacks to 496 MB, downloaded on
         # every run without this. The key pins the exact version, so a version
         # bump is a cache miss by construction and can never serve a stale
@@ -171,7 +246,15 @@ jobs:
           path: ~/.dotnet/tools
           key: fflat-2.1.3-${{ runner.os }}
 
-      - name: install fflat and ripgrep
+      - name: install ripgrep
+        # Every lane: the proofs grep with `rg` (FG-228, FG-207, the lanes, and
+        # more), and so does the store-summary step below. The runner image does
+        # not ship it — the old single job installed it alongside fflat, which
+        # hid that dependency inside the toolchain step.
+        run: sudo apt-get update -q && sudo apt-get install -y -q ripgrep
+
+      - name: install fflat
+        if: matrix.lane == 'audits' || matrix.lane == 'stale-refs'
         # FG-226. The audit tools are F# scripts compiled to native binaries by
         # fflat; `scripts/build-audits.sh` runs inside the gate itself.
         #
@@ -185,7 +268,7 @@ jobs:
           # line names no system c++ library (`-lstdc++compat` is bflat's own
           # bundled static lib), so this is kept as documented-prerequisite
           # cargo rather than a measured need.
-          sudo apt-get update -q && sudo apt-get install -y -q ripgrep libc++-dev libbrotli1
+          sudo apt-get install -y -q libc++-dev libbrotli1
           # Idempotent: on a cache hit the tool is already there, and
           # `dotnet tool install` exits non-zero rather than no-opping.
           # Tested by RUNNING it, not by `-x`.
@@ -203,30 +286,19 @@ jobs:
           # tools on any Linux host.
           #
           # Run it HERE, right after install, because the failure it catches
-          # otherwise surfaces ~7 minutes in — the audit build sits after the
-          # full test suite. ~3 s. The same function runs again inside the gate,
-          # idempotently, which is what gives a fresh custodian machine the same
-          # remedy instead of an opaque `did not compile`.
+          # otherwise surfaces minutes in, after the lane's other work. ~3 s.
+          # The same function runs again inside the gate, idempotently, which is
+          # what gives a fresh custodian machine the same remedy instead of an
+          # opaque `did not compile`.
           # PATH is set explicitly: `GITHUB_PATH` does not affect the step
           # that writes it, which is why the two `fflat` invocations above use
           # an absolute path. This one would otherwise work only because the
           # runner image happens to prepend ~/.dotnet/tools.
           PATH="$HOME/.dotnet/tools:$PATH" ./scripts/build-audits.sh --preflight
 
-      - name: start pulling the PID-1 controller image
-        # The PID-1 proof below runs the controller inside a digest-pinned image
-        # of ~850 MB. Pulling it inside that step cost ~14 s of its 51 s on run
-        # 33567174871 while the network sat idle through the 15-minute gate step
-        # before it. Start the pull here, detached, so it overlaps the gate. The
-        # PID-1 step still runs its own synchronous `docker pull`, which no-ops
-        # on a finished pull and waits on one in flight, so nothing below
-        # depends on this having completed. Output goes to a file: a background
-        # process holding the step's stdout would keep the step from ending.
-        run: |
-          nohup docker pull "$FG224_CONTROLLER_IMAGE" >"$RUNNER_TEMP/fg224-image-pull.log" 2>&1 &
-
-      - name: gate
+      - name: gate lane ${{ matrix.lane }}
         env:
+          FOGELL_GATE_LANES: ${{ matrix.lane }}
           FOGELL_TEST_DATABASE_URL: "Host=127.0.0.1;Port=55440;Username=fogell;Database=fogell"
         # The log is kept for the step below. `pipefail` is set explicitly rather
         # than trusted to the runner's default shell: the exit status this step
@@ -236,15 +308,16 @@ jobs:
           ./scripts/build-and-test.sh 2>&1 | tee "$RUNNER_TEMP/gate.log"
 
       - name: store tests actually ran
+        if: matrix.lane == 'build'
         # The Store suite self-skips (exit 0, "skipped:" on stderr) when no database
         # answers, which would let a gate go green while silently testing 26 fewer
         # things. A skipped suite prints no Expecto summary at all, and the FG-229
-        # runner refuses any project without one, so the skip fails in the `gate`
+        # runner refuses any project without one, so the skip fails in the lane
         # step above as `test project produced no Expecto summary` with the
         # suite's `skipped:` line echoed beside it — the cause (the service
         # container) is visible there.
         #
-        # This step re-asserts the positive half from the gate's own log instead
+        # This step re-asserts the positive half from the lane's own log instead
         # of running the suite a second time (7 s on run 33567174871): the Store
         # project's summary line, as the runner prints it, must be present. It
         # does not look for `skipped:` — the runner keeps a passing suite's
@@ -252,6 +325,73 @@ jobs:
         # and a check for it would be dead code.
         run: |
           rg -F 'tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj: EXPECTO!' "$RUNNER_TEMP/gate.log"
+
+  drills:
+    # The postgres-backed product proofs. These were always separate workflow
+    # steps after the script, running against the tree the script had built;
+    # they still need that tree, so this job builds it the way README says to.
+    runs-on: ubuntu-latest
+    # The four proofs measured 40 s + 43 s + 12 s + 91 s on run 33571850280 (the
+    # FG-231 and FG-232 steps and this job's own restore+build are UNMEASURED
+    # hosted; FG-232 ran in about 1 s on HeMan; the
+    # dependency-lock proof's cold restore and build inside that run's single
+    # gate step took 75 s, the nearest measurement). Without
+    # a bound GitHub's default is 360 minutes, and two runs on 2026-09-01
+    # (33564807004, 33567964629) sat in_progress for 77 and 39 minutes after the
+    # PID-1 controller proof had already refused (docs/tickets/FG-231.md has the
+    # timestamps). The step bounds below are the sharp backstops; this is the
+    # blunt one.
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fogell
+          POSTGRES_DB: fogell
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["55440:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fogell"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GATE_CHECKOUT_REF }}
+
+      - name: start pulling the PID-1 controller image
+        # The PID-1 proof below runs the controller inside a digest-pinned image
+        # of ~850 MB. Pulling it inside that step cost ~14 s of its 51 s on run
+        # 33567174871 while the network sat idle through the build before it.
+        # Start the pull here, detached, so it overlaps the build. The PID-1
+        # step still runs its own synchronous `docker pull`, which no-ops on a
+        # finished pull and waits on one in flight, so nothing below depends on
+        # this having completed. Output goes to a file: a background process
+        # holding the step's stdout would keep the step from ending.
+        run: |
+          nohup docker pull "$FG224_CONTROLLER_IMAGE" >"$RUNNER_TEMP/fg224-image-pull.log" 2>&1 &
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: install ripgrep
+        # scripts/prove-fg231-proof-bounds.sh refuses (exit 2) without `rg`, and
+        # the runner image does not ship it. The five older drill scripts use
+        # plain grep, which is why an earlier draft dropped this step — and
+        # would have turned every hosted run red at the FG-231 step.
+        run: sudo apt-get update -q && sudo apt-get install -y -q ripgrep
+
+      - name: build the tree the drills exercise
+        # Locked restore, then a no-restore build: the same two commands README
+        # gives for a runnable controller. The `build` lane proves the lock
+        # graph and the source-cleared restore; this job only needs the
+        # binaries, and a lock violation here would fail the same way there.
+        run: |
+          set -euo pipefail
+          dotnet restore --locked-mode
+          dotnet build -c Release --no-restore
 
       - name: runnable controller vertical slice (FG-224)
         # This is the product seam the project suites cannot prove independently:
@@ -282,9 +422,28 @@ jobs:
           FOGELL_BUILD_CONFIGURATION: Release
           FOGELL_FG224_CONTROLLER_IMAGE: ${{ env.FG224_CONTROLLER_IMAGE }}
         run: |
-          # Completes or no-ops the pull started before the gate step.
+          # Completes or no-ops the pull started before the build step.
           docker pull "$FOGELL_FG224_CONTROLLER_IMAGE" >/dev/null
           ./scripts/prove-runnable-controller.sh
+
+      - name: controller inotify footprint is bounded regardless of cwd (FG-232)
+        # ASP.NET Core roots the host's file provider at the cwd and watches
+        # that whole tree, one inotify watch per directory, to reload
+        # appsettings.json. Started from a ~268k-directory home on 2026-09-02
+        # the controller held 65,361 of the user's 65,536 watches and every
+        # other FileSystemWatcher for the user failed. The controller now pins
+        # its content root to the apphost directory and reads configuration
+        # once. The checker is shown to fail first (an unreadable process is
+        # unavailable rather than zero; a stand-in at the bound is refused and
+        # one under it passes with its count named), then the real controller
+        # is started from a 256-subdirectory tree against the service database
+        # and must hold fewer than 64 watches. About 1 s on HeMan.
+        timeout-minutes: 10
+        env:
+          FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
+          FOGELL_PG_PORT: 55440
+          FOGELL_BUILD_CONFIGURATION: Release
+        run: ./scripts/prove-fg232-controller-inotify.sh
 
       - name: runnable controller proof cannot hang (FG-231)
         # Plants six stalls in byte-mutated copies of the proof above — a
@@ -294,7 +453,7 @@ jobs:
         # the container only after the identity budget expired — and requires
         # each to become a named refusal within budget
         # with no controller left behind. This is the checker being shown to
-        # fail; the two steps above are it passing.
+        # fail; the two FG-224 steps above are it passing.
         timeout-minutes: 10
         env:
           FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
@@ -324,3 +483,30 @@ jobs:
         run: |
           ./scripts/prove-migration-rollback-drill.sh
           ./scripts/migration-rollback-drill.sh
+
+  gate:
+    # THE REQUIRED CHECK. Branch protection requires exactly one context named
+    # `gate`; this job is it. `if: always()` makes it report even when a lane
+    # failed or was cancelled — a missing required check blocks merge, which is
+    # the right direction, but a visible red with the failed job named is what
+    # a reviewer can act on. It fails unless every job it aggregates succeeded;
+    # `skipped` and `cancelled` are failures here, not neutral.
+    needs: [plan, lane, drills]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every job succeeded
+        env:
+          PLAN: ${{ needs.plan.result }}
+          LANE: ${{ needs.lane.result }}
+          DRILLS: ${{ needs.drills.result }}
+        run: |
+          set -euo pipefail
+          status=0
+          for job in PLAN LANE DRILLS; do
+            result="${!job}"
+            echo "$job: $result"
+            [ "$result" = "success" ] || status=1
+          done
+          exit "$status"

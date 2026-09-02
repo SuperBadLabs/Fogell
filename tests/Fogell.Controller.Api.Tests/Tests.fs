@@ -447,6 +447,51 @@ let private databaseStartupBoundary =
                   drop.ExecuteNonQuery() |> ignore
           } ]
 
+let private hostFootprint =
+    let trimmed (path: string) = IO.Path.TrimEndingDirectorySeparator path
+
+    testList
+        "FG-232 host content root and configuration watch"
+        [ test "the host roots at the apphost directory and reads configuration once" {
+              let options = Fogell.Controller.Host.Program.hostOptions ()
+
+              Expect.equal
+                  (trimmed options.ContentRootPath)
+                  (trimmed AppContext.BaseDirectory)
+                  "the content root is the apphost directory, not the current working directory"
+
+              Expect.sequenceEqual
+                  options.Args
+                  [| Fogell.Controller.Host.Program.reloadConfigOnChangeSwitch |]
+                  "the only host argument turns configuration reload-on-change off"
+
+              // The options must survive the host's own resolution: neither the
+              // cwd nor an ambient content-root variable may displace them.
+              let ambientRoot =
+                  IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg232-ambient-{Guid.NewGuid():N}")
+
+              IO.Directory.CreateDirectory ambientRoot |> ignore
+              let previous = Environment.GetEnvironmentVariable "ASPNETCORE_CONTENTROOT"
+
+              try
+                  Environment.SetEnvironmentVariable("ASPNETCORE_CONTENTROOT", ambientRoot)
+                  let builder = WebApplication.CreateBuilder options
+                  use app = builder.Build()
+
+                  Expect.equal
+                      (trimmed app.Environment.ContentRootPath)
+                      (trimmed AppContext.BaseDirectory)
+                      "the built host reports the apphost directory as its content root"
+
+                  Expect.equal
+                      app.Configuration["hostBuilder:reloadConfigOnChange"]
+                      "false"
+                      "the built host carries the reload-on-change switch in its configuration"
+              finally
+                  Environment.SetEnvironmentVariable("ASPNETCORE_CONTENTROOT", previous)
+                  IO.Directory.Delete(ambientRoot, true)
+          } ]
+
 let private executionLauncherValidation =
     let variables =
         [ "FOGELL_DATABASE_URL"; "FOGELL_MAINTENANCE_DATABASE_URL"
@@ -1909,6 +1954,7 @@ let main argv =
                         "Fogell.Controller.Api"
                         [ stateRootReadiness
                           databaseStartupBoundary
+                          hostFootprint
                           executionLauncherValidation
                           authorization
                           endpoints ]))
