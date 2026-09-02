@@ -152,8 +152,9 @@ admitted (FG-004, [`Limits.fs`](../src/Fogell.Admission/Limits.fs) and
 triple-quoted scalars and uses a bounded token-context DFA to shield complete
 slashies from structural counting. Slashy-versus-division is resolved by the
 grammar, whose slashy productions apply the same caller-selected raw UTF-8 cap.
-Raw scanners preserve token adjacency and operands across comment trivia; an
-unterminated block comment is refused by the linear guard before backtracking.
+Raw arguments are scanned in one forward pass that preserves complete operator
+tokens and Groovy's non-nesting comment semantics; an unterminated block comment
+is refused by the linear guard before backtracking.
 The standing FG-004b sweep sends 10,000 replay-pinned inputs guaranteed to be
 refused by the Declarative parser boundary and requires typed positioned refusal.
 
