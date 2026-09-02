@@ -461,6 +461,48 @@ let stringSpanRaw: P<string> =
 
     scan
 
+/// Raw comment source for scanners that retain an unevaluated expression.
+/// Literal-looking bytes inside comments must never reach string/span parsers.
+let commentSpanRaw: P<string> =
+    let scan (stream: CharStream<ParserState>) =
+        let start = stream.Index
+
+        if stream.PeekString 2 = "//" then
+            stream.Skip(2)
+
+            while
+                not stream.IsEndOfStream
+                && stream.Peek() <> '\r'
+                && stream.Peek() <> '\n'
+                do
+                stream.Skip()
+
+            let length = int (stream.Index - start)
+            stream.Seek start
+            Reply(stream.Read length)
+        elif stream.PeekString 2 = "/*" then
+            stream.Skip(2)
+            let mutable closed = false
+
+            while not closed && not stream.IsEndOfStream do
+                if stream.PeekString 2 = "*/" then
+                    stream.Skip(2)
+                    closed <- true
+                else
+                    stream.Skip()
+
+            if closed then
+                let length = int (stream.Index - start)
+                stream.Seek start
+                Reply(stream.Read length)
+            else
+                stream.Seek start
+                Reply(Error, expected "a terminated block comment")
+        else
+            Reply(Error, expected "a comment")
+
+    scan
+
 // --- balanced raw capture --------------------------------------------------
 
 /// FG-141. Can the character ending the text so far END an expression? This is
@@ -498,6 +540,7 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
             // the region opener starts an expression context; a `/` first thing
             // in the body is a slashy opener
             let mutable lastSig = ' '
+            let mutable priorSig = ' '
 
             while depth > 0 && not failed && not (stream.IsEndOfStream) do
                 let c = stream.Peek()
@@ -533,6 +576,7 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                                 stream.Skip()
 
                         if not closed then failed <- true
+                        priorSig <- lastSig
                         lastSig <- q // a completed literal ends an expression
                     else
 
@@ -554,6 +598,7 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                         else
                             stream.Skip()
 
+                    priorSig <- lastSig
                     lastSig <- q // a completed literal ends an expression
                 elif c = '/' && stream.Peek(1) = '/' then
                     while not stream.IsEndOfStream && stream.Peek() <> '\n' do
@@ -571,7 +616,14 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                             ended <- true
                         else
                             stream.Skip()
-                elif c = '/' && not (endsExpression lastSig) then
+                elif
+                    c = '/'
+                    && not (
+                        endsExpression lastSig
+                        || ((lastSig = '+' && priorSig = '+')
+                            || (lastSig = '-' && priorSig = '-'))
+                    )
+                then
                     // FG-141: no left operand, so this `/` can only open a
                     // slashy. Skip its span; on no closer, rewind and read the
                     // `/` as the ordinary character it always was.
@@ -591,10 +643,18 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                             stream.Skip()
 
                     if closed then
+                        let finish = stream.Index
+                        let contentLength = int (finish - before - 2L)
+                        stream.Seek(before + 1L)
+                        let rawContent = stream.Read contentLength
+                        stream.Seek finish
+                        recordScalarContent rawContent stream
+                        priorSig <- lastSig
                         lastSig <- '\'' // a completed literal ends an expression
                     else
                         stream.Seek(before)
                         stream.Skip()
+                        priorSig <- lastSig
                         lastSig <- '/'
                 else
                     if c = opening then depth <- depth + 1
@@ -602,6 +662,7 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                     stream.Skip()
 
                     if c <> ' ' && c <> '\t' && c <> '\r' && c <> '\n' then
+                        priorSig <- lastSig
                         lastSig <- c
 
             if depth <> 0 then

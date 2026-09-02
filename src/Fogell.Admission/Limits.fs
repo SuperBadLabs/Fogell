@@ -138,18 +138,21 @@ module Limits =
             while err.IsNone && i < source.Length do
                 let c = source.[i]
 
-                if c = '\n' then
+                if c = '\r' then
                     line <- line + 1L
+                    column <- 1L
+                elif c = '\n' then
+                    if i = 0 || source.[i - 1] <> '\r' then line <- line + 1L
                     column <- 1L
                 else
                     column <- column + 1L
 
                 if lineComment then
-                    if c = '\n' then
+                    if c = '\r' || c = '\n' then
                         lineComment <- false
                         markTriviaBreak ()
                 elif blockComment then
-                    if c = '\n' then markTriviaBreak ()
+                    if c = '\r' || c = '\n' then markTriviaBreak ()
 
                     if c = '*' && i + 1 < source.Length && source.[i + 1] = '/' then
                         i <- i + 1
@@ -196,8 +199,8 @@ module Limits =
                         lastWasBlockClose <- false
                 else
                     match c with
-                    | ' ' | '\t' | '\r' -> ()
-                    | '\n' -> markTriviaBreak ()
+                    | ' ' | '\t' -> ()
+                    | '\r' | '\n' -> markTriviaBreak ()
                     | '/' when i + 1 < source.Length && source.[i + 1] = '/' ->
                         lineComment <- true
                         i <- i + 1
@@ -340,6 +343,13 @@ module Limits =
                                 awaitingControlParen <- false
                                 needsOperand <- true
                                 statementHead <- false
+                                commandHead <- false
+                            | "else" ->
+                                // An unbraced else body begins a statement just
+                                // like a completed control header.
+                                awaitingControlParen <- false
+                                needsOperand <- true
+                                statementHead <- true
                                 commandHead <- false
                             | "def" | "final" | "new" | "instanceof" | "as" ->
                                 awaitingControlParen <- false

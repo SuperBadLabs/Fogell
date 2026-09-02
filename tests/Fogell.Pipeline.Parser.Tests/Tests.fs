@@ -277,6 +277,15 @@ let admissionLimits =
                     "raw double-quote-bearing slashy expression",
                     "pipeline { agent any stages { stage('B') { steps { echo /a\"aa/ + 'x' } } } }",
                     "pipeline { agent any stages { stage('B') { steps { echo /aa\"aa/ + 'x' } } } }"
+                    "list-nested slashy",
+                    "pipeline { agent any stages { stage('B') { steps { echo [/aaaa/] } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo [/aaaaa/] } } } }"
+                    "parenthesised list-nested slashy",
+                    "pipeline { agent any stages { stage('B') { steps { echo([/aaaa/]) } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo([/aaaaa/]) } } } }"
+                    "named map-nested slashy",
+                    "pipeline { agent any stages { stage('B') { steps { echo message: [x: /aaaa/] } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo message: [x: /aaaaa/] } } } }"
                     "raw parenthesised positional expression",
                     "pipeline { agent any stages { stage('B') { steps { echo(/aaaa/ + 'x') } } } }",
                     "pipeline { agent any stages { stage('B') { steps { echo(/aaaaa/ + 'x') } } } }"
@@ -289,6 +298,9 @@ let admissionLimits =
                     "named branch condition",
                     "pipeline { agent any stages { stage('B') { when { branch pattern: /aaaa/ } steps { echo 'x' } } } }",
                     "pipeline { agent any stages { stage('B') { when { branch pattern: /aaaaa/ } steps { echo 'x' } } } }"
+                    "named branch nested slashy",
+                    "pipeline { agent any stages { stage('B') { when { branch pattern: [/aaaa/] } steps { echo 'x' } } } }",
+                    "pipeline { agent any stages { stage('B') { when { branch pattern: [/aaaaa/] } steps { echo 'x' } } } }"
                     "named environment condition",
                     "pipeline { agent any stages { stage('B') { when { environment name: /aaaa/, value: 'x' } steps { echo 'x' } } } }",
                     "pipeline { agent any stages { stage('B') { when { environment name: /aaaaa/, value: 'x' } steps { echo 'x' } } } }"
@@ -381,6 +393,45 @@ let admissionLimits =
                   | Error e -> Expect.equal e.Code TooManyNodes "slashy content cannot hide subsequent nodes"
                   | Ok _ -> failtest "a quote inside a slashy bypassed the node precheck"
 
+              let elseDepth = "if (true) {} else /a'aa/; if (((true))) {}"
+
+              match Limits.precheck { limits with MaxDepth = 2; MaxScalarBytes = 100 } elseDepth with
+              | Error e -> Expect.equal e.Code NestingTooDeep "an else-body slashy cannot hide following depth"
+              | Ok _ -> failtest "an else-body slashy bypassed the depth precheck"
+
+              match
+                  Fogell.Groovy.Parser.Parser.parseWithLimits
+                      { limits with MaxDepth = 2; MaxScalarBytes = 100 }
+                      elseDepth
+              with
+              | Error e -> Expect.equal e.Code NestingTooDeep "an else-body slashy cannot hide Groovy depth"
+              | Ok _ -> failtest "an else-body slashy bypassed Groovy admission depth"
+
+              let deepPreamble =
+                  "if (true) {} else /a'aa/; if ((((((true)))))) {}\n" + basePipeline
+
+              match Parser.parseWithLimits { limits with MaxDepth = 5; MaxScalarBytes = 100 } deepPreamble with
+              | Error e -> Expect.equal e.Code NestingTooDeep "a preamble slashy cannot hide depth"
+              | Ok _ -> failtest "a preamble slashy bypassed Declarative admission depth"
+
+              for literalLooking in
+                  [ "'aaaaa'"; "\"aaaaa\""; "'''aaaaa'''"; "\"\"\"aaaaa\"\"\""; "/aaaaa/" ] do
+                  let source =
+                      "pipeline { agent any stages { stage('B') { steps { echo(x /* "
+                      + literalLooking
+                      + " */ + y) } } } }"
+
+                  match Parser.parseWithLimits limits source with
+                  | Ok _ -> ()
+                  | Error e -> failtestf "comment content %s must not become a scalar: %A" literalLooking e
+
+              let leadingComment =
+                  "pipeline { agent any stages { stage('B') { steps { echo(/* 'aaaaa' */ x) } } } }"
+
+              match Parser.parseWithLimits limits leadingComment with
+              | Ok _ -> ()
+              | Error e -> failtestf "a leading block comment must not become a slashy scalar: %A" e
+
               Expect.isOk (Limits.precheck limits "10 / 2 / 5") "division operators do not open slashy spans"
 
               for source in
@@ -390,6 +441,25 @@ let admissionLimits =
                     "x++ / 2"
                     "a\n / b / c" ] do
                   Expect.isOk (Limits.precheck limits source) $"division remains code in {source}"
+
+              for source in
+                  [ "pipeline { agent any stages { stage('B') { steps { echo x++ / aaaaa / b } } } }"
+                    "pipeline { agent any stages { stage('B') { steps { echo(x++ / aaaaa / b) } } } }" ] do
+                  match Parser.parseWithLimits limits source with
+                  | Ok _ -> ()
+                  | Error e -> failtestf "postfix division must not become a slashy scalar: %A" e
+
+              match Limits.precheck limits "return\r'aaaaa'" with
+              | Error e ->
+                  Expect.equal e.Code ScalarTooLong "the bare-CR scalar is refused"
+                  Expect.equal e.Position { Line = 2L; Column = 8L } "bare CR advances the refusal line"
+              | Ok _ -> failtest "the bare-CR scalar bypassed the scalar limit"
+
+              match Fogell.Groovy.Parser.Parser.parseWithLimits limits "return\r'aaaaa'" with
+              | Error e ->
+                  Expect.equal e.Code ScalarTooLong "Groovy refuses the bare-CR scalar"
+                  Expect.equal e.Position { Line = 2L; Column = 8L } "Groovy retains the bare-CR source position"
+              | Ok _ -> failtest "Groovy admitted the bare-CR scalar"
 
               Expect.isOk
                   (Limits.precheck limits "// /aaaaa/\nnode")

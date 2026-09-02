@@ -75,6 +75,7 @@ let private rawArgValue (stops: char list) : P<string> =
                 let here = stream.Index
                 let mutable i = here - 1L
                 let mutable lastSig = ' '
+                let mutable priorSig = ' '
                 let mutable scanning = true
 
                 while scanning && i >= 0L do
@@ -87,9 +88,26 @@ let private rawArgValue (stops: char list) : P<string> =
                         lastSig <- ch
                         scanning <- false
 
+                i <- i - 1L
+                scanning <- true
+
+                while scanning && i >= 0L do
+                    stream.Seek i
+                    let ch = stream.Peek()
+
+                    if ch = ' ' || ch = '\t' then
+                        i <- i - 1L
+                    else
+                        priorSig <- ch
+                        scanning <- false
+
                 stream.Seek here
 
-                if Lexeme.endsExpression lastSig then
+                let postfixDivision =
+                    (lastSig = '+' && priorSig = '+')
+                    || (lastSig = '-' && priorSig = '-')
+
+                if Lexeme.endsExpression lastSig || postfixDivision then
                     stream.Skip()
                     Reply("/") // division: the ordinary character
                 else
@@ -119,14 +137,18 @@ let private rawArgValue (stops: char list) : P<string> =
                         stream.Skip()
                         Reply("/")
 
-    let chunks = quotedSpan <|> plain <|> slash
+    let chunks = attempt commentSpanRaw <|> quotedSpan <|> plain <|> slash
 
     // At the start of an argument value the surrounding call grammar has
     // already established an operand position. That context is stronger than
     // character lookbehind (`echo /x/` otherwise sees the `o` in `echo` and
     // mistakes the literal for division). Capture and bound that first slashy,
     // then let the ordinary raw-expression scanner consume any continuation.
-    attempt (pipe2 (lookAhead (pchar '/') >>. stringSpanRaw) (manyStrings chunks) (+))
+    attempt (
+        pipe2
+            (lookAhead (pchar '/' .>> notFollowedBy (anyOf "/*")) >>. stringSpanRaw)
+            (manyStrings chunks)
+            (+))
     <|> many1Strings chunks
 
 /// A string literal wins ONLY when it is the WHOLE value.
