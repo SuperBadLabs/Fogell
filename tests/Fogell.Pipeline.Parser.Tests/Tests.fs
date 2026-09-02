@@ -652,6 +652,60 @@ let admissionLimits =
                               $"{newlineLabel} refuses an ordinary {quoteLabel}-quoted multiline string"
                       | Ok _ -> failtestf "%s was swallowed inside an ordinary %s-quoted string" newlineLabel quoteLabel
 
+                      // Direct Declarative arguments take the scalar parser. These
+                      // controls must not be hidden inside a list/balancedRaw value:
+                      // that path is reparsed by the nested Groovy parser and once
+                      // masked a decoder that retained the physical line ending.
+                      let directMultiline =
+                          "pipeline { agent any stages { stage('B') { steps { echo "
+                          + quote
+                          + "a"
+                          + newline
+                          + "b"
+                          + quote
+                          + " } } } }"
+
+                      match Parser.parseWithLimits Limits.defaults directMultiline with
+                      | Error e ->
+                          Expect.equal
+                              e.Code
+                              MalformedSyntax
+                              $"{newlineLabel} refuses a direct {quoteLabel}-quoted multiline argument"
+                      | Ok _ -> failtestf "%s crossed a direct %s-quoted argument" newlineLabel quoteLabel
+
+                      for argumentLabel, prefix in [ "positional", "echo "; "named", "echo message: " ] do
+                          let directContinuation =
+                              "pipeline { agent any stages { stage('B') { steps { "
+                              + prefix
+                              + quote
+                              + "a\\"
+                              + newline
+                              + "b"
+                              + quote
+                              + " } } } }"
+
+                          match Parser.parseWithLimits Limits.defaults directContinuation with
+                          | Ok pipeline ->
+                              let step = pipeline.Stages.[0].Steps.[0]
+
+                              if argumentLabel = "positional" then
+                                  Expect.equal
+                                      step.Positional
+                                      [ "ab" ]
+                                      $"{newlineLabel} is removed from a direct {quoteLabel}-quoted positional"
+                              else
+                                  Expect.equal
+                                      step.Named
+                                      [ "message", "ab" ]
+                                      $"{newlineLabel} is removed from a direct {quoteLabel}-quoted named value"
+                          | Error e ->
+                              failtestf
+                                  "%s direct %s %s-quoted continuation was rejected: %A"
+                                  newlineLabel
+                                  argumentLabel
+                                  quoteLabel
+                                  e
+
                   let tripleMultiline =
                       "pipeline { agent any stages { stage('B') { steps { echo(['''a"
                       + newline

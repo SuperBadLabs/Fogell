@@ -195,6 +195,26 @@ let private decodedEscape: P<char> =
 let private escapedChar: P<char> =
     skipChar '\\' >>. decodedEscape
 
+/// A backslash immediately followed by a physical line ending is Groovy's
+/// line-continuation spelling, not an escaped newline character. Jenkins drops
+/// the whole pair before constructing the string: `echo 'first\\\nsecond'`
+/// receives `firstsecond`. This has to precede [escapedChar], whose historical
+/// catch-all quite correctly maps an escaped *letter* `n` to LF but would also
+/// accept a physical LF through [anyChar] and retain it.
+///
+/// Keep all three line-ending forms explicit. FParsec recognises LF, CRLF and
+/// bare CR as newlines, and the surrounding scanners already promise identical
+/// boundaries for those forms. The outer [attempt] restores the backslash when
+/// it is not a continuation so the ordinary escape parser can consume it.
+let private escapedPhysicalContinuation: P<string> =
+    attempt (
+        skipChar '\\'
+        >>. choice
+                [ attempt (skipChar '\r' >>. skipChar '\n')
+                  skipChar '\n'
+                  skipChar '\r' ]
+        >>% "")
+
 /// The ONLY thing that separates [escapedCharKeepingDollar] from [escapedChar].
 ///
 /// A NUL sentinel, not "\$": REVIEW FIX (Codex, PR #14 round 9). `"\\$X"` is an
@@ -214,11 +234,17 @@ let private keepDollar (c: char) : string =
 
 let private quoted (q: string) : P<string> =
     between (skipString q) (skipString q) (
-        manyChars (escapedChar <|> satisfy (fun c -> c <> q.[0] && c <> '\n')))
+        manyStrings (
+            escapedPhysicalContinuation
+            <|> (escapedChar |>> string)
+            <|> (satisfy (fun c -> c <> q.[0] && c <> '\r' && c <> '\n') |>> string)))
 
 let private tripleQuoted (q: string) : P<string> =
     between (skipString q) (skipString q) (
-        manyCharsTill (escapedChar <|> anyChar) (lookAhead (skipString q)))
+        manyTill
+            (escapedPhysicalContinuation <|> (escapedChar |>> string) <|> (anyChar |>> string))
+            (lookAhead (skipString q))
+        |>> String.concat "")
 
 /// FG-125. A SLASHY string is the one form whose escapes are NOT Java's: it
 /// escapes only its `/` delimiter and preserves every other backslash sequence
@@ -280,11 +306,16 @@ let private escapedCharKeepingDollar: P<string> =
 /// Variants used where interpolation provenance matters, so \$ is preserved.
 let private quotedKeepingDollar (q: string) : P<string> =
     between (skipString q) (skipString q) (
-        manyStrings (escapedCharKeepingDollar <|> (satisfy (fun c -> c <> q.[0] && c <> '\n') |>> string)))
+        manyStrings (
+            escapedPhysicalContinuation
+            <|> escapedCharKeepingDollar
+            <|> (satisfy (fun c -> c <> q.[0] && c <> '\r' && c <> '\n') |>> string)))
 
 let private tripleQuotedKeepingDollar (q: string) : P<string> =
     between (skipString q) (skipString q) (
-        manyTill (escapedCharKeepingDollar <|> (anyChar |>> string)) (lookAhead (skipString q))
+        manyTill
+            (escapedPhysicalContinuation <|> escapedCharKeepingDollar <|> (anyChar |>> string))
+            (lookAhead (skipString q))
         |>> String.concat "")
 
 /// Any Groovy string form Jenkinsfiles use, including slashy strings.
