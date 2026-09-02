@@ -101,9 +101,8 @@ let private rawArgValue (stops: char list) : P<string> =
                     while not closed && not bad && not stream.IsEndOfStream do
                         let d = stream.Peek()
 
-                        if d = '\\' then
-                            sb.Append(stream.Read(1)) |> ignore
-                            if not stream.IsEndOfStream then sb.Append(stream.Read(1)) |> ignore
+                        if d = '\\' && stream.Peek(1) = '/' then
+                            sb.Append(stream.Read(2)) |> ignore
                         elif d = '/' then
                             sb.Append(stream.Read(1)) |> ignore
                             closed <- true
@@ -113,13 +112,22 @@ let private rawArgValue (stops: char list) : P<string> =
                             sb.Append(stream.Read(1)) |> ignore
 
                     if closed then
+                        recordScalarContent (sb.ToString().Substring(1, sb.Length - 2)) stream
                         Reply(sb.ToString())
                     else
                         stream.Seek here
                         stream.Skip()
                         Reply("/")
 
-    many1Strings (quotedSpan <|> plain <|> slash)
+    let chunks = quotedSpan <|> plain <|> slash
+
+    // At the start of an argument value the surrounding call grammar has
+    // already established an operand position. That context is stronger than
+    // character lookbehind (`echo /x/` otherwise sees the `o` in `echo` and
+    // mistakes the literal for division). Capture and bound that first slashy,
+    // then let the ordinary raw-expression scanner consume any continuation.
+    attempt (pipe2 (lookAhead (pchar '/') >>. stringSpanRaw) (manyStrings chunks) (+))
+    <|> many1Strings chunks
 
 /// A string literal wins ONLY when it is the WHOLE value.
 ///
@@ -435,31 +443,53 @@ let private stepBlock: P<Step list> =
 /// Fogell cannot parse, it must be a REFUSAL that gets a ticket, not a silent guess at
 /// what the author meant.
 
-let private parenArgs (raw: string) =
+let private rebaseAdmissionError (strippedColumns: int64) (origin: FParsec.Position) (error: AdmissionError) =
+    let rebased =
+        { Line = origin.Line + error.Position.Line - 1L
+          Column =
+            if error.Position.Line = 1L then
+                origin.Column + strippedColumns + error.Position.Column - 1L
+            else
+                error.Position.Column }
+
+    { error with Position = rebased }
+
+let private parenArgs (origin: FParsec.Position) (raw: string) =
     let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
 
     getUserState
     >>= fun outerState ->
             let state =
-                { parserState () with
-                    MaxScalarBytes = outerState.MaxScalarBytes }
+                parserStateWithLimits outerState.Limits
 
             match runParserOnString (ws >>. argList .>> eof) state "args" body with
             | ParserResult.Success(v, parsedState, _) ->
                 match parsedState.ScalarRefusal, parsedState.Refusal.Value with
-                | Some e, _ -> setUserState { outerState with ScalarRefusal = Some e } >>% v
+                | Some e, _ ->
+                    let rebased = rebaseAdmissionError 1L origin e
+                    setUserState { outerState with ScalarRefusal = Some rebased } >>% v
                 | None, Some(message, _) -> refuse message
                 | None, None -> preturn v
             | ParserResult.Failure(_, _, failedState) ->
                 match failedState.ScalarRefusal, failedState.Refusal.Value with
                 | Some e, _ ->
-                    setUserState { outerState with ScalarRefusal = Some e }
+                    let rebased = rebaseAdmissionError 1L origin e
+                    setUserState { outerState with ScalarRefusal = Some rebased }
                     >>. fail "parenthesised argument contains an overlong scalar"
                 | None, Some(message, _) -> refuse message
                 | None, None ->
                     refuse "a parenthesised argument body that does not parse is refused, never downgraded to one positional value"
 
 let private hspaces: P<unit> = skipMany (anyOf " \t")
+
+let private validateNestedScalar (strippedColumns: int64) (origin: FParsec.Position) (source: string) : P<string> =
+    getUserState
+    >>= fun state ->
+            match Fogell.Groovy.Parser.Parser.parseWithLimits state.Limits source with
+            | Result.Error e when e.Code = ScalarTooLong ->
+                let rebased = rebaseAdmissionError strippedColumns origin e
+                setUserState { state with ScalarRefusal = Some rebased } >>% source
+            | _ -> preturn source
 
 let private nonEmptyInlineArgs =
     hspaces >>. argList
@@ -482,7 +512,7 @@ stepRef.Value <-
             // workspace, nothing else. Any zero-argument call form was affected —
             // `deleteDir()`, `cleanWs()`, and so on.
             (choice
-                [ attempt (balancedRaw '(' ')') >>= parenArgs
+                [ attempt (getPosition .>>. balancedRaw '(' ')') >>= fun (origin, raw) -> parenArgs origin raw
                   attempt nonEmptyInlineArgs
                   notFollowedBy (attempt (hspaces >>. identifier .>>? symbol ":" >>. lookAhead (pchar '[')))
                   >>% ([], [], Set.empty, Set.empty, [], Set.empty, []) ])
@@ -495,7 +525,10 @@ stepRef.Value <-
         // walker could never run one. `Fogell.Groovy.Parser` is what understands this
         // text; the walker hands it over at execution.
         if name = "script" then
-            (attempt (balancedBody '{' '}') |>> fun raw -> pos, name, args, [], true, Some raw)
+            (attempt (getPosition .>>. balancedBody '{' '}')
+             >>= fun (origin, raw) ->
+                     validateNestedScalar 1L origin raw
+                     |>> fun validated -> pos, name, args, [], true, Some validated)
             <|> preturn (pos, name, args, [], false, None)
         else
             opt (attempt stepBlock)
@@ -724,12 +757,12 @@ let private whenNamedGroupOrParens: P<(string * string) list> =
     attempt (between (symbol "(") (symbol ")") whenNamedGroup)
     <|> whenNamedGroup
 
-let private decodeWhenString (source: string) =
-    match runParserOnString (ws >>. stringLiteral .>> eof) (parserState ()) "when-value" source with
+let private decodeWhenString (limits: Limits) (source: string) =
+    match runParserOnString (ws >>. stringLiteral .>> eof) (parserStateWithLimits limits) "when-value" source with
     | ParserResult.Success(value, _, _) -> Some value
     | ParserResult.Failure _ -> None
 
-let private decodeWhenEqualsOperand (source: string) =
+let private decodeWhenEqualsOperand (limits: Limits) (source: string) =
     let scalar =
         attempt (stringLiteral |>> fun value -> $"'{value}'")
         // Preserve the deliberately narrow scalar grammar that Fogell can
@@ -738,7 +771,7 @@ let private decodeWhenEqualsOperand (source: string) =
         // equals operands.
         <|> (many1Satisfy (fun c -> isDigit c || c = '-' || c = '.' || c = '_' || isLetter c) .>> ws)
 
-    match runParserOnString (ws >>. scalar .>> eof) (parserState ()) "when-equals-value" source with
+    match runParserOnString (ws >>. scalar .>> eof) (parserStateWithLimits limits) "when-equals-value" source with
     | ParserResult.Success(value, _, _) -> Some value
     | ParserResult.Failure _ -> None
 
@@ -748,10 +781,11 @@ let private renderWhenPairs pairs =
 let private whenEnvironmentCondition: P<WhenCondition> =
     keyword "environment"
     >>. whenNamedGroupOrParens
-    |>> fun pairs ->
+    .>>. getUserState
+    |>> fun (pairs, state) ->
             let getString k =
                 pairs
-                |> List.tryPick (fun (n, v) -> if n = k then decodeWhenString v else None)
+                |> List.tryPick (fun (n, v) -> if n = k then decodeWhenString state.Limits v else None)
 
             match getString "name", getString "value" with
             | Some n, Some v -> WhenEnvironment(n, v)
@@ -771,15 +805,15 @@ let private whenNamedOrBareString
     (key: string)
     (modelled: string -> WhenCondition)
     : P<WhenCondition> =
-    let fromNamed pairs =
+    let fromNamed limits pairs =
         match pairs with
         | [ (name, value) ] when name = key ->
-            match decodeWhenString value with
+            match decodeWhenString limits value with
             | Some decoded -> modelled decoded
             | None -> WhenUnmodelled(kind, renderWhenPairs pairs)
         | _ -> WhenUnmodelled(kind, renderWhenPairs pairs)
 
-    let named = whenNamedGroupOrParens |>> fromNamed
+    let named = whenNamedGroupOrParens .>>. getUserState |>> fun (pairs, state) -> fromNamed state.Limits pairs
 
     let positional =
         attempt (between (symbol "(") (symbol ")") stringLiteral)
@@ -804,12 +838,13 @@ let private whenEqualsCondition: P<WhenCondition> =
     // 2 are distinguishable — Jenkins compares objects, and String != Integer.
     >>. whenNamedGroupOrParens
     .>> ws
-    |>> fun pairs ->
+    .>>. getUserState
+    |>> fun (pairs, state) ->
             let get k = pairs |> List.tryPick (fun (n, v) -> if n = k then Some v else None)
 
             match get "expected", get "actual" with
             | Some e, Some a ->
-                match decodeWhenEqualsOperand e, decodeWhenEqualsOperand a with
+                match decodeWhenEqualsOperand state.Limits e, decodeWhenEqualsOperand state.Limits a with
                 | Some modelledExpected, Some modelledActual -> WhenEquals(modelledExpected, modelledActual)
                 | _ -> WhenUnmodelled("equals", renderWhenPairs pairs)
             | _ -> WhenUnmodelled("equals", renderWhenPairs pairs)
@@ -840,14 +875,15 @@ let private namedOrBare (kind: string) (key: string) (measuredInvalidKeys: Set<s
     // same shadowing that bit this file once before.
     let named =
         whenNamedGroupOrParens
-        >>= fun pairs ->
+        .>>. getUserState
+        >>= fun (pairs, state) ->
                 match pairs |> List.tryFind (fun (name, _) -> Set.contains name measuredInvalidKeys) with
                 | Some(name, _) ->
                     refuse $"`{kind}` named argument `{name}` is rejected by Jenkins"
                 | None ->
                     match pairs with
                     | [ (k, v) ] when k = key ->
-                        match decodeWhenString v with
+                        match decodeWhenString state.Limits v with
                         | Some decoded -> preturn (Result.Ok decoded)
                         | None -> preturn (Result.Error(renderWhenPairs pairs))
                     | _ -> preturn (Result.Error(renderWhenPairs pairs))
@@ -930,7 +966,10 @@ let rec private whenCondition: P<WhenCondition> =
                       attempt whenTagCondition
                       attempt whenEqualsCondition
                       attempt whenEnvironmentCondition
-                      attempt (keyword "expression" >>. balancedBody '{' '}' .>> ws |>> WhenExpression)
+                      attempt (
+                          keyword "expression"
+                          >>. getPosition .>>. balancedBody '{' '}'
+                          >>= fun (origin, raw) -> validateNestedScalar 1L origin raw |>> WhenExpression)
                       attempt (keyword "allOf" >>. between (symbol "{") (symbol "}") (whenSeparators >>. many (attempt (whenCondition .>> whenSeparators))) .>> ws |>> WhenAllOf)
                       attempt (keyword "anyOf" >>. between (symbol "{") (symbol "}") (whenSeparators >>. many (attempt (whenCondition .>> whenSeparators))) .>> ws |>> WhenAnyOf)
                       attempt (keyword "not" >>. between (symbol "{") (symbol "}") whenCondition .>> ws |>> WhenNot)
@@ -1289,7 +1328,8 @@ let private pipelineParser: P<Pipeline> =
     // `withSkippedString` reads exactly what `preamble >>. skipToPipeline` consumed, so
     // the capture cannot drift from the skip: there is no second scanner to keep in
     // agreement with this one.
-    withSkippedString (fun skipped () -> skipped) (preamble >>. skipToPipeline)
+    getPosition
+    .>>. withSkippedString (fun skipped () -> skipped) (preamble >>. skipToPipeline)
     .>>. (keyword "pipeline"
           >>. between
                   (symbol "{")
@@ -1311,7 +1351,11 @@ let private pipelineParser: P<Pipeline> =
                    // files carry pipeline+stage), and a duplicate STAGE `options` has no
                    // measurement yet.
                    >>= rejectingDuplicateSections "options" (function TopOptions _ -> true | _ -> false)))
-    .>>. manyChars anyChar
+    .>>. (getPosition .>>. manyChars anyChar)
+    >>= fun (((preambleOrigin, capturedPreamble), sections), (epilogueOrigin, capturedEpilogue)) ->
+            validateNestedScalar 0L preambleOrigin capturedPreamble
+            >>. validateNestedScalar 0L epilogueOrigin capturedEpilogue
+            >>% ((capturedPreamble, sections), capturedEpilogue)
     |>> fun ((capturedPreamble, sections), capturedEpilogue) ->
             let pick f = sections |> List.tryPick f
             { Agent = defaultArg (pick (function TopAgent a -> Some a | _ -> None)) AgentNone

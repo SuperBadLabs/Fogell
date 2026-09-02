@@ -36,6 +36,30 @@ module Limits =
 
         precedingBackslashes % 2 = 1
 
+    /// For every source index, record the next slash on the same physical
+    /// line that can terminate a slashy literal. Groovy's slashy escape rule
+    /// is deliberately narrower than ordinary-string escaping: a slash whose
+    /// immediately preceding character is a backslash is content, while a
+    /// backslash before any other character is just raw content.
+    ///
+    /// Computing this table once is load-bearing. Looking for a closer from
+    /// every possible opener makes a line of repeated escaped slashes
+    /// quadratic; the source cap bounds memory and this pass stays O(n).
+    let private nextSlashyClosers (source: string) =
+        let closers = Array.create source.Length -1
+        let mutable nextCloser = -1
+
+        for i = source.Length - 1 downto 0 do
+            if source.[i] = '\n' then
+                nextCloser <- -1
+
+            closers.[i] <- nextCloser
+
+            if source.[i] = '/' && (i = 0 || source.[i - 1] <> '\\') then
+                nextCloser <- i
+
+        closers
+
     /// Cheap pre-parse guard. Performs a UTF-8 byte-count pass, then counts
     /// brace depth and token-ish nodes with a second linear scan. Neither pass
     /// recurses, so this guard cannot itself exhaust the stack. It is
@@ -58,8 +82,8 @@ module Limits =
                     $"source is {sourceBytes} UTF-8 bytes, limit is {limits.MaxSourceBytes}"
             )
         else
+            let slashyClosers = nextSlashyClosers source
             let mutable depth = 0
-            let mutable maxDepth = 0
             let mutable nodes = 0
             let mutable line = 1L
             let mutable column = 1L
@@ -68,8 +92,48 @@ module Limits =
             let mutable delimiterLength = 0
             let mutable lineComment = false
             let mutable blockComment = false
+            // Slashy-versus-division cannot be decided from the immediately
+            // preceding character: `return /x/` and command-form `echo /x/`
+            // both follow an identifier, while `return a / b` is division.
+            // These fields are a bounded lexical context, not a grammar. They
+            // only decide whether a complete same-line slashy span shields its
+            // contents from this guard; the real parser still decides whether
+            // the source is valid and owns the slashy's scalar-byte refusal.
+            let mutable needsOperand = true
+            let mutable statementHead = true
+            let mutable commandHead = false
+            let mutable sawLineBreak = false
+            let mutable lastWasBlockClose = false
+            let mutable awaitingControlParen = false
+            let controlParens = System.Collections.Generic.Stack<bool>()
+            let mutable expressionNesting = 0
             let mutable err = None
             let mutable i = 0
+
+            let recordNode () =
+                nodes <- nodes + 1
+
+                if nodes > limits.MaxNodes then
+                    err <-
+                        Some(
+                            AdmissionError.at
+                                TooManyNodes
+                                line
+                                column
+                                $"node count exceeds {limits.MaxNodes}"
+                        )
+
+            let markTriviaBreak () =
+                sawLineBreak <- true
+                // Command-form arguments must begin on their head's line.
+                // Do not reset HaveOperand generally: Fogell permits a binary
+                // operator after newline trivia (`a\n / b`). A completed block
+                // is the narrow seam where a slash may begin the next statement.
+                commandHead <- false
+
+                if lastWasBlockClose && expressionNesting = 0 then
+                    needsOperand <- true
+                    statementHead <- true
 
             while err.IsNone && i < source.Length do
                 let c = source.[i]
@@ -81,8 +145,12 @@ module Limits =
                     column <- column + 1L
 
                 if lineComment then
-                    if c = '\n' then lineComment <- false
+                    if c = '\n' then
+                        lineComment <- false
+                        markTriviaBreak ()
                 elif blockComment then
+                    if c = '\n' then markTriviaBreak ()
+
                     if c = '*' && i + 1 < source.Length && source.[i + 1] = '/' then
                         i <- i + 1
                         column <- column + 1L
@@ -121,8 +189,15 @@ module Limits =
                         quote <- '\000'
                         scalarContentStart <- -1
                         delimiterLength <- 0
+                        needsOperand <- false
+                        statementHead <- false
+                        commandHead <- false
+                        sawLineBreak <- false
+                        lastWasBlockClose <- false
                 else
                     match c with
+                    | ' ' | '\t' | '\r' -> ()
+                    | '\n' -> markTriviaBreak ()
                     | '/' when i + 1 < source.Length && source.[i + 1] = '/' ->
                         lineComment <- true
                         i <- i + 1
@@ -140,16 +215,34 @@ module Limits =
                                 1
 
                         scalarContentStart <- i + delimiterLength
-                        nodes <- nodes + 1
+                        recordNode ()
 
                         if delimiterLength = 3 then
                             i <- i + 2
                             column <- column + 2L
+                    | '/'
+                        when slashyClosers.[i] >= 0
+                             && (needsOperand || statementHead || commandHead) ->
+                        // Comments won above. A complete candidate in an
+                        // operand or command-argument position shields every
+                        // quote and delimiter through its cached closer. If no
+                        // closer exists this arm is not entered: the slash is
+                        // processed as ordinary code and all fallback
+                        // node/depth accounting remains visible.
+                        recordNode ()
+
+                        if err.IsNone then
+                            let closingIndex = slashyClosers.[i]
+                            column <- column + int64 (closingIndex - i)
+                            i <- closingIndex
+                            needsOperand <- false
+                            statementHead <- false
+                            commandHead <- false
+                            sawLineBreak <- false
+                            lastWasBlockClose <- false
                     | '{' | '[' | '(' ->
                         depth <- depth + 1
-                        nodes <- nodes + 1
-
-                        if depth > maxDepth then maxDepth <- depth
+                        recordNode ()
 
                         if depth > limits.MaxDepth then
                             err <-
@@ -160,23 +253,151 @@ module Limits =
                                         column
                                         $"nesting depth {depth} exceeds limit {limits.MaxDepth}"
                                 )
+                        elif c = '(' then
+                            controlParens.Push awaitingControlParen
+                            awaitingControlParen <- false
+                            expressionNesting <- expressionNesting + 1
+                            needsOperand <- true
+                            statementHead <- false
+                            commandHead <- false
+                            sawLineBreak <- false
+                            lastWasBlockClose <- false
+                        elif c = '[' then
+                            expressionNesting <- expressionNesting + 1
+                            needsOperand <- true
+                            statementHead <- false
+                            commandHead <- false
+                            sawLineBreak <- false
+                            lastWasBlockClose <- false
+                        else
+                            // A brace begins either a statement body or an
+                            // expression literal; both allow an operand first.
+                            needsOperand <- true
+                            statementHead <- true
+                            commandHead <- false
+                            sawLineBreak <- false
+                            lastWasBlockClose <- false
                     | '}' | ']' | ')' ->
                         depth <- depth - 1
-                        nodes <- nodes + 1
-                    | c when System.Char.IsLetterOrDigit c || c = '_' ->
-                        if i = 0 || not (System.Char.IsLetterOrDigit source.[i - 1] || source.[i - 1] = '_') then
-                            nodes <- nodes + 1
-                    | _ -> ()
+                        recordNode ()
 
-                    if err.IsNone && nodes > limits.MaxNodes then
-                        err <-
-                            Some(
-                                AdmissionError.at
-                                    TooManyNodes
-                                    line
-                                    column
-                                    $"node count exceeds {limits.MaxNodes}"
-                            )
+                        if c = ')' then
+                            expressionNesting <- max 0 (expressionNesting - 1)
+
+                            let closedControl =
+                                if controlParens.Count = 0 then false else controlParens.Pop()
+
+                            if closedControl then
+                                // `if (...) /x/` is an unbraced statement
+                                // body, not division by the condition.
+                                needsOperand <- true
+                                statementHead <- true
+                            else
+                                needsOperand <- false
+                                statementHead <- false
+
+                            lastWasBlockClose <- false
+                        elif c = ']' then
+                            expressionNesting <- max 0 (expressionNesting - 1)
+                            needsOperand <- false
+                            statementHead <- false
+                            lastWasBlockClose <- false
+                        else
+                            needsOperand <- false
+                            statementHead <- false
+                            lastWasBlockClose <- true
+
+                        commandHead <- false
+                        sawLineBreak <- false
+                    | c when System.Char.IsLetterOrDigit c || c = '_' ->
+                        let start = i
+
+                        while
+                            i + 1 < source.Length
+                            && (System.Char.IsLetterOrDigit source.[i + 1] || source.[i + 1] = '_')
+                            do
+                            i <- i + 1
+                            column <- column + 1L
+
+                        let word = source.Substring(start, i - start + 1)
+                        recordNode ()
+
+                        if err.IsNone then
+                            let beginsNewStatement =
+                                statementHead
+                                || (sawLineBreak && expressionNesting = 0 && not needsOperand)
+
+                            match word with
+                            | "if" | "while" | "for" | "switch" | "catch" ->
+                                awaitingControlParen <- true
+                                needsOperand <- true
+                                statementHead <- false
+                                commandHead <- false
+                            | "return" | "throw" | "case" | "in" ->
+                                // These keywords require an expression next;
+                                // their final identifier character must never
+                                // force a following slash to division.
+                                awaitingControlParen <- false
+                                needsOperand <- true
+                                statementHead <- false
+                                commandHead <- false
+                            | "def" | "final" | "new" | "instanceof" | "as" ->
+                                awaitingControlParen <- false
+                                needsOperand <- true
+                                statementHead <- false
+                                commandHead <- false
+                            | "true" | "false" | "null" ->
+                                awaitingControlParen <- false
+                                needsOperand <- false
+                                statementHead <- false
+                                commandHead <- false
+                            | _ ->
+                                awaitingControlParen <- false
+                                // A leading identifier can be a Groovy
+                                // command head (`echo /x/`); a number cannot.
+                                // Keeping numeric heads out is what preserves
+                                // `10 / 2 / 5` as two divisions.
+                                let identifierHead =
+                                    System.Char.IsLetter word.[0] || word.[0] = '_'
+
+                                commandHead <- identifierHead && (beginsNewStatement || commandHead)
+                                needsOperand <- false
+                                statementHead <- false
+
+                            sawLineBreak <- false
+                            lastWasBlockClose <- false
+                    | ';' ->
+                        needsOperand <- true
+                        statementHead <- true
+                        commandHead <- false
+                        awaitingControlParen <- false
+                        sawLineBreak <- false
+                        lastWasBlockClose <- false
+                    | '+' | '-' when i + 1 < source.Length && source.[i + 1] = c && not needsOperand ->
+                        // Postfix increment/decrement leaves a complete value.
+                        i <- i + 1
+                        column <- column + 1L
+                        needsOperand <- false
+                        statementHead <- false
+                        commandHead <- false
+                        sawLineBreak <- false
+                        lastWasBlockClose <- false
+                    | '/' | '=' | '+' | '-' | '*' | '%' | '&' | '|' | '^' | '!' | '~'
+                    | '<' | '>' | ',' | ':' | '?' | '.' ->
+                        needsOperand <- true
+                        statementHead <- false
+                        commandHead <- false
+                        awaitingControlParen <- false
+                        sawLineBreak <- false
+                        lastWasBlockClose <- false
+                    | _ ->
+                        // Unknown punctuation is deliberately not promoted to
+                        // an expression ender. If the grammar accepts it, a
+                        // later explicit token will establish slash context;
+                        // if it does not, the parser will fail closed.
+                        commandHead <- false
+                        sawLineBreak <- false
+                        lastWasBlockClose <- false
 
                 i <- i + 1
 

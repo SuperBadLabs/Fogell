@@ -21,17 +21,35 @@ open Fogell.Ir
 /// scalar interpretation the parser actually commits can refuse admission.
 type ParserState =
     { Refusal: (string * Fogell.Ir.Position) option ref
-      MaxScalarBytes: int
+      Limits: Limits
       ScalarRefusal: AdmissionError option }
 
 let parserStateWithLimits (limits: Limits) =
     { Refusal = ref None
-      MaxScalarBytes = limits.MaxScalarBytes
+      Limits = limits
       ScalarRefusal = None }
 
 let parserState () = parserStateWithLimits Limits.defaults
 
 type P<'a> = Parser<'a, ParserState>
+
+/// Record a scalar refusal at the point its grammar/scanner has committed to a
+/// literal span. Keeping this state immutable is load-bearing: an enclosing
+/// `attempt` must rewind a scalar interpretation that the grammar abandons.
+let recordScalarContent (rawContent: string) (stream: CharStream<ParserState>) =
+    let scalarBytes = System.Text.Encoding.UTF8.GetByteCount rawContent
+
+    if scalarBytes > stream.UserState.Limits.MaxScalarBytes then
+        let position = stream.Position
+
+        let refusal =
+            AdmissionError.at
+                ScalarTooLong
+                position.Line
+                position.Column
+                $"string literal exceeds {stream.UserState.Limits.MaxScalarBytes} UTF-8 bytes"
+
+        stream.UserState <- { stream.UserState with ScalarRefusal = Some refusal }
 
 /// Record a semantic refusal before failing the current parser branch. The
 /// fallback may still parse, but admission reads this cell before returning it.
@@ -219,7 +237,7 @@ let private tripleQuoted (q: string) : P<string> =
 let private slashyQuoted: P<string> =
     let content =
         manyStrings (
-            (skipChar '\\' >>. (anyChar |>> fun c -> if c = '/' then "/" else "\\" + string c))
+            (attempt (skipString "\\/" >>% "/"))
             <|> (satisfy (fun c -> c <> '/' && c <> '\n') |>> string))
 
     let captured =
@@ -235,13 +253,13 @@ let private slashyQuoted: P<string> =
     >>= fun (((decoded, raw), position), state) ->
             let scalarBytes = System.Text.Encoding.UTF8.GetByteCount raw
 
-            if scalarBytes > state.MaxScalarBytes then
+            if scalarBytes > state.Limits.MaxScalarBytes then
                 let refusal =
                     AdmissionError.at
                         ScalarTooLong
                         position.Line
                         position.Column
-                        $"string literal exceeds {state.MaxScalarBytes} UTF-8 bytes"
+                        $"string literal exceeds {state.Limits.MaxScalarBytes} UTF-8 bytes"
 
                 setUserState { state with ScalarRefusal = Some refusal } >>% decoded
             else
@@ -381,7 +399,9 @@ let stringSpanRaw: P<string> =
             while not closed && not stream.IsEndOfStream do
                 let d = stream.Peek()
 
-                if d = '\\' then
+                if q = '/' && d = '\\' && stream.Peek(1) = '/' then
+                    stream.Skip(2)
+                elif q <> '/' && d = '\\' then
                     stream.Skip()
                     if not stream.IsEndOfStream then stream.Skip()
                 elif not tripled && d = q then
@@ -409,7 +429,10 @@ let stringSpanRaw: P<string> =
             if readDelimited c tripled then
                 let len = int (stream.Index - start)
                 stream.Seek start
-                Reply(stream.Read len)
+                let raw = stream.Read len
+                let delimiterLength = if tripled then 3 else 1
+                recordScalarContent (raw.Substring(delimiterLength, raw.Length - (2 * delimiterLength))) stream
+                Reply(raw)
             else
                 stream.Seek start
                 Reply(Error, expected "a terminated string literal")
@@ -427,7 +450,9 @@ let stringSpanRaw: P<string> =
             if readDelimited '/' false then
                 let len = int (stream.Index - start)
                 stream.Seek start
-                Reply(stream.Read len)
+                let raw = stream.Read len
+                recordScalarContent (raw.Substring(1, raw.Length - 2)) stream
+                Reply(raw)
             else
                 stream.Seek start
                 Reply(Error, expected "a terminated slashy string")
@@ -557,9 +582,8 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                     while not closed && not stream.IsEndOfStream do
                         let d = stream.Peek()
 
-                        if d = '\\' then
-                            stream.Skip()
-                            if not stream.IsEndOfStream then stream.Skip()
+                        if d = '\\' && stream.Peek(1) = '/' then
+                            stream.Skip(2)
                         elif d = '/' then
                             stream.Skip()
                             closed <- true

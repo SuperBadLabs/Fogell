@@ -232,8 +232,8 @@ let admissionLimits =
               expectScalarTooLong "UTF-8 slashy" "/ééa/"
               expectAccepted "pipeline escaped-slash" "/aa\\//"
               expectScalarTooLong "pipeline escaped-slash" "/aa\\/a/"
-              expectAccepted "pipeline even backslash run" "/aa\\\\/"
-              expectScalarTooLong "pipeline even backslash run" "/aa\\\\a/"
+              expectAccepted "pipeline even backslash run plus escaped slash" "/a\\\\//"
+              expectScalarTooLong "pipeline even backslash run plus escaped slash" "/aa\\\\//"
 
               for label, exact, over in
                   [ "return keyword", "return /aaaa/", "return /aaaaa/"
@@ -268,6 +268,33 @@ let admissionLimits =
                     "step argument",
                     "pipeline { agent any stages { stage('B') { steps { echo /aaaa/ } } } }",
                     "pipeline { agent any stages { stage('B') { steps { echo /aaaaa/ } } } }"
+                    "raw positional expression",
+                    "pipeline { agent any stages { stage('B') { steps { echo /aaaa/ + 'x' } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo /aaaaa/ + 'x' } } } }"
+                    "raw quote-bearing slashy expression",
+                    "pipeline { agent any stages { stage('B') { steps { echo /a'aa/ + 'x' } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo /aa'aa/ + 'x' } } } }"
+                    "raw double-quote-bearing slashy expression",
+                    "pipeline { agent any stages { stage('B') { steps { echo /a\"aa/ + 'x' } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo /aa\"aa/ + 'x' } } } }"
+                    "raw parenthesised positional expression",
+                    "pipeline { agent any stages { stage('B') { steps { echo(/aaaa/ + 'x') } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo(/aaaaa/ + 'x') } } } }"
+                    "raw named expression",
+                    "pipeline { agent any stages { stage('B') { steps { echo message: /aaaa/ + env.X } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo message: /aaaaa/ + env.X } } } }"
+                    "raw parenthesised named expression",
+                    "pipeline { agent any stages { stage('B') { steps { echo(message: /aaaa/ + env.X) } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo(message: /aaaaa/ + env.X) } } } }"
+                    "named branch condition",
+                    "pipeline { agent any stages { stage('B') { when { branch pattern: /aaaa/ } steps { echo 'x' } } } }",
+                    "pipeline { agent any stages { stage('B') { when { branch pattern: /aaaaa/ } steps { echo 'x' } } } }"
+                    "named environment condition",
+                    "pipeline { agent any stages { stage('B') { when { environment name: /aaaa/, value: 'x' } steps { echo 'x' } } } }",
+                    "pipeline { agent any stages { stage('B') { when { environment name: /aaaaa/, value: 'x' } steps { echo 'x' } } } }"
+                    "named equals condition",
+                    "pipeline { agent any stages { stage('B') { when { equals expected: /aaaa/, actual: /aaaa/ } steps { echo 'x' } } } }",
+                    "pipeline { agent any stages { stage('B') { when { equals expected: /aaaaa/, actual: /aaaaa/ } steps { echo 'x' } } } }"
                     "script body",
                     "pipeline { agent any stages { stage('B') { steps { script { echo /aaaa/ } } } } }",
                     "pipeline { agent any stages { stage('B') { steps { script { echo /aaaaa/ } } } } }"
@@ -286,6 +313,34 @@ let admissionLimits =
                   | Error e -> Expect.equal e.Code ScalarTooLong $"{label} is refused by the scalar limit"
                   | Ok _ -> failtestf "%s bypassed the scalar limit" label
 
+              let positionAfterLastSlash (source: string) =
+                  let slash = source.LastIndexOf('/')
+                  let line = 1L + int64 (source.Substring(0, slash) |> Seq.filter ((=) '\n') |> Seq.length)
+                  let lastNewline = source.LastIndexOf('\n', slash)
+                  { Line = line
+                    Column = int64 (slash - lastNewline + 1) }
+
+              let expectPositionedScalar label source =
+                  match Parser.parseWithLimits limits source with
+                  | Error e ->
+                      Expect.equal e.Code ScalarTooLong $"{label} is a scalar refusal"
+                      Expect.equal e.Position (positionAfterLastSlash source) $"{label} is positioned in the Jenkinsfile"
+                  | Ok _ -> failtestf "%s bypassed the scalar limit" label
+
+              for label, source in
+                  [ "parenthesised reparse",
+                    "pipeline { agent any stages { stage('B') { steps { echo(/aaaaa/) } } } }"
+                    "parenthesised CRLF reparse",
+                    "pipeline { agent any stages { stage('B') { steps { echo(\r\n /aaaaa/\r\n) } } } }"
+                    "nested script",
+                    "pipeline { agent any stages { stage('B') { steps { script {\n echo /aaaaa/\n} } } } }"
+                    "nested when expression",
+                    "pipeline { agent any stages { stage('B') { when { expression {\n echo /aaaaa/\n} } steps { echo 'x' } } } }"
+                    "preamble", "echo /aaaaa/\n" + basePipeline
+                    "epilogue", basePipeline + "\necho /aaaaa/"
+                    "same-line epilogue", basePipeline + " echo /aaaaa/" ] do
+                  expectPositionedScalar label source
+
               expectGroovyAccepted
                   "escaped slash"
                   "/aa\\//"
@@ -302,7 +357,39 @@ let admissionLimits =
                   "Groovy even backslash run plus escaped slash"
                   "/aa\\\\//"
 
+              for quote in [ "'"; "\"" ] do
+                  let exact = "return /a" + quote + "aa/\nbreak"
+
+                  match Fogell.Groovy.Parser.Parser.parseWithLimits limits exact with
+                  | Ok _ -> ()
+                  | Error e -> failtestf "a quote inside a slashy must not corrupt scalar scanning: %A" e
+
+                  let nested = "return /a" + quote + "aa/; if (((true))) {}"
+                  let depthLimits = { limits with MaxDepth = 2; MaxScalarBytes = 100 }
+
+                  match Limits.precheck depthLimits nested with
+                  | Error e -> Expect.equal e.Code NestingTooDeep "slashy content cannot hide following depth"
+                  | Ok _ -> failtest "a quote inside a slashy bypassed the structural precheck"
+
+                  match Fogell.Groovy.Parser.Parser.parseWithLimits depthLimits nested with
+                  | Error e -> Expect.equal e.Code NestingTooDeep "slashy content cannot hide parser admission depth"
+                  | Ok _ -> failtest "a quote inside a slashy admitted excessive grammar depth"
+
+                  let nodeLimits = { limits with MaxNodes = 1; MaxScalarBytes = 100 }
+
+                  match Limits.precheck nodeLimits exact with
+                  | Error e -> Expect.equal e.Code TooManyNodes "slashy content cannot hide subsequent nodes"
+                  | Ok _ -> failtest "a quote inside a slashy bypassed the node precheck"
+
               Expect.isOk (Limits.precheck limits "10 / 2 / 5") "division operators do not open slashy spans"
+
+              for source in
+                  [ "x = a / b / c"
+                    "return a / b"
+                    "foo() / 2"
+                    "x++ / 2"
+                    "a\n / b / c" ] do
+                  Expect.isOk (Limits.precheck limits source) $"division remains code in {source}"
 
               Expect.isOk
                   (Limits.precheck limits "// /aaaaa/\nnode")
