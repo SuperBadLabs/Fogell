@@ -581,6 +581,14 @@ let admissionLimits =
                         "pipeline { agent any stages { stage('B') { steps { echo /aaaaa"
                         + newline
                         + "tail/ } } } }"
+                        "command-head raw",
+                        "pipeline { agent any stages { stage('B') { steps { echo foo /aaaaa"
+                        + newline
+                        + "tail/ } } } }"
+                        "operator-position raw",
+                        "pipeline { agent any stages { stage('B') { steps { echo env.A + /aaaaa"
+                        + newline
+                        + "tail/ } } } }"
                         "named raw",
                         "pipeline { agent any stages { stage('B') { steps { echo message: /aaaaa"
                         + newline
