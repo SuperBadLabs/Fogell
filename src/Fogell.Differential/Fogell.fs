@@ -1045,6 +1045,60 @@ module FogellSide =
                 compileRejected <- true
                 bump BuildStatus.Failure
 
+            //
+            // FG-123. The map name is EVALUATED, because Jenkins evaluates it.
+            // MEASURED on Jenkins 2.568.1 (2026-09-02, transient probe jobs):
+            // `ansiColor("${'xterm'}")` sets TERM=xterm, `ansiColor("${env.JOB_NAME}")`
+            // sets TERM to the job name, `ansiColor('xt' + 'erm')` sets TERM=xterm,
+            // and the argument is evaluated BEFORE the `environment` block applies,
+            // so `env.MAPNAME` over a declared MAPNAME and `env.NOPE` both give the
+            // text `null` — every one of them SUCCESS; a bare unknown name fails
+            // with MissingPropertyException. This code copied the parser's
+            // unevaluated text — `${'xterm'}`, `${env.JOB_NAME}`, `xt' + 'erm`,
+            // `${env.MAPNAME}` — into TERM and reported success: a green build
+            // carrying the wrong bytes. The argument
+            // now goes through the same strict literal/GString/expression renderer
+            // as a step argument, over the Jenkins-provided values ONLY, and it is
+            // judged HERE, beside FG-123a's shape refusals and before the SCM block
+            // below — so an unusable argument refuses before any checkout effect,
+            // and the SCM wrapper values are deliberately not visible to it (what
+            // Jenkins gives an option that reads GIT_COMMIT is unmeasured; on
+            // Jenkins the checkout runs inside the option's wrapper). Receipts:
+            // `options-ansicolor-gstring`, `options-ansicolor-env`,
+            // `options-ansicolor-expression`, `options-ansicolor-declared-env`,
+            // `options-ansicolor-env-unknown`.
+            //
+            // FAIL CLOSED, not fall back: a placeholder the renderer cannot resolve
+            // or evaluate is refused by name below (FG-103), never copied verbatim —
+            // that was the defect. What Jenkins prints for such an argument is
+            // UNMEASURED and not claimed.
+            let ansiColorEnv, ansiColorRenderError =
+                match ansiColorOptions with
+                | [ o ] when not ansiColorRejected ->
+                    match ansiColorMap o with
+                    | Some m ->
+                        let key = if List.isEmpty o.Positional then "colorMapName" else "#0"
+                        let optionEnv = Map.ofList jenkinsProvided
+
+                        try
+                            [ "TERM", GString.render optionEnv o key m ], None
+                        with
+                        | GString.MissingProperty name ->
+                            [], Some $"the ansiColor(<colorMapName>) argument names an unknown property: {name}"
+                        | GString.UnsupportedExpression detail ->
+                            [], Some $"the ansiColor(<colorMapName>) argument cannot be evaluated: {detail}"
+                    | None -> [], None
+                | _ -> [], None
+
+            match ansiColorRenderError with
+            | Some e ->
+                emit $"ERROR: pipeline declares an unusable ansiColor option: {e}"
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
+            | None -> ()
+
+
             match unstableArgError with
             | Some e ->
                 emit $"ERROR: a stage declares an unusable unstable step: {e}"
@@ -1181,14 +1235,6 @@ module FogellSide =
             // It joins the BASE layer beside the SCM wrapper values, for the
             // same reason they are there: a declared `environment { TERM = ... }`
             // must override it, because a declaration applies INSIDE the wrapper.
-            let ansiColorEnv =
-                match ansiColorOptions with
-                | [ o ] when not ansiColorRejected ->
-                    match ansiColorMap o with
-                    | Some m -> [ "TERM", m.Trim().Trim('\'', '"') ]
-                    | None -> []
-                | _ -> []
-
             let envForWith =
                 WalkerArgs.envForWith (jenkinsProvided @ scmWrapperEnv @ ansiColorEnv) pipeline
 

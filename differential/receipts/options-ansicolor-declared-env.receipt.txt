@@ -1,8 +1,8 @@
-# Differential receipt — options-ansicolor.Jenkinsfile
+# Differential receipt — options-ansicolor-declared-env.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         c3d1460af9218cb439878e7ceab4939f0dc7935ae00751ebaa87393d11b47b21
-case-digest:  16d723961cf7320212759a1ae344167ddf955dec25c097607d6fb56333757333
+seal:         bcf1cae2fb1c296d59b0d34b88ff29a9bb9084bf2488f2211a56c1c99b4be83f
+case-digest:  e2d9f23376ccb860c8e043a7caf1d6383b40d4314f63fc5a15b3718086dfc48e
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
@@ -81,26 +81,20 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: 3340e11f62904914bb7efa7bcb1fad3a4384b543e44e3d2e081f4e6cc26ee649
-  output (5 lines):
-    | + echo plain
-    | + echo TERM=[xterm]
+  workspace-hash: 2c4623907bb0fc2800f3b93eef4fb24fb7f8dbf2ac2ebb0dbab1638bbe8659e9
+  output (3 lines):
+    | + echo TERM=[null]
     | + cat term.txt
-    | TERM=[xterm]
-    | a narrated line
+    | TERM=[null]
   workspace:
-    dacf36547c77  plain.txt
-    dd9499a25c20  term.txt
+    481f481598be  term.txt
 
 ## Fogell
   result:         success
-  workspace-hash: 3340e11f62904914bb7efa7bcb1fad3a4384b543e44e3d2e081f4e6cc26ee649
-  output (5 lines):
-    | + echo plain
-    | + echo TERM=[xterm]
+  workspace-hash: 2c4623907bb0fc2800f3b93eef4fb24fb7f8dbf2ac2ebb0dbab1638bbe8659e9
+  output (3 lines):
+    | + echo TERM=[null]
     | + cat term.txt
-    | TERM=[xterm]
-    | a narrated line
+    | TERM=[null]
   workspace:
-    dacf36547c77  plain.txt
-    dd9499a25c20  term.txt
+    481f481598be  term.txt
