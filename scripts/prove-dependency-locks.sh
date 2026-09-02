@@ -176,9 +176,9 @@ check_lock_policy() {
   # run in parallel and are judged afterwards in inventory order: the first
   # diagnostic is deterministic whatever the completion order, and the message
   # is unchanged because the mutation arms below match it verbatim. The cap is
-  # one evaluation per core, not build-audits.sh's nproc/3: an evaluation-only
-  # msbuild is a fraction of an fflat compile. UNMEASURED on the 4-core runner;
-  # if this shows up in a step timing, that divisor is the knob.
+  # one evaluation per core, the same cap build-audits.sh now uses for fflat.
+  # Measured hosted: this block fell from 24 s to 7 s (runs 33567174871 →
+  # 33571850280).
   jobs_max=$(nproc 2>/dev/null || echo 4)
   i=0
   for project in "${projects[@]}"; do

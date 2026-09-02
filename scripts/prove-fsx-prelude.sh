@@ -193,8 +193,11 @@ arm_prepare() {
 }
 arm_build_all() {
   local jobs_max d
+  # One compile per core: nproc/3 was 1 on the 4-core runner and serialised the
+  # arms. Measured in scripts/build-audits.sh (2026-09-02, 4-core mask): 69 s
+  # serial vs 33 s at one job per core for nine compiles.
   jobs_max=$(nproc 2>/dev/null || echo 4)
-  jobs_max=$(( jobs_max / 3 )); [ "$jobs_max" -lt 1 ] && jobs_max=1
+  [ "$jobs_max" -lt 1 ] && jobs_max=1
   for d in "${ARM_DIRS[@]}"; do
     while [ "$(jobs -rp | wc -l)" -ge "$jobs_max" ]; do wait -n; done
     { fflat "$d/fixture.fsx" -o "$d/fixture" >"$d/compile.log" 2>&1 || : ; } &

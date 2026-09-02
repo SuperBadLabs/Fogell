@@ -11,9 +11,10 @@
 # shape exactly. Building here, in the same run that uses them, makes the
 # source-to-binary link true by construction instead of by discipline.
 #
-# `--check` verifies every tool is present and newer than its source, without
-# building. That is the STALENESS guard for a developer who edited an .fsx and
-# did not rebuild; the gate calls the plain form and rebuilds unconditionally.
+# `--check` verifies every tool — or, with tool names after it, just those — is
+# present and newer than its source, without building. That is the STALENESS
+# guard for a developer who edited an .fsx and did not rebuild; the gate's audits
+# lane calls the plain form and rebuilds unconditionally.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -116,7 +117,34 @@ ensure_link_prereqs() {
 # audit build sits at the end of the gate. A trivial .fsx is enough — the brotli
 # flags come from the framework link, not from the program, which is why this
 # probe genuinely fails when the prerequisites are missing.
-if [ "${1:-}" = "--preflight" ]; then
+mode=build
+case "${1:-}" in
+  --preflight|--check) mode=${1#--}; shift ;;
+esac
+
+# A SUBSET, when the caller names tools, for `build` and `--check` alike. A
+# hosted gate lane builds only what it runs: the stale-reference lane needs one
+# binary and was compiling all nine (159 s of its 344 s on run 33595804856) to
+# get it — and its proof's `--check` guard must then ask about that one binary,
+# not nine, or the lane fails on the eight it never needed. Every name must be a
+# known tool; duplicates collapse. With no names the full set is meant, so a
+# proof that runs `build-audits.sh --check` bare (the scorecard mapping proof,
+# which needs the whole toolchain current) still demands everything.
+if [ "$#" -gt 0 ]; then
+  [ "$mode" != preflight ] || { echo "FAIL: --preflight takes no tool names" >&2; exit 2; }
+  requested=()
+  for t in "$@"; do
+    known=0
+    for k in "${TOOLS[@]}"; do [ "$k" = "$t" ] && known=1; done
+    [ "$known" -eq 1 ] || { echo "FAIL: unknown audit tool '$t' (known: ${TOOLS[*]})" >&2; exit 2; }
+    seen=0
+    for k in "${requested[@]}"; do [ "$k" = "$t" ] && seen=1; done
+    [ "$seen" -eq 1 ] || requested+=("$t")
+  done
+  TOOLS=("${requested[@]}")
+fi
+
+if [ "$mode" = preflight ]; then
   ensure_link_prereqs
   probe=$(mktemp -d /tmp/fogell-linkprobe.XXXXXX)
   trap 'rm -rf "$probe"' EXIT
@@ -130,7 +158,7 @@ if [ "${1:-}" = "--preflight" ]; then
   exit 1
 fi
 
-if [ "${1:-}" = "--check" ]; then
+if [ "$mode" = check ]; then
   missing=0
   for t in "${TOOLS[@]}"; do
     if [ ! -x "$BIN/$t" ]; then
@@ -148,23 +176,27 @@ if [ "${1:-}" = "--check" ]; then
     echo "FAIL: audit binaries are missing or stale — run scripts/build-audits.sh" >&2
     exit 1
   fi
-  echo "audit binaries current: ${#TOOLS[@]} tools"
+  echo "audit binaries current: ${#TOOLS[@]} tool(s): ${TOOLS[*]}"
   exit 0
 fi
 
 ensure_link_prereqs
 mkdir -p "$BIN"
 
-# COMPILED IN PARALLEL. Each fflat invocation saturates roughly three cores, and
-# there are nine independent tools; run sequentially the original eight cost ~58s of wall time
-# on a 32-core host that is idle for most of it. The jobs are capped rather than
-# unbounded so this does not thrash a small runner — GitHub's are 4-core, where
-# the cap is what keeps it from being SLOWER than sequential.
+# COMPILED IN PARALLEL, ONE JOB PER CORE. An earlier cap of nproc/3 rested on
+# the belief that each fflat invocation saturates about three cores; on a
+# 4-core runner that cap is 1, and the nine tools compiled strictly in series —
+# ~140 s of the audits lane and 159 s of the stale-reference lane on run
+# 33595804856. Measured 2026-09-02 on HeMan under `taskset -c 28-31` (nproc 4),
+# the nine tools took 69 s at a cap of 1, 43 s at 2, and 33 s at 4: the compile
+# is mostly single-threaded (fsc) with parallel phases (ILCompiler, lld), so
+# one job per core is the right cap. Still capped at all, so 32 cores do not
+# spawn 32 compilers for nine tools.
 LOGS=$(mktemp -d /tmp/fogell-build-audits.XXXXXX)
 trap 'rm -rf "$LOGS"' EXIT
 
 jobs_max=$(nproc 2>/dev/null || echo 4)
-jobs_max=$(( jobs_max / 3 )); [ "$jobs_max" -lt 1 ] && jobs_max=1
+[ "$jobs_max" -lt 1 ] && jobs_max=1
 [ "$jobs_max" -gt "${#TOOLS[@]}" ] && jobs_max=${#TOOLS[@]}
 
 for t in "${TOOLS[@]}"; do
@@ -200,4 +232,4 @@ for t in "${TOOLS[@]}"; do
     exit 1
   fi
 done
-echo "built $built audit tools into $BIN/"
+echo "built $built audit tools into $BIN/: ${TOOLS[*]}"

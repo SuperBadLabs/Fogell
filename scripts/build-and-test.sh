@@ -31,12 +31,16 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 #               projects, and every proof that needs the built tree
 #   audits      the fflat-compiled audit tools, their proofs, the claim and
 #               board-number audits, the lane-partition audit — no dotnet build
+#   prelude     the shared-prelude semantics proof, which compiles its own
+#               fixtures with fflat and needs none of the nine tools; 122 s of
+#               fflat work (run 33595804856) that stood on the audits lane's path
 #   stale-refs  the stale-reference audit and its mutant proof — the longest
-#               fflat consumer, so it stands alone
+#               fflat consumer, so it stands alone; it builds only the one tool
+#               it runs
 #   lanes       the restart lane, the inbox-watcher proof and the approval lane;
 #               the restart lane's own `dotnet build` produces the tree all three
 #               use
-GATE_LANES=(build audits stale-refs lanes)
+GATE_LANES=(build audits prelude stale-refs lanes)
 
 if [ "${1:-}" = "--list-lanes" ]; then
   printf '%s\n' "${GATE_LANES[@]}"
@@ -107,13 +111,26 @@ export NUGET_PACKAGES="$gate_package_cache"
 # an fflat build is not reproducible, so a committed binary could not be proven
 # to match its source. Building them in the run that trusts them makes the
 # source-to-binary link true by construction. Two lanes need them (`audits` and
-# `stale-refs`); built once per run whichever asks first, so the local `all`
-# sequence compiles them exactly where it always did.
-audit_tools_built=0
+# `stale-refs`); each tool is built at most once per run, by whichever block
+# asks first. With no arguments every tool is built — the audits block, and so
+# the local `all` sequence compiles them exactly where it always did. With tool
+# names only those not yet built are compiled, which is how a lane running one
+# audit pays for one compile instead of nine.
+audit_tools_built=""   # space-separated tool names, or `all`
 ensure_audit_tools() {
-  [ "$audit_tools_built" -eq 1 ] && return 0
-  ./scripts/build-audits.sh || { echo "AUDIT TOOL BUILD FAILED"; exit 1; }
-  audit_tools_built=1
+  [ "$audit_tools_built" = all ] && return 0
+  if [ "$#" -eq 0 ]; then
+    ./scripts/build-audits.sh || { echo "AUDIT TOOL BUILD FAILED"; exit 1; }
+    audit_tools_built=all
+    return 0
+  fi
+  local missing=() t
+  for t in "$@"; do
+    case " $audit_tools_built " in *" $t "*) ;; *) missing+=("$t") ;; esac
+  done
+  [ "${#missing[@]}" -eq 0 ] && return 0
+  ./scripts/build-audits.sh "${missing[@]}" || { echo "AUDIT TOOL BUILD FAILED"; exit 1; }
+  audit_tools_built="$audit_tools_built ${missing[*]}"
 }
 
 echo "=== sdk ==="; dotnet --version
@@ -169,9 +186,19 @@ if lane_active audits; then
   # removed authentication, and failed setup POSTs were ignored. Prove those
   # known-bad environments before trusting the native tools.
   ./scripts/prove-fg226-audit-tools.sh || { echo "FG-226 AUDIT TOOL PROOF FAILED"; exit 1; }
+fi
+
+if lane_active prelude; then
   # The prelude is shared by all nine tools, so a divergence in it changes every
-  # audit's verdict at once. Proven before any of them runs.
+  # audit's verdict at once. In the `all` sequence it is proven right after the
+  # tools are built and the FG-226 toolchain proof has run (which already
+  # exercises `probe-input`), before the audits themselves. Its own lane hosted,
+  # because it compiles its fixtures with fflat and needs none of the tools, so
+  # it can run beside the tool build instead of after it.
   ./scripts/prove-fsx-prelude.sh || { echo "FSX PRELUDE PROOF FAILED"; exit 1; }
+fi
+
+if lane_active audits; then
   # The lane partition of THIS script (see the LANES comment at the top). Static,
   # sub-second, and it proves its own checker on planted defects first.
   echo "=== gate lane partition audit (blocking) ==="
@@ -219,7 +246,9 @@ if lane_active stale-refs; then
   # definition, two false-positive cases, and four of the checker's own failure
   # modes.
   echo "=== stale-reference audit + its own proof (FG-104b, blocking) ==="
-  ensure_audit_tools
+  # Only the one tool this lane runs; in the `all` sequence the audits block has
+  # already built everything and this is a no-op.
+  ensure_audit_tools audit-stale-refs
   # the proof runs FIRST and in scratch repositories: a checker nobody has watched
   # fail is a claim, and this one has twice been wrong about its own job
   ./scripts/prove-stale-refs.sh || { echo "STALE-REF PROOF FAILED"; exit 1; }
