@@ -5984,6 +5984,137 @@ let timestampsRefusals =
                   "decoration after the stamp no longer hides the xtrace row from canonicalisation"
           } ]
 
+/// FG-128. The RECOVERED provenance block was visible but not tamper-evident:
+/// deliberately outside the content seal so a re-run proof seals like a
+/// first-attempt one, it could be added, removed or edited without breaking
+/// anything. It now carries its own `recovered-seal:` line, recomputed by the
+/// verifier from the block's entries, while the content seal stays identical
+/// between the two attempts.
+let recoveredProvenanceSeal =
+    let trace result =
+        { Disposition = ExecutedOrRuntime
+          Result = result
+          Output = [ "visible" ]
+          WorkspaceHash = "workspace"
+          WorkspaceFiles = []
+          Timestamps = (0, 0)
+          Concurrent = false
+          EngineNotes = []
+          ReportedFailureReason = false }
+
+    let firstAttempt =
+        Compare.receipt
+            "fg128-recovered.Jenkinsfile"
+            (Text.Encoding.UTF8.GetBytes "pipeline { }")
+            "2.568.1"
+            []
+            (Result.Ok(trace "success"))
+            (Result.Ok(trace "success"))
+
+    let entry = "attempt 1: DIVERGED (1) — result differs: jenkins=success fogell=failure"
+    let recovered = { firstAttempt with RecoveredFrom = [ entry ] }
+
+    let verify (r: Receipt) (text: string) =
+        Compare.verifySealedText (Compare.receiptFileName r.File) text
+
+    let describe (c: Compare.SealCheck) = c.Describe
+
+    let withoutLines (text: string) (drop: string -> bool) =
+        text.Split('\n') |> Array.filter (fun l -> not (drop l)) |> String.concat "\n"
+
+    let withoutRecoveredBlock (text: string) =
+        // from the RECOVERED: line through the blank line that ends the block
+        let lines = text.Split('\n') |> Array.toList
+        let i = lines |> List.findIndex (fun l -> l.StartsWith "RECOVERED:")
+        let rest = lines |> List.skip i |> List.skipWhile (fun l -> l <> "") |> List.skip 1
+        (lines |> List.take i) @ rest |> String.concat "\n"
+
+    testList
+        "FG-128 recovered provenance seal"
+        [ test "a recovered receipt is bound by its own line and seals like its first attempt" {
+              let text = Compare.render recovered
+              Expect.stringContains text "\nrecovered-seal: " "the provenance line is rendered"
+              Expect.stringContains text $"\n    {entry}\n" "the entry is rendered inside the block"
+              Expect.equal recovered.Seal firstAttempt.Seal "provenance stays OUT of the content seal — no churn between attempts"
+
+              match verify recovered text with
+              | Compare.SealValid -> ()
+              | other -> failtest $"a freshly rendered recovered receipt must verify, got {describe other}"
+          }
+
+          test "a first-attempt receipt carries no provenance line and verifies" {
+              let text = Compare.render firstAttempt
+              // A LINE-START check: the contract prose in every receipt names the field,
+              // so a substring search would fire on a first-attempt receipt too.
+              Expect.isFalse
+                  (text.Split('\n') |> Array.exists (fun l -> l.StartsWith "recovered-seal:"))
+                  "no block, no header line"
+
+              match verify firstAttempt text with
+              | Compare.SealValid -> ()
+              | other -> failtest $"got {describe other}"
+          }
+
+          test "an edited entry is a provenance mismatch while the content seal still matches" {
+              let text = (Compare.render recovered).Replace($"    {entry}", "    attempt 1: PROVEN (nothing to see)")
+
+              match verify recovered text with
+              | Compare.ProvenanceMismatch _ -> ()
+              | other -> failtest $"expected ProvenanceMismatch, got {describe other}"
+          }
+
+          test "a deleted block leaves its line orphaned and is refused" {
+              let text = withoutRecoveredBlock (Compare.render recovered)
+              Expect.isFalse (text.Contains "RECOVERED:") "the block is gone"
+
+              match verify recovered text with
+              | Compare.SealRefused reason -> Expect.stringContains reason "no RECOVERED provenance block" "the refusal names the orphaned line"
+              | other -> failtest $"expected SealRefused, got {describe other}"
+          }
+
+          test "a deleted line leaves the block unbound and is refused" {
+              let text = withoutLines (Compare.render recovered) (fun l -> l.StartsWith "recovered-seal:")
+              Expect.stringContains text "RECOVERED:" "the block is still there"
+
+              match verify recovered text with
+              | Compare.SealRefused reason -> Expect.stringContains reason "no recovered-seal line binds it" "the refusal names the unbound block"
+              | other -> failtest $"expected SealRefused, got {describe other}"
+          }
+
+          test "the entry count is bound: a blank-looking entry cannot be dropped" {
+              // With entries hashed WITHOUT their count, deleting the one entry that
+              // renders as a bare four-space line would leave the joined text unchanged
+              // and the receipt valid. The count is what catches it.
+              let blank = { firstAttempt with RecoveredFrom = [ "" ] }
+              let text = Compare.render blank
+              let dropped = withoutLines text (fun l -> l = "    ")
+              Expect.notEqual dropped text "the blank entry line was actually removed"
+
+              match verify blank dropped with
+              | Compare.ProvenanceMismatch _ -> ()
+              | other -> failtest $"expected ProvenanceMismatch, got {describe other}"
+          }
+
+          test "an entry with a trailing CR hashes the same on both sides" {
+              // The reader folds CRLF before splitting lines, so a trailing CR vanishes
+              // on the way back in; the writer canonicalises it away too.
+              let cr = { firstAttempt with RecoveredFrom = [ "attempt 1: DIVERGED (1)\r" ] }
+
+              match verify cr (Compare.render cr) with
+              | Compare.SealValid -> ()
+              | other -> failtest $"got {describe other}"
+          }
+
+          test "a fabricated block on a first-attempt receipt is refused" {
+              let text =
+                  (Compare.render firstAttempt)
+                      .Replace("VERDICT:", "RECOVERED: this case DIVERGED on an earlier attempt and did not reproduce.\n    fabricated history\n\nVERDICT:")
+
+              match verify firstAttempt text with
+              | Compare.SealRefused reason -> Expect.stringContains reason "no recovered-seal line binds it" "fabrication is caught as an unbound block"
+              | other -> failtest $"expected SealRefused, got {describe other}"
+          } ]
+
 let spreadAssignmentPreflight =
     let pipelineWithBody body =
         "pipeline { agent any stages { stage('probe') { steps { script { "
@@ -9415,6 +9546,7 @@ let main argv =
               controllerApprovalPreflight
               spreadAssignmentPreflight
               excerptWiring
+              recoveredProvenanceSeal
               timestampsRefusals
               userOutputSurvives
               stringModel
