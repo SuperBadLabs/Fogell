@@ -149,8 +149,9 @@ identity remain controller/authentication responsibilities.
 node count, nesting and UTF-8 scalar-content bytes before a parser result is
 admitted (FG-004, [`Limits.fs`](../src/Fogell.Admission/Limits.fs) and
 `Parser.parseWithLimits`). The non-recursive precheck owns ordinary and
-triple-quoted scalars; slashy-versus-division is resolved by the grammar, whose
-slashy productions apply the same caller-selected raw UTF-8 cap. The standing
+triple-quoted scalars and uses a bounded token-context DFA to shield complete
+slashies from structural counting. Slashy-versus-division is resolved by the
+grammar, whose slashy productions apply the same caller-selected raw UTF-8 cap. The standing
 FG-004b sweep sends 10,000 replay-pinned inputs guaranteed to be refused by the
 Declarative parser boundary and requires typed positioned refusal.
 
