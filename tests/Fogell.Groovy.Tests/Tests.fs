@@ -2995,6 +2995,15 @@ let fg180Grammar =
               | other -> failtestf "wrong slashy AST: %A" other
           }
 
+          test "slashy strings refuse every raw physical line-ending spelling" {
+              for newlineLabel, newline in [ "LF", "\n"; "CRLF", "\r\n"; "bare CR", "\r" ] do
+                  let source = "def value = /before" + newline + "after/\n"
+
+                  Expect.isFalse
+                      (parses source)
+                      $"slashy raw {newlineLabel} crosses Fogell's supported single-line boundary"
+          }
+
           test "ordinary strings refuse every raw physical line-ending spelling" {
               for quoteLabel, quote in [ "single", "'"; "double", "\"" ] do
                   for newlineLabel, newline in [ "LF", "\n"; "CRLF", "\r\n"; "bare CR", "\r" ] do

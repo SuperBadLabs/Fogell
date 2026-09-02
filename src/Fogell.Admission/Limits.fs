@@ -50,7 +50,7 @@ module Limits =
         let mutable nextCloser = -1
 
         for i = source.Length - 1 downto 0 do
-            if source.[i] = '\n' then
+            if source.[i] = '\r' || source.[i] = '\n' then
                 nextCloser <- -1
 
             closers.[i] <- nextCloser

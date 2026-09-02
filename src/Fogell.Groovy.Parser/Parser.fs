@@ -227,7 +227,9 @@ let private tripleSingle: P<Expr> =
 /// the closing delimiter; the approval lane's Z2 rewrite met the space first.
 let private slashy: P<Expr> =
     let content =
-        manyChars (attempt (skipString "\\/" >>% '/') <|> satisfy (fun c -> c <> '/' && c <> '\n'))
+        manyChars (
+            attempt (skipString "\\/" >>% '/')
+            <|> satisfy (fun c -> c <> '/' && c <> '\r' && c <> '\n'))
 
     let captured =
         between

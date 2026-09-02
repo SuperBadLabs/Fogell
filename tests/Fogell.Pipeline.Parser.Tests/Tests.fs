@@ -563,6 +563,15 @@ let admissionLimits =
               // FParsec accepts LF, CRLF and bare CR as physical line endings.
               // Raw arguments and balanced capture must end on the same three forms.
               for newlineLabel, newline in [ "LF", "\n"; "CRLF", "\r\n"; "bare CR", "\r" ] do
+                  let slashyMultiline =
+                      "pipeline { agent any stages { stage('B') { steps { echo(/before"
+                      + newline
+                      + "after/) } } } }"
+
+                  match Parser.parseWithLimits Limits.defaults slashyMultiline with
+                  | Error e -> Expect.equal e.Code MalformedSyntax $"{newlineLabel} terminates a slashy literal"
+                  | Ok _ -> failtestf "a slashy literal crossed a raw %s boundary" newlineLabel
+
                   for firstLabel, firstStep in [ "positional raw", "echo x"; "named raw", "echo message: x" ] do
                       let adjacentSteps =
                           "pipeline { agent any stages { stage('B') { steps { "
@@ -697,6 +706,14 @@ let admissionLimits =
                   Expect.equal e.Code ScalarTooLong "the bare-CR scalar is refused"
                   Expect.equal e.Position { Line = 2L; Column = 8L } "bare CR advances the refusal line"
               | Ok _ -> failtest "the bare-CR scalar bypassed the scalar limit"
+
+              let zeroDepth =
+                  { limits with
+                      MaxDepth = 0 }
+
+              match Limits.precheck zeroDepth "/x\r{/" with
+              | Error e -> Expect.equal e.Code NestingTooDeep "a later-line slash cannot shield structure across bare CR"
+              | Ok _ -> failtest "the slashy closer cache crossed a bare-CR boundary"
 
               match Fogell.Groovy.Parser.Parser.parseWithLimits limits "return\r'aaaaa'" with
               | Error e ->

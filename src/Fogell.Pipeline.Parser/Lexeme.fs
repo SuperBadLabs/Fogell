@@ -238,7 +238,7 @@ let private slashyQuoted: P<string> =
     let content =
         manyStrings (
             (attempt (skipString "\\/" >>% "/"))
-            <|> (satisfy (fun c -> c <> '/' && c <> '\n') |>> string))
+            <|> (satisfy (fun c -> c <> '/' && c <> '\r' && c <> '\n') |>> string))
 
     let captured =
         between
