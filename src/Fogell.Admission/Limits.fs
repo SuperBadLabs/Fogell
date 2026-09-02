@@ -505,7 +505,7 @@ module Limits =
                         // needs this slashy boundary. Before that fallback,
                         // however, returnStmt speculatively parses
                         // `tool / x /` as division. Do not jump to the cached
-                        // closer here: every group and node the recursive
+                        // cached delimiter here: every group and node the recursive
                         // division parse can visit must remain visible to the
                         // admission limits.
                         resetUnaryChain ()
