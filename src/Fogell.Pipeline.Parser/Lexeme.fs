@@ -22,12 +22,14 @@ open Fogell.Ir
 type ParserState =
     { Refusal: (string * Fogell.Ir.Position) option ref
       Limits: Limits
-      ScalarRefusal: AdmissionError option }
+      ScalarRefusal: AdmissionError option
+      RawArgumentLineBoundary: bool }
 
 let parserStateWithLimits (limits: Limits) =
     { Refusal = ref None
       Limits = limits
-      ScalarRefusal = None }
+      ScalarRefusal = None
+      RawArgumentLineBoundary = false }
 
 let parserState () = parserStateWithLimits Limits.defaults
 

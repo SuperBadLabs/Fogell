@@ -815,6 +815,55 @@ let admissionLimits =
                           $"{newlineLabel} inside a block comment exposes the following gate scalar"
                   | Ok _ -> failtestf "%s inside a block comment swallowed the approval gate" newlineLabel
 
+                  let namedCommentSeparatedSteps =
+                      "pipeline { agent any stages { stage('B') { steps { echo message: 1 /* comment"
+                      + newline
+                      + "*/ input /aaaaa/ } } } }"
+
+                  match Parser.parseWithLimits Limits.defaults namedCommentSeparatedSteps with
+                  | Ok pipeline ->
+                      Expect.equal
+                          pipeline.Stages.[0].Steps.Length
+                          2
+                          $"{newlineLabel} inside a named raw argument preserves the following step"
+                  | Error e -> failtestf "%s named block-comment-separated steps did not parse: %A" newlineLabel e
+
+                  match Parser.parseWithLimits limits namedCommentSeparatedSteps with
+                  | Error e ->
+                      Expect.equal
+                          e.Code
+                          ScalarTooLong
+                          $"{newlineLabel} inside a named raw argument exposes the following gate scalar"
+                  | Ok _ -> failtestf "%s inside a named raw argument swallowed the approval gate" newlineLabel
+
+                  let commentSeparatedWhenValue =
+                      "pipeline { agent any stages { stage('B') { when { branch pattern: x /* comment"
+                      + newline
+                      + "*/ branch 'main' } steps { echo 'x' } } } }"
+
+                  match Parser.parseWithLimits Limits.defaults commentSeparatedWhenValue with
+                  | Ok pipeline ->
+                      match pipeline.Stages.[0].When with
+                      | Some(WhenAllOf [ WhenUnmodelled("branch", firstRaw); WhenBranch "main" ]) ->
+                          Expect.isFalse
+                              (firstRaw.Contains("branch 'main'"))
+                              $"{newlineLabel} inside a block comment ends the first named when value"
+                      | other -> failtestf "%s block-comment-separated when conditions rejoined: %A" newlineLabel other
+                  | Error e -> failtestf "%s block-comment-separated when conditions failed: %A" newlineLabel e
+
+                  let parenthesisedCommaControl =
+                      "pipeline { agent any stages { stage('B') { steps { echo(1 /* comment"
+                      + newline
+                      + "*/, 2) } } } }"
+
+                  match Parser.parseWithLimits Limits.defaults parenthesisedCommaControl with
+                  | Ok pipeline ->
+                      Expect.equal
+                          pipeline.Stages.[0].Steps.[0].Positional.Length
+                          2
+                          $"{newlineLabel} inside a balanced argument preserves its comma separator"
+                  | Error e -> failtestf "%s parenthesised comment/comma control failed: %A" newlineLabel e
+
                   let slashyMultiline =
                       "pipeline { agent any stages { stage('B') { steps { echo(/before"
                       + newline

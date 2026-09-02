@@ -62,6 +62,7 @@ let private rawArgValue (allowCommandHead: bool) (stops: char list) : P<string> 
         let mutable finished = false
         let mutable failed = false
         let mutable scalarRefusal = None
+        let mutable crossedBlockCommentLine = false
 
         let recordSignificant c index =
             thirdSig <- priorSig
@@ -153,7 +154,6 @@ let private rawArgValue (allowCommandHead: bool) (stops: char list) : P<string> 
             elif c = '/' && stream.Peek(1) = '*' then
                 stream.Skip(2)
                 let mutable closed = false
-                let mutable crossedPhysicalLine = false
 
                 while not closed && not stream.IsEndOfStream do
                     if stream.Peek() = '*' && stream.Peek(1) = '/' then
@@ -161,13 +161,13 @@ let private rawArgValue (allowCommandHead: bool) (stops: char list) : P<string> 
                         closed <- true
                     else
                         if stream.Peek() = '\r' || stream.Peek() = '\n' then
-                            crossedPhysicalLine <- true
+                            crossedBlockCommentLine <- true
 
                         stream.Skip()
 
                 if not closed then
                     failed <- true
-                elif crossedPhysicalLine then
+                elif crossedBlockCommentLine then
                     // Groovy whitespace retains physical breaks inside block
                     // comments as statement boundaries. Consume the complete
                     // comment, then end this raw argument at that same seam so
@@ -274,10 +274,17 @@ let private rawArgValue (allowCommandHead: bool) (stops: char list) : P<string> 
             stream.Seek start
             let raw = stream.Read length
 
-            match scalarRefusal with
-            | Some refusal ->
-                stream.UserState <- keepFirstScalarRefusal stream.UserState refusal
-            | None -> ()
+            let stateWithScalarRefusal =
+                match scalarRefusal with
+                | Some refusal -> keepFirstScalarRefusal stream.UserState refusal
+                | None -> stream.UserState
+
+            stream.UserState <-
+                if crossedBlockCommentLine then
+                    { stateWithScalarRefusal with
+                        RawArgumentLineBoundary = true }
+                else
+                    stateWithScalarRefusal
 
             Reply(raw)
 
@@ -955,14 +962,33 @@ let private postSection: P<(PostCondition * Step list) list> =
 /// argument separators. The ordinary chunk uses the same slashy-aware scanner as
 /// step arguments.
 let private whenRawValue: P<string> =
+    let clearRawBoundary state =
+        { state with
+            RawArgumentLineBoundary = false }
+
     let ordinary =
         rawArgValue false [ ','; '\r'; '\n'; '}'; ';'; '('; ')'; '['; ']'; '{' ]
 
-    many1Strings (
+    let chunk =
         attempt (balancedRaw '(' ')')
         <|> attempt (balancedRaw '[' ']')
         <|> attempt (balancedRaw '{' '}')
-        <|> ordinary)
+        <|> ordinary
+
+    let endValue =
+        (getUserState
+         >>= fun state ->
+                 if state.RawArgumentLineBoundary then preturn () else pzero)
+        <|> lookAhead (eof <|> (anyOf ",\r\n};)]" >>% ()))
+
+    updateUserState clearRawBoundary
+    >>. manyTill chunk endValue
+    >>= fun chunks ->
+            updateUserState clearRawBoundary
+            >>. if List.isEmpty chunks then
+                    fail "a when named argument requires a value"
+                else
+                    preturn (String.concat "" chunks)
     .>> ws
     |>> fun value -> value.Trim()
 
