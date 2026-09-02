@@ -16,4 +16,9 @@
     <ProjectReference Include="../Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj" />
     <PackageReference Include="FParsec" Version="1.1.1" />
   </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Fogell.Pipeline.Parser.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>

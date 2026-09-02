@@ -1152,6 +1152,49 @@ let admissionLimits =
                       Expect.equal e.Position (positionAfterLastSlash source) $"{label} is positioned in the Jenkinsfile"
                   | Ok _ -> failtestf "%s bypassed the scalar limit" label
 
+              let scalarAt column =
+                  AdmissionError.at ScalarTooLong 1L column "synthetic nested scalar refusal"
+
+              let beforeNestedScan = Lexeme.parserStateWithLimits limits
+              let provisional = scalarAt 57L
+              let exactNested = scalarAt 66L
+
+              let afterNestedScan =
+                  { beforeNestedScan with
+                      ScalarRefusal = Some provisional
+                      RawArgumentLineBoundary = true }
+
+              let refinedNested =
+                  Parser.refineScalarAfterIsolatedReparse beforeNestedScan afterNestedScan exactNested
+
+              Expect.equal
+                  refinedNested.ScalarRefusal
+                  (Some exactNested)
+                  "a nested parse replaces provisional scalar state from its enclosing scan"
+
+              Expect.isTrue
+                  refinedNested.RawArgumentLineBoundary
+                  "scalar refinement preserves unrelated state produced by the enclosing scan"
+
+              let earlierBeforeNestedScan =
+                  { beforeNestedScan with
+                      ScalarRefusal = Some(scalarAt 10L) }
+
+              let afterEarlierNestedScan =
+                  { earlierBeforeNestedScan with
+                      RawArgumentLineBoundary = true }
+
+              let refinedEarlier =
+                  Parser.refineScalarAfterIsolatedReparse
+                      earlierBeforeNestedScan
+                      afterEarlierNestedScan
+                      exactNested
+
+              Expect.equal
+                  refinedEarlier.ScalarRefusal
+                  earlierBeforeNestedScan.ScalarRefusal
+                  "a nested parse retains scalar state that predates its enclosing scan"
+
               for label, source in
                   [ "parenthesised reparse",
                     "pipeline { agent any stages { stage('B') { steps { echo(/aaaaa/) } } } }"

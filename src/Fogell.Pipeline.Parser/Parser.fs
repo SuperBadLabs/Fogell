@@ -701,6 +701,17 @@ let private commitScalarRefusal (state: ParserState) (refusal: AdmissionError) =
         | Some existing -> Some(earlierScalarRefusal existing refusal)
         | None -> Some refusal
 
+/// Preserve state produced after an enclosing scan while refining only its
+/// provisional scalar position from an isolated nested parse. A refusal that
+/// predates the scan remains source-authoritative.
+let internal refineScalarAfterIsolatedReparse
+    (stateBeforeScan: ParserState)
+    (stateAfterScan: ParserState)
+    (authoritative: AdmissionError)
+    =
+    let selected = (keepFirstScalarRefusal stateBeforeScan authoritative).ScalarRefusal
+    { stateAfterScan with ScalarRefusal = selected }
+
 let private commitRebasedScalarRefusal
     (stateBeforeScan: ParserState)
     (outerState: ParserState)
@@ -708,7 +719,7 @@ let private commitRebasedScalarRefusal
     (error: AdmissionError)
     =
     let rebased = rebaseAdmissionError 1L origin error
-    let stateWithScalar = keepFirstScalarRefusal stateBeforeScan rebased
+    let stateWithScalar = refineScalarAfterIsolatedReparse stateBeforeScan outerState rebased
 
     let committed =
         match outerState.CommittedScalarRefusal.Value with
@@ -752,7 +763,7 @@ let private parenArgs (stateBeforeScan: ParserState) (origin: FParsec.Position) 
                     // hold a provisional end-of-span position. Replace that
                     // provisional value with the inner grammar's exact one,
                     // while retaining any refusal that preceded the call.
-                    setUserState (keepFirstScalarRefusal stateBeforeScan rebased) >>% v
+                    setUserState (refineScalarAfterIsolatedReparse stateBeforeScan outerState rebased) >>% v
                 | None, Some(message, _) -> refuse message
                 | None, None -> preturn v
             | ParserResult.Failure(_, _, failedState) ->
@@ -770,7 +781,7 @@ let private parenArgs (stateBeforeScan: ParserState) (origin: FParsec.Position) 
                     // Retain a refusal that preceded this parenthesised scan,
                     // but replace balancedRaw's provisional position for this
                     // same body with the isolated grammar's exact position.
-                    setUserState (keepFirstScalarRefusal stateBeforeScan rebased)
+                    setUserState (refineScalarAfterIsolatedReparse stateBeforeScan outerState rebased)
                     >>. fail "parenthesised argument contains an overlong scalar"
                 | None, Some(message, _) -> refuse message
                 | None, None ->
