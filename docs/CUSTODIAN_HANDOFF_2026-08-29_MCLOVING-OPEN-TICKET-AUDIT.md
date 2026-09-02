@@ -1,5 +1,22 @@
 # Fogell custodian handoff — 2026-08-29 — McLoving open-ticket audit
 
+> **Refreshed 2026-09-01 before publication.** This document is the
+> 2026-08-29 snapshot it says it is; its baselines, counts and per-ticket
+> classifications were not re-derived, and its disposition matched the
+> snapshot's 73 open rows exactly. What moved between the snapshot and
+> publication, measured against the board at publication time (225 rows,
+> 160 DONE, 65 open, P0–P3 1/20/33/11): nine tickets classified below as open
+> are DONE now — FG-016, FG-016b, FG-044b, FG-085, FG-121, FG-135, FG-163,
+> FG-166, FG-224 — so their classifications are historical, and their McLoving
+> donors remain valid reading for whatever they left open. One ticket open at
+> publication, FG-221, did not exist at the snapshot and so is absent from the
+> disposition below; "all 73 open tickets" was true of the snapshot's rows but
+> is not a complete map of today's open set. Two review findings on the first
+> PR are folded into the text where they apply and marked as such. (The first
+> cut of this preface counted ten, adding FG-026 from a prose mention inside
+> the FG-026b entry; it was DONE before the snapshot and was never
+> classified — the pre-push verifier caught it.)
+
 Status: **read-only related-work audit complete; no Fogell ticket status or
 duplication-axis decision changed.**
 
@@ -30,9 +47,12 @@ Fogell acceptance.
 - The useful Wave4B compiler work was later carried to main through squash
   commits. No useful capability in this audit exists only on the stale
   checked-out branch.
-- All McLoving paths and line numbers below refer to `bed6c0f` unless stated
-  otherwise. Use `git show bed6c0f:<path>`; do not silently read the checked-out
-  Wave4B file when the two differ.
+- All McLoving paths and line numbers below refer to
+  `bed6c0f52cd2ddcb8dea2859cb134ef15d402ef3` unless stated otherwise. Use
+  `git show bed6c0f52cd2ddcb8dea2859cb134ef15d402ef3:<path>`; do not silently
+  read the checked-out Wave4B file when the two differ. (The full SHA is used
+  here rather than the seven-character form so the instruction stays
+  unambiguous as the repository grows — a review finding on the first PR.)
 
 This audit was read-only. No McLoving or Fogell source, ticket, receipt, or
 board row was changed to produce it.
@@ -339,7 +359,8 @@ open in McLoving.
 
 1. Fetch both repositories and record fresh exact heads before relying on this
    snapshot.
-2. Close the small evidence defects first: FG-163 and FG-166, then combine the
+2. Close the small evidence defects first — FG-163 and FG-166 were DONE by
+   2026-08-29's own custodian watch, after this snapshot — then combine the
    FG-128/FG-169 design so provenance and whole-document content are separate
    versioned digest domains.
 3. Finish Fogell's retry runtime using McLoving's FG-027 analogue; the Store
@@ -350,7 +371,10 @@ open in McLoving.
 5. Use McLoving's agent protocol/journal model for FG-062.
 6. Adapt the connector/reconciliation spine for FG-026b, retaining a bounded
    Fogell producer registry and bypass mutation.
-7. Follow with the product vertical slice FG-224/FG-066/FG-067.
+7. Follow with the product vertical slice FG-066/FG-067. FG-224's runnable
+   single-node controller is already merged and DONE — it was grouped here with
+   the unimplemented CLI/UI work by mistake, a review finding on the first PR;
+   FG-225's own scope statement does not reopen it.
 
 Treat this as an implementation map, not an instruction to select a ticket
 automatically. Pick an impact dimension deliberately, prove its narrow Fogell
