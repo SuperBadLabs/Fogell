@@ -25,17 +25,25 @@ type Limits =
           MaxCollectionItems = 4_096 }
 
 /// Read-only slashy/division classifications for one exact source string.
-/// The backing representation and its incomplete-candidate sentinel remain
-/// private to admission; parser consumers can query or slice without mutating
-/// the DFA result.
+/// Complete and incomplete candidates both carry their already-computed
+/// boundary, so parser consumers never need to rescan a source suffix.
+[<Struct>]
+type SlashySpanBoundary =
+    | Unclassified
+    | Complete of ClosingIndex: int
+    | Incomplete of PhysicalEndIndex: int
+
 [<Sealed>]
-type SlashySpans internal (closers: int array) =
+type SlashySpans internal (boundaries: SlashySpanBoundary array) =
     static member Empty = SlashySpans Array.empty
 
-    member _.Length = closers.Length
+    member _.Length = boundaries.Length
 
-    member _.IsClassified(index: int) =
-        index >= 0 && index < closers.Length && closers.[index] <> -1
+    member _.Boundary(index: int) =
+        if index < 0 || index >= boundaries.Length then
+            Unclassified
+        else
+            boundaries.[index]
 
     member _.Slice(start: int, length: int) =
         if length <= 0 then
@@ -45,17 +53,16 @@ type SlashySpans internal (closers: int array) =
                 Array.init length (fun relativeIndex ->
                     let outerIndex = start + relativeIndex
 
-                    if outerIndex < 0 || outerIndex >= closers.Length then
-                        -1
+                    if outerIndex < 0 || outerIndex >= boundaries.Length then
+                        Unclassified
                     else
-                        let outerCloser = closers.[outerIndex]
-
-                        if outerCloser = -2 then
-                            -2
-                        elif outerCloser >= start && outerCloser < start + length then
-                            outerCloser - start
-                        else
-                            -1)
+                        match boundaries.[outerIndex] with
+                        | Complete outerCloser when outerCloser >= start && outerCloser < start + length ->
+                            Complete(outerCloser - start)
+                        | Complete outerCloser when outerCloser >= start + length -> Incomplete length
+                        | Incomplete outerPhysicalEnd ->
+                            Incomplete(min length (max 0 (outerPhysicalEnd - start)))
+                        | _ -> Unclassified)
 
             SlashySpans sliced
 
@@ -80,20 +87,24 @@ module Limits =
     /// Computing this table once is load-bearing. Looking for a closing slash from
     /// every possible opener makes a line of repeated escaped slashes
     /// quadratic; the source cap bounds memory and this pass stays O(n).
-    let private nextSlashyClosers (source: string) =
+    let private nextSlashyBoundaries (source: string) =
         let closers = Array.create source.Length -1
+        let physicalEnds = Array.create source.Length source.Length
         let mutable nextCloser = -1
+        let mutable physicalEnd = source.Length
 
         for i = source.Length - 1 downto 0 do
             if source.[i] = '\r' || source.[i] = '\n' then
                 nextCloser <- -1
+                physicalEnd <- i
 
             closers.[i] <- nextCloser
+            physicalEnds.[i] <- physicalEnd
 
             if source.[i] = '/' && (i = 0 || source.[i - 1] <> '\\') then
                 nextCloser <- i
 
-        closers
+        closers, physicalEnds
 
     /// Cheap pre-parse guard. Performs a UTF-8 byte-count pass, then counts
     /// brace depth and token-ish nodes with a second linear scan. Neither pass
@@ -117,11 +128,11 @@ module Limits =
                     $"source is {sourceBytes} UTF-8 bytes, limit is {limits.MaxSourceBytes}"
             )
         else
-            let slashyClosers = nextSlashyClosers source
+            let slashyClosers, physicalEnds = nextSlashyBoundaries source
             // Only the DFA-classified opener positions are exported. A
             // structural subscanner can then share this exact slashy/division
             // decision instead of growing a second, drifting lookbehind rule.
-            let recognizedSlashyClosers = Array.create source.Length -1
+            let recognizedSlashyBoundaries = Array.create source.Length Unclassified
             let mutable depth = 0
             let mutable nodes = 0
             let mutable line = 1L
@@ -145,6 +156,16 @@ module Limits =
             let mutable awaitingControlParen = false
             let mutable returnFallbackPending = false
             let mutable returnCommandHead = false
+            // Fogell.Groovy.Parser's unary production recursively invokes
+            // itself once for every prefix `!` or `-`. Trivia does not break
+            // that recursion (`! /* c */ - value`), so charge the consecutive
+            // grammar chain here before untrusted source reaches the parser.
+            // A completed primary or binary seam resets it to the inherited
+            // outer chain; postfix `--` and `->` are handled by their earlier,
+            // non-recursive branches below.
+            let mutable unaryChainDepth = 0
+            let mutable unaryFloor = 0
+            let unaryFloors = System.Collections.Generic.Stack<int>()
             let controlParens = System.Collections.Generic.Stack<bool>()
             // A `case` expression ends at a colon at the same structural and
             // expression nesting where the keyword began. Its third field is
@@ -155,9 +176,9 @@ module Limits =
             // stack so interpolation structure is counted by this same
             // non-recursive guard, including nested GStrings.
             let interpolationQuotes =
-                System.Collections.Generic.Stack<char * int * int * int>()
+                System.Collections.Generic.Stack<char * int * int * int * int>()
 
-            let mutable pendingInterpolation: (char * int * int * int) option = None
+            let mutable pendingInterpolation: (char * int * int * int * int) option = None
             let mutable expressionNesting = 0
             let mutable err = None
             let mutable i = 0
@@ -174,6 +195,28 @@ module Limits =
                                 column
                                 $"node count exceeds {limits.MaxNodes}"
                         )
+
+            let recordUnaryOperator () =
+                unaryChainDepth <- unaryChainDepth + 1
+                // Each recursive unary production becomes one EUnary node.
+                recordNode ()
+
+                let grammarDepth = depth + unaryChainDepth
+
+                if err.IsNone && grammarDepth > limits.MaxDepth then
+                    err <-
+                        Some(
+                            AdmissionError.at
+                                NestingTooDeep
+                                line
+                                column
+                                $"grammar depth {grammarDepth} exceeds limit {limits.MaxDepth}"
+                        )
+
+            let resetUnaryChain () =
+                // Unary frames outside the current structural primary remain
+                // active while its nested expression is parsed.
+                unaryChainDepth <- unaryFloor
 
             let markTriviaBreak () =
                 sawLineBreak <- true
@@ -282,7 +325,8 @@ module Limits =
                         // real expression. Resume ordinary structural scanning
                         // at its opening brace, then restore this outer string
                         // when the matching brace closes.
-                        pendingInterpolation <- Some(quote, delimiterLength, scalarContentStart, depth)
+                        pendingInterpolation <-
+                            Some(quote, delimiterLength, scalarContentStart, depth, unaryChainDepth)
                         quote <- '\000'
                         scalarContentStart <- -1
                         delimiterLength <- 0
@@ -362,6 +406,7 @@ module Limits =
                             commandHead <- false
                             returnFallbackPending <- false
                             returnCommandHead <- false
+                            resetUnaryChain ()
                             sawLineBreak <- false
                 else
                     match c with
@@ -407,7 +452,7 @@ module Limits =
 
                         if err.IsNone then
                             let closingIndex = slashyClosers.[i]
-                            recognizedSlashyClosers.[i] <- closingIndex
+                            recognizedSlashyBoundaries.[i] <- Complete closingIndex
                             column <- column + int64 (closingIndex - i)
                             i <- closingIndex
                             needsOperand <- false
@@ -415,6 +460,7 @@ module Limits =
                             commandHead <- false
                             returnFallbackPending <- false
                             returnCommandHead <- false
+                            resetUnaryChain ()
                             sawLineBreak <- false
                     | '/' when needsOperand || statementHead || commandHead ->
                         // Preserve the DFA decision even without a same-line
@@ -422,13 +468,14 @@ module Limits =
                         // structure visible, while balancedRaw must know this
                         // was an operand-position slashy candidate so crossing
                         // a physical ending becomes its semantic refusal.
-                        recognizedSlashyClosers.[i] <- -2
+                        recognizedSlashyBoundaries.[i] <- Incomplete physicalEnds.[i]
                         needsOperand <- true
                         statementHead <- false
                         commandHead <- false
                         awaitingControlParen <- false
                         returnFallbackPending <- false
                         returnCommandHead <- false
+                        resetUnaryChain ()
                         sawLineBreak <- false
                     | '{' | '[' | '(' ->
                         let opensInterpolation =
@@ -439,19 +486,29 @@ module Limits =
                                 true
                             | _ -> false
 
+                        unaryFloors.Push unaryFloor
+                        unaryFloor <- unaryChainDepth
                         depth <- depth + 1
                         recordNode ()
                         returnFallbackPending <- false
                         returnCommandHead <- false
 
-                        if depth > limits.MaxDepth then
+                        let grammarDepth = depth + unaryChainDepth
+
+                        if grammarDepth > limits.MaxDepth then
+                            let message =
+                                if unaryChainDepth = 0 then
+                                    $"nesting depth {depth} exceeds limit {limits.MaxDepth}"
+                                else
+                                    $"grammar depth {grammarDepth} exceeds limit {limits.MaxDepth}"
+
                             err <-
                                 Some(
                                     AdmissionError.at
                                         NestingTooDeep
                                         line
                                         column
-                                        $"nesting depth {depth} exceeds limit {limits.MaxDepth}"
+                                        message
                                 )
                         elif c = '(' then
                             controlParens.Push awaitingControlParen
@@ -481,6 +538,12 @@ module Limits =
                     | '}' | ']' | ')' ->
                         depth <- depth - 1
                         recordNode ()
+
+                        let parentUnaryFloor =
+                            if unaryFloors.Count = 0 then 0 else unaryFloors.Pop()
+
+                        unaryFloor <- parentUnaryFloor
+                        unaryChainDepth <- parentUnaryFloor
 
                         match caseContext with
                         | Some(caseDepth, _, _) when depth < caseDepth -> caseContext <- None
@@ -515,7 +578,7 @@ module Limits =
                         sawLineBreak <- false
 
                         if c = '}' && interpolationQuotes.Count > 0 then
-                            let outerQuote, outerDelimiterLength, outerScalarStart, outerDepth =
+                            let outerQuote, outerDelimiterLength, outerScalarStart, outerDepth, outerUnaryDepth =
                                 interpolationQuotes.Peek()
 
                             if depth = outerDepth then
@@ -523,7 +586,12 @@ module Limits =
                                 quote <- outerQuote
                                 delimiterLength <- outerDelimiterLength
                                 scalarContentStart <- outerScalarStart
+                                // `${...}` completed, but the surrounding
+                                // GString primary has not. Keep unary frames
+                                // that wrap that literal active until its quote.
+                                unaryChainDepth <- outerUnaryDepth
                     | c when System.Char.IsLetterOrDigit c || c = '_' ->
+                        resetUnaryChain ()
                         let start = i
 
                         while
@@ -605,6 +673,7 @@ module Limits =
 
                             sawLineBreak <- false
                     | ';' ->
+                        resetUnaryChain ()
                         needsOperand <- true
                         statementHead <- true
                         commandHead <- false
@@ -614,6 +683,7 @@ module Limits =
                         returnCommandHead <- false
                         sawLineBreak <- false
                     | '+' | '-' when i + 1 < source.Length && source.[i + 1] = c && not needsOperand ->
+                        resetUnaryChain ()
                         // Postfix increment/decrement leaves a complete value.
                         i <- i + 1
                         column <- column + 1L
@@ -624,6 +694,7 @@ module Limits =
                         returnCommandHead <- false
                         sawLineBreak <- false
                     | '-' when i + 1 < source.Length && source.[i + 1] = '>' ->
+                        resetUnaryChain ()
                         // Closure parameters and modern switch cases hand off
                         // to a statement body. Only the adjacent arrow has this
                         // meaning; ordinary subtraction/comparison remains an
@@ -637,7 +708,17 @@ module Limits =
                         returnFallbackPending <- false
                         returnCommandHead <- false
                         sawLineBreak <- false
+                    | ('!' | '-') when needsOperand ->
+                        recordUnaryOperator ()
+                        needsOperand <- true
+                        statementHead <- false
+                        commandHead <- false
+                        awaitingControlParen <- false
+                        returnFallbackPending <- false
+                        returnCommandHead <- false
+                        sawLineBreak <- false
                     | '?' ->
+                        resetUnaryChain ()
                         let safeNavigation = i + 1 < source.Length && source.[i + 1] = '.'
 
                         match caseContext with
@@ -656,6 +737,7 @@ module Limits =
                         returnCommandHead <- false
                         sawLineBreak <- false
                     | ':' ->
+                        resetUnaryChain ()
                         let caseTerminator, closesCaseTernary =
                             match caseContext with
                             | Some(caseDepth, caseExpressionNesting, ternaryDepth)
@@ -682,6 +764,7 @@ module Limits =
                         sawLineBreak <- false
                     | '/' | '=' | '+' | '-' | '*' | '%' | '&' | '|' | '^' | '!' | '~'
                     | '<' | '>' | ',' | '.' ->
+                        resetUnaryChain ()
                         needsOperand <- true
                         statementHead <- false
                         commandHead <- false
@@ -690,6 +773,7 @@ module Limits =
                         returnCommandHead <- false
                         sawLineBreak <- false
                     | _ ->
+                        resetUnaryChain ()
                         // Unknown punctuation is deliberately not promoted to
                         // an expression ender. If the grammar accepts it, a
                         // later explicit token will establish slash context;
@@ -706,10 +790,10 @@ module Limits =
                     if quote = '\000' then source.Length else scalarContentStart
 
                 match pendingInterpolation with
-                | Some(_, _, start, _) -> earliestOpenScalar <- min earliestOpenScalar start
+                | Some(_, _, start, _, _) -> earliestOpenScalar <- min earliestOpenScalar start
                 | None -> ()
 
-                for _, _, start, _ in interpolationQuotes do
+                for _, _, start, _, _ in interpolationQuotes do
                     earliestOpenScalar <- min earliestOpenScalar start
 
                 if earliestOpenScalar < source.Length then
@@ -742,7 +826,7 @@ module Limits =
 
             match err with
             | Some e -> Error e
-            | None -> Ok(SlashySpans recognizedSlashyClosers)
+            | None -> Ok(SlashySpans recognizedSlashyBoundaries)
 
     let precheck (limits: Limits) (source: string) : Result<unit, AdmissionError> =
         precheckWithSlashySpans limits source |> Result.map ignore

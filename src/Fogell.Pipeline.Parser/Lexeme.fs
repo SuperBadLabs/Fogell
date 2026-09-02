@@ -483,8 +483,8 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                 let c = stream.Peek()
                 let slashySpanIndex = int stream.Index
 
-                let dfaClassifiesSlashy =
-                    stream.UserState.BalancedSlashySpans.IsClassified slashySpanIndex
+                let dfaSlashyBoundary =
+                    stream.UserState.BalancedSlashySpans.Boundary slashySpanIndex
 
                 let fallbackClassifiesSlashy =
                     not (
@@ -576,35 +576,11 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                     && (if stream.UserState.BalancedSlashySpans.Length = 0 then
                             fallbackClassifiesSlashy
                         else
-                            dfaClassifiesSlashy)
+                            dfaSlashyBoundary <> Unclassified)
                 then
-                    // FG-141: no left operand, so this `/` can only open a
-                    // slashy. Skip its span; without a closing slash, rewind and read the
-                    // `/` as the ordinary character it always was.
                     let before = stream.Index
-                    stream.Skip()
-                    let mutable closed = false
-                    let mutable crossedLine = false
 
-                    while not closed && not crossedLine && not stream.IsEndOfStream do
-                        let d = stream.Peek()
-
-                        if d = '\\' && stream.Peek(1) = '/' then
-                            stream.Skip(2)
-                        elif d = '\r' || d = '\n' then
-                            // Both grammar-owned slashy parsers are single-line.
-                            // A broader structural scanner could let a later `/`
-                            // shield this balanced region's real closing brace,
-                            // then reinterpret source that Jenkins keeps inside
-                            // one multiline slashy as surrounding structure.
-                            crossedLine <- true
-                        elif d = '/' then
-                            stream.Skip()
-                            closed <- true
-                        else
-                            stream.Skip()
-
-                    if closed then
+                    let recordComplete () =
                         let finish = stream.Index
                         let contentLength = int (finish - before - 2L)
                         stream.Seek(before + 1L)
@@ -612,7 +588,10 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                         stream.Seek finish
                         recordScalarContent rawContent stream
                         recordSignificant '\'' (finish - 1L) // a completed literal ends an expression
-                    elif crossedLine then
+
+                    let refuseAtPhysicalEnd physicalEnd =
+                        stream.Seek(int64 physicalEnd)
+
                         // This position has no left operand, so the slash cannot
                         // be division. Rewinding it to an ordinary character lets
                         // a collection or opaque block close at the line break and
@@ -631,10 +610,55 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                                 )
 
                         failed <- true
-                    else
-                        stream.Seek(before)
+
+                    match dfaSlashyBoundary with
+                    | Complete closingIndex ->
+                        // Admission has already proved the exact same-line
+                        // delimiter. Consume it directly instead of searching
+                        // this suffix a second time.
+                        stream.Seek(int64 closingIndex + 1L)
+                        recordComplete ()
+                    | Incomplete physicalEnd when physicalEnd < stream.UserState.BalancedSlashySpans.Length ->
+                        // The precheck also cached the first physical ending.
+                        // Seeking to it preserves the old refusal coordinate
+                        // without rescanning every later incomplete candidate.
+                        refuseAtPhysicalEnd physicalEnd
+                    | Incomplete _ ->
+                        // No delimiter or physical ending remains in this exact
+                        // parser input. The historical fallback reads the slash
+                        // as ordinary source; the cached EOF boundary makes that
+                        // decision constant-time.
                         stream.Skip()
                         recordSignificant '/' before
+                    | Unclassified ->
+                        // Focused parsers use an empty DFA table. Retain their
+                        // local lexical fallback, while public admission always
+                        // takes one of the cached branches above.
+                        stream.Skip()
+                        let mutable closed = false
+                        let mutable crossedLine = false
+
+                        while not closed && not crossedLine && not stream.IsEndOfStream do
+                            let d = stream.Peek()
+
+                            if d = '\\' && stream.Peek(1) = '/' then
+                                stream.Skip(2)
+                            elif d = '\r' || d = '\n' then
+                                crossedLine <- true
+                            elif d = '/' then
+                                stream.Skip()
+                                closed <- true
+                            else
+                                stream.Skip()
+
+                        if closed then
+                            recordComplete ()
+                        elif crossedLine then
+                            refuseAtPhysicalEnd (int stream.Index)
+                        else
+                            stream.Seek(before)
+                            stream.Skip()
+                            recordSignificant '/' before
                 else
                     let significantIndex = stream.Index
                     if c = opening then depth <- depth + 1

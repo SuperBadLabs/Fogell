@@ -364,6 +364,169 @@ let admissionLimits =
               |> expectCode "Declarative script GString" NestingTooDeep
           }
 
+          test "recursive unary chains are bounded before every Groovy route" {
+              let depthLimits =
+                  { Limits.defaults with
+                      MaxSourceBytes = 10_000
+                      MaxDepth = 4
+                      MaxNodes = 10_000
+                      MaxScalarBytes = 10_000 }
+
+              let expectCode label expected result =
+                  match result with
+                  | Error e -> Expect.equal e.Code expected $"{label}: named admission refusal"
+                  | Ok _ -> failtestf "%s bypassed unary admission" label
+
+              let exact = String.replicate depthLimits.MaxDepth "!" + "true"
+              let over = "!" + exact
+
+              Expect.isOk (Limits.precheck depthLimits exact) "MaxDepth unary chain fits exactly"
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits depthLimits exact)
+                  "the exact unary boundary reaches and survives the recursive grammar"
+
+              let overError =
+                  match Limits.precheck depthLimits over with
+                  | Error e -> e
+                  | Ok() -> failtest "the plus-one unary chain bypassed precheck"
+
+              Expect.equal overError.Code NestingTooDeep "the plus-one unary chain has a depth refusal"
+              Expect.equal overError.Position.Line 1L "the unary refusal line is exact"
+              Expect.equal overError.Position.Column 6L "the fifth prefix operator is the refusal point"
+
+              Fogell.Groovy.Parser.Parser.parseWithLimits depthLimits over
+              |> expectCode "direct Groovy unary chain" NestingTooDeep
+
+              let triviaSeparated = "! /* block */ -\n// line\n! - true"
+
+              Expect.isOk
+                  (Limits.precheck depthLimits triviaSeparated)
+                  "block comments, line comments and physical trivia preserve one exact unary chain"
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits depthLimits triviaSeparated)
+                  "the recursive grammar agrees on the trivia-separated exact chain"
+
+              let nodeLimits =
+                  { depthLimits with
+                      MaxDepth = 64
+                      MaxNodes = 2 }
+
+              Expect.isOk (Limits.precheck nodeLimits "!true") "one EUnary plus its operand fits two nodes"
+
+              Limits.precheck nodeLimits "!!true"
+              |> expectCode "unary EUnary node accounting/precheck" TooManyNodes
+
+              Fogell.Groovy.Parser.Parser.parseWithLimits nodeLimits "!!true"
+              |> expectCode "unary EUnary node accounting/Groovy" TooManyNodes
+
+              let nested count unaryCount =
+                  String.replicate count "("
+                  + String.replicate unaryCount "!"
+                  + "true"
+                  + String.replicate count ")"
+
+              let combinedExact = nested 63 1
+              let combinedOver = nested 63 2
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults combinedExact)
+                  "63 structural groups plus one unary frame fit the combined depth boundary"
+
+              Limits.precheck Limits.defaults combinedOver
+              |> expectCode "combined structural and unary depth/precheck" NestingTooDeep
+
+              Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults combinedOver
+              |> expectCode "combined structural and unary depth/Groovy" NestingTooDeep
+
+              let outerUnaryGrouped =
+                  String.replicate 40 "!"
+                  + nested 40 0
+
+              Limits.precheck Limits.defaults outerUnaryGrouped
+              |> expectCode "outer unary frames survive a grouped primary/precheck" NestingTooDeep
+
+              Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults outerUnaryGrouped
+              |> expectCode "outer unary frames survive a grouped primary/Groovy" NestingTooDeep
+
+              let interpolated unaryCount =
+                  "\"${"
+                  + nested 62 unaryCount
+                  + "}\""
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults (interpolated 1))
+                  "interpolation plus groups and one unary frame fit the combined boundary"
+
+              Limits.precheck Limits.defaults (interpolated 2)
+              |> expectCode "interpolated combined unary depth/precheck" NestingTooDeep
+
+              Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults (interpolated 2)
+              |> expectCode "interpolated combined unary depth/Groovy" NestingTooDeep
+
+              let outerUnaryInterpolation =
+                  String.replicate 40 "!"
+                  + "\"${"
+                  + String.replicate 40 "!"
+                  + "true}\""
+
+              Limits.precheck Limits.defaults outerUnaryInterpolation
+              |> expectCode "outer unary GString plus placeholder unary/precheck" NestingTooDeep
+
+              Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults outerUnaryInterpolation
+              |> expectCode "outer unary GString plus placeholder unary/Groovy" NestingTooDeep
+
+              let outerUnaryList =
+                  String.replicate 40 "!"
+                  + "[1, "
+                  + String.replicate 40 "!"
+                  + "true]"
+
+              Limits.precheck Limits.defaults outerUnaryList
+              |> expectCode "outer unary list plus later item unary/precheck" NestingTooDeep
+
+              Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults outerUnaryList
+              |> expectCode "outer unary list plus later item unary/Groovy" NestingTooDeep
+
+              let hostile = String.replicate (Limits.defaults.MaxDepth + 1) "!" + "true"
+
+              let scripted =
+                  hostile
+                  + "\npipeline { agent any stages { stage('B') { steps { echo 'x' } } } }"
+
+              Parser.parseWithLimits Limits.defaults scripted
+              |> expectCode "scripted preamble unary chain" NestingTooDeep
+
+              let declarativeScript =
+                  "pipeline { agent any stages { stage('B') { steps { script { def x = "
+                  + hostile
+                  + " } } } } }"
+
+              Parser.parseWithLimits Limits.defaults declarativeScript
+              |> expectCode "Declarative script unary chain" NestingTooDeep
+
+              let opaqueDeclarative =
+                  "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return "
+                  + hostile
+                  + " } } } }"
+
+              Parser.parseWithLimits Limits.defaults opaqueDeclarative
+              |> expectCode "opaque Declarative unary chain" NestingTooDeep
+
+              let zeroUnaryDepth =
+                  { Limits.defaults with
+                      MaxDepth = 0 }
+
+              Expect.isOk
+                  (Limits.precheck zeroUnaryDepth "x-- / 2")
+                  "postfix decrement is not charged as two recursive unary calls"
+
+              Expect.isOk
+                  (Limits.precheck Limits.defaults "[1].each { x -> !x }")
+                  "a closure arrow remains distinct from unary minus"
+          }
+
           test "balanced raw expressions reuse the admission slashy classification" {
               let limits =
                   { Limits.defaults with
@@ -481,6 +644,55 @@ let admissionLimits =
                   match Limits.precheck structuralLimits source with
                   | Error e -> Expect.equal e.Code NestingTooDeep $"{label}: division structure remains visible"
                   | Ok _ -> failtestf "%s let a colon promote division to slashy shielding" label
+
+              let spanSource = "return /aaaa/"
+
+              let spans =
+                  match Limits.precheckWithSlashySpans Limits.defaults spanSource with
+                  | Ok classified -> classified
+                  | Error e -> failtestf "slashy boundary control failed precheck: %A" e
+
+              Expect.equal (spans.Boundary(7)) (Complete 12) "the complete closer is exported without a sentinel"
+
+              Expect.equal
+                  (spans.Slice(7, 3).Boundary(0))
+                  (Incomplete 3)
+                  "a closer beyond an isolated reparse is its local EOF boundary"
+
+              for newlineLabel, newline in [ "LF", "\n"; "CRLF", "\r\n"; "CR", "\r" ] do
+                  let prefix =
+                      "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return /"
+                      + String.replicate 64 "\\/"
+
+                  let source = prefix + newline + "tail/ } } } }"
+
+                  match Parser.parseWithLimits Limits.defaults source with
+                  | Error e ->
+                      Expect.equal e.Code MalformedSyntax $"{newlineLabel}: incomplete classified slashy refuses"
+                      Expect.equal e.Position.Line 1L $"{newlineLabel}: refusal stays before the physical ending"
+                      Expect.equal
+                          e.Position.Column
+                          (int64 prefix.Length + 1L)
+                          $"{newlineLabel}: cached boundary preserves the exact refusal column"
+                  | Ok _ -> failtestf "%s incomplete classified slashy parsed" newlineLabel
+
+              let escapedSlashAdversary =
+                  "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { "
+                  + String.replicate 80_000 "\\/"
+                  + " } } } }"
+
+              let escapedSlashStarted = Diagnostics.Stopwatch.StartNew()
+              let escapedSlashResult = Parser.parseWithLimits Limits.defaults escapedSlashAdversary
+              escapedSlashStarted.Stop()
+
+              match escapedSlashResult with
+              | Ok _ -> ()
+              | Error e -> failtestf "source-sized escaped-slash opaque block failed: %A" e
+
+              Expect.isLessThan
+                  escapedSlashStarted.Elapsed.TotalSeconds
+                  2.0
+                  "cached incomplete boundaries keep public balancedRaw parsing bounded-linear"
           }
 
           test "all parser-supported scalar delimiters enforce UTF-8 content bytes" {
