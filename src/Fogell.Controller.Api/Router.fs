@@ -45,12 +45,6 @@ module Router =
     let private OpenNonBlocking = 0x800
 
     [<Literal>]
-    let private OpenDirectory = 0x10000
-
-    [<Literal>]
-    let private OpenNoFollow = 0x20000
-
-    [<Literal>]
     let private OpenCloseOnExec = 0x80000
 
     [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
@@ -112,10 +106,13 @@ module Router =
     /// actually opened, so a pathname swap cannot redirect response bytes outside
     /// this attempt's artifact root between validation and streaming.
     let private tryOpenArtifact (stateRoot: string) (organizationId: Guid) (attemptId: Guid) (rawPath: string) =
-        match artifactPathSegments rawPath with
-        | None -> InvalidArtifactPath
-        | Some _ when not (OperatingSystem.IsLinux()) -> ArtifactPlatformUnsupported
-        | Some values ->
+        // FG-238: O_DIRECTORY/O_NOFOLLOW are per-architecture; an untabulated
+        // architecture is a platform refusal, not an open with the wrong bits.
+        match artifactPathSegments rawPath, LinuxOpenFlags.current with
+        | None, _ -> InvalidArtifactPath
+        | Some _, _ when not (OperatingSystem.IsLinux()) -> ArtifactPlatformUnsupported
+        | Some _, Error _ -> ArtifactPlatformUnsupported
+        | Some values, Ok table ->
             // A missing snapshot parent is a legacy-migration signal only
             // beneath the real organization workspace. Refuse symlinked
             // workspace ancestors before an ENOENT can cause filesystem work.
@@ -126,8 +123,8 @@ module Router =
                     workspaceRoot,
                     OpenReadOnly
                     ||| OpenNonBlocking
-                    ||| OpenDirectory
-                    ||| OpenNoFollow
+                    ||| table.Directory
+                    ||| table.NoFollow
                     ||| OpenCloseOnExec)
             let workspaceStatus =
                 if workspaceDescriptor < 0 then
@@ -160,8 +157,8 @@ module Router =
                         snapshotParent,
                         OpenReadOnly
                         ||| OpenNonBlocking
-                        ||| OpenDirectory
-                        ||| OpenNoFollow
+                        ||| table.Directory
+                        ||| table.NoFollow
                         ||| OpenCloseOnExec)
                 else
                     -1
@@ -192,8 +189,8 @@ module Router =
                                 snapshotRoot,
                                 OpenReadOnly
                                 ||| OpenNonBlocking
-                                ||| OpenDirectory
-                                ||| OpenNoFollow
+                                ||| table.Directory
+                                ||| table.NoFollow
                                 ||| OpenCloseOnExec)
 
                         if rootDescriptor < 0 then
@@ -220,7 +217,7 @@ module Router =
                                     let descriptor =
                                         openFile (
                                             candidate,
-                                            OpenReadOnly ||| OpenNonBlocking ||| OpenNoFollow ||| OpenCloseOnExec)
+                                            OpenReadOnly ||| OpenNonBlocking ||| table.NoFollow ||| OpenCloseOnExec)
 
                                     if descriptor < 0 then
                                         classifyOpenError ()

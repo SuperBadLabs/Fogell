@@ -2,6 +2,7 @@ module Fogell.Domain.Tests
 
 open System
 open Expecto
+open System.Runtime.InteropServices
 open FsCheck
 open Fogell.Domain
 
@@ -154,6 +155,66 @@ let retrySemantics =
               Expect.notEqual child.Id parent.Id "parent identity is preserved"
           } ]
 
+/// FG-238. O_DIRECTORY and O_NOFOLLOW are per-architecture kernel ABI. The
+/// values here are read from the kernel's own headers
+/// (`include/uapi/asm-generic/fcntl.h`, `arch/arm64/include/uapi/asm/fcntl.h`),
+/// not from a running process, so the test pins the table to the ABI rather
+/// than to whatever machine happens to run it.
+let linuxOpenFlags =
+    testList
+        "FG-238 open(2) flag bits follow the kernel's per-architecture ABI"
+        [ test "the asm-generic table is O_DIRECTORY=0o200000, O_NOFOLLOW=0o400000" {
+              Expect.equal LinuxOpenFlags.asmGeneric.Directory 0x10000 "O_DIRECTORY (asm-generic)"
+              Expect.equal LinuxOpenFlags.asmGeneric.NoFollow 0x20000 "O_NOFOLLOW (asm-generic)"
+          }
+
+          test "the arm lineage table is O_DIRECTORY=0o40000, O_NOFOLLOW=0o100000" {
+              Expect.equal LinuxOpenFlags.armLineage.Directory 0x4000 "O_DIRECTORY (arm64)"
+              Expect.equal LinuxOpenFlags.armLineage.NoFollow 0x8000 "O_NOFOLLOW (arm64)"
+          }
+
+          test "the asm-generic bits are O_DIRECT|O_LARGEFILE on arm64, which is why guessing fails" {
+              // arm64: O_DIRECT = 0o200000, O_LARGEFILE = 0o400000 — the exact
+              // bits the generic table calls O_DIRECTORY and O_NOFOLLOW.
+              Expect.notEqual LinuxOpenFlags.asmGeneric LinuxOpenFlags.armLineage "the two tables differ"
+              Expect.equal
+                  (LinuxOpenFlags.asmGeneric.Directory ||| LinuxOpenFlags.asmGeneric.NoFollow)
+                  (0o200000 ||| 0o400000)
+                  "on arm64 those bits are O_DIRECT|O_LARGEFILE"
+          }
+
+          test "x86, x86-64, riscv64, s390x and loongarch64 use the asm-generic table" {
+              for architecture in
+                  [ Architecture.X86
+                    Architecture.X64
+                    Architecture.RiscV64
+                    Architecture.S390x
+                    Architecture.LoongArch64 ] do
+                  Expect.equal
+                      (LinuxOpenFlags.forArchitecture architecture)
+                      (Ok LinuxOpenFlags.asmGeneric)
+                      $"%A{architecture} is asm-generic"
+          }
+
+          test "arm, armv6, arm64 and ppc64le use the arm lineage table" {
+              for architecture in
+                  [ Architecture.Arm; Architecture.Armv6; Architecture.Arm64; Architecture.Ppc64le ] do
+                  Expect.equal
+                      (LinuxOpenFlags.forArchitecture architecture)
+                      (Ok LinuxOpenFlags.armLineage)
+                      $"%A{architecture} is arm lineage"
+          }
+
+          test "an untabulated architecture is a refusal, never a guess" {
+              match LinuxOpenFlags.forArchitecture Architecture.Wasm with
+              | Ok table -> failtestf "Wasm received a table: %A" table
+              | Error why -> Expect.stringContains why "not tabulated" "the refusal names the gap"
+          }
+
+          test "the running process is tabulated" {
+              Expect.isOk LinuxOpenFlags.current $"%A{RuntimeInformation.ProcessArchitecture} must be tabulated"
+          } ]
+
 [<EntryPoint>]
 let main argv =
     runTestsWithCLIArgs
@@ -165,4 +226,5 @@ let main argv =
               transitionProperties
               publicationGuard
               retrySemantics
+              linuxOpenFlags
               RetryDecisionTests.tests ])
