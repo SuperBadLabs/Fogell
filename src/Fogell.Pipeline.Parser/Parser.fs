@@ -664,6 +664,30 @@ let private commitScalarRefusal (state: ParserState) (refusal: AdmissionError) =
         | Some existing -> Some(earlierScalarRefusal existing refusal)
         | None -> Some refusal
 
+let private commitRebasedScalarRefusal
+    (stateBeforeScan: ParserState)
+    (outerState: ParserState)
+    (origin: FParsec.Position)
+    (error: AdmissionError)
+    =
+    let rebased = rebaseAdmissionError 1L origin error
+    let stateWithScalar = keepFirstScalarRefusal stateBeforeScan rebased
+
+    let committed =
+        match outerState.CommittedScalarRefusal.Value with
+        | None ->
+            // The first durable write must also preserve an ordinary refusal
+            // that preceded this whole section and may be rewound with it.
+            stateWithScalar.ScalarRefusal.Value
+        | Some _ ->
+            // Once durability exists, compare the newly proven location with
+            // the cell itself; feeding its old value back would make the
+            // existing-vs-new ordering branch vacuous.
+            rebased
+
+    commitScalarRefusal outerState committed
+    stateWithScalar
+
 let private parenArgs (stateBeforeScan: ParserState) (origin: FParsec.Position) (raw: string) =
     let body = if raw.Length >= 2 then raw.Substring(1, raw.Length - 2) else ""
 
@@ -675,7 +699,14 @@ let private parenArgs (stateBeforeScan: ParserState) (origin: FParsec.Position) 
             match runParserOnString (ws >>. argList false .>> eof) state "args" body with
             | ParserResult.Success(v, parsedState, _) ->
                 match parsedState.ScalarRefusal, parsedState.Refusal.Value with
-                | Some e, _ ->
+                | Some e, Some _ ->
+                    let committedState = commitRebasedScalarRefusal stateBeforeScan outerState origin e
+                    // An attempted inner branch may leave a semantic refusal
+                    // even when raw fallback completes the isolated parse.
+                    // That proof makes the scalar commitment just as durable
+                    // as the failed-parse case below.
+                    setUserState committedState >>% v
+                | Some e, None ->
                     let rebased = rebaseAdmissionError 1L origin e
                     // balancedRaw has already scanned this same body and may
                     // hold a provisional end-of-span position. Replace that
@@ -687,15 +718,12 @@ let private parenArgs (stateBeforeScan: ParserState) (origin: FParsec.Position) 
             | ParserResult.Failure(_, _, failedState) ->
                 match failedState.ScalarRefusal, failedState.Refusal.Value with
                 | Some e, Some _ ->
-                    let rebased = rebaseAdmissionError 1L origin e
-                    let committed = (keepFirstScalarRefusal stateBeforeScan rebased).ScalarRefusal.Value
                     // The inner semantic refusal proves this argument branch;
                     // outer attempts may rewind immutable state but must not
                     // erase its first committed scalar behind a generic section
                     // fallback. The separate cell is intentionally not written
                     // for ordinary grammar failure below.
-                    commitScalarRefusal outerState committed
-                    setUserState (keepFirstScalarRefusal stateBeforeScan rebased)
+                    setUserState (commitRebasedScalarRefusal stateBeforeScan outerState origin e)
                     >>. fail "parenthesised argument contains an overlong scalar"
                 | Some e, None ->
                     let rebased = rebaseAdmissionError 1L origin e
@@ -729,22 +757,6 @@ let private validateNestedScalarFrom
 let private validateNestedScalar (strippedColumns: int64) (origin: FParsec.Position) (source: string) : P<string> =
     getUserState
     >>= fun state -> validateNestedScalarFrom state strippedColumns origin source
-
-let private validateEarlierNestedScalar
-    (strippedColumns: int64)
-    (origin: FParsec.Position)
-    (source: string)
-    : P<string> =
-    getUserState
-    >>= fun state ->
-            match Fogell.Groovy.Parser.Parser.parseWithLimits state.Limits source with
-            | Result.Error e when e.Code = ScalarTooLong ->
-                let rebased = rebaseAdmissionError strippedColumns origin e
-                // The top-level parser captures the preamble first but validates
-                // it after the pipeline body. Its refusal is earlier in source
-                // order and therefore deliberately replaces body parser state.
-                setUserState { state with ScalarRefusal = Some rebased } >>% source
-            | _ -> preturn source
 
 let private validatedBalancedBody strippedColumns openChar closeChar =
     getUserState .>>. getPosition .>>. balancedBody openChar closeChar
@@ -1609,8 +1621,16 @@ let private pipelineParser: P<Pipeline> =
     // `withSkippedString` reads exactly what `preamble >>. skipToPipeline` consumed, so
     // the capture cannot drift from the skip: there is no second scanner to keep in
     // agreement with this one.
-    getPosition
-    .>>. withSkippedString (fun skipped () -> skipped) (preamble >>. skipToPipeline)
+    (getUserState
+     .>>. getPosition
+     .>>. withSkippedString (fun skipped () -> skipped) (preamble >>. skipToPipeline)
+     >>= fun ((stateBeforePreamble, preambleOrigin), capturedPreamble) ->
+             // Validate source in source order. In particular, establish an
+             // earlier preamble refusal before any body attempt can persist a
+             // later semantic+scalar refusal outside immutable backtracking.
+             // The pre-capture checkpoint also lets the nested grammar refine
+             // this preamble's own provisional balanced-scan coordinate.
+             validateNestedScalarFrom stateBeforePreamble 0L preambleOrigin capturedPreamble)
     .>>. (keyword "pipeline"
           >>. between
                   (symbol "{")
@@ -1633,9 +1653,8 @@ let private pipelineParser: P<Pipeline> =
                    // measurement yet.
                    >>= rejectingDuplicateSections "options" (function TopOptions _ -> true | _ -> false)))
     .>>. (getPosition .>>. manyChars anyChar)
-    >>= fun (((preambleOrigin, capturedPreamble), sections), (epilogueOrigin, capturedEpilogue)) ->
-            validateEarlierNestedScalar 0L preambleOrigin capturedPreamble
-            >>. validateNestedScalar 0L epilogueOrigin capturedEpilogue
+    >>= fun ((capturedPreamble, sections), (epilogueOrigin, capturedEpilogue)) ->
+            validateNestedScalar 0L epilogueOrigin capturedEpilogue
             >>% ((capturedPreamble, sections), capturedEpilogue)
     |>> fun ((capturedPreamble, sections), capturedEpilogue) ->
             let pick f = sections |> List.tryPick f

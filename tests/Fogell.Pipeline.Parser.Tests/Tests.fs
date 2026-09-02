@@ -404,6 +404,73 @@ let admissionLimits =
                   "semantic failure commits its own scalar without an earlier refusal"
                   (pipelineWithSteps "      sh(script: /bbbbbb/, returnStatus: true, returnStatus: false)")
 
+              let successfulFallbackWithRefusal = "      echo(/bbbbbb/, bad: '\\8')"
+
+              let successfulFallbackError =
+                  pipelineWithSteps successfulFallbackWithRefusal
+                  |> Parser.parseWithLimits limits
+                  |> positionedScalarError "successful fallback with a semantic refusal"
+
+              Expect.equal
+                  (pipelineWithSteps
+                      (successfulFallbackWithRefusal + "\n      echo(message: 'x', message: 'y')")
+                   |> Parser.parseWithLimits limits
+                   |> positionedScalarError "successful fallback before a later structural failure")
+                  successfulFallbackError
+                  "a semantic refusal from a successful isolated reparse commits its scalar"
+
+              Expect.equal
+                  (pipelineWithSteps
+                      (successfulFallbackWithRefusal
+                       + "\n      echo(/ccccccc/, bad: '\\8')"
+                       + "\n      echo(message: 'x', message: 'y')")
+                   |> Parser.parseWithLimits limits
+                   |> positionedScalarError "two committed scalar refusals")
+                  successfulFallbackError
+                  "a later committed scalar cannot overwrite the first committed refusal"
+
+              let earlierPreambleError =
+                  ("def first = /aaaaa/\n" + pipelineWithSteps "      echo 'x'")
+                  |> Parser.parseWithLimits limits
+                  |> positionedScalarError "preamble before a bounded body"
+
+              Expect.equal
+                  (("def first = /aaaaa/\n"
+                    + pipelineWithSteps "      sh(script: /bbbbbb/, returnStatus: true, returnStatus: false)")
+                   |> Parser.parseWithLimits limits
+                   |> positionedScalarError "preamble before a committed body refusal")
+                  earlierPreambleError
+                  "preamble validation precedes a later committed body refusal"
+
+              let helperPreamble = "def helper() { return /aaaaa/ }\n"
+
+              let helperPreambleError =
+                  (helperPreamble + pipelineWithSteps "      echo 'x'")
+                  |> Parser.parseWithLimits limits
+                  |> positionedScalarError "balanced helper preamble"
+
+              let nestedHelperPreambleError =
+                  Fogell.Groovy.Parser.Parser.parseWithLimits limits helperPreamble
+                  |> positionedScalarError "standalone helper preamble"
+
+              Expect.equal
+                  helperPreambleError
+                  nestedHelperPreambleError
+                  "top-level preamble validation exposes the exact nested Groovy refusal"
+
+              Expect.equal
+                  helperPreambleError.Position
+                  { Line = 1L; Column = 30L }
+                  "nested Groovy validation refines the preamble balanced-scan position"
+
+              Expect.equal
+                  ((helperPreamble
+                    + pipelineWithSteps "      sh(script: /bbbbbb/, returnStatus: true, returnStatus: false)")
+                   |> Parser.parseWithLimits limits
+                   |> positionedScalarError "balanced helper before a committed body refusal")
+                  helperPreambleError
+                  "an exact earlier helper refusal remains authoritative over the body"
+
               let boundedScalarDuplicate =
                   pipelineWithSteps "      sh(script: /bbbb/, returnStatus: true, returnStatus: false)"
 
