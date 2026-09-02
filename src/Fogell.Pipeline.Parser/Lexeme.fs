@@ -541,12 +541,19 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                     let before = stream.Index
                     stream.Skip()
                     let mutable closed = false
+                    let mutable crossedLine = false
 
-                    while not closed && not stream.IsEndOfStream do
+                    while not closed && not crossedLine && not stream.IsEndOfStream do
                         let d = stream.Peek()
 
                         if d = '\\' && stream.Peek(1) = '/' then
                             stream.Skip(2)
+                        elif d = '\r' || d = '\n' then
+                            // Both grammar-owned slashy parsers are single-line.
+                            // A broader structural scanner could let a later `/`
+                            // shield this balanced region's real closing brace,
+                            // admitting an opaque section Groovy rejects.
+                            crossedLine <- true
                         elif d = '/' then
                             stream.Skip()
                             closed <- true

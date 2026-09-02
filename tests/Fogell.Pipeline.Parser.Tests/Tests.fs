@@ -572,6 +572,38 @@ let admissionLimits =
                   | Error e -> Expect.equal e.Code MalformedSyntax $"{newlineLabel} terminates a slashy literal"
                   | Ok _ -> failtestf "a slashy literal crossed a raw %s boundary" newlineLabel
 
+                  // The opaque top/stage fallbacks rely on balancedRaw. Its
+                  // slashy shielding must use the same physical-line boundary
+                  // as the grammar-owned slashy parsers, or a later slash can
+                  // hide the balanced region's real closing brace.
+                  let opaqueSlashyContexts =
+                      [ "top-level opaque block",
+                        "pipeline { agent any stages { stage('B') { steps { echo 'x' } } } libraries { /x"
+                        + newline
+                        + "} y/ } }"
+                        "stage opaque block",
+                        "pipeline { agent any stages { stage('B') { steps { echo 'x' } mystery { /x"
+                        + newline
+                        + "} y/ } } } }" ]
+
+                  for contextLabel, source in opaqueSlashyContexts do
+                      match Parser.parseWithLimits Limits.defaults source with
+                      | Error e ->
+                          Expect.equal
+                              e.Code
+                              MalformedSyntax
+                              $"{newlineLabel} terminates slashy shielding in a {contextLabel}"
+                      | Ok _ -> failtestf "%s crossed slashy shielding in a %s" newlineLabel contextLabel
+
+                  for contextLabel, source in
+                      [ "top-level opaque control",
+                        "pipeline { agent any stages { stage('B') { steps { echo 'x' } } } libraries { /x}y/ } }"
+                        "stage opaque control",
+                        "pipeline { agent any stages { stage('B') { steps { echo 'x' } mystery { /x}y/ } } } }" ] do
+                      match Parser.parseWithLimits Limits.defaults source with
+                      | Ok _ -> ()
+                      | Error e -> failtestf "same-line slashy failed in %s: %A" contextLabel e
+
                   let lowScalar =
                       { Limits.defaults with
                           MaxScalarBytes = 4 }
