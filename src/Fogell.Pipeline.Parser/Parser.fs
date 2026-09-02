@@ -29,7 +29,7 @@ let private stepParser, private stepRef = createParserForwardedToRef<Step, Parse
 /// and since FG-141 a slashy `/; …/` too. The lexical state moves only forward:
 /// reconstructing it with character lookbehind misread comments containing
 /// `/*` and operator runs longer than two characters.
-let private rawArgValue (stops: char list) : P<string> =
+let private rawArgValue (allowCommandHead: bool) (stops: char list) : P<string> =
     // A `/` IS DIVISION OR A SLASHY OPENER, DECIDED BY FORWARD TOKEN CONTEXT.
     // The history that shaped the rule is kept because both failure directions
     // actually shipped:
@@ -58,6 +58,7 @@ let private rawArgValue (stops: char list) : P<string> =
         let mutable thirdSig = ' '
         let mutable lastSigIndex = -1L
         let mutable priorSigIndex = -1L
+        let mutable commandHead = false
         let mutable finished = false
         let mutable failed = false
         let mutable scalarRefusal = None
@@ -89,10 +90,23 @@ let private rawArgValue (stops: char list) : P<string> =
                                 $"string literal exceeds {stream.UserState.Limits.MaxScalarBytes} UTF-8 bytes"
                         )
 
+        let skipEscapedCharacter () =
+            stream.Skip()
+
+            if not stream.IsEndOfStream then
+                if stream.Peek() = '\r' then
+                    stream.Skip()
+                    if not stream.IsEndOfStream && stream.Peek() = '\n' then stream.Skip()
+                else
+                    stream.Skip()
+
         while not finished && not failed && not stream.IsEndOfStream do
             let c = stream.Peek()
 
-            if List.contains c stops then
+            // Physical line endings terminate every raw argument surface. Keep
+            // this invariant here rather than relying only on each caller's stop
+            // list: FParsec accepts LF, CRLF and bare CR as line boundaries.
+            if c = '\r' || c = '\n' || List.contains c stops then
                 finished <- true
             elif c = '\'' || c = '"' then
                 let literalStart = stream.Index
@@ -106,8 +120,7 @@ let private rawArgValue (stops: char list) : P<string> =
                     let d = stream.Peek()
 
                     if d = '\\' then
-                        stream.Skip()
-                        if not stream.IsEndOfStream then stream.Skip()
+                        skipEscapedCharacter ()
                     elif tripled && d = q && stream.Peek(1) = q && stream.Peek(2) = q then
                         stream.Skip(3)
                         closed <- true
@@ -125,6 +138,7 @@ let private rawArgValue (stops: char list) : P<string> =
                     let contentLength = int (finish - literalStart - int64 (2 * delimiterLength))
                     recordRawScalar contentStart contentLength finish
                     recordSignificant q (finish - 1L)
+                    commandHead <- false
                 else
                     failed <- true
             elif c = '/' && stream.Peek(1) = '/' then
@@ -157,9 +171,10 @@ let private rawArgValue (stops: char list) : P<string> =
                     && lastSigIndex = priorSigIndex + 1L
                     && Lexeme.endsExpression thirdSig
 
-                if Lexeme.endsExpression lastSig || postfixDivision then
+                if not commandHead && (Lexeme.endsExpression lastSig || postfixDivision) then
                     stream.Skip()
                     recordSignificant '/' slashIndex
+                    commandHead <- false
                 else
                     stream.Skip()
                     let contentStart = stream.Index
@@ -184,15 +199,39 @@ let private rawArgValue (stops: char list) : P<string> =
                         let contentLength = int (finish - contentStart - 1L)
                         recordRawScalar contentStart contentLength finish
                         recordSignificant '\'' (finish - 1L)
+                        commandHead <- false
                     else
                         stream.Seek(slashIndex + 1L)
                         recordSignificant '/' slashIndex
+                        commandHead <- false
+            elif isIdentStart c then
+                let beganAtArgument = lastSigIndex < 0L
+                let continuedCommand = commandHead
+                let token = System.Text.StringBuilder()
+                let mutable tokenEnd = stream.Index
+                let mutable tokenLast = c
+
+                while not stream.IsEndOfStream && isIdentCont (stream.Peek()) do
+                    tokenEnd <- stream.Index
+                    tokenLast <- stream.Peek()
+                    token.Append(stream.Read(1)) |> ignore
+
+                recordSignificant tokenLast tokenEnd
+                let word = token.ToString()
+
+                commandHead <-
+                    allowCommandHead
+                    && (beganAtArgument || continuedCommand)
+                    && word <> "true"
+                    && word <> "false"
+                    && word <> "null"
             else
                 let index = stream.Index
                 stream.Skip()
 
                 if c <> ' ' && c <> '\t' && c <> '\r' && c <> '\n' then
                     recordSignificant c index
+                    commandHead <- false
 
         let finish = stream.Index
 
@@ -319,7 +358,7 @@ let private namedArgWithKind: P<string * string * string * bool> =
             // to raw text on an unclosed collection would admit `target: [` as an
             // expression and parse the following line as another step.
             <|> (notFollowedBy (pchar '[')
-                 >>. rawArgValue [ ','; ')'; '\n'; '}'; ';' ] .>> ws
+                 >>. rawArgValue false [ ','; ')'; '\r'; '\n'; '}'; ';' ] .>> ws
                  |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)))
     |>> fun (n, (v, escaped, isLiteral)) -> n, v, escaped, isLiteral
 
@@ -327,7 +366,7 @@ let private namedArg: P<string * string> =
     attempt (
         identifier .>>? symbol ":" .>>. (
             (stringLiteral |>> id)
-            <|> (rawArgValue [ ','; ')'; '\n'; '}'; ';' ] .>> ws
+            <|> (rawArgValue false [ ','; ')'; '\r'; '\n'; '}'; ';' ] .>> ws
                  |>> fun s -> s.Trim())))
 
 /// A positional argument with its quote kind. `input 'Deploy ${TARGET}?'` is LITERAL on
@@ -338,7 +377,7 @@ let private namedArg: P<string * string> =
 /// `+ env.TARGET`, backtracked `steps` to EMPTY and shipped past the gate with no
 /// prompt — a THIRD route to the same bypass, fixed one branch at a time because
 /// I fixed the instance in front of me and described the class.
-let private positionalArgWithKind: P<string * string * bool> =
+let private positionalArgWithKind allowCommandHead : P<string * string * bool> =
     (wholeValue stringLiteralWithKindBoth
      |>> fun (plain, escaped, interpolates) -> plain, escaped, not interpolates)
     <|> (balancedRaw '[' ']' |>> fun v -> v, v, false)
@@ -365,13 +404,13 @@ let private positionalArgWithKind: P<string * string * bool> =
     <|> attempt (
         identifier .>>. balancedRaw '(' ')' .>> ws
         |>> fun (n, raw) -> n + raw, "\u0001" + n + raw, false)
-    <|> (rawArgValue [ ','; ')'; '\n'; '{'; '}'; ';' ] .>> ws
+    <|> (rawArgValue allowCommandHead [ ','; ')'; '\r'; '\n'; '{'; '}'; ';' ] .>> ws
          |>> fun s -> s.Trim(), "\u0001" + s.Trim(), false)
 
 let private positionalArg: P<string> =
     stringLiteral
     <|> (balancedRaw '[' ']')
-    <|> (rawArgValue [ ','; ')'; '\n'; '{'; '}'; ';' ] .>> ws
+    <|> (rawArgValue false [ ','; ')'; '\r'; '\n'; '{'; '}'; ';' ] .>> ws
          |>> fun s -> s.Trim())
 
 /// FG-134 / FG-138. A `;` TERMINATES a raw (unquoted) argument, outside literals.
@@ -387,14 +426,14 @@ let private positionalArg: P<string> =
 /// an expression carrying one inside quotes. Receipt
 /// `steps-semicolon-after-raw-arg`, proven to discriminate by mutation.
 
-let private argList
+let private argList allowCommandHead
     : P<(string * string) list * string list * Set<string> * Set<int> * (string * string) list * Set<string> * string list> =
     let namedCollectionPrefix =
         attempt (identifier .>>? symbol ":" >>. lookAhead (pchar '['))
 
     let one =
         (namedArgWithKind |>> Choice1Of2)
-        <|> (notFollowedBy namedCollectionPrefix >>. positionalArgWithKind |>> Choice2Of2)
+        <|> (notFollowedBy namedCollectionPrefix >>. positionalArgWithKind allowCommandHead |>> Choice2Of2)
 
     // Once `name: [` is present, failure of the balanced value is a refusal. It
     // must not be reinterpreted as one positional expression containing the
@@ -575,7 +614,7 @@ let private parenArgs (origin: FParsec.Position) (raw: string) =
             let state =
                 parserStateWithLimits outerState.Limits
 
-            match runParserOnString (ws >>. argList .>> eof) state "args" body with
+            match runParserOnString (ws >>. argList false .>> eof) state "args" body with
             | ParserResult.Success(v, parsedState, _) ->
                 match parsedState.ScalarRefusal, parsedState.Refusal.Value with
                 | Some e, _ ->
@@ -605,7 +644,7 @@ let private validateNestedScalar (strippedColumns: int64) (origin: FParsec.Posit
             | _ -> preturn source
 
 let private nonEmptyInlineArgs =
-    hspaces >>. argList
+    hspaces >>. argList true
     >>= fun ((_, _, _, _, _, _, order) as args) ->
         if List.isEmpty order then fail "no inline argument parsed" else preturn args
 
@@ -771,7 +810,7 @@ let private agentSpec: P<AgentSpec> =
             identifierBare
             .>>. withSkippedString
                     (fun skipped args -> skipped, args)
-                    (inlineAgentGap >>. argList)
+                    (inlineAgentGap >>. argList false)
             >>= fun (kind, (source, (_named, positional, _, _, _, _, order))) ->
                     if List.isEmpty order then
                         fail "an inline agent requires at least one named argument"
@@ -850,7 +889,7 @@ let private postSection: P<(PostCondition * Step list) list> =
 /// step arguments.
 let private whenRawValue: P<string> =
     let ordinary =
-        rawArgValue [ ','; '\n'; '}'; ';'; '('; ')'; '['; ']'; '{' ]
+        rawArgValue false [ ','; '\r'; '\n'; '}'; ';'; '('; ')'; '['; ']'; '{' ]
 
     many1Strings (
         attempt (balancedRaw '(' ')')

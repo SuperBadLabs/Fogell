@@ -407,6 +407,16 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                 lastSig <- c
                 lastSigIndex <- index
 
+            let skipEscapedCharacter () =
+                stream.Skip()
+
+                if not stream.IsEndOfStream then
+                    if stream.Peek() = '\r' then
+                        stream.Skip()
+                        if not stream.IsEndOfStream && stream.Peek() = '\n' then stream.Skip()
+                    else
+                        stream.Skip()
+
             while depth > 0 && not failed && not (stream.IsEndOfStream) do
                 let c = stream.Peek()
 
@@ -432,8 +442,7 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                             let d = stream.Peek()
 
                             if d = '\\' then
-                                stream.Skip()
-                                if not stream.IsEndOfStream then stream.Skip()
+                                skipEscapedCharacter ()
                             elif d = q && stream.Peek(1) = q && stream.Peek(2) = q then
                                 stream.Skip(3)
                                 closed <- true
@@ -448,17 +457,19 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
 
                     let mutable closed = false
 
-                    while not closed && not stream.IsEndOfStream do
+                    while not closed && not failed && not stream.IsEndOfStream do
                         let d = stream.Peek()
 
                         if d = '\\' then
-                            stream.Skip()
-                            if not stream.IsEndOfStream then stream.Skip()
+                            skipEscapedCharacter ()
                         elif d = q then
                             stream.Skip()
                             closed <- true
-                        elif d = '\n' && q = '\'' then
-                            closed <- true // unterminated single-quote: bail
+                        elif (d = '\r' || d = '\n') && q = '\'' then
+                            // Ordinary single-quoted Groovy strings cannot cross
+                            // an unescaped physical line ending. CRLF is observed
+                            // at its CR, and bare CR must behave exactly like LF.
+                            failed <- true
                         else
                             stream.Skip()
 

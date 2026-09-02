@@ -489,39 +489,52 @@ let admissionLimits =
 
               expectGroovyScalarTooLong "three-character operator-run interpretation" "x--- /aaaaa/"
 
-              // A block comment does not erase the operand before it. Every
-              // slash here is division, so the long identifier is not a scalar.
-              for label, argument in
-                  [ "inline", "x /* c */ / aaaaa / b"
-                    "paren", "(x /* c */ / aaaaa / b)"
-                    "named", "message: x /* c */ / aaaaa / b"
-                    "paren named", "(message: x /* c */ / aaaaa / b)"
-                    "inline inner opener", "x /* /* */ / aaaaa / b"
-                    "paren inner opener", "(x /* /* */ / aaaaa / b)"
-                    "named inner opener", "message: x /* /* */ / aaaaa / b"
-                    "paren named inner opener", "(message: x /* /* */ / aaaaa / b)" ] do
-                  let source =
-                      "pipeline { agent any stages { stage('B') { steps { echo "
-                      + argument
-                      + " } } } }"
+              // Raw arguments are later evaluated as top-level Groovy fragments,
+              // where a leading identifier is a command head. Grouping or a
+              // collection changes that context back to ordinary division.
+              for commentLabel, expression in
+                  [ "ordinary comment", "x /* c */ / aaaaa / b"
+                    "inner-opener comment", "x /* /* */ / aaaaa / b" ] do
+                  expectPipelineScalar
+                      (commentLabel + " inline command")
+                      ("pipeline { agent any stages { stage('B') { steps { echo "
+                       + expression
+                       + " } } } }")
 
-                  match Parser.parseWithLimits limits source with
-                  | Ok _ -> ()
-                  | Error e -> failtestf "%s comment-trivia division became a scalar: %A" label e
+                  for label, argument in
+                      [ "grouped division", "(" + expression + ")"
+                        "list division", "[" + expression + "]"
+                        "named division", "message: " + expression
+                        "paren named division", "(message: " + expression + ")" ] do
+                      let source =
+                          "pipeline { agent any stages { stage('B') { steps { echo "
+                          + argument
+                          + " } } } }"
 
-              for condition in
-                  [ "branch pattern: x /* c */ / aaaaa / b"
-                    "branch(pattern: x /* c */ / aaaaa / b)"
-                    "branch pattern: x /* /* */ / aaaaa / b"
-                    "branch(pattern: x /* /* */ / aaaaa / b)" ] do
-                  let source =
-                      "pipeline { agent any stages { stage('B') { when { "
-                      + condition
-                      + " } steps { echo 'x' } } } }"
+                      match Parser.parseWithLimits limits source with
+                      | Ok _ -> ()
+                      | Error e -> failtestf "%s %s became a scalar: %A" commentLabel label e
 
-                  match Parser.parseWithLimits limits source with
-                  | Ok _ -> ()
-                  | Error e -> failtestf "named when comment-trivia division became a scalar: %A" e
+                  for condition in
+                      [ "branch pattern: " + expression
+                        "branch(pattern: " + expression + ")" ] do
+                      let source =
+                          "pipeline { agent any stages { stage('B') { when { "
+                          + condition
+                          + " } steps { echo 'x' } } } }"
+
+                      match Parser.parseWithLimits limits source with
+                      | Ok _ -> ()
+                      | Error e -> failtestf "%s named when division became a scalar: %A" commentLabel e
+
+                  expectGroovyScalarTooLong (commentLabel + " command interpretation") expression
+                  expectGroovyAccepted (commentLabel + " assigned division") ("def y = " + expression)
+
+              expectPipelineScalar
+                  "raw identifier-headed command slashy"
+                  "pipeline { agent any stages { stage('B') { steps { echo foo /aaaaa/ } } } }"
+
+              expectGroovyScalarTooLong "identifier-headed command interpretation" "foo /aaaaa/"
 
               let innerOpenerSlashy = "x + /* a /* */ /aaaaa/"
 
@@ -548,8 +561,71 @@ let admissionLimits =
               expectGroovyScalarTooLong "non-nesting comment slashy interpretation" innerOpenerSlashy
 
               // FParsec accepts LF, CRLF and bare CR as physical line endings.
-              // Raw balanced capture must end comments on the same three forms.
+              // Raw arguments and balanced capture must end on the same three forms.
               for newlineLabel, newline in [ "LF", "\n"; "CRLF", "\r\n"; "bare CR", "\r" ] do
+                  for firstLabel, firstStep in [ "positional raw", "echo x"; "named raw", "echo message: x" ] do
+                      let adjacentSteps =
+                          "pipeline { agent any stages { stage('B') { steps { "
+                          + firstStep
+                          + newline
+                          + " input /aaaaa/"
+                          + newline
+                          + "} } } }"
+
+                      match Parser.parseWithLimits Limits.defaults adjacentSteps with
+                      | Ok pipeline ->
+                          Expect.equal
+                              pipeline.Stages.[0].Steps.Length
+                              2
+                              $"{newlineLabel} after {firstLabel} preserves the approval step"
+
+                          Expect.equal
+                              pipeline.Stages.[0].Steps.[1].Name
+                              "input"
+                              $"{newlineLabel} after {firstLabel} retains the approval gate"
+                      | Error e -> failtestf "%s-separated %s steps did not parse: %A" newlineLabel firstLabel e
+
+                      match Parser.parseWithLimits limits adjacentSteps with
+                      | Error e ->
+                          Expect.equal e.Code ScalarTooLong $"{newlineLabel} after {firstLabel} exposes the gate's scalar"
+                      | Ok _ -> failtestf "%s after %s swallowed the approval gate" newlineLabel firstLabel
+
+                  let ordinaryMultiline =
+                      "pipeline { agent any stages { stage('B') { steps { echo(['a"
+                      + newline
+                      + "b']) } } } }"
+
+                  match Parser.parseWithLimits Limits.defaults ordinaryMultiline with
+                  | Error e -> Expect.equal e.Code MalformedSyntax $"{newlineLabel} refuses an ordinary multiline string"
+                  | Ok _ -> failtestf "%s was swallowed inside an ordinary single-quoted string" newlineLabel
+
+                  let tripleMultiline =
+                      "pipeline { agent any stages { stage('B') { steps { echo(['''a"
+                      + newline
+                      + "b''']) } } } }"
+
+                  match Parser.parseWithLimits Limits.defaults tripleMultiline with
+                  | Ok _ -> ()
+                  | Error e -> failtestf "%s was rejected inside a triple-single-quoted string: %A" newlineLabel e
+
+                  let continuedOrdinary =
+                      "pipeline { agent any stages { stage('B') { steps { echo(['a\\"
+                      + newline
+                      + "b']) } } } }"
+
+                  match Parser.parseWithLimits Limits.defaults continuedOrdinary with
+                  | Ok _ -> ()
+                  | Error e -> failtestf "%s escaped physical continuation was rejected: %A" newlineLabel e
+
+                  let continuedRawConcat =
+                      "pipeline { agent any stages { stage('B') { steps { echo x + 'a\\"
+                      + newline
+                      + "b' } } } }"
+
+                  match Parser.parseWithLimits Limits.defaults continuedRawConcat with
+                  | Ok _ -> ()
+                  | Error e -> failtestf "%s escaped continuation in a raw expression was rejected: %A" newlineLabel e
+
                   let scriptComment =
                       "pipeline { agent any stages { stage('B') { steps { script { echo x // c"
                       + newline
