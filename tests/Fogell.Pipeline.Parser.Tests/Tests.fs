@@ -286,7 +286,9 @@ let admissionLimits =
                   "a supported command expression remains admitted inside interpolation"
 
               Expect.isOk
-                  (Fogell.Groovy.Parser.Parser.parseWithLimits depthLimits "\"${[1].each { echo /((((/ }}\"")
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits
+                      { depthLimits with MaxDepth = 3 }
+                      "\"${[1].each { echo /((((/ }}\"")
                   "a closure inside interpolation still begins a command-capable statement body"
 
               let nestedDivisionGString =
@@ -521,17 +523,35 @@ let admissionLimits =
                   Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults source
                   |> expectCode (label + " plus-one postfix depth/Groovy") NestingTooDeep
 
-              for label, source in postfixCases 40 23 do
+              for label, source in postfixCases 40 22 do
+                  if label <> "spread member call" then
+                      Expect.isOk
+                          (Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults source)
+                          $"{label}: unary, one postfix step and its suffix group fit exactly"
+
+              let exactConstructor = unary 40 + "new Foo(" + unary 23 + "true)"
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults exactConstructor)
+                  "constructor arguments remain a primary, not a postfix-loop step"
+
+              let exactSpreadCall = unary 40 + "foo*.bar(" + unary 21 + "true)"
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults exactSpreadCall)
+                  "spread property plus the following call are two exact postfix-loop steps"
+
+              for label, source in postfixCases 0 0 do
                   Expect.isOk
                       (Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults source)
-                      $"{label}: 40 outer plus 23 inner unary frames and one suffix group fit exactly"
+                      $"{label}: every postfix form still parses at an ordinary depth"
 
               let siblingArguments =
                   unary 40
                   + "foo("
-                  + unary 23
+                  + unary 22
                   + "true, "
-                  + unary 23
+                  + unary 22
                   + "false)"
 
               Expect.isOk
@@ -549,6 +569,114 @@ let admissionLimits =
                   Expect.isOk
                       (Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults source)
                       $"{label}: the recursive grammar agrees that the expressions are independent"
+
+              let groupedNewlineIndexes =
+                  [ "parenthesised", "(" + unary 40 + "foo\n[" + unary 24 + "true])"
+                    "list", "[" + unary 40 + "foo\n[" + unary 24 + "true]]"
+                    "GString interpolation", "\"${" + unary 40 + "foo\n[" + unary 24 + "true]}\"" ]
+
+              for label, source in groupedNewlineIndexes do
+                  Limits.precheck Limits.defaults source
+                  |> expectCode (label + " newline index retains unary/precheck") NestingTooDeep
+
+                  Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults source
+                  |> expectCode (label + " newline index retains unary/Groovy") NestingTooDeep
+
+              let statementBodyNewlineIndex =
+                  "({ " + unary 40 + "foo\n[" + unary 40 + "true] })"
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults statementBodyNewlineIndex)
+                  "a nested statement body resets expression-group ownership before a newline list statement"
+
+              let flatPostfixChain suffixCount =
+                  "x" + String.replicate suffixCount ".x"
+
+              let flatPostfixLimits =
+                  { Limits.defaults with
+                      MaxSourceBytes = 100_000
+                      MaxDepth = 4
+                      MaxNodes = 100
+                      MaxScalarBytes = 100_000 }
+
+              let exactFlatPostfix = flatPostfixChain flatPostfixLimits.MaxDepth
+              let overFlatPostfix = flatPostfixChain (flatPostfixLimits.MaxDepth + 1)
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits flatPostfixLimits exactFlatPostfix)
+                  "MaxDepth flat postfix-loop steps fit exactly"
+
+              Limits.precheck flatPostfixLimits overFlatPostfix
+              |> expectCode "plus-one flat postfix depth/precheck" NestingTooDeep
+
+              Fogell.Groovy.Parser.Parser.parseWithLimits flatPostfixLimits overFlatPostfix
+              |> expectCode "plus-one flat postfix depth/Groovy" NestingTooDeep
+
+              let flatPostfixNodeLimits =
+                  { flatPostfixLimits with
+                      MaxDepth = 64
+                      MaxNodes = 5 }
+
+              Expect.isOk
+                  (Limits.precheck flatPostfixNodeLimits (flatPostfixChain 4))
+                  "a primary plus four suffix identifiers fit five nodes exactly"
+
+              Limits.precheck flatPostfixNodeLimits (flatPostfixChain 5)
+              |> expectCode "plus-one flat postfix node/precheck" TooManyNodes
+
+              Fogell.Groovy.Parser.Parser.parseWithLimits flatPostfixNodeLimits (flatPostfixChain 5)
+              |> expectCode "plus-one flat postfix node/Groovy" TooManyNodes
+
+              let sourceSizedPostfix =
+                  flatPostfixChain (Limits.defaults.MaxNodes - 1)
+
+              Limits.precheck Limits.defaults sourceSizedPostfix
+              |> expectCode "MaxNodes-sized postfix chain/precheck" NestingTooDeep
+
+              Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults sourceSizedPostfix
+              |> expectCode "MaxNodes-sized postfix chain/Groovy" NestingTooDeep
+
+              let exactCompoundPostfix =
+                  [ 2, "x.y()"
+                    2, "x?.y()"
+                    2, "x() { true }"
+                    2, "x.y { true }"
+                    2, "x[true]"
+                    3, "x*.y()"
+                    3, "x()()"
+                    3, "x() { true } { false }"
+                    3, "x(y.z)" ]
+
+              for maxDepth, source in exactCompoundPostfix do
+                  Expect.isOk
+                      (Fogell.Groovy.Parser.Parser.parseWithLimits { flatPostfixLimits with MaxDepth = maxDepth } source)
+                      $"{source}: compound postfix steps meet their exact boundary"
+
+              let unaryPostfixLimits =
+                  { flatPostfixLimits with
+                      MaxDepth = 4
+                      MaxNodes = 16 }
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits unaryPostfixLimits "!!x.y.y")
+                  "two unary plus two postfix frames fit the combined boundary"
+
+              Fogell.Groovy.Parser.Parser.parseWithLimits unaryPostfixLimits "!!x.y.y.y"
+              |> expectCode "plus-one combined unary/postfix chain" NestingTooDeep
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits flatPostfixLimits "(x.y.y.y)")
+                  "one structural plus three postfix frames fit the combined boundary"
+
+              Fogell.Groovy.Parser.Parser.parseWithLimits flatPostfixLimits "(x.y.y.y.y)"
+              |> expectCode "plus-one combined structural/postfix chain" NestingTooDeep
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits flatPostfixLimits "\"$x.y.y.y.y\"")
+                  "four shorthand GString property frames fit exactly"
+
+              Fogell.Groovy.Parser.Parser.parseWithLimits flatPostfixLimits "\"$x.y.y.y.y.y\""
+              |> expectCode "plus-one shorthand GString property chain" NestingTooDeep
 
               let hostile = String.replicate (Limits.defaults.MaxDepth + 1) "!" + "true"
 
@@ -754,6 +882,78 @@ let admissionLimits =
                   escapedSlashStarted.Elapsed.TotalSeconds
                   2.0
                   "cached incomplete boundaries keep public balancedRaw parsing bounded-linear"
+
+              let rawArgumentAdversary =
+                  "pipeline { agent any stages { stage('B') { steps { input(message: "
+                  + String.replicate 80_000 "\\/"
+                  + ") } } } } }"
+
+              let rawArgumentStarted = Diagnostics.Stopwatch.StartNew()
+              let rawArgumentResult = Parser.parseWithLimits Limits.defaults rawArgumentAdversary
+              rawArgumentStarted.Stop()
+
+              match rawArgumentResult with
+              | Ok _ -> ()
+              | Error e -> failtestf "source-sized escaped-slash raw argument failed: %A" e
+
+              Expect.isLessThan
+                  rawArgumentStarted.Elapsed.TotalSeconds
+                  2.0
+                  "sliced cached incomplete boundaries keep public rawArgValue parsing bounded-linear"
+          }
+
+          test "return command slashy fallback exposes speculative division depth" {
+              let limits =
+                  { Limits.defaults with
+                      MaxDepth = 10
+                      MaxSourceBytes = 10_000
+                      MaxScalarBytes = 10_000 }
+
+              let grouped count =
+                  String.replicate count "(" + "true" + String.replicate count ")"
+
+              let direct count = "return tool / " + grouped count + " /;"
+
+              let scripted count =
+                  "pipeline { agent any stages { stage('B') { steps { script { "
+                  + direct count
+                  + " } } } } } }"
+
+              let scriptLimits =
+                  { limits with MaxDepth = 15 }
+
+              Expect.isOk
+                  (Limits.precheck limits (direct 10))
+                  "the exact direct speculative-division depth remains admitted"
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits limits (direct 10))
+                  "the exact direct return-command slashy fallback remains compatible"
+
+              for label, result in
+                  [ "direct precheck", Limits.precheck limits (direct 11)
+                    "direct Groovy", Fogell.Groovy.Parser.Parser.parseWithLimits limits (direct 11) |> Result.map ignore
+                    "Declarative script", Parser.parseWithLimits scriptLimits (scripted 6) |> Result.map ignore ] do
+                  match result with
+                  | Error e -> Expect.equal e.Code NestingTooDeep $"{label}: speculative division depth is bounded"
+                  | Ok _ -> failtestf "%s hid plus-one depth inside the eventual slashy fallback" label
+
+              Expect.isOk
+                  (Parser.parseWithLimits scriptLimits (scripted 5))
+                  "the exact Declarative script depth retains return-command slashy compatibility"
+
+              let scalarExact =
+                  { limits with
+                      MaxDepth = Limits.defaults.MaxDepth
+                      MaxScalarBytes = 4 }
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits scalarExact "return tool /aaaa/;")
+                  "the exact scalar return-command slashy remains admitted"
+
+              match Fogell.Groovy.Parser.Parser.parseWithLimits scalarExact "return tool /aaaaa/;" with
+              | Error e -> Expect.equal e.Code ScalarTooLong "the fallback slashy still owns scalar admission"
+              | Ok _ -> failtest "the structurally visible fallback slashy bypassed its scalar limit"
           }
 
           test "all parser-supported scalar delimiters enforce UTF-8 content bytes" {
@@ -2195,7 +2395,7 @@ let sourceExcerpts =
                     tiny,
                     "pipeline { x }",
                     "source_too_large at 1:1: source is 14 UTF-8 bytes, limit is 12\npipeline { x }\n^"
-                    "nesting_too_deep", tiny, "a\n{{{", "nesting_too_deep at 2:4: nesting depth 3 exceeds limit 2\n{{{\n   ^"
+                    "nesting_too_deep", tiny, "a\n{{{", "nesting_too_deep at 2:3: grammar depth 3 exceeds limit 2\n{{{\n  ^"
                     "too_many_nodes", tiny, "a b\nc d e", "too_many_nodes at 2:6: node count exceeds 4\nc d e\n     ^"
                     "scalar_too_long",
                     tiny,
@@ -2562,14 +2762,14 @@ let admissionNegativeSweep =
               (depthSource "x\n" "{")
               NestingTooDeep
               2L
-              66L
+              65L
           exact
               "crlf-resets-depth-position"
               "crlf-depth"
               (depthSource "x\r\n" "{")
               NestingTooDeep
               2L
-              66L
+              65L
           exact
               "missing-pipeline-close"
               "missing-close"
@@ -2628,7 +2828,7 @@ let admissionNegativeSweep =
                 (depthSource prefix opener)
                 NestingTooDeep
                 1L
-                (int64 prefix.Length + 66L)
+                (int64 prefix.Length + 65L)
 
     let cases () =
         let rng = FuzzXorShift64(seed)

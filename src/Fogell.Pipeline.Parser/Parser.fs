@@ -187,34 +187,17 @@ let private rawArgValue (allowCommandHead: bool) (stops: char list) : P<string> 
                     recordSignificant '/' slashIndex
                     commandHead <- false
                 else
-                    stream.Skip()
-                    let contentStart = stream.Index
-                    let mutable closed = false
-                    let mutable searching = true
-
-                    while not closed && searching && not stream.IsEndOfStream do
-                        let d = stream.Peek()
-
-                        if d = '\\' && stream.Peek(1) = '/' then
-                            stream.Skip(2)
-                        elif d = '/' then
-                            stream.Skip()
-                            closed <- true
-                        elif d = '\r' || d = '\n' then
-                            searching <- false
-                        else
-                            stream.Skip()
-
-                    if closed then
+                    let recordComplete () =
                         let finish = stream.Index
+                        let contentStart = slashIndex + 1L
                         let contentLength = int (finish - contentStart - 1L)
                         recordRawScalar contentStart contentLength finish
                         recordSignificant '\'' (finish - 1L)
                         commandHead <- false
-                    elif
-                        not stream.IsEndOfStream
-                        && (stream.Peek() = '\r' || stream.Peek() = '\n')
-                    then
+
+                    let refuseAtPhysicalEnd physicalEnd =
+                        stream.Seek(int64 physicalEnd)
+
                         // At an operand position this slash can only begin a
                         // slashy literal. Falling back at a physical line ending
                         // lets the enclosing grammar reinterpret the next line as
@@ -230,10 +213,57 @@ let private rawArgValue (allowCommandHead: bool) (stops: char list) : P<string> 
                                 )
 
                         failed <- true
-                    else
-                        stream.Seek(slashIndex + 1L)
+
+                    match stream.UserState.BalancedSlashySpans.Boundary(int slashIndex) with
+                    | Complete closingIndex ->
+                        // Admission already proved this exact delimiter. The
+                        // boundary is source-relative here and slice-relative
+                        // inside isolated parenthesized argument reparses.
+                        stream.Seek(int64 closingIndex + 1L)
+                        recordComplete ()
+                    | Incomplete physicalEnd when physicalEnd < stream.UserState.BalancedSlashySpans.Length ->
+                        // Preserve the historical refusal coordinate at the
+                        // first physical ending without searching this suffix.
+                        refuseAtPhysicalEnd physicalEnd
+                    | Incomplete _ ->
+                        // Admission proved there is neither a delimiter nor a
+                        // physical ending in this parser input. Consume the
+                        // ordinary slash once; later candidates use their own
+                        // cached EOF boundary instead of rescanning to EOF.
+                        stream.Skip()
                         recordSignificant '/' slashIndex
                         commandHead <- false
+                    | Unclassified ->
+                        // Focused parsers and a local token context that differs
+                        // from admission retain the established lexical scan.
+                        stream.Skip()
+                        let mutable closed = false
+                        let mutable searching = true
+
+                        while not closed && searching && not stream.IsEndOfStream do
+                            let d = stream.Peek()
+
+                            if d = '\\' && stream.Peek(1) = '/' then
+                                stream.Skip(2)
+                            elif d = '/' then
+                                stream.Skip()
+                                closed <- true
+                            elif d = '\r' || d = '\n' then
+                                searching <- false
+                            else
+                                stream.Skip()
+
+                        if closed then
+                            recordComplete ()
+                        elif
+                            not stream.IsEndOfStream
+                            && (stream.Peek() = '\r' || stream.Peek() = '\n')
+                        then
+                            refuseAtPhysicalEnd (int stream.Index)
+                        else
+                            stream.Seek(slashIndex + 1L)
+                            recordSignificant '/' slashIndex
+                            commandHead <- false
             elif isIdentStart c then
                 let beganAtArgument = lastSigIndex < 0L
                 let token = System.Text.StringBuilder()

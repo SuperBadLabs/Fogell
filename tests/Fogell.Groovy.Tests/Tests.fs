@@ -404,6 +404,21 @@ let grammar =
                   (Ast.containsSpreadAssignment (parseOk "holder.foo { rows*.name = 'x' }.bar = 1\n"))
                   "the separate statement traversal still sees a write inside a call closure"
           }
+
+          test "a closure suffix on a completed call becomes a call-result invocation" {
+              match parseOk "x() { true } { false }" with
+              | [ SExpr(
+                    ECall(
+                        MethodCall(ECall(FreeCall "x", [], Some first), "call"),
+                        [],
+                        Some second
+                    )
+                ) ] ->
+                  Expect.equal first.Body [ SExpr(EBool true) ] "the first closure remains attached to x"
+                  Expect.equal second.Body [ SExpr(EBool false) ] "the suffix closure is retained on the result call"
+              | other -> failtestf "the second closure was consumed without an AST receiver frame: %A" other
+          }
+
           // FG-174. Both parsers hold this rule, because both produce calls and a rule
           // held by only one of them is the shape of half the findings on this branch.
           test "a duplicate named argument is refused, parenthesised" {

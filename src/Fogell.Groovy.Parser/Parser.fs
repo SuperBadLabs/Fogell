@@ -467,18 +467,18 @@ let private primary: P<Expr> =
 /// Postfix chain: property access, indexing, calls, spread-dot, safe-nav,
 /// and a trailing closure that turns `x.each { }` into a call.
 let private postfixChain (start: Expr) : P<Expr> =
-    let step (e: Expr) =
+    let step: P<Expr -> Expr> =
         choice
-            [ attempt (symbol "*." >>. plainIdent |>> fun n -> ESpreadProp(e, n))
+            [ attempt (symbol "*." >>. plainIdent |>> fun n e -> ESpreadProp(e, n))
               attempt (
                   symbol "?." >>. plainIdent .>>. opt (attempt argsInParens) .>>. opt (attempt closure)
-                  |>> fun ((n, args), trailing) ->
+                  |>> fun ((n, args), trailing) e ->
                           match args, trailing with
                           | None, None -> ESafeProp(e, n)
                           | a, t -> ECall(SafeMethodCall(e, n), defaultArg a [], t))
               attempt (
                   symbol "." >>. plainIdent .>>. opt (attempt argsInParens) .>>. opt (attempt closure)
-                  |>> fun ((n, args), trailing) ->
+                  |>> fun ((n, args), trailing) e ->
                           match args, trailing with
                           | None, None -> EProp(e, n)
                           | a, t -> ECall(MethodCall(e, n), defaultArg a [], t))
@@ -495,21 +495,23 @@ let private postfixChain (start: Expr) : P<Expr> =
               // This masked FG-179 for months: every probe of closure capture was written
               // across newlines, so the confound sat in the evidence for both sides of that
               // argument and two observers agreed on a wrong cause.
-              attempt (indexMayContinue >>. expressionGroup "[" "]" exprRef |>> fun i -> EIndex(e, i))
+              attempt (indexMayContinue >>. expressionGroup "[" "]" exprRef |>> fun i e -> EIndex(e, i))
               attempt (argsInParens .>>. opt (attempt closure)
-                       |>> fun (args, t) ->
+                       |>> fun (args, t) e ->
                                match e with
                                | EVar n -> ECall(FreeCall n, args, t)
                                | _ -> ECall(MethodCall(e, "call"), args, t))
-              attempt (closure |>> fun c ->
+              attempt (closure |>> fun c e ->
                           match e with
                           | EVar n -> ECall(FreeCall n, [], Some c)
-                          | _ -> e) ]
+                          | _ -> ECall(MethodCall(e, "call"), [], Some c)) ]
 
-    let rec loop e =
-        (attempt (step e) >>= loop) <|> preturn e
-
-    loop start
+    // `many` owns this flat repetition iteratively. The former recursive loop
+    // invoked itself once per suffix, so a MaxNodes-sized `.x` chain could put
+    // roughly sixteen thousand live parser frames on the process stack even
+    // though it contained no nested grammar at all.
+    many (attempt step)
+    |>> List.fold (fun e applySuffix -> applySuffix e) start
 
 let private unaryForward = createParserForwardedToRef<Expr, TriviaState> ()
 let private unaryRef = fst unaryForward

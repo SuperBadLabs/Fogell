@@ -167,6 +167,21 @@ module Limits =
             let mutable unaryFloor = 0
             let mutable postfixPrimary = false
             let unaryFrames = System.Collections.Generic.Stack<int * int>()
+            // Every successful postfix suffix adds one nested AST receiver.
+            // Keep that left spine under the same depth
+            // contract as structural and unary recursion; downstream AST
+            // walkers and the interpreter recurse through it too.
+            let mutable postfixChainDepth = 0
+            let mutable postfixFloor = 0
+            let mutable postfixMemberStage = 0
+            let mutable constructorPrimary = false
+            let postfixFrames = System.Collections.Generic.Stack<int * int * int>()
+            // Groovy permits a postfix index to cross a physical ending only
+            // while an expression group owns the parse. Parentheses, lists and
+            // `${...}` increment that ownership; a closure/statement body
+            // temporarily resets it even when nested in an expression group.
+            let mutable postfixGroupDepth = 0
+            let postfixGroupFrames = System.Collections.Generic.Stack<int>()
             let controlParens = System.Collections.Generic.Stack<bool>()
             // A `case` expression ends at a colon at the same structural and
             // expression nesting where the keyword began. Its third field is
@@ -202,7 +217,22 @@ module Limits =
                 // Each recursive unary production becomes one EUnary node.
                 recordNode ()
 
-                let grammarDepth = depth + unaryChainDepth
+                let grammarDepth = depth + unaryChainDepth + postfixChainDepth
+
+                if err.IsNone && grammarDepth > limits.MaxDepth then
+                    err <-
+                        Some(
+                            AdmissionError.at
+                                NestingTooDeep
+                                line
+                                column
+                                $"grammar depth {grammarDepth} exceeds limit {limits.MaxDepth}"
+                        )
+
+            let recordPostfixStep () =
+                postfixChainDepth <- postfixChainDepth + 1
+
+                let grammarDepth = depth + unaryChainDepth + postfixChainDepth
 
                 if err.IsNone && grammarDepth > limits.MaxDepth then
                     err <-
@@ -218,6 +248,9 @@ module Limits =
                 // Unary frames outside the current structural primary remain
                 // active while its nested expression is parsed.
                 unaryChainDepth <- unaryFloor
+                postfixChainDepth <- postfixFloor
+                postfixMemberStage <- 0
+                constructorPrimary <- false
                 postfixPrimary <- false
 
             let markTriviaBreak () =
@@ -344,6 +377,7 @@ module Limits =
                         // becomes an AST node and therefore participates in a
                         // caller's custom MaxNodes contract.
                         let mutable cursor = i + 1
+                        let mutable shorthandPostfixDepth = 0
 
                         let consumeIdentifier () =
                             recordNode ()
@@ -364,6 +398,24 @@ module Limits =
                             && (System.Char.IsLetter source.[cursor + 1] || source.[cursor + 1] = '_')
                             do
                             cursor <- cursor + 1
+                            shorthandPostfixDepth <- shorthandPostfixDepth + 1
+
+                            let grammarDepth =
+                                depth
+                                + unaryChainDepth
+                                + postfixChainDepth
+                                + shorthandPostfixDepth
+
+                            if err.IsNone && grammarDepth > limits.MaxDepth then
+                                err <-
+                                    Some(
+                                        AdmissionError.at
+                                            NestingTooDeep
+                                            line
+                                            (column + int64 (cursor - i))
+                                            $"grammar depth {grammarDepth} exceeds limit {limits.MaxDepth}"
+                                    )
+
                             consumeIdentifier ()
 
                         let consumedAfterDollar = cursor - i - 1
@@ -443,10 +495,35 @@ module Limits =
                             column <- column + 2L
                     | '/'
                         when slashyClosers.[i] >= 0
-                             && (needsOperand
-                                 || statementHead
-                                 || commandHead
-                                 || (returnCommandHead && not (nextTokenCanStartUnary slashyClosers.[i]))) ->
+                             && returnCommandHead
+                             && not needsOperand
+                             && not statementHead
+                             && not commandHead
+                             && not (nextTokenCanStartUnary slashyClosers.[i]) ->
+                        // `return tool /x/;` ultimately falls back to the
+                        // command statement `tool /x/`, so balancedRaw still
+                        // needs this slashy boundary. Before that fallback,
+                        // however, returnStmt speculatively parses
+                        // `tool / x /` as division. Do not jump to the cached
+                        // closer here: every group and node the recursive
+                        // division parse can visit must remain visible to the
+                        // admission limits.
+                        resetUnaryChain ()
+                        recordNode ()
+
+                        if err.IsNone then
+                            recognizedSlashyBoundaries.[i] <- Complete slashyClosers.[i]
+                            needsOperand <- true
+                            statementHead <- false
+                            commandHead <- false
+                            awaitingControlParen <- false
+                            returnFallbackPending <- false
+                            returnCommandHead <- false
+                            postfixPrimary <- false
+                            sawLineBreak <- false
+                    | '/'
+                        when slashyClosers.[i] >= 0
+                             && (needsOperand || statementHead || commandHead) ->
                         // Comments won above. A complete candidate in an
                         // operand or command-argument position shields every
                         // quote and delimiter through its cached closing index. If no
@@ -485,14 +562,6 @@ module Limits =
                         resetUnaryChain ()
                         sawLineBreak <- false
                     | '{' | '[' | '(' ->
-                        // A postfix index cannot cross a physical ending in
-                        // the Groovy grammar. Calls and trailing closures can,
-                        // so only `[` forces a completed-primary seam here.
-                        if c = '[' && postfixPrimary && sawLineBreak then
-                            resetUnaryChain ()
-                        elif not needsOperand && not postfixPrimary then
-                            resetUnaryChain ()
-
                         let opensInterpolation =
                             match pendingInterpolation with
                             | Some context when c = '{' ->
@@ -501,19 +570,77 @@ module Limits =
                                 true
                             | _ -> false
 
+                        // A postfix index cannot cross a physical ending in
+                        // top-level/statement Groovy grammar. It can continue
+                        // inside an expression-bearing group, and calls and
+                        // trailing closures can cross regardless.
+                        if
+                            c = '['
+                            && postfixPrimary
+                            && sawLineBreak
+                            && postfixGroupDepth = 0
+                        then
+                            resetUnaryChain ()
+                        elif not needsOperand && not postfixPrimary then
+                            resetUnaryChain ()
+
+                        // Plain and safe member steps parse their optional
+                        // arguments and trailing closure inside the same
+                        // postfix-loop invocation. A bare call/index/closure,
+                        // or a call after spread-property, is a new step.
+                        let memberOwnsOpener =
+                            postfixPrimary
+                            && not needsOperand
+                            && ((c = '(' && postfixMemberStage = 1)
+                                || (c = '{' && postfixMemberStage > 0))
+
+                        let constructorOwnsArgs =
+                            constructorPrimary
+                            && postfixPrimary
+                            && not needsOperand
+                            && c = '('
+
+                        let isPostfixOpener =
+                            postfixPrimary
+                            && not needsOperand
+                            && not memberOwnsOpener
+                            && not constructorOwnsArgs
+
+                        if isPostfixOpener then recordPostfixStep ()
+
+                        let memberStageAfterClose =
+                            if memberOwnsOpener && c = '(' then
+                                2 // the same member step may still own a trailing closure
+                            elif isPostfixOpener && c = '(' then
+                                2 // a bare call step also owns its optional trailing closure
+                            else
+                                0
+
                         unaryFrames.Push(unaryFloor, unaryChainDepth)
                         unaryFloor <- unaryChainDepth
                         postfixPrimary <- false
+                        postfixFrames.Push(postfixFloor, postfixChainDepth, memberStageAfterClose)
+                        postfixFloor <- postfixChainDepth
+                        postfixMemberStage <- 0
+                        constructorPrimary <- false
+                        postfixGroupFrames.Push postfixGroupDepth
+
+                        postfixGroupDepth <-
+                            if c = '(' || c = '[' || opensInterpolation then
+                                postfixGroupDepth + 1
+                            else
+                                0
+
                         depth <- depth + 1
                         recordNode ()
                         returnFallbackPending <- false
                         returnCommandHead <- false
 
-                        let grammarDepth = depth + unaryChainDepth
+                        let grammarDepth = depth + unaryChainDepth + postfixChainDepth
 
                         if grammarDepth > limits.MaxDepth then
                             let message =
-                                if unaryChainDepth = 0 then
+                                if unaryChainDepth = 0 && postfixChainDepth = 0 then
                                     $"nesting depth {depth} exceeds limit {limits.MaxDepth}"
                                 else
                                     $"grammar depth {grammarDepth} exceeds limit {limits.MaxDepth}"
@@ -561,6 +688,22 @@ module Limits =
                         unaryFloor <- parentUnaryFloor
                         unaryChainDepth <- inheritedUnaryChain
                         postfixPrimary <- true
+
+                        let parentPostfixFloor, inheritedPostfixChain, restoredMemberStage =
+                            if postfixFrames.Count = 0 then
+                                0, 0, 0
+                            else
+                                postfixFrames.Pop()
+
+                        postfixFloor <- parentPostfixFloor
+                        postfixChainDepth <- inheritedPostfixChain
+                        postfixMemberStage <- restoredMemberStage
+
+                        postfixGroupDepth <-
+                            if postfixGroupFrames.Count = 0 then
+                                0
+                            else
+                                postfixGroupFrames.Pop()
 
                         match caseContext with
                         | Some(caseDepth, _, _) when depth < caseDepth -> caseContext <- None
@@ -666,6 +809,7 @@ module Limits =
                                 // Constructor syntax is one primary whose
                                 // identifier and optional call arguments are
                                 // parsed after this keyword.
+                                constructorPrimary <- true
                                 postfixPrimary <- false
                                 awaitingControlParen <- false
                                 needsOperand <- true
@@ -757,6 +901,12 @@ module Limits =
                         // Safe navigation extends the completed primary; its
                         // member/call suffix is still parsed under outer unary
                         // frames.
+                        recordPostfixStep ()
+                        constructorPrimary <- false
+                        i <- i + 1
+                        column <- column + 1L
+                        postfixMemberStage <- 1
+                        postfixPrimary <- false
                         needsOperand <- true
                         statementHead <- false
                         commandHead <- false
@@ -766,8 +916,12 @@ module Limits =
                         sawLineBreak <- false
                     | '*' when postfixPrimary && i + 1 < source.Length && source.[i + 1] = '.' ->
                         // Spread-dot is one postfix continuation token.
+                        recordPostfixStep ()
+                        constructorPrimary <- false
                         i <- i + 1
                         column <- column + 1L
+                        postfixMemberStage <- 0
+                        postfixPrimary <- false
                         needsOperand <- true
                         statementHead <- false
                         commandHead <- false
@@ -776,6 +930,10 @@ module Limits =
                         returnCommandHead <- false
                         sawLineBreak <- false
                     | '.' when postfixPrimary && (i + 1 >= source.Length || source.[i + 1] <> '.') ->
+                        recordPostfixStep ()
+                        constructorPrimary <- false
+                        postfixMemberStage <- 1
+                        postfixPrimary <- false
                         needsOperand <- true
                         statementHead <- false
                         commandHead <- false
