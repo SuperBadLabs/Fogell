@@ -25,7 +25,7 @@ type Limits =
           MaxCollectionItems = 4_096 }
 
 /// Read-only slashy/division classifications for one exact source string.
-/// The backing representation and its unterminated-candidate sentinel remain
+/// The backing representation and its incomplete-candidate sentinel remain
 /// private to admission; parser consumers can query or slice without mutating
 /// the DFA result.
 [<Sealed>]
@@ -418,7 +418,7 @@ module Limits =
                             sawLineBreak <- false
                     | '/' when needsOperand || statementHead || commandHead ->
                         // Preserve the DFA decision even without a same-line
-                        // closer. The precheck itself must leave all following
+                        // closing delimiter. The precheck itself must leave all following
                         // structure visible, while balancedRaw must know this
                         // was an operand-position slashy candidate so crossing
                         // a physical ending becomes its semantic refusal.
