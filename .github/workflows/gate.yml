@@ -44,6 +44,13 @@ jobs:
       # the proof itself. The native controller step must NOT see it in
       # FOGELL_FG224_CONTROLLER_IMAGE — that variable selects container mode.
       FG224_CONTROLLER_IMAGE: mcr.microsoft.com/dotnet/sdk@sha256:ea8bde36c11b6e7eec2656d0e59101d4462f6bd630730f2c8201ed0572b295d5
+    # A green run took 20m41s on 2026-09-01 (run 33567962039; 18m23s on run
+    # 33571850280 after the pull and build changes above). Without this,
+    # GitHub's 360-minute default applied, and two runs that day (33564807004,
+    # 33567964629) sat in_progress for 77 and 39 minutes after the PID-1
+    # controller proof had already refused (docs/tickets/FG-231.md has the
+    # timestamps). Twice the measured duration is a hang, not a slow run.
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:16
@@ -250,6 +257,9 @@ jobs:
         # This is the product seam the project suites cannot prove independently:
         # least-privilege startup, real HTTP admission, supervised Run.Host child,
         # fenced progressive logs and atomic terminal roll-up on a fresh database.
+        # 38 s on run 33567962039; the proof bounds every wait it makes (FG-231),
+        # so this is the backstop for a bound that itself fails to fire.
+        timeout-minutes: 10
         env:
           FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
           FOGELL_PG_PORT: 55440
@@ -262,6 +272,10 @@ jobs:
         # to be the exact controller apphost before accepting any HTTP result.
         # A complementary surviving-init pass kills only the controller during
         # a real nested step, then binds Run.Host, shell, and sleep extinction.
+        # 51 s on run 33567962039. This is the step that hung on 2026-09-01:
+        # the proof refused 13.7 s in and nothing bounded its EXIT trap's
+        # `docker stop` or the `wait` on the `docker run` client (FG-231).
+        timeout-minutes: 10
         env:
           FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
           FOGELL_PG_PORT: 55440
@@ -271,6 +285,22 @@ jobs:
           # Completes or no-ops the pull started before the gate step.
           docker pull "$FOGELL_FG224_CONTROLLER_IMAGE" >/dev/null
           ./scripts/prove-runnable-controller.sh
+
+      - name: runnable controller proof cannot hang (FG-231)
+        # Plants five stalls in byte-mutated copies of the proof above — a
+        # controller ignoring SIGTERM, a silent HTTP socket, a Run.Host that
+        # never exits, a post-launch refusal whose `docker stop` hangs, and a
+        # `docker run` that creates the container only after the identity
+        # budget expired — and requires each to become a named refusal within budget
+        # with no controller left behind. This is the checker being shown to
+        # fail; the two steps above are it passing.
+        timeout-minutes: 10
+        env:
+          FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
+          FOGELL_PG_PORT: 55440
+          FOGELL_BUILD_CONFIGURATION: Release
+          FOGELL_FG224_CONTROLLER_IMAGE: ${{ env.FG224_CONTROLLER_IMAGE }}
+        run: ./scripts/prove-fg231-proof-bounds.sh
 
       - name: backup/restore drill and hostile proof (FG-085a)
         # The postgres:16 service is also the client-tool distribution. Keeping

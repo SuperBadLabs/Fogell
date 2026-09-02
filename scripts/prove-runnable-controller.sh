@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# errtrace: the ERR diagnostic below must fire inside the helper functions
+# that own every bound, which bash does not do for a function body by default.
+set -Eeuo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 container=${FOGELL_PG_CONTAINER:-fogell-fg060a}
@@ -22,8 +24,109 @@ controller_death_receipt=""
 liveness_writer_pid=""
 liveness_host_pid=""
 
+# Every wait in this proof is bounded, and every bound names what it was
+# waiting for. On 2026-09-01 two hosted PID1 lanes (jobs 100045425020 and
+# 100055372746) printed `container PID1 was unreadable` 13.7 s into the step
+# and then sat in_progress for 77 and 39 minutes; the runner's cancellation
+# reaped one orphan bash and one orphan docker client. Nothing bounded the
+# EXIT trap's `docker stop` or its bare `wait` on the backgrounded `docker run`
+# client, and one of them never returned. Whether the container was still
+# being created (the identity loop ran its whole budget on fast `docker exec`
+# failures, and a cold pull of this image was measured at 14 s on run
+# 33567174871) or the daemon had stopped answering is not recorded by that
+# log; both shapes are bounded here. A proof that cannot finish refusing is
+# worse than one that fails, since nothing names the call it is stuck in.
+#
+# The budgets below are the proof's own poll budgets restated as wall-clock
+# deadlines: 10 s for readiness and identity (the old 200 x 50 ms), 80 s for
+# the post-exit tail (800 x 100 ms). A single HTTP request is bounded by the
+# shortest of them; a docker CLI call, a synchronous controller or Run.Host
+# invocation, and a reaped process each get a budget wide enough that only a
+# hang can exhaust it.
+http_max_time=10
+docker_budget=30
+process_budget=30
+reap_budget_ms=15000
+# The one-time image pull. Sized under the hosted step's 10-minute bound, so
+# it is a bound there too; the hosted PID1 step has already pulled the image,
+# where this is a no-op.
+image_pull_budget=300
+
+now_ms() {
+  # bash renders EPOCHREALTIME with the locale's decimal separator; a comma
+  # would become the arithmetic comma operator below and silently truncate.
+  local t=${EPOCHREALTIME/,/.}
+  printf '%s\n' "$(( ${t%.*} * 1000 + 10#${t#*.} / 1000 ))"
+}
+
+deadline_after() {
+  printf '%s\n' "$(( $(now_ms) + $1 ))"
+}
+
+before_deadline() {
+  (( $(now_ms) < $1 ))
+}
+
+# Run a command under a wall-clock budget in seconds. 124 means the budget
+# expired; the ERR diagnostic below names the command and the exit code.
+bounded() {
+  timeout -k 5 "$1" "${@:2}"
+}
+
+# Reap a background child within a budget. On expiry the child is killed and
+# reaped, the wait is named as a refusal, and 124 is returned so the caller
+# can distinguish a hang from a nonzero exit.
+wait_bounded() {
+  local pid="$1"
+  local budget_ms="$2"
+  local label="$3"
+  local deadline
+  deadline=$(deadline_after "$budget_ms")
+  while kill -0 "$pid" 2>/dev/null; do
+    if ! before_deadline "$deadline"; then
+      kill -KILL "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      echo "FG-224 REFUSED: $label (pid $pid) did not exit within ${budget_ms} ms and was killed" >&2
+      return 124
+    fi
+    sleep 0.05
+  done
+  # A pid this shell has already reaped is not a child any more; that is a
+  # failure path's second look, not a diagnostic.
+  wait "$pid" 2>/dev/null
+}
+
+# Any command that fails while errexit is active ends the proof with status 1
+# and a line naming it, so a bounded call that expires is reported as the call
+# that expired rather than as a silent nonzero exit. The set +e sections
+# capture their own status and are excluded by the errexit test. The line is
+# written to the proof's original stderr: the trap fires inside the failing
+# call, whose own stderr may be redirected into a scratch file that cleanup
+# then removes, which is how the first draft of this diagnostic went missing.
+exec {diagnostic_fd}>&2
+on_err() {
+  local rc="$1"
+  local line="$2"
+  local command="$3"
+  [[ $- == *e* ]] || return 0
+  # A failure inside a command substitution is reported once, by the
+  # assignment that consumed it, with the substituted command's own status.
+  (( BASH_SUBSHELL == 0 )) || return 0
+  local note=""
+  local i
+  (( rc == 124 )) && note=" (budget expired)"
+  # A failure inside a function is reported with its call chain, so a
+  # `return 1` names the function and the line that called it.
+  for (( i = 1; i < ${#FUNCNAME[@]} - 1; i++ )); do
+    note+=" in ${FUNCNAME[i]} called from line ${BASH_LINENO[i]}"
+  done
+  echo "FG-224 REFUSED: line $line: \`$command\` exited $rc$note" >&"$diagnostic_fd"
+  exit 1
+}
+trap 'on_err $? $LINENO "$BASH_COMMAND"' ERR
+
 admin() {
-  docker exec "$container" psql -U fogell -d "$1" -v ON_ERROR_STOP=1 "${@:2}"
+  bounded "$docker_budget" docker exec "$container" psql -U fogell -d "$1" -v ON_ERROR_STOP=1 "${@:2}"
 }
 
 host_pid_for_namespace() {
@@ -43,26 +146,40 @@ host_pid_for_namespace() {
   return 1
 }
 
+# The controller container is stopped by name and its client reaped under a
+# budget. The client is `docker run --rm`, which outlives `docker stop` when the
+# stop arrives before the container exists (image still pulling) or when the
+# daemon does not answer; in both cases the client is killed and the container,
+# if it came up after all, is removed by name so no controller survives the
+# proof. Runs as the last act of the body and again from the EXIT trap.
+release_controller() {
+  [[ -n "$host_pid" ]] || return 0
+  if [[ -n "$controller_container" ]]; then
+    bounded "$docker_budget" docker stop --time 10 "$controller_container" >/dev/null 2>&1 || true
+    wait_bounded "$host_pid" "$reap_budget_ms" "controller container client" >/dev/null \
+      || bounded "$docker_budget" docker rm -f "$controller_container" >/dev/null 2>&1 || true
+  else
+    kill -TERM "$host_pid" 2>/dev/null || true
+    wait_bounded "$host_pid" "$reap_budget_ms" "native controller" >/dev/null || true
+  fi
+  host_pid=""
+  controller_container=""
+}
+
 cleanup() {
   if [[ -n "$liveness_writer_pid" ]] && kill -0 "$liveness_writer_pid" 2>/dev/null; then
     kill -TERM "$liveness_writer_pid" 2>/dev/null || true
-    wait "$liveness_writer_pid" 2>/dev/null || true
+    wait_bounded "$liveness_writer_pid" "$reap_budget_ms" "liveness FIFO writer" >/dev/null || true
   fi
   if [[ -n "$liveness_host_pid" ]] && kill -0 "$liveness_host_pid" 2>/dev/null; then
     kill -KILL "$liveness_host_pid" 2>/dev/null || true
-    wait "$liveness_host_pid" 2>/dev/null || true
+    wait_bounded "$liveness_host_pid" "$reap_budget_ms" "liveness-pipe Run.Host" >/dev/null || true
   fi
-  if [[ -n "$controller_container" ]]; then
-    docker stop --time 10 "$controller_container" >/dev/null 2>&1 || true
-    [[ -z "$host_pid" ]] || wait "$host_pid" 2>/dev/null || true
-  elif [[ -n "$host_pid" ]] && kill -0 "$host_pid" 2>/dev/null; then
-    kill -TERM "$host_pid" 2>/dev/null || true
-    wait "$host_pid" 2>/dev/null || true
-  fi
-  docker exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
+  release_controller
+  bounded "$docker_budget" docker exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
     -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$database' AND pid <> pg_backend_pid()" \
     -c "DROP DATABASE IF EXISTS $database" >/dev/null 2>&1 || true
-  docker exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
+  bounded "$docker_budget" docker exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
     -c "DROP OWNED BY $role" -c "DROP ROLE IF EXISTS $role" >/dev/null 2>&1 || true
   if [[ ${FOGELL_KEEP_FG224_PROOF:-0} = 1 ]]; then
     echo "FG-224 proof scratch retained: $scratch" >&2
@@ -79,6 +196,38 @@ controller="$repo/src/Fogell.Controller.Host/bin/$configuration/net10.0/Fogell.C
 run_host="$repo/tools/Fogell.Run.Host/bin/$configuration/net10.0/Fogell.Run.Host"
 [[ -x "$controller" ]] || { echo "FG-224 REFUSED: controller host is not built" >&2; exit 2; }
 [[ -x "$run_host" ]] || { echo "FG-224 REFUSED: run host is not built" >&2; exit 2; }
+command -v timeout >/dev/null \
+  || { echo "FG-224 REFUSED: coreutils timeout is required to bound this proof" >&2; exit 2; }
+
+# The PID1 identity budget below is 10 s of controller start-up. On a runner
+# that has never seen the digest-pinned image, `docker run` first pulls ~850 MB
+# (14 s measured on hosted run 33567174871), and the budget was measuring the
+# registry instead of the controller. Pull once here, bounded, so a slow pull
+# is a named refusal before any controller launch and never a false identity
+# refusal after one. Only a daemon that says the image is absent starts the
+# pull: a daemon that does not answer, or answers with anything else, is its
+# own refusal rather than a cue to wait on the registry.
+if [[ -n "$controller_image" ]]; then
+  image_rc=0
+  bounded "$docker_budget" docker image inspect "$controller_image" >/dev/null 2>"$scratch/image-inspect.stderr" \
+    || image_rc=$?
+  if (( image_rc == 124 )); then
+    echo "FG-224 REFUSED: docker did not answer an image inspect within ${docker_budget} s" >&2
+    exit 2
+  elif (( image_rc != 0 )); then
+    grep -Fq 'No such image' "$scratch/image-inspect.stderr" \
+      || { echo "FG-224 REFUSED: controller image inspect failed ($image_rc): $(tr '\n' ' ' <"$scratch/image-inspect.stderr")" >&2; exit 2; }
+    pull_rc=0
+    bounded "$image_pull_budget" docker pull "$controller_image" >"$scratch/image-pull.log" 2>&1 || pull_rc=$?
+    if (( pull_rc == 124 )); then
+      echo "FG-224 REFUSED: controller image was not pulled within ${image_pull_budget} s: $(tail -n 1 "$scratch/image-pull.log")" >&2
+      exit 2
+    elif (( pull_rc != 0 )); then
+      echo "FG-224 REFUSED: controller image pull failed ($pull_rc): $(tail -n 1 "$scratch/image-pull.log")" >&2
+      exit 2
+    fi
+  fi
+fi
 
 printf '%s' 'fg224-proof-token-0123456789abcdef' >"$token_file"
 printf '%s' 'weak' >"$weak_token_file"
@@ -110,7 +259,8 @@ liveness_writer_pid=$!
 ) >"$scratch/controller-liveness.stdout" 2>"$scratch/controller-liveness.stderr" &
 liveness_host_pid=$!
 
-for _ in $(seq 1 200); do
+poll_deadline=$(deadline_after 10000)
+while before_deadline "$poll_deadline"; do
   [[ -s "$liveness_started" && -s "$liveness_step_pid_file" && -s "$liveness_sleep_pid_file" ]] && break
   kill -0 "$liveness_host_pid" 2>/dev/null \
     || { echo "FG-224 REFUSED: liveness-pipe Run.Host exited before its step started" >&2; exit 1; }
@@ -121,24 +271,28 @@ done
 liveness_step_pid=$(tr -d '[:space:]' <"$liveness_step_pid_file")
 liveness_sleep_pid=$(tr -d '[:space:]' <"$liveness_sleep_pid_file")
 kill -TERM "$liveness_writer_pid"
-wait "$liveness_writer_pid" 2>/dev/null || true
+wait_bounded "$liveness_writer_pid" "$reap_budget_ms" "liveness FIFO writer after SIGTERM" >/dev/null || true
 liveness_writer_pid=""
 
-for _ in $(seq 1 200); do
+poll_deadline=$(deadline_after 10000)
+while before_deadline "$poll_deadline"; do
   kill -0 "$liveness_host_pid" 2>/dev/null || break
   sleep 0.05
 done
 ! kill -0 "$liveness_host_pid" 2>/dev/null \
   || { echo "FG-224 REFUSED: Run.Host survived controller liveness-pipe EOF" >&2; exit 1; }
 set +e
-wait "$liveness_host_pid"
+wait_bounded "$liveness_host_pid" "$reap_budget_ms" "liveness-pipe Run.Host after EOF"
 liveness_rc=$?
 set -e
 liveness_host_pid=""
+[[ $liveness_rc -ne 124 ]] \
+  || { echo "FG-224 REFUSED: liveness-pipe Run.Host could not be reaped" >&2; exit 1; }
 [[ $liveness_rc -ne 0 ]] \
   || { echo "FG-224 REFUSED: controller liveness-pipe EOF reported clean Run.Host success" >&2; exit 1; }
 
-for _ in $(seq 1 200); do
+poll_deadline=$(deadline_after 10000)
+while before_deadline "$poll_deadline"; do
   if ! kill -0 "$liveness_step_pid" 2>/dev/null \
       && ! kill -0 "$liveness_sleep_pid" 2>/dev/null; then
     break
@@ -199,15 +353,26 @@ launch_controller() {
 
   if [[ -n "$controller_image" ]]; then
     local pid1_executable=""
-    for _ in $(seq 1 200); do
-      pid1_executable=$(docker exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true)
+    local poll_deadline
+    poll_deadline=$(deadline_after 10000)
+    while before_deadline "$poll_deadline"; do
+      pid1_executable=$(bounded "$docker_budget" docker exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true)
       [[ "$pid1_executable" = "$controller" ]] && break
       kill -0 "$host_pid" 2>/dev/null \
         || { echo "FG-224 REFUSED: controller container exited before PID1 identity was proven" >&2; exit 1; }
       sleep 0.05
     done
-    [[ "$pid1_executable" = "$controller" ]] \
-      || { echo "FG-224 REFUSED: container PID1 was ${pid1_executable:-unreadable}, expected $controller" >&2; exit 1; }
+    if [[ "$pid1_executable" != "$controller" ]]; then
+      # Name what the client was doing, since the identity read says only that
+      # nothing answered: the container's state if it exists, and the client's
+      # last output (a pull in progress reports itself here).
+      # `docker inspect` prints an empty line for an object it cannot find.
+      local container_state
+      container_state=$(bounded "$docker_budget" docker inspect --format '{{.State.Status}}' "$controller_container" 2>/dev/null | tr -d '\n' || true)
+      [[ -n "$container_state" ]] || container_state=absent
+      echo "FG-224 REFUSED: container PID1 was ${pid1_executable:-unreadable}, expected $controller (container $container_state; client output: $(tail -n 3 "$host_log" | tr '\n' ' '))" >&2
+      exit 1
+    fi
   fi
 }
 
@@ -235,7 +400,9 @@ launch_controller_under_surviving_init() {
     >>"$host_log" 2>&1 &
   host_pid=$!
 
-  for _ in $(seq 1 200); do
+  local poll_deadline
+  poll_deadline=$(deadline_after 10000)
+  while before_deadline "$poll_deadline"; do
     [[ -s "$controller_pid_file" ]] && break
     kill -0 "$host_pid" 2>/dev/null \
       || { echo "FG-224 REFUSED: surviving-init container exited before controller launch" >&2; exit 1; }
@@ -247,40 +414,55 @@ launch_controller_under_surviving_init() {
 
 stop_controller() {
   local stop_diagnostic=""
+  local reap_rc=0
 
   if [[ -n "$controller_container" ]]; then
-    if ! docker stop --time 10 "$controller_container" >"$scratch/docker-stop.stdout" 2>"$scratch/docker-stop.stderr"; then
+    if ! bounded "$docker_budget" docker stop --time 10 "$controller_container" >"$scratch/docker-stop.stdout" 2>"$scratch/docker-stop.stderr"; then
       stop_diagnostic=$(tr '\n' ' ' <"$scratch/docker-stop.stderr")
       echo "FG-224 REFUSED: controller container stop failed: ${stop_diagnostic:-docker stop returned nonzero}" >&2
       return 1
     fi
-    if ! wait "$host_pid"; then
+    wait_bounded "$host_pid" "$reap_budget_ms" "controller container client after docker stop" || reap_rc=$?
+    if (( reap_rc == 124 )); then
+      bounded "$docker_budget" docker rm -f "$controller_container" >/dev/null 2>&1 || true
+      return 1
+    fi
+    if (( reap_rc != 0 )); then
       echo "FG-224 REFUSED: controller container process returned nonzero after docker stop" >&2
       return 1
     fi
     controller_container=""
   else
     kill -TERM "$host_pid"
-    wait "$host_pid"
+    wait_bounded "$host_pid" "$reap_budget_ms" "native controller after SIGTERM" || reap_rc=$?
+    if (( reap_rc != 0 )); then
+      (( reap_rc == 124 )) \
+        || echo "FG-224 REFUSED: native controller returned $reap_rc after SIGTERM" >&2
+      return 1
+    fi
   fi
   host_pid=""
 }
 
 set +e
-env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$weak_token_file" "$controller" \
+bounded "$process_budget" env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$weak_token_file" "$controller" \
   >"$scratch/weak.stdout" 2>"$scratch/weak.stderr"
 weak_rc=$?
 set -e
+[[ $weak_rc -ne 124 ]] \
+  || { echo "FG-224 REFUSED: weak-token startup did not exit within ${process_budget} s" >&2; exit 1; }
 [[ $weak_rc -eq 2 ]] || { echo "FG-224 REFUSED: weak token did not fail startup before bind" >&2; exit 1; }
 ! curl -fsS --max-time 1 "$base_url/health/live" >/dev/null 2>&1 \
   || { echo "FG-224 REFUSED: weak startup bound a socket" >&2; exit 1; }
 
 set +e
-env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" \
+bounded "$process_budget" env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" \
   "FOGELL_WORKER_POLL_MS=3334" "FOGELL_WORKER_LEASE_SECONDS=10" "$controller" \
   >"$scratch/unsafe-timing.stdout" 2>"$scratch/unsafe-timing.stderr"
 unsafe_timing_rc=$?
 set -e
+[[ $unsafe_timing_rc -ne 124 ]] \
+  || { echo "FG-224 REFUSED: unsafe worker timing startup did not exit within ${process_budget} s" >&2; exit 1; }
 [[ $unsafe_timing_rc -eq 2 ]] \
   || { echo "FG-224 REFUSED: unsafe worker timing did not fail startup" >&2; exit 1; }
 grep -Fq 'FOGELL_WORKER_POLL_MS must be no more than one third of FOGELL_WORKER_LEASE_SECONDS (3333 ms for 10 s)' \
@@ -290,10 +472,12 @@ grep -Fq 'FOGELL_WORKER_POLL_MS must be no more than one third of FOGELL_WORKER_
   || { echo "FG-224 REFUSED: unsafe worker timing startup bound a socket" >&2; exit 1; }
 
 set +e
-env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" "$controller" \
+bounded "$process_budget" env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" "$controller" \
   >"$scratch/capability.stdout" 2>"$scratch/capability.stderr"
 capability_rc=$?
 set -e
+[[ $capability_rc -ne 124 ]] \
+  || { echo "FG-224 REFUSED: incomplete-capability startup did not exit within ${process_budget} s" >&2; exit 1; }
 [[ $capability_rc -eq 3 ]] \
   || { echo "FG-224 REFUSED: incomplete runtime capability did not fail startup" >&2; exit 1; }
 grep -Fq 'runtime database capability is incomplete' "$scratch/capability.stderr" \
@@ -323,8 +507,9 @@ admin "$database" \
 launch_controller 10000
 
 ready=0
-for _ in $(seq 1 200); do
-  if curl -fsS "$base_url/health/ready" >/dev/null 2>&1; then
+poll_deadline=$(deadline_after 10000)
+while before_deadline "$poll_deadline"; do
+  if curl --max-time "$http_max_time" -fsS "$base_url/health/ready" >/dev/null 2>&1; then
     ready=1
     break
   fi
@@ -339,7 +524,7 @@ auth="authorization: Bearer fg224-proof-token-0123456789abcdef"
 capture_reconciliation() {
   local failed_build_id="$1"
   local label="$2"
-  curl -fsS -H "$auth" "$builds_url/$failed_build_id/logs" >"$scratch/$label-logs.json" || true
+  curl --max-time "$http_max_time" -fsS -H "$auth" "$builds_url/$failed_build_id/logs" >"$scratch/$label-logs.json" || true
   admin "$database" -Atc \
     "SELECT a.state || '|' || COALESCE(e.payload->>'reason', '') || '|' || COALESCE(o.body->>'reason', '')
        FROM attempts a
@@ -367,7 +552,7 @@ exact_size=$(wc -c <"$scratch/chunked-exact" | tr -d '[:space:]')
 head -c $((1024 - exact_size)) /dev/zero | tr '\0' ' ' >>"$scratch/chunked-exact"
 [[ $(wc -c <"$scratch/chunked-exact" | tr -d '[:space:]') = 1024 ]] \
   || { echo "FG-224 REFUSED: exact-limit fixture is not 1024 bytes" >&2; exit 1; }
-exact_code=$(curl --http1.1 -sS -o "$scratch/chunked-exact.json" -w '%{http_code}' -X POST \
+exact_code=$(curl --max-time "$http_max_time" --http1.1 -sS -o "$scratch/chunked-exact.json" -w '%{http_code}' -X POST \
   -H "$auth" -H 'idempotency-key: fg224-chunked-exact' \
   -H 'content-type: application/x-jenkinsfile' -H 'transfer-encoding: chunked' \
   --data-binary @"$scratch/chunked-exact" "$builds_url")
@@ -375,7 +560,7 @@ exact_code=$(curl --http1.1 -sS -o "$scratch/chunked-exact.json" -w '%{http_code
   || { echo "FG-224 REFUSED: exact-limit chunked pipeline returned $exact_code instead of 201" >&2; exit 1; }
 exact_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <"$scratch/chunked-exact.json")
 [[ -n "$exact_build_id" ]] || { echo "FG-224 REFUSED: exact-limit admission returned no build id" >&2; exit 1; }
-exact_cancel_code=$(curl -sS -o "$scratch/chunked-exact-cancel.json" -w '%{http_code}' -X POST \
+exact_cancel_code=$(curl --max-time "$http_max_time" -sS -o "$scratch/chunked-exact-cancel.json" -w '%{http_code}' -X POST \
   -H "$auth" "$builds_url/$exact_build_id/cancel")
 [[ "$exact_cancel_code" = 202 ]] \
   || { echo "FG-224 REFUSED: exact-limit queued build was not cancelled before worker start" >&2; exit 1; }
@@ -383,7 +568,7 @@ exact_cancel_code=$(curl -sS -o "$scratch/chunked-exact-cancel.json" -w '%{http_
 # The one forbidden decoded byte must return the Router's stable JSON 413,
 # independently of chunk framing and segmentation.
 head -c 1025 /dev/zero | tr '\0' x >"$scratch/chunked-overflow"
-chunked_code=$(curl --http1.1 -sS -o "$scratch/chunked-overflow.json" -w '%{http_code}' -X POST \
+chunked_code=$(curl --max-time "$http_max_time" --http1.1 -sS -o "$scratch/chunked-overflow.json" -w '%{http_code}' -X POST \
   -H "$auth" -H 'idempotency-key: fg224-chunked-overflow' \
   -H 'content-type: application/x-jenkinsfile' -H 'transfer-encoding: chunked' \
   --data-binary @"$scratch/chunked-overflow" "$builds_url")
@@ -400,7 +585,7 @@ unsupported_pipeline=$'pipeline {\n  agent any\n  tools { maven \'m3\' }\n  stag
 builds_before_unsupported=$(admin "$database" -Atc \
   "SELECT count(*) FROM builds WHERE organization_id='$organization' AND project_id='$project'")
 for attempt in 1 2; do
-  unsupported_code=$(curl -sS -o "$scratch/unsupported-$attempt.json" -w '%{http_code}' -X POST \
+  unsupported_code=$(curl --max-time "$http_max_time" -sS -o "$scratch/unsupported-$attempt.json" -w '%{http_code}' -X POST \
     -H "$auth" -H 'idempotency-key: fg224-unsupported-retry' \
     -H 'content-type: application/x-jenkinsfile' --data-binary "$unsupported_pipeline" "$builds_url")
   [[ "$unsupported_code" = 422 ]] \
@@ -415,7 +600,7 @@ for attempt in 1 2; do
     || { echo "FG-224 REFUSED: unsupported admission attempt $attempt created durable build state" >&2; exit 1; }
 done
 
-supported_after_refusal=$(curl -sS -o "$scratch/supported-after-refusal.json" -w '%{http_code}' -X POST \
+supported_after_refusal=$(curl --max-time "$http_max_time" -sS -o "$scratch/supported-after-refusal.json" -w '%{http_code}' -X POST \
   -H "$auth" -H 'idempotency-key: fg224-unsupported-retry' \
   -H 'content-type: application/x-jenkinsfile' --data-binary "$exact_prefix" "$builds_url")
 [[ "$supported_after_refusal" = 201 ]] \
@@ -423,18 +608,18 @@ supported_after_refusal=$(curl -sS -o "$scratch/supported-after-refusal.json" -w
 supported_after_refusal_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <"$scratch/supported-after-refusal.json")
 [[ -n "$supported_after_refusal_id" ]] \
   || { echo "FG-224 REFUSED: supported admission after refusal returned no build id" >&2; exit 1; }
-supported_replay_code=$(curl -sS -o "$scratch/supported-after-refusal-replay.json" -w '%{http_code}' -X POST \
+supported_replay_code=$(curl --max-time "$http_max_time" -sS -o "$scratch/supported-after-refusal-replay.json" -w '%{http_code}' -X POST \
   -H "$auth" -H 'idempotency-key: fg224-unsupported-retry' \
   -H 'content-type: application/x-jenkinsfile' --data-binary "$exact_prefix" "$builds_url")
 [[ "$supported_replay_code" = 200 ]] \
   || { echo "FG-224 REFUSED: supported admission after refusal did not replay idempotently" >&2; exit 1; }
-supported_cancel_code=$(curl -sS -o "$scratch/supported-after-refusal-cancel.json" -w '%{http_code}' -X POST \
+supported_cancel_code=$(curl --max-time "$http_max_time" -sS -o "$scratch/supported-after-refusal-cancel.json" -w '%{http_code}' -X POST \
   -H "$auth" "$builds_url/$supported_after_refusal_id/cancel")
 [[ "$supported_cancel_code" = 202 ]] \
   || { echo "FG-224 REFUSED: supported admission after refusal was not cancelled before worker start" >&2; exit 1; }
 
 poison_pipeline=$'pipeline {\n  agent any\n  stages {\n    stage(\'Poison\') {\n      steps {\n        echo \'this-source-must-never-run\'\n      }\n    }\n  }\n}'
-poison_response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-materialization-poison' \
+poison_response=$(curl --max-time "$http_max_time" -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-materialization-poison' \
   -H 'content-type: application/x-jenkinsfile' --data-binary "$poison_pipeline" "$builds_url")
 poison_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$poison_response")
 [[ -n "$poison_build_id" ]] \
@@ -442,7 +627,7 @@ poison_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$poison_respons
 
 pipeline=$'pipeline {\n  agent any\n  stages {\n    stage(\'Build\') {\n      steps {\n        echo \'hello-controller-before\'\n        echo "FG224-METADATA:${env.BUILD_NUMBER}:${env.BUILD_ID}:${env.BUILD_DISPLAY_NAME}"\n        sh \'printf QkVHSU4tMjI0 | base64 -d; head -c 20000 /dev/zero | base64 -w0; printf RU5ELTEtMjI0 | base64 -d\'\n        sh \'mkdir -p dist; printf "\\\\000\\\\377A\\\\r\\\\nB" > dist/payload.bin\'\n        archiveArtifacts artifacts: \'dist/payload.bin\'\n        sh \'sleep 5\'\n        echo \'hello-controller-after\'\n      }\n    }\n  }\n}'
 
-response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-e2e' \
+response=$(curl --max-time "$http_max_time" -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-e2e' \
   -H 'content-type: application/x-jenkinsfile' --data-binary "$pipeline" "$builds_url")
 build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$response")
 [[ -n "$build_id" ]] || { echo "FG-224 REFUSED: admission returned no build id" >&2; exit 1; }
@@ -469,8 +654,9 @@ printf '%s' 'pipeline { agent none }' >"$poison_definition"
 launch_controller 50
 
 ready=0
-for _ in $(seq 1 200); do
-  if curl -fsS "$base_url/health/ready" >/dev/null 2>&1; then
+poll_deadline=$(deadline_after 10000)
+while before_deadline "$poll_deadline"; do
+  if curl --max-time "$http_max_time" -fsS "$base_url/health/ready" >/dev/null 2>&1; then
     ready=1
     break
   fi
@@ -484,8 +670,9 @@ done
 # escaping before BeginExecution and returning to queued on lease expiry. The
 # later build's progressive and terminal assertions below prove FIFO progress.
 poison_terminal=""
-for _ in $(seq 1 200); do
-  poison_terminal=$(curl -fsS -H "$auth" "$builds_url/$poison_build_id")
+poll_deadline=$(deadline_after 10000)
+while before_deadline "$poll_deadline"; do
+  poison_terminal=$(curl --max-time "$http_max_time" -fsS -H "$auth" "$builds_url/$poison_build_id")
   grep -q '"status":"reconciliation_required"' <<<"$poison_terminal" && break
   grep -q '"status":"\(success\|failure\|aborted\)"' <<<"$poison_terminal" && {
     echo "FG-224 REFUSED: materialization poison reached false terminal truth $poison_terminal" >&2
@@ -502,7 +689,7 @@ poison_attempt=$(admin "$database" -Atc \
     WHERE a.organization_id='$organization' AND n.build_id='$poison_build_id'")
 [[ "$poison_attempt" = "reconciliation_required|true|true" ]] \
   || { echo "FG-224 REFUSED: materialization poison retained requeue authority: $poison_attempt" >&2; exit 1; }
-poison_logs=$(curl -fsS -H "$auth" "$builds_url/$poison_build_id/logs")
+poison_logs=$(curl --max-time "$http_max_time" -fsS -H "$auth" "$builds_url/$poison_build_id/logs")
 ! grep -Fq 'this-source-must-never-run' <<<"$poison_logs" \
   || { echo "FG-224 REFUSED: materialization poison executed its durable source" >&2; exit 1; }
 grep -Fq '"from_sequence":0' <<<"$poison_logs" \
@@ -521,10 +708,11 @@ poison_chunk_count=$(admin "$database" -Atc \
 # -> HTTP path before the build reaches terminal state. A terminal replay could
 # satisfy a post-build grep but cannot satisfy this assertion.
 progressive=0
-for _ in $(seq 1 600); do
-  live_logs=$(curl -fsS -H "$auth" "$builds_url/$build_id/logs")
+poll_deadline=$(deadline_after 30000)
+while before_deadline "$poll_deadline"; do
+  live_logs=$(curl --max-time "$http_max_time" -fsS -H "$auth" "$builds_url/$build_id/logs")
   if grep -q 'hello-controller-before' <<<"$live_logs"; then
-    live_state=$(curl -fsS -H "$auth" "$builds_url/$build_id")
+    live_state=$(curl --max-time "$http_max_time" -fsS -H "$auth" "$builds_url/$build_id")
     grep -q '"status":"running"' <<<"$live_state" \
       || { echo "FG-224 REFUSED: first console line arrived only after terminal state" >&2; exit 1; }
     ! grep -q 'hello-controller-after' <<<"$live_logs" \
@@ -535,15 +723,16 @@ for _ in $(seq 1 600); do
   sleep 0.05
 done
 if [[ $progressive -ne 1 ]]; then
-  stalled_state=$(curl -fsS -H "$auth" "$builds_url/$build_id" || true)
+  stalled_state=$(curl --max-time "$http_max_time" -fsS -H "$auth" "$builds_url/$build_id" || true)
   capture_reconciliation "$build_id" main-build
   echo "FG-224 REFUSED: console did not stream before terminal state: ${stalled_state:-unavailable}" >&2
   exit 1
 fi
 
 terminal=""
-for _ in $(seq 1 300); do
-  terminal=$(curl -fsS -H "$auth" "$builds_url/$build_id")
+poll_deadline=$(deadline_after 15000)
+while before_deadline "$poll_deadline"; do
+  terminal=$(curl --max-time "$http_max_time" -fsS -H "$auth" "$builds_url/$build_id")
   grep -q '"status":"success"' <<<"$terminal" && break
   grep -q '"status":"\(failure\|aborted\|reconciliation_required\)"' <<<"$terminal" && {
     capture_reconciliation "$build_id" main-build
@@ -558,7 +747,7 @@ grep -q '"status":"success"' <<<"$terminal" || { echo "FG-224 REFUSED: build did
 # Drive the real child archiver above, then require the authenticated controller
 # response to preserve non-UTF-8 bytes and transport metadata exactly.
 printf '\000\377A\r\nB' >"$scratch/expected-artifact.bin"
-artifact_code=$(curl -sS -D "$scratch/artifact.headers" -o "$scratch/artifact.bin" -w '%{http_code}' \
+artifact_code=$(curl --max-time "$http_max_time" -sS -D "$scratch/artifact.headers" -o "$scratch/artifact.bin" -w '%{http_code}' \
   -H "$auth" "$builds_url/$build_id/attempts/$attempt_id/artifacts/dist/payload.bin")
 [[ "$artifact_code" = 200 ]] \
   || { echo "FG-042b REFUSED: artifact retrieval returned $artifact_code" >&2; exit 1; }
@@ -571,14 +760,14 @@ grep -iq '^content-length: 6' "$scratch/artifact.headers" \
 grep -iq '^x-content-type-options: nosniff' "$scratch/artifact.headers" \
   || { echo "FG-042b REFUSED: artifact response permits content sniffing" >&2; exit 1; }
 
-unauthenticated_artifact_code=$(curl -sS -o "$scratch/artifact-unauthenticated.json" -w '%{http_code}' \
+unauthenticated_artifact_code=$(curl --max-time "$http_max_time" -sS -o "$scratch/artifact-unauthenticated.json" -w '%{http_code}' \
   "$builds_url/$build_id/attempts/$attempt_id/artifacts/dist/payload.bin")
 [[ "$unauthenticated_artifact_code" = 401 ]] \
   || { echo "FG-042b REFUSED: unauthenticated artifact retrieval returned $unauthenticated_artifact_code" >&2; exit 1; }
 ! cmp -s "$scratch/expected-artifact.bin" "$scratch/artifact-unauthenticated.json" \
   || { echo "FG-042b REFUSED: unauthenticated response disclosed artifact bytes" >&2; exit 1; }
 
-logs=$(curl -fsS -H "$auth" "$builds_url/$build_id/logs")
+logs=$(curl --max-time "$http_max_time" -fsS -H "$auth" "$builds_url/$build_id/logs")
 [[ $(grep -o 'hello-controller-before' <<<"$logs" | wc -l | tr -d '[:space:]') = 1 ]] \
   || { echo "FG-224 REFUSED: first console line was lost or duplicated" >&2; exit 1; }
 [[ $(grep -o 'hello-controller-after' <<<"$logs" | wc -l | tr -d '[:space:]') = 1 ]] \
@@ -616,22 +805,22 @@ IFS='|' read -r large_chunks large_a_count max_log_chunk <<<"$(admin "$database"
 (( max_log_chunk <= 49152 )) \
   || { echo "FG-224 REFUSED: producer frame exceeded its decoded-byte contract ($max_log_chunk)" >&2; exit 1; }
 
-replay_code=$(curl -sS -o "$scratch/replay.json" -w '%{http_code}' -X POST -H "$auth" \
+replay_code=$(curl --max-time "$http_max_time" -sS -o "$scratch/replay.json" -w '%{http_code}' -X POST -H "$auth" \
   -H 'idempotency-key: fg224-e2e' -H 'content-type: application/x-jenkinsfile' \
   --data-binary "$pipeline" "$builds_url")
 [[ "$replay_code" = 200 ]] || { echo "FG-224 REFUSED: exact replay was not idempotent" >&2; exit 1; }
 
-conflict_code=$(curl -sS -o "$scratch/conflict.json" -w '%{http_code}' -X POST -H "$auth" \
+conflict_code=$(curl --max-time "$http_max_time" -sS -o "$scratch/conflict.json" -w '%{http_code}' -X POST -H "$auth" \
   -H 'idempotency-key: fg224-e2e' -H 'content-type: application/x-jenkinsfile' \
   --data-binary "${pipeline/hello-controller/substituted}" "$builds_url")
 [[ "$conflict_code" = 409 ]] || { echo "FG-224 REFUSED: source substitution did not conflict" >&2; exit 1; }
 
-placement_code=$(curl -sS -o "$scratch/placement.json" -w '%{http_code}' -X POST -H "$auth" \
+placement_code=$(curl --max-time "$http_max_time" -sS -o "$scratch/placement.json" -w '%{http_code}' -X POST -H "$auth" \
   -H 'idempotency-key: fg224-placement' -H 'fogell-trust-pool: privileged' \
   -H 'content-type: application/x-jenkinsfile' --data-binary "$pipeline" "$builds_url")
 [[ "$placement_code" = 400 ]] || { echo "FG-224 REFUSED: caller selected a trust pool" >&2; exit 1; }
 
-cancel_code=$(curl -sS -o "$scratch/cancel.json" -w '%{http_code}' -X POST -H "$auth" "$builds_url/$build_id/cancel")
+cancel_code=$(curl --max-time "$http_max_time" -sS -o "$scratch/cancel.json" -w '%{http_code}' -X POST -H "$auth" "$builds_url/$build_id/cancel")
 [[ "$cancel_code" = 409 ]] || { echo "FG-224 REFUSED: terminal cancellation did not conflict" >&2; exit 1; }
 
 facts=$(admin "$database" -Atc \
@@ -648,7 +837,7 @@ facts=$(admin "$database" -Atc \
 # entering the shell. The source leaves one workspace marker so its second
 # execution (the retry child) is observable and successful.
 retry_pipeline=$'pipeline {\n  agent any\n  stages {\n    stage(\'RetryJournal\') {\n      steps {\n        sh \'if [ -f "$HOME/.fg224-allow-child" ]; then echo FG224-RETRY-CHILD-EXECUTED; else exit 7; fi\'\n        echo \'FG224-RETRY-CHILD-COMPLETED\'\n      }\n    }\n  }\n}'
-retry_response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-attempt-journal' \
+retry_response=$(curl --max-time "$http_max_time" -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-attempt-journal' \
   -H 'content-type: application/x-jenkinsfile' --data-binary "$retry_pipeline" "$builds_url")
 retry_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$retry_response")
 retry_parent_attempt=$(sed -n 's/.*"attempt_id":"\([^"]*\)".*/\1/p' <<<"$retry_response")
@@ -657,7 +846,8 @@ retry_parent_attempt=$(sed -n 's/.*"attempt_id":"\([^"]*\)".*/\1/p' <<<"$retry_r
 retry_build_key=${retry_build_id//-/}
 
 retry_parent_terminal=""
-for _ in $(seq 1 300); do
+poll_deadline=$(deadline_after 15000)
+while before_deadline "$poll_deadline"; do
   retry_parent_terminal=$(admin "$database" -Atc \
     "SELECT state || '|' || COALESCE(result, '') FROM attempts WHERE organization_id='$organization' AND id='$retry_parent_attempt'")
   [[ "$retry_parent_terminal" = "terminal|failure" ]] && break
@@ -706,7 +896,8 @@ admin "$database" -c "BEGIN;
   COMMIT;" >/dev/null
 
 retry_child_terminal=""
-for _ in $(seq 1 300); do
+poll_deadline=$(deadline_after 15000)
+while before_deadline "$poll_deadline"; do
   retry_child_terminal=$(admin "$database" -Atc \
     "SELECT state || '|' || COALESCE(result, '') FROM attempts WHERE organization_id='$organization' AND id='$retry_child_attempt'")
   [[ "$retry_child_terminal" = "terminal|success" ]] && break
@@ -719,7 +910,7 @@ done
 [[ "$retry_child_terminal" = "terminal|success" ]] \
   || { echo "FG-224 REFUSED: retry child did not execute successfully: $retry_child_terminal" >&2; exit 1; }
 
-retry_logs=$(curl -fsS -H "$auth" "$builds_url/$retry_build_id/logs")
+retry_logs=$(curl --max-time "$http_max_time" -fsS -H "$auth" "$builds_url/$retry_build_id/logs")
 retry_child_marker_count=$(admin "$database" -Atc \
   "SELECT count(*) FROM log_chunks
     WHERE organization_id='$organization' AND build_id='$retry_build_id'
@@ -747,7 +938,7 @@ grep -qx $'build-finished\tsuccess' "$retry_child_journal" \
 # Restarting the exact child against its deterministic path must resume that
 # journal as a terminal no-op, not execute the shell again or append bytes.
 retry_child_sum_before=$(sha256sum "$retry_child_journal" | cut -d' ' -f1)
-"$run_host" \
+bounded "$process_budget" "$run_host" \
   "$state_root/definitions/$organization_key/$retry_build_key/Jenkinsfile" \
   "$state_root/workspaces/$organization_key" "$retry_build_key" "$retry_child_journal" \
   >"$scratch/retry-child-restart.log" 2>&1
@@ -770,8 +961,9 @@ stop_controller
 launch_controller 10000
 
 ready=0
-for _ in $(seq 1 200); do
-  if curl -fsS "$base_url/health/ready" >/dev/null 2>&1; then
+poll_deadline=$(deadline_after 10000)
+while before_deadline "$poll_deadline"; do
+  if curl --max-time "$http_max_time" -fsS "$base_url/health/ready" >/dev/null 2>&1; then
     ready=1
     break
   fi
@@ -781,15 +973,16 @@ done
 [[ $ready -eq 1 ]] || { echo "FG-224 REFUSED: tail-proof controller never became ready" >&2; exit 1; }
 
 tail_pipeline=$'pipeline {\n  agent any\n  stages {\n    stage(\'Tail\') {\n      steps {\n        sh \'printf RFJBSU4tQkVHSU4tMjI0 | base64 -d; head -c 18000000 /dev/zero | tr "\\\\0" "\\\\132"; printf RFJBSU4tRU5ELTIyNA== | base64 -d\'\n      }\n    }\n  }\n}'
-tail_response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-post-exit-tail' \
+tail_response=$(curl --max-time "$http_max_time" -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-post-exit-tail' \
   -H 'content-type: application/x-jenkinsfile' --data-binary "$tail_pipeline" "$builds_url")
 tail_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$tail_response")
 [[ -n "$tail_build_id" ]] || { echo "FG-224 REFUSED: tail proof admission returned no build id" >&2; exit 1; }
 
 tail_started=$(date +%s)
 tail_terminal=""
-for _ in $(seq 1 800); do
-  tail_terminal=$(curl -fsS -H "$auth" "$builds_url/$tail_build_id")
+poll_deadline=$(deadline_after 80000)
+while before_deadline "$poll_deadline"; do
+  tail_terminal=$(curl --max-time "$http_max_time" -fsS -H "$auth" "$builds_url/$tail_build_id")
   grep -q '"status":"success"' <<<"$tail_terminal" && break
   grep -q '"status":"\(failure\|aborted\|reconciliation_required\)"' <<<"$tail_terminal" && {
     echo "FG-224 REFUSED: tail proof reached $tail_terminal" >&2
@@ -843,8 +1036,9 @@ stop_controller
 launch_controller 50
 
 ready=0
-for _ in $(seq 1 200); do
-  if curl -fsS "$base_url/health/ready" >/dev/null 2>&1; then
+poll_deadline=$(deadline_after 10000)
+while before_deadline "$poll_deadline"; do
+  if curl --max-time "$http_max_time" -fsS "$base_url/health/ready" >/dev/null 2>&1; then
     ready=1
     break
   fi
@@ -854,7 +1048,7 @@ done
 [[ $ready -eq 1 ]] || { echo "FG-224 REFUSED: shutdown-proof controller never became ready" >&2; exit 1; }
 
 shutdown_pipeline=$'pipeline {\n  agent any\n  stages {\n    stage(\'Shutdown\') {\n      steps {\n        sh \'echo FG224-SHUTDOWN-FRAME; sleep 30\'\n      }\n    }\n  }\n}'
-shutdown_response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-shutdown-recovery' \
+shutdown_response=$(curl --max-time "$http_max_time" -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-shutdown-recovery' \
   -H 'content-type: application/x-jenkinsfile' --data-binary "$shutdown_pipeline" "$builds_url")
 shutdown_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$shutdown_response")
 [[ -n "$shutdown_build_id" ]] || { echo "FG-224 REFUSED: shutdown proof admission returned no build id" >&2; exit 1; }
@@ -866,7 +1060,8 @@ shutdown_event_file=""
 # any output. Hash only after the exact final pre-sleep frame is durable, so
 # subsequent equality tests reconciliation retention rather than a live writer.
 shutdown_quiescent_frame=$(printf '%s' '+ sleep 30' | base64 -w0)
-for _ in $(seq 1 400); do
+poll_deadline=$(deadline_after 20000)
+while before_deadline "$poll_deadline"; do
   IFS='|' read -r shutdown_attempt shutdown_fence shutdown_state <<<"$(admin "$database" -Atc \
     "SELECT a.id, a.fence, a.state
        FROM attempts a JOIN nodes n
@@ -927,12 +1122,13 @@ if [[ -n "$controller_image" ]]; then
   controller_namespace_pid=$(tr -d '[:space:]' <"$controller_pid_file")
 
   ready=0
-  for _ in $(seq 1 200); do
-    if curl -fsS "$base_url/health/ready" >/dev/null 2>&1; then
+  poll_deadline=$(deadline_after 10000)
+  while before_deadline "$poll_deadline"; do
+    if curl --max-time "$http_max_time" -fsS "$base_url/health/ready" >/dev/null 2>&1; then
       ready=1
       break
     fi
-    docker exec "$controller_container" /bin/kill -0 "$controller_namespace_pid" 2>/dev/null \
+    bounded "$docker_budget" docker exec "$controller_container" /bin/kill -0 "$controller_namespace_pid" 2>/dev/null \
       || { echo "FG-224 REFUSED: surviving-init controller exited during startup" >&2; exit 1; }
     sleep 0.05
   done
@@ -944,23 +1140,24 @@ if [[ -n "$controller_image" ]]; then
   controller_death_shell_pid_file="$scratch/controller-death-shell.pid"
   controller_death_sleep_pid_file="$scratch/controller-death-sleep.pid"
   controller_death_pipeline="pipeline { agent any stages { stage('ControllerDeath') { steps { sh 'echo \$\$ > $controller_death_shell_pid_file; sleep 30 & echo \$! > $controller_death_sleep_pid_file; echo started > $controller_death_started; wait \$!; echo leaked > $controller_death_leaked' } } } }"
-  controller_death_response=$(curl -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-controller-death' \
+  controller_death_response=$(curl --max-time "$http_max_time" -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-controller-death' \
     -H 'content-type: application/x-jenkinsfile' --data-binary "$controller_death_pipeline" "$builds_url")
   controller_death_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$controller_death_response")
   [[ -n "$controller_death_build_id" ]] \
     || { echo "FG-224 REFUSED: controller-death proof admission returned no build id" >&2; exit 1; }
 
-  for _ in $(seq 1 400); do
+  poll_deadline=$(deadline_after 20000)
+  while before_deadline "$poll_deadline"; do
     [[ -s "$controller_death_started" && -s "$controller_death_shell_pid_file" && -s "$controller_death_sleep_pid_file" ]] && break
-    docker exec "$controller_container" /bin/kill -0 "$controller_namespace_pid" 2>/dev/null \
+    bounded "$docker_budget" docker exec "$controller_container" /bin/kill -0 "$controller_namespace_pid" 2>/dev/null \
       || { echo "FG-224 REFUSED: controller exited before its nested step and sleep child started" >&2; exit 1; }
     sleep 0.05
   done
   [[ -s "$controller_death_started" && -s "$controller_death_shell_pid_file" && -s "$controller_death_sleep_pid_file" ]] \
     || { echo "FG-224 REFUSED: controller-death proof never reached its running shell and sleep child" >&2; exit 1; }
 
-  docker top "$controller_container" -eo pid,ppid,pgid,args >"$scratch/controller-death-processes.txt"
-  container_init_host_pid=$(docker inspect --format '{{.State.Pid}}' "$controller_container")
+  bounded "$docker_budget" docker top "$controller_container" -eo pid,ppid,pgid,args >"$scratch/controller-death-processes.txt"
+  container_init_host_pid=$(bounded "$docker_budget" docker inspect --format '{{.State.Pid}}' "$controller_container")
   controller_host_pid=$(host_pid_for_namespace "$scratch/controller-death-processes.txt" "$controller_namespace_pid") \
     || controller_host_pid=""
   controller_death_run_host_pid=$(awk -v app="$run_host" 'index($0, app) { print $1; exit }' "$scratch/controller-death-processes.txt")
@@ -977,9 +1174,10 @@ if [[ -n "$controller_image" ]]; then
   [[ "$controller_death_shell_host_pid" =~ ^[0-9]+$ && "$controller_death_sleep_host_pid" =~ ^[0-9]+$ ]] \
     || { echo "FG-224 REFUSED: controller-death proof could not bind both step shell and sleep child" >&2; exit 1; }
 
-  docker exec "$controller_container" /bin/kill -KILL "$controller_namespace_pid"
+  bounded "$docker_budget" docker exec "$controller_container" /bin/kill -KILL "$controller_namespace_pid"
 
-  for _ in $(seq 1 200); do
+  poll_deadline=$(deadline_after 10000)
+  while before_deadline "$poll_deadline"; do
     if [[ -s "$controller_stopped_file" \
           && ! -e "/proc/$controller_host_pid" \
           && ! -e "/proc/$controller_death_run_host_pid" \
@@ -1006,6 +1204,8 @@ admin "$database" -c "UPDATE build_definitions SET source_bytes = decode('00','h
 mutate_rc=$?
 set -e
 [[ $mutate_rc -ne 0 ]] || { echo "FG-224 REFUSED: durable definition was mutable" >&2; exit 1; }
+
+release_controller
 
 if grep -Fq 'fg224-proof-token-0123456789abcdef' "$host_log" || grep -Fq 'Password=fogell' "$host_log"; then
   echo "FG-224 REFUSED: controller log disclosed a configured secret" >&2
