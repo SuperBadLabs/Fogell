@@ -7579,6 +7579,107 @@ let ansiColorTrailingBlocks =
                       assertCompileRefusal label (invalidPipeline optionBody) root workspace)
           }
 
+          test "an ansiColor argument the renderer cannot resolve refuses before every effect" {
+              // FG-123. The alternative — copying the unevaluated text into TERM —
+              // was the defect. What Jenkins prints for these is UNPROVEN by receipt
+              // (a bare unknown name fails there with MissingPropertyException, the
+              // rest is not measured); the refusal is Fogell's own, named, and before
+              // any stage or post effect.
+              for label, optionBody in
+                  [ "unknown-name", "ansiColor(\"${nope}\")"
+                    "unterminated", "ansiColor(\"${xterm\")"
+                    "named-unknown", "ansiColor(colorMapName: \"${nope}\")" ] do
+                  withWorkspace label (fun root workspace ->
+                      assertCompileRefusal label (invalidPipeline optionBody) root workspace)
+          }
+
+          test "a declared environment value is not visible to the option argument, as measured" {
+              // MEASURED on Jenkins 2.568.1 (2026-09-02): the option's argument is
+              // evaluated before the `environment` block applies, so
+              // `ansiColor("${env.MAPNAME}")` with a declared MAPNAME sets TERM to
+              // the text `null` under SUCCESS. Fogell renders over the
+              // Jenkins-provided values only and reaches the same bytes. Receipt
+              // `options-ansicolor-declared-env`.
+              withWorkspace "declared-env" (fun root workspace ->
+                  let source =
+                      "pipeline { agent any environment { MAPNAME = 'xterm' } options { "
+                      + "ansiColor(\"${env.MAPNAME}\")"
+                      + " } stages { stage('term') { steps { sh 'printf %s \"$TERM\" > term.txt' } } } }"
+
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "declared-env control refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "build succeeds"
+                      Expect.equal
+                          (IO.File.ReadAllText(IO.Path.Combine(workspace, "term.txt")))
+                          "null"
+                          "the declared value is not visible when the option is applied")
+          }
+
+          test "a binding assigned inside the ansiColor argument survives into later steps" {
+              // MEASURED on Jenkins 2.568.1 (2026-09-02, raised by Codex on PR #336):
+              // the argument is evaluated in the script's own binding, so the
+              // assignment is visible to a later `echo` and the def-keyword advisory
+              // is printed. Receipt `options-ansicolor-binding`. The first cut
+              // rendered through a throwaway binding and failed the later read.
+              withWorkspace "binding" (fun root workspace ->
+                  let source =
+                      "pipeline { agent any options { "
+                      + "ansiColor(\"${x = 'xterm'; x}\")"
+                      + " } stages { stage('term') { steps { sh 'printf %s \"$TERM\" > term.txt'; echo \"x=${x}\" } } } }"
+
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "binding-assignment control refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "build succeeds"
+                      Expect.equal (IO.File.ReadAllText(IO.Path.Combine(workspace, "term.txt"))) "xterm" "TERM is the assigned value"
+                      Expect.contains trace.Output "x=xterm" "the later step reads the binding the option assigned"
+
+                      Expect.isTrue
+                          (trace.Output |> List.exists (fun l -> l.StartsWith "Did you forget the `def` keyword?"))
+                          "the def-keyword advisory is emitted for the option's assignment")
+          }
+
+          test "an unresolvable ansiColor argument on an SCM pipeline refuses before checkout" {
+              // FG-123. The render is judged beside FG-123a's shape refusals, ahead of
+              // the SCM block: the pre-push verifier measured the first cut refusing
+              // AFTER the checkout had narrated and left the Jenkinsfile in the
+              // workspace. Same harness as the FG-123a SCM test above.
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg123-scm-{Guid.NewGuid():N}")
+              let sourceRepo = IO.Path.Combine(root, "source")
+              let bareRepo = IO.Path.Combine(root, "remote.git")
+              let workspaceRoot = IO.Path.Combine(root, "workspace")
+              let workspace = IO.Path.Combine(workspaceRoot, "job")
+              let script = invalidPipeline "ansiColor(\"${nope}\")"
+
+              try
+                  IO.Directory.CreateDirectory(sourceRepo) |> ignore
+                  IO.Directory.CreateDirectory(workspaceRoot) |> ignore
+                  runGit sourceRepo [ "init"; "-b"; "main" ] |> ignore
+                  IO.File.WriteAllText(IO.Path.Combine(sourceRepo, "Jenkinsfile"), script)
+                  runGit sourceRepo [ "add"; "Jenkinsfile" ] |> ignore
+                  runGit sourceRepo [ "commit"; "-m"; "attested FG-123 definition" ] |> ignore
+                  runGit root [ "init"; "--bare"; bareRepo ] |> ignore
+                  runGit sourceRepo [ "push"; bareRepo; "main:main" ] |> ignore
+                  let scm = { Url = bareRepo; Branch = "main" }
+
+                  match FogellSide.runScm [] workspaceRoot "job" scm script with
+                  | Error why -> failtestf "matching local SCM did not reach the render refusal: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "failure" "the render refusal controls the SCM result"
+                      Expect.isTrue trace.ReportedFailureReason "the refusal is explained"
+                      Expect.isEmpty trace.Output "no checkout or stage narration survives"
+                      Expect.isEmpty trace.WorkspaceFiles "checkout produced no semantic files"
+                      Expect.isTrue (IO.Directory.Exists workspace) "workspace setup completed"
+                      Expect.isEmpty
+                          (IO.Directory.EnumerateFileSystemEntries(workspace, "*", IO.SearchOption.AllDirectories)
+                           |> Seq.toList)
+                          "no .git, checkout, stage, option-body or post effect"
+              finally
+                  if IO.Directory.Exists root then
+                      IO.Directory.Delete(root, true)
+          }
+
           test "hosted synthetic calls retain their trailing-body presence" {
               withWorkspace "hosted-presence" (fun root workspace ->
                   let source =
@@ -7597,10 +7698,23 @@ let ansiColorTrailingBlocks =
           }
 
           test "valid positional, named and brace-text controls make TERM observable" {
+              // FG-123. The last four rows are the EVALUATED shapes, measured on
+              // Jenkins 2.568.1 (2026-09-02): a GString whose placeholder is a
+              // literal, a GString reading a Jenkins-provided variable, the named
+              // spelling of the same, and an unquoted expression. Before FG-123 each
+              // copied its unevaluated source text into TERM under a green build.
               for label, optionBody, expected in
                   [ "positional", "ansiColor('xterm')", "xterm"
                     "named", "ansiColor(colorMapName: 'vga')", "vga"
-                    "argument-brace", "ansiColor('x{term}')", "x{term}" ] do
+                    "argument-brace", "ansiColor('x{term}')", "x{term}"
+                    "gstring-literal", "ansiColor(\"${'xterm'}\")", "xterm"
+                    "gstring-env", "ansiColor(\"${env.JOB_NAME}\")", "job"
+                    "named-gstring-env", "ansiColor(colorMapName: \"${env.JOB_NAME}-vga\")", "job-vga"
+                    "expression", "ansiColor('xt' + 'erm')", "xterm"
+                    // MEASURED: Jenkins renders `env.<unknown>` as the text `null` here
+                    // (SUCCESS), exactly as the step-argument rule does. Receipt:
+                    // `options-ansicolor-env-unknown`.
+                    "env-unknown", "ansiColor(\"${env.NOPE}\")", "null" ] do
                   withWorkspace label (fun root workspace ->
                       let source =
                           "pipeline { agent any options { "
