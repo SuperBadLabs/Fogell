@@ -186,6 +186,303 @@ let admissionLimits =
               Expect.equal oddDoubleRunError.Position.Column 7L "the double-quote odd-run refusal points at EOF"
           }
 
+          test "ordinary quotes cannot shield later structure across a physical line ending" {
+              let limits =
+                  { Limits.defaults with
+                      MaxSourceBytes = 10_000
+                      MaxDepth = 0
+                      MaxScalarBytes = 10_000 }
+
+              let pipeline =
+                  "pipeline { agent any stages { stage('B') { steps { echo 'x' } } } }"
+
+              let refusal label result =
+                  match result with
+                  | Error e ->
+                      Expect.equal e.Code MalformedSyntax $"{label}: the raw ending is a syntax refusal"
+                      Expect.equal e.Position.Line 2L $"{label}: the refusal identifies the following physical line"
+                      Expect.equal e.Position.Column 1L $"{label}: the refusal identifies the physical-line boundary"
+                      e
+                  | Ok _ -> failtestf "%s allowed an invalid quote to shield later structure" label
+
+              for quoteLabel, quote in [ "single", "'"; "double", "\"" ] do
+                  for newlineLabel, newline in [ "LF", "\n"; "CRLF", "\r\n"; "CR", "\r" ] do
+                      let label = $"{quoteLabel}/{newlineLabel}"
+                      let invalid = quote + "bad" + newline + pipeline
+
+                      Limits.precheck limits invalid
+                      |> refusal (label + "/precheck")
+                      |> ignore
+
+                      Parser.parseWithLimits limits invalid
+                      |> refusal (label + "/Declarative")
+                      |> ignore
+
+                      let continued = quote + "bad\\" + newline + "continued" + quote
+                      Expect.isOk (Limits.precheck limits continued) $"{label}: an odd run continues the quote"
+
+                      let evenRun = quote + "bad\\\\" + newline + "continued" + quote
+                      Limits.precheck limits evenRun
+                      |> refusal (label + "/even-run")
+                      |> ignore
+
+              Expect.isOk (Limits.precheck limits "'''a\nb'''") "triple-single quotes remain multiline"
+              Expect.isOk (Limits.precheck limits "\"\"\"a\nb\"\"\"") "triple-double quotes remain multiline"
+          }
+
+          test "GString interpolation is structurally bounded before recursive parsing" {
+              let depthLimits =
+                  { Limits.defaults with
+                      MaxSourceBytes = 10_000
+                      MaxDepth = 2
+                      MaxNodes = 10_000
+                      MaxScalarBytes = 10_000 }
+
+              let expectCode label expected result =
+                  match result with
+                  | Error e -> Expect.equal e.Code expected $"{label}: named admission refusal"
+                  | Ok _ -> failtestf "%s bypassed the structural precheck" label
+
+              for label, source in
+                  [ "ordinary", "\"${(((1)))}\""
+                    "triple-double", "\"\"\"${(((1)))}\"\"\"" ] do
+                  Limits.precheck depthLimits source
+                  |> expectCode (label + "/precheck") NestingTooDeep
+
+                  Fogell.Groovy.Parser.Parser.parseWithLimits depthLimits source
+                  |> expectCode (label + "/Groovy") NestingTooDeep
+
+              let deep =
+                  String.replicate (Limits.defaults.MaxDepth + 16) "("
+                  + "1"
+                  + String.replicate (Limits.defaults.MaxDepth + 16) ")"
+
+              let divisionGString = "\"${amount / " + deep + " / 2}\""
+
+              Limits.precheck Limits.defaults divisionGString
+              |> expectCode "division inside interpolation/precheck" NestingTooDeep
+
+              Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults divisionGString
+              |> expectCode "division inside interpolation/Groovy" NestingTooDeep
+
+              let declarativeDivision =
+                  "pipeline { agent any stages { stage('B') { steps { script { def x = \"${amount / "
+                  + deep
+                  + " / 2}\" } } } } }"
+
+              Parser.parseWithLimits Limits.defaults declarativeDivision
+              |> expectCode "division inside interpolation/Declarative" NestingTooDeep
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits depthLimits "\"${/(((())))/}\"")
+                  "a primary-position slashy remains shielded inside interpolation"
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits depthLimits "\"${/}/}\"")
+                  "a slashy closing brace does not end interpolation"
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits depthLimits "\"${tool 'M3'}\"")
+                  "a supported command expression remains admitted inside interpolation"
+
+              Expect.isOk
+                  (Fogell.Groovy.Parser.Parser.parseWithLimits depthLimits "\"${[1].each { echo /((((/ }}\"")
+                  "a closure inside interpolation still begins a command-capable statement body"
+
+              let nestedDivisionGString =
+                  "\"${\"${amount / " + deep + " / 2}\"}\""
+
+              Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults nestedDivisionGString
+              |> expectCode "nested GString division" NestingTooDeep
+
+              let scalarRestorationLimits =
+                  { depthLimits with
+                      MaxDepth = 64
+                      MaxScalarBytes = 4 }
+
+              Expect.isOk
+                  (Limits.precheck scalarRestorationLimits "\"${1}\"")
+                  "a closed interpolated scalar fits at its whole-content boundary"
+
+              Limits.precheck scalarRestorationLimits "\"${1}a\""
+              |> expectCode "closed interpolated scalar accounting" ScalarTooLong
+
+              let shorthandNodeLimits =
+                  { depthLimits with
+                      MaxDepth = 64
+                      MaxNodes = 1 }
+
+              Limits.precheck shorthandNodeLimits "\"$a\""
+              |> expectCode "shorthand GString/precheck" TooManyNodes
+
+              Fogell.Groovy.Parser.Parser.parseWithLimits shorthandNodeLimits "\"$a\""
+              |> expectCode "shorthand GString/Groovy" TooManyNodes
+
+              let nodeLimits =
+                  { depthLimits with
+                      MaxDepth = 64
+                      MaxNodes = 2 }
+
+              Limits.precheck nodeLimits "\"${(((1)))}\""
+              |> expectCode "interpolation nodes" TooManyNodes
+
+              Expect.isOk
+                  (Limits.precheck depthLimits "\"\\${(((1)))}\"")
+                  "an escaped dollar remains literal GString content"
+
+              Limits.precheck depthLimits "\"\\\\${(((1)))}\""
+              |> expectCode "an even backslash run leaves interpolation live" NestingTooDeep
+
+              Expect.isOk
+                  (Limits.precheck depthLimits "'${(((1)))}'")
+                  "single quotes do not interpolate"
+
+              Expect.isOk
+                  (Limits.precheck depthLimits "'''${(((1)))}'''")
+                  "triple-single quotes do not interpolate"
+
+              let unterminatedLimits =
+                  { depthLimits with
+                      MaxDepth = 64
+                      MaxScalarBytes = 2 }
+
+              Limits.precheck unterminatedLimits "\"${1"
+              |> expectCode "unterminated GString scalar accounting" ScalarTooLong
+
+              let declarativeLimits =
+                  { depthLimits with
+                      MaxDepth = 12 }
+
+              let interpolationBomb = String.replicate 16 "(" + "1" + String.replicate 16 ")"
+
+              let declarative =
+                  "pipeline { agent any stages { stage('B') { steps { script { echo \"${"
+                  + interpolationBomb
+                  + "}\" } } } } }"
+
+              Parser.parseWithLimits declarativeLimits declarative
+              |> expectCode "Declarative script GString" NestingTooDeep
+          }
+
+          test "balanced raw expressions reuse the admission slashy classification" {
+              let limits =
+                  { Limits.defaults with
+                      MaxSourceBytes = 10_000
+                      MaxScalarBytes = 4 }
+
+              let expectAccepted label source =
+                  match Parser.parseWithLimits limits source with
+                  | Ok _ -> ()
+                  | Error e -> failtestf "%s should remain admitted, got %A" label e
+
+              let expectScalarTooLong label source =
+                  match Parser.parseWithLimits limits source with
+                  | Error e -> Expect.equal e.Code ScalarTooLong $"{label}: the DFA-classified slashy is bounded"
+                  | Ok _ -> failtestf "%s bypassed the scalar limit" label
+
+              for label, exact, over in
+                  [ "opaque stage extension",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return /aaaa/ } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return /aaaaa/ } } } }"
+                    "command in collection",
+                    "pipeline { agent any stages { stage('B') { steps { echo [{ echo /aaaa/ }] } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo [{ echo /aaaaa/ }] } } } }"
+                    "unbraced control body",
+                    "foo { if (ok) /aaaa/ }\npipeline { agent any stages { stage('B') { steps { echo 'x' } } } }",
+                    "foo { if (ok) /aaaaa/ }\npipeline { agent any stages { stage('B') { steps { echo 'x' } } } }"
+                    "isolated parenthesised reparse",
+                    "pipeline { agent any stages { stage('B') { steps { echo(return /aaaa/) } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo(return /aaaaa/) } } } }"
+                    "parenthesised named collection reparse",
+                    "pipeline { agent any stages { stage('B') { steps { echo(values: [{ echo /a]aa/ }]) } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo(values: [{ echo /aa]aaa/ }]) } } } }"
+                    "parenthesised nested-call reparse",
+                    "pipeline { agent any stages { stage('B') { steps { echo(wrapper(return /a)aa/)) } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo(wrapper(return /aa)aaa/)) } } } }"
+                    "labeled command body",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { deploy: echo /aaaa/ } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { deploy: echo /aaaaa/ } } } }"
+                    "case command body",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { switch (x) { case 1: echo /aaaa/; break } } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { switch (x) { case 1: echo /aaaaa/; break } } } } }"
+                    "default command body",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { switch (x) { default: echo /aaaa/ } } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { switch (x) { default: echo /aaaaa/ } } } } }"
+                    "closure arrow command body",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { [1].each { x -> echo /aaaa/ } } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { [1].each { x -> echo /aaaaa/ } } } } }"
+                    "empty closure arrow command body",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { run { -> echo /aaaa/ } } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { run { -> echo /aaaaa/ } } } } }"
+                    "switch arrow command body",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { switch (x) { case 1 -> echo /aaaa/ } } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { switch (x) { case 1 -> echo /aaaaa/ } } } } }"
+                    "return fallback command body",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return tool /aaaa/ } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return tool /aaaaa/ } } } }"
+                    "return fallback command expression",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return tool /aaaa/ + rhs } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return tool /aaaaa/ + rhs } } } }"
+                    "return newline command body",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return\ntool /aaaa/(x) } } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return\ntool /aaaaa/(x) } } } }"
+                    "return command before terminal comment",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return tool /aaaa/ // c\n} } } }",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return tool /aaaaa/ // c\n} } } }" ] do
+                  expectAccepted label exact
+                  expectScalarTooLong label over
+
+              for label, source in
+                  [ "return division",
+                    "pipeline { agent any stages { stage('B') { steps { foo { return amount / 2 / 5 } } } } }"
+                    "command division",
+                    "pipeline { agent any stages { stage('B') { steps { foo { echo amount / 2 / 5 } } } } }"
+                    "collection division",
+                    "pipeline { agent any stages { stage('B') { steps { echo [foo / aaaaa / b] } } } }"
+                    "labeled numeric division",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { deploy: 10 / aaaaa / 2 } } } }"
+                    "case numeric division",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { switch (x) { case 1: 10 / aaaaa / 2 } } } } }"
+                    "return chained division",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return amount / aaaaa / b } } } }"
+                    "return division across a line comment",
+                    "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return tool / aaaaa / // c\necho 'x' } } } }" ] do
+                  expectAccepted label source
+
+              for newlineLabel, newline in [ "LF", "\n"; "CRLF", "\r\n"; "CR", "\r" ] do
+                  let newlineReturnPosition =
+                      "pipeline { agent any stages { stage('B') { steps { echo 'x' } foo { return"
+                      + newline
+                      + "tool /aaaaa/(x) } } } }"
+
+                  match Parser.parseWithLimits limits newlineReturnPosition with
+                  | Error e ->
+                      Expect.equal e.Code ScalarTooLong $"{newlineLabel} return position: scalar refusal"
+                      Expect.equal e.Position.Line 2L $"{newlineLabel} return position: physical line"
+                      Expect.equal e.Position.Column 13L $"{newlineLabel} return position: after the committed closer"
+                  | Ok _ -> failtestf "%s return position bypassed the scalar limit" newlineLabel
+
+              let structuralLimits =
+                  { limits with
+                      MaxDepth = 5
+                      MaxScalarBytes = 10_000 }
+
+              let structuralBomb = String.replicate 8 "(" + "1" + String.replicate 8 ")"
+
+              for label, source in
+                  [ "map value division", "[deploy: amount / " + structuralBomb + " / 2]"
+                    "named value division", "echo message: amount / " + structuralBomb + " / 2"
+                    "case ternary division",
+                    "switch(x) { case ok ? left : amount / " + structuralBomb + " / 2: break }"
+                    "case map division",
+                    "switch(x) { case [k: amount / " + structuralBomb + " / 2]: break }"
+                    "return division across a line comment",
+                    "return tool / " + structuralBomb + " / // c\necho 'x'" ] do
+                  match Limits.precheck structuralLimits source with
+                  | Error e -> Expect.equal e.Code NestingTooDeep $"{label}: division structure remains visible"
+                  | Ok _ -> failtestf "%s let a colon promote division to slashy shielding" label
+          }
+
           test "all parser-supported scalar delimiters enforce UTF-8 content bytes" {
               let limits =
                   { Limits.defaults with

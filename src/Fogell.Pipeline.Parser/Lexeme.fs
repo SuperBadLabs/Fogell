@@ -27,14 +27,22 @@ type ParserState =
       Limits: Limits
       ScalarRefusal: AdmissionError option
       CommittedScalarRefusal: AdmissionError option ref
+      // Read-only opener classifications produced by the admission DFA for
+      // this exact parser input. Empty is reserved for focused scalar parsers
+      // that never invoke balancedRaw.
+      BalancedSlashySpans: SlashySpans
       RawArgumentLineBoundary: bool }
 
-let parserStateWithLimits (limits: Limits) =
+let parserStateWithLimitsAndSlashySpans (limits: Limits) (slashySpans: SlashySpans) =
     { Refusal = ref None
       Limits = limits
       ScalarRefusal = None
       CommittedScalarRefusal = ref None
+      BalancedSlashySpans = slashySpans
       RawArgumentLineBoundary = false }
+
+let parserStateWithLimits (limits: Limits) =
+    parserStateWithLimitsAndSlashySpans limits SlashySpans.Empty
 
 let parserState () = parserStateWithLimits Limits.defaults
 
@@ -456,18 +464,36 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                 lastSig <- c
                 lastSigIndex <- index
 
+            let skipOne () =
+                if stream.Peek() = '\r' || stream.Peek() = '\n' then
+                    stream.SkipNewline() |> ignore
+                else
+                    stream.Skip()
+
             let skipEscapedCharacter () =
                 stream.Skip()
 
                 if not stream.IsEndOfStream then
-                    if stream.Peek() = '\r' then
-                        stream.Skip()
-                        if not stream.IsEndOfStream && stream.Peek() = '\n' then stream.Skip()
+                    if stream.Peek() = '\r' || stream.Peek() = '\n' then
+                        stream.SkipNewline() |> ignore
                     else
                         stream.Skip()
 
             while depth > 0 && not failed && not (stream.IsEndOfStream) do
                 let c = stream.Peek()
+                let slashySpanIndex = int stream.Index
+
+                let dfaClassifiesSlashy =
+                    stream.UserState.BalancedSlashySpans.IsClassified slashySpanIndex
+
+                let fallbackClassifiesSlashy =
+                    not (
+                        endsExpression lastSig
+                        || (((lastSig = '+' && priorSig = '+')
+                             || (lastSig = '-' && priorSig = '-'))
+                            && lastSigIndex = priorSigIndex + 1L
+                            && endsExpression thirdSig)
+                    )
 
                 if c = '\'' || c = '"' then
                     // TRIPLE-QUOTED SPANS FIRST. Treating `"""` as an empty string
@@ -496,7 +522,7 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                                 stream.Skip(3)
                                 closed <- true
                             else
-                                stream.Skip()
+                                skipOne ()
 
                         if not closed then failed <- true
                         recordSignificant q (stream.Index - 1L) // a completed literal ends an expression
@@ -544,16 +570,13 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                             stream.Skip()
                             ended <- true
                         else
-                            stream.Skip()
+                            skipOne ()
                 elif
                     c = '/'
-                    && not (
-                        endsExpression lastSig
-                        || (((lastSig = '+' && priorSig = '+')
-                             || (lastSig = '-' && priorSig = '-'))
-                            && lastSigIndex = priorSigIndex + 1L
-                            && endsExpression thirdSig)
-                    )
+                    && (if stream.UserState.BalancedSlashySpans.Length = 0 then
+                            fallbackClassifiesSlashy
+                        else
+                            dfaClassifiesSlashy)
                 then
                     // FG-141: no left operand, so this `/` can only open a
                     // slashy. Skip its span; without a closing slash, rewind and read the
@@ -616,7 +639,7 @@ let balancedRaw (opening: char) (closing: char) : P<string> =
                     let significantIndex = stream.Index
                     if c = opening then depth <- depth + 1
                     elif c = closing then depth <- depth - 1
-                    stream.Skip()
+                    skipOne ()
 
                     if c <> ' ' && c <> '\t' && c <> '\r' && c <> '\n' then
                         recordSignificant c significantIndex

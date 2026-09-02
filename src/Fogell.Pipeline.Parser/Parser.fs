@@ -693,8 +693,11 @@ let private parenArgs (stateBeforeScan: ParserState) (origin: FParsec.Position) 
 
     getUserState
     >>= fun outerState ->
+            let bodySlashySpans =
+                outerState.BalancedSlashySpans.Slice(int origin.Index + 1, body.Length)
+
             let state =
-                parserStateWithLimits outerState.Limits
+                parserStateWithLimitsAndSlashySpans outerState.Limits bodySlashySpans
 
             match runParserOnString (ws >>. argList false .>> eof) state "args" body with
             | ParserResult.Success(v, parsedState, _) ->
@@ -1948,13 +1951,19 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, Admissi
           Message = oneLine
           Position = position }
 
-    match Limits.precheck limits source with
+    match Limits.precheckWithSlashySpans limits source with
     | Result.Error e -> Result.Error e
-    | Result.Ok() ->
+    | Result.Ok slashyClosers ->
         if not (looksDeclarative source) then
             Result.Error(AdmissionError.at NoPipelineBlock 1L 1L "no declarative `pipeline { }` block found")
         else
-            match runParserOnString (pipelineParser .>> eof) (parserStateWithLimits limits) "Jenkinsfile" source with
+            match
+                runParserOnString
+                    (pipelineParser .>> eof)
+                    (parserStateWithLimitsAndSlashySpans limits slashyClosers)
+                    "Jenkinsfile"
+                    source
+            with
             | ParserResult.Success(p, state, _) ->
                 match firstScalarRefusal state with
                 | Some scalar -> Result.Error scalar
