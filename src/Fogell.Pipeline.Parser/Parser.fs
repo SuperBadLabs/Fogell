@@ -225,7 +225,6 @@ let private rawArgValue (allowCommandHead: bool) (stops: char list) : P<string> 
                         commandHead <- false
             elif isIdentStart c then
                 let beganAtArgument = lastSigIndex < 0L
-                let continuedCommand = commandHead
                 let token = System.Text.StringBuilder()
                 let mutable tokenEnd = stream.Index
                 let mutable tokenLast = c
@@ -240,7 +239,7 @@ let private rawArgValue (allowCommandHead: bool) (stops: char list) : P<string> 
 
                 commandHead <-
                     allowCommandHead
-                    && (beganAtArgument || continuedCommand)
+                    && beganAtArgument
                     && word <> "true"
                     && word <> "false"
                     && word <> "null"

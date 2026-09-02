@@ -707,6 +707,48 @@ let admissionLimits =
 
               expectGroovyScalarTooLong "identifier-headed command interpretation" "foo /aaaaa/"
 
+              // Once `bar` begins the first argument expression, both slashes
+              // are division. Carrying command-head state through `bar` would
+              // misread the first slash as a literal opener and let its
+              // contents evade scalar, node and depth admission accounting.
+              let commandArgumentDivision = "foo bar / aaaaa / 2"
+
+              Expect.isOk
+                  (Limits.precheck limits commandArgumentDivision)
+                  "a command argument's division is not a slashy scalar"
+
+              expectGroovyAccepted
+                  "command argument division"
+                  commandArgumentDivision
+
+              let pipelineCommandArgumentDivision =
+                  "pipeline { agent any stages { stage('B') { steps { echo "
+                  + commandArgumentDivision
+                  + " } } } }"
+
+              match Parser.parseWithLimits limits pipelineCommandArgumentDivision with
+              | Ok _ -> ()
+              | Error e -> failtestf "command argument division became a slashy scalar: %A" e
+
+              let hiddenCommandArgumentDepth = "foo bar / " + hiddenDepth + " / 2"
+
+              match Limits.precheck Limits.defaults hiddenCommandArgumentDepth with
+              | Error e -> Expect.equal e.Code NestingTooDeep "command argument division exposes structural depth"
+              | Ok _ -> failtest "command-head state hid depth inside its first argument expression"
+
+              match Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults hiddenCommandArgumentDepth with
+              | Error e -> Expect.equal e.Code NestingTooDeep "the Groovy route retains command-argument depth"
+              | Ok _ -> failtest "the Groovy route admitted depth hidden in a command argument"
+
+              let hiddenPipelineCommandArgumentDepth =
+                  "pipeline { agent any stages { stage('B') { steps { script { "
+                  + hiddenCommandArgumentDepth
+                  + " } } } } } }"
+
+              match Parser.parseWithLimits Limits.defaults hiddenPipelineCommandArgumentDepth with
+              | Error e -> Expect.equal e.Code NestingTooDeep "the Declarative script route retains command-argument depth"
+              | Ok _ -> failtest "Declarative admitted depth hidden in a command argument"
+
               let innerOpenerSlashy = "x + /* a /* */ /aaaaa/"
 
               for label, argument in

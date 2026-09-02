@@ -355,12 +355,15 @@ module Limits =
                                 awaitingControlParen <- false
                                 // A leading identifier can be a Groovy
                                 // command head (`echo /x/`); a number cannot.
+                                // The next identifier begins the first argument
+                                // expression, so `echo value / x / 2` is
+                                // division and must leave its depth visible.
                                 // Keeping numeric heads out is what preserves
                                 // `10 / 2 / 5` as two divisions.
                                 let identifierHead =
                                     System.Char.IsLetter word.[0] || word.[0] = '_'
 
-                                commandHead <- identifierHead && (beginsNewStatement || commandHead)
+                                commandHead <- identifierHead && beginsNewStatement
                                 needsOperand <- false
                                 statementHead <- false
 
