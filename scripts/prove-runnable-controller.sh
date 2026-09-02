@@ -6,6 +6,7 @@ set -Eeuo pipefail
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 container=${FOGELL_PG_CONTAINER:-fogell-fg060a}
 port=${FOGELL_PG_PORT:-55445}
+runtime=${FOGELL_CONTAINER_RUNTIME:-podman}
 database="fogell_fg224_$$_$(date +%s)"
 role="fogell_fg224_runtime_$$_$(date +%s)"
 listen_port=${FOGELL_FG224_PORT:-18083}
@@ -28,10 +29,10 @@ liveness_host_pid=""
 # waiting for. On 2026-09-01 two hosted PID1 lanes (jobs 100045425020 and
 # 100055372746) printed `container PID1 was unreadable` 13.7 s into the step
 # and then sat in_progress for 77 and 39 minutes; the runner's cancellation
-# reaped one orphan bash and one orphan docker client. Nothing bounded the
-# EXIT trap's `docker stop` or its bare `wait` on the backgrounded `docker run`
-# client, and one of them never returned. Whether the container was still
-# being created (the identity loop ran its whole budget on fast `docker exec`
+# reaped one orphan bash and one orphan runtime client. Nothing bounded the
+# EXIT trap's container stop or its bare wait on the backgrounded run client,
+# and one of them never returned. Whether the container was still
+# being created (the identity loop ran its whole budget on fast exec failures
 # failures, and a cold pull of this image was measured at 14 s on run
 # 33567174871) or the daemon had stopped answering is not recorded by that
 # log; both shapes are bounded here. A proof that cannot finish refusing is
@@ -40,11 +41,11 @@ liveness_host_pid=""
 # The budgets below are the proof's own poll budgets restated as wall-clock
 # deadlines: 10 s for readiness and identity (the old 200 x 50 ms), 80 s for
 # the post-exit tail (800 x 100 ms). A single HTTP request is bounded by the
-# shortest of them; a docker CLI call, a synchronous controller or Run.Host
+# shortest of them; a container-runtime call, synchronous controller or Run.Host
 # invocation, and a reaped process each get a budget wide enough that only a
 # hang can exhaust it.
 http_max_time=10
-docker_budget=30
+runtime_budget=30
 process_budget=30
 reap_budget_ms=15000
 # The one-time image pull. Sized under the hosted step's 10-minute bound, so
@@ -132,7 +133,7 @@ on_err() {
 trap 'on_err $? $LINENO "$BASH_COMMAND"' ERR
 
 admin() {
-  bounded "$docker_budget" docker exec "$container" psql -U fogell -d "$1" -v ON_ERROR_STOP=1 "${@:2}"
+  bounded "$runtime_budget" "$runtime" exec "$container" psql -U fogell -d "$1" -v ON_ERROR_STOP=1 "${@:2}"
 }
 
 host_pid_for_namespace() {
@@ -152,8 +153,21 @@ host_pid_for_namespace() {
   return 1
 }
 
+# The legacy runtime's ps-compatible top reports host PIDs in its first column. Podman's
+# ps-compatible form runs ps inside the container and reports namespace PIDs;
+# its `hpid` descriptor is the explicit host identity this extinction proof
+# needs. Normalize both runtimes to a first host-PID column before inspection.
+container_process_table() {
+  local target=$1
+  if [[ "$runtime" = podman ]]; then
+    bounded "$runtime_budget" "$runtime" top "$target" hpid pid ppid pgid args
+  else
+    bounded "$runtime_budget" "$runtime" top "$target" -eo pid,ppid,pgid,args
+  fi
+}
+
 # The controller container is stopped by name and its client reaped under a
-# budget. The client is `docker run --rm`, which outlives `docker stop` when the
+# budget. The attached run client outlives a stop when the
 # stop arrives before the container exists (image still pulling) or when the
 # daemon does not answer; in both cases the client is killed and the container,
 # if it came up after all, is removed by name so no controller survives the
@@ -161,9 +175,9 @@ host_pid_for_namespace() {
 release_controller() {
   [[ -n "$host_pid" ]] || return 0
   if [[ -n "$controller_container" ]]; then
-    bounded "$docker_budget" docker stop --time 10 "$controller_container" >/dev/null 2>&1 || true
+    bounded "$runtime_budget" "$runtime" stop --time 10 "$controller_container" >/dev/null 2>&1 || true
     wait_bounded "$host_pid" "$reap_budget_ms" "controller container client" >/dev/null \
-      || bounded "$docker_budget" docker rm -f "$controller_container" >/dev/null 2>&1 || true
+      || bounded "$runtime_budget" "$runtime" rm -f "$controller_container" >/dev/null 2>&1 || true
   else
     kill -TERM "$host_pid" 2>/dev/null || true
     wait_bounded "$host_pid" "$reap_budget_ms" "native controller" >/dev/null || true
@@ -182,10 +196,10 @@ cleanup() {
     wait_bounded "$liveness_host_pid" "$reap_budget_ms" "liveness-pipe Run.Host" >/dev/null || true
   fi
   release_controller
-  bounded "$docker_budget" docker exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
+  bounded "$runtime_budget" "$runtime" exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
     -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$database' AND pid <> pg_backend_pid()" \
     -c "DROP DATABASE IF EXISTS $database" >/dev/null 2>&1 || true
-  bounded "$docker_budget" docker exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
+  bounded "$runtime_budget" "$runtime" exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
     -c "DROP OWNED BY $role" -c "DROP ROLE IF EXISTS $role" >/dev/null 2>&1 || true
   if [[ ${FOGELL_KEEP_FG224_PROOF:-0} = 1 ]]; then
     echo "FG-224 proof scratch retained: $scratch" >&2
@@ -204,27 +218,37 @@ run_host="$repo/tools/Fogell.Run.Host/bin/$configuration/net10.0/Fogell.Run.Host
 [[ -x "$run_host" ]] || { echo "FG-224 REFUSED: run host is not built" >&2; exit 2; }
 command -v timeout >/dev/null \
   || { echo "FG-224 REFUSED: coreutils timeout is required to bound this proof" >&2; exit 2; }
+[[ "$runtime" = podman || "$runtime" = docker ]] \
+  || { echo "FG-224 REFUSED: FOGELL_CONTAINER_RUNTIME must be exactly podman or docker" >&2; exit 2; }
+command -v "$runtime" >/dev/null \
+  || { echo "FG-224 REFUSED: $runtime is required for the scratch database and PID-1 proof" >&2; exit 2; }
+
+# Rootless Podman otherwise maps an explicit numeric container user to a
+# subordinate host id that cannot write the bind-mounted scratch directory.
+# keep-id preserves the proof's least-privilege user and its host ownership.
+container_user_args=(--user "$(id -u):$(id -g)")
+if [[ "$runtime" = podman ]]; then
+  container_user_args=(--userns keep-id --user "$(id -u):$(id -g)")
+fi
 
 # The PID1 identity budget below is 10 s of controller start-up. On a runner
-# that has never seen the digest-pinned image, `docker run` first pulls ~850 MB
+# that has never seen the digest-pinned image, the first run pulls ~850 MB
 # (14 s measured on hosted run 33567174871), and the budget was measuring the
 # registry instead of the controller. Pull once here, bounded, so a slow pull
 # is a named refusal before any controller launch and never a false identity
-# refusal after one. Only a daemon that says the image is absent starts the
-# pull: a daemon that does not answer, or answers with anything else, is its
-# own refusal rather than a cue to wait on the registry.
+# refusal after one. Any nonzero inspect is followed by one bounded pull: a
+# missing image is acquired, while a broken runtime or registry becomes a
+# named pull refusal instead of being mistaken for absence.
 if [[ -n "$controller_image" ]]; then
   image_rc=0
-  bounded "$docker_budget" docker image inspect "$controller_image" >/dev/null 2>"$scratch/image-inspect.stderr" \
+  bounded "$runtime_budget" "$runtime" image inspect "$controller_image" >/dev/null 2>"$scratch/image-inspect.stderr" \
     || image_rc=$?
   if budget_expired "$image_rc"; then
-    echo "FG-224 REFUSED: docker did not answer an image inspect within ${docker_budget} s" >&2
+    echo "FG-224 REFUSED: $runtime did not answer an image inspect within ${runtime_budget} s" >&2
     exit 2
   elif (( image_rc != 0 )); then
-    grep -Fq 'No such image' "$scratch/image-inspect.stderr" \
-      || { echo "FG-224 REFUSED: controller image inspect failed ($image_rc): $(tr '\n' ' ' <"$scratch/image-inspect.stderr")" >&2; exit 2; }
     pull_rc=0
-    bounded "$image_pull_budget" docker pull "$controller_image" >"$scratch/image-pull.log" 2>&1 || pull_rc=$?
+    bounded "$image_pull_budget" "$runtime" pull "$controller_image" >"$scratch/image-pull.log" 2>&1 || pull_rc=$?
     if budget_expired "$pull_rc"; then
       echo "FG-224 REFUSED: controller image was not pulled within ${image_pull_budget} s: $(tail -n 1 "$scratch/image-pull.log")" >&2
       exit 2
@@ -337,19 +361,19 @@ launch_controller() {
   if [[ -n "$controller_image" ]]; then
     controller_serial=$((controller_serial + 1))
     controller_container="fogell-fg224-proof-$$_$controller_serial"
-    local docker_env=()
+    local container_env=()
     local entry
     for entry in "${common_env[@]}"; do
       case "$entry" in
         FOGELL_WORKER_POLL_MS=*) ;;
-        *) docker_env+=(--env "$entry") ;;
+        *) container_env+=(--env "$entry") ;;
       esac
     done
-    docker_env+=(--env "FOGELL_API_TOKEN_FILE=$token_file" --env "FOGELL_WORKER_POLL_MS=$poll_ms")
-    docker run --rm --name "$controller_container" --network host \
-      --user "$(id -u):$(id -g)" \
+    container_env+=(--env "FOGELL_API_TOKEN_FILE=$token_file" --env "FOGELL_WORKER_POLL_MS=$poll_ms")
+    "$runtime" run --rm --name "$controller_container" --network host \
+      "${container_user_args[@]}" \
       --volume "$repo:$repo:ro" --volume "$scratch:$scratch" \
-      "${docker_env[@]}" --entrypoint "$controller" "$controller_image" >>"$host_log" 2>&1 &
+      "${container_env[@]}" --entrypoint "$controller" "$controller_image" >>"$host_log" 2>&1 &
   else
     controller_container=""
     env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" \
@@ -362,7 +386,7 @@ launch_controller() {
     local poll_deadline
     poll_deadline=$(deadline_after 10000)
     while before_deadline "$poll_deadline"; do
-      pid1_executable=$(bounded "$docker_budget" docker exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true)
+      pid1_executable=$(bounded "$runtime_budget" "$runtime" exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true)
       [[ "$pid1_executable" = "$controller" ]] && break
       kill -0 "$host_pid" 2>/dev/null \
         || { echo "FG-224 REFUSED: controller container exited before PID1 identity was proven" >&2; exit 1; }
@@ -372,9 +396,9 @@ launch_controller() {
       # Name what the client was doing, since the identity read says only that
       # nothing answered: the container's state if it exists, and the client's
       # last output (a pull in progress reports itself here).
-      # `docker inspect` prints an empty line for an object it cannot find.
+      # Runtime inspect prints an empty line for an object it cannot find.
       local container_state
-      container_state=$(bounded "$docker_budget" docker inspect --format '{{.State.Status}}' "$controller_container" 2>/dev/null | tr -d '\n' || true)
+      container_state=$(bounded "$runtime_budget" "$runtime" inspect --format '{{.State.Status}}' "$controller_container" 2>/dev/null | tr -d '\n' || true)
       [[ -n "$container_state" ]] || container_state=absent
       echo "FG-224 REFUSED: container PID1 was ${pid1_executable:-unreadable}, expected $controller (container $container_state; client output: $(tail -n 3 "$host_log" | tr '\n' ' '))" >&2
       exit 1
@@ -385,22 +409,22 @@ launch_controller() {
 launch_controller_under_surviving_init() {
   controller_serial=$((controller_serial + 1))
   controller_container="fogell-fg224-proof-$$_$controller_serial"
-  local docker_env=()
+  local container_env=()
   local entry
   local controller_pid_file="$1"
   local controller_stopped_file="$2"
   for entry in "${common_env[@]}"; do
     case "$entry" in
       FOGELL_WORKER_POLL_MS=*) ;;
-      *) docker_env+=(--env "$entry") ;;
+      *) container_env+=(--env "$entry") ;;
     esac
   done
-  docker_env+=(--env "FOGELL_API_TOKEN_FILE=$token_file" --env "FOGELL_WORKER_POLL_MS=50")
+  container_env+=(--env "FOGELL_API_TOKEN_FILE=$token_file" --env "FOGELL_WORKER_POLL_MS=50")
 
-  docker run --rm --name "$controller_container" --network host \
-    --user "$(id -u):$(id -g)" \
+  "$runtime" run --rm --name "$controller_container" --network host \
+    "${container_user_args[@]}" \
     --volume "$repo:$repo:ro" --volume "$scratch:$scratch" \
-    "${docker_env[@]}" --entrypoint /bin/sh "$controller_image" -c \
+    "${container_env[@]}" --entrypoint /bin/sh "$controller_image" -c \
     'trap '\''exit 0'\'' TERM INT; "$1" & controller_pid=$!; printf '\''%s'\'' "$controller_pid" >"$2"; wait "$controller_pid"; printf stopped >"$3"; while :; do /bin/sleep 1; done' \
     fogell-controller-surviving-init "$controller" "$controller_pid_file" "$controller_stopped_file" \
     >>"$host_log" 2>&1 &
@@ -424,23 +448,23 @@ stop_controller() {
 
   if [[ -n "$controller_container" ]]; then
     local stop_rc=0
-    bounded "$docker_budget" docker stop --time 10 "$controller_container" >"$scratch/docker-stop.stdout" 2>"$scratch/docker-stop.stderr" \
+    bounded "$runtime_budget" "$runtime" stop --time 10 "$controller_container" >"$scratch/runtime-stop.stdout" 2>"$scratch/runtime-stop.stderr" \
       || stop_rc=$?
     if budget_expired "$stop_rc"; then
-      echo "FG-224 REFUSED: controller container stop did not return within ${docker_budget} s" >&2
+      echo "FG-224 REFUSED: controller container stop did not return within ${runtime_budget} s" >&2
       return 1
     elif (( stop_rc != 0 )); then
-      stop_diagnostic=$(tr '\n' ' ' <"$scratch/docker-stop.stderr")
-      echo "FG-224 REFUSED: controller container stop failed ($stop_rc): ${stop_diagnostic:-docker stop returned nonzero}" >&2
+      stop_diagnostic=$(tr '\n' ' ' <"$scratch/runtime-stop.stderr")
+      echo "FG-224 REFUSED: controller container stop failed ($stop_rc): ${stop_diagnostic:-runtime stop returned nonzero}" >&2
       return 1
     fi
-    wait_bounded "$host_pid" "$reap_budget_ms" "controller container client after docker stop" || reap_rc=$?
+    wait_bounded "$host_pid" "$reap_budget_ms" "controller container client after runtime stop" || reap_rc=$?
     if (( reap_rc == 124 )); then
-      bounded "$docker_budget" docker rm -f "$controller_container" >/dev/null 2>&1 || true
+      bounded "$runtime_budget" "$runtime" rm -f "$controller_container" >/dev/null 2>&1 || true
       return 1
     fi
     if (( reap_rc != 0 )); then
-      echo "FG-224 REFUSED: controller container process returned nonzero after docker stop" >&2
+      echo "FG-224 REFUSED: controller container process returned nonzero after runtime stop" >&2
       return 1
     fi
     controller_container=""
@@ -1140,7 +1164,7 @@ if [[ -n "$controller_image" ]]; then
       ready=1
       break
     fi
-    bounded "$docker_budget" docker exec "$controller_container" /bin/kill -0 "$controller_namespace_pid" 2>/dev/null \
+    bounded "$runtime_budget" "$runtime" exec "$controller_container" /bin/kill -0 "$controller_namespace_pid" 2>/dev/null \
       || { echo "FG-224 REFUSED: surviving-init controller exited during startup" >&2; exit 1; }
     sleep 0.05
   done
@@ -1161,15 +1185,15 @@ if [[ -n "$controller_image" ]]; then
   poll_deadline=$(deadline_after 20000)
   while before_deadline "$poll_deadline"; do
     [[ -s "$controller_death_started" && -s "$controller_death_shell_pid_file" && -s "$controller_death_sleep_pid_file" ]] && break
-    bounded "$docker_budget" docker exec "$controller_container" /bin/kill -0 "$controller_namespace_pid" 2>/dev/null \
+    bounded "$runtime_budget" "$runtime" exec "$controller_container" /bin/kill -0 "$controller_namespace_pid" 2>/dev/null \
       || { echo "FG-224 REFUSED: controller exited before its nested step and sleep child started" >&2; exit 1; }
     sleep 0.05
   done
   [[ -s "$controller_death_started" && -s "$controller_death_shell_pid_file" && -s "$controller_death_sleep_pid_file" ]] \
     || { echo "FG-224 REFUSED: controller-death proof never reached its running shell and sleep child" >&2; exit 1; }
 
-  bounded "$docker_budget" docker top "$controller_container" -eo pid,ppid,pgid,args >"$scratch/controller-death-processes.txt"
-  container_init_host_pid=$(bounded "$docker_budget" docker inspect --format '{{.State.Pid}}' "$controller_container")
+  container_process_table "$controller_container" >"$scratch/controller-death-processes.txt"
+  container_init_host_pid=$(bounded "$runtime_budget" "$runtime" inspect --format '{{.State.Pid}}' "$controller_container")
   controller_host_pid=$(host_pid_for_namespace "$scratch/controller-death-processes.txt" "$controller_namespace_pid") \
     || controller_host_pid=""
   controller_death_run_host_pid=$(awk -v app="$run_host" 'index($0, app) { print $1; exit }' "$scratch/controller-death-processes.txt")
@@ -1186,7 +1210,7 @@ if [[ -n "$controller_image" ]]; then
   [[ "$controller_death_shell_host_pid" =~ ^[0-9]+$ && "$controller_death_sleep_host_pid" =~ ^[0-9]+$ ]] \
     || { echo "FG-224 REFUSED: controller-death proof could not bind both step shell and sleep child" >&2; exit 1; }
 
-  bounded "$docker_budget" docker exec "$controller_container" /bin/kill -KILL "$controller_namespace_pid"
+  bounded "$runtime_budget" "$runtime" exec "$controller_container" /bin/kill -KILL "$controller_namespace_pid"
 
   poll_deadline=$(deadline_after 10000)
   while before_deadline "$poll_deadline"; do

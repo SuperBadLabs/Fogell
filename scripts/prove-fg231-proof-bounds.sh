@@ -16,9 +16,9 @@
 #   - a synchronous Run.Host invocation that never exits, once leaving on
 #     SIGTERM and once ignoring it (GNU timeout returns 124 and 137);
 #   - with FOGELL_FG224_CONTROLLER_IMAGE set, a refusal after the container
-#     launched whose `docker stop` then hangs (a daemon that stopped
-#     answering), and a `docker run` that takes 15 s to create the container
-#     (a cold image pull) so the identity budget expires first, `docker stop`
+#     launched whose runtime stop then hangs (a daemon that stopped
+#     answering), and a runtime run that takes 15 s to create the container
+#     (a cold image pull) so the identity budget expires first, runtime stop
 #     fails fast on a container that does not exist, and the client then
 #     brings the controller up with nothing left to stop it — the two
 #     readings of hosted jobs 100045425020 and 100055372746.
@@ -31,7 +31,8 @@ controller_image=${FOGELL_FG224_CONTROLLER_IMAGE:-}
 # an arm that reaches this has hung, which is the defect this proves absent.
 arm_budget=${FOGELL_FG231_ARM_BUDGET:-180}
 scratch=$(mktemp -d /tmp/fogell-fg231-proof.XXXXXX)
-real_docker=$(command -v docker || true)
+runtime=${FOGELL_CONTAINER_RUNTIME:-podman}
+real_runtime=$(command -v "$runtime" || true)
 blackhole_pid=""
 arms_run=0
 
@@ -52,7 +53,9 @@ cleanup() {
 trap cleanup EXIT
 
 [[ -x "$proof" ]] || { echo "FG-231 REFUSED: $proof is not executable" >&2; exit 2; }
-[[ -n "$real_docker" ]] || { echo "FG-231 REFUSED: docker is required" >&2; exit 2; }
+[[ "$runtime" = podman || "$runtime" = docker ]] \
+  || { echo "FG-231 REFUSED: FOGELL_CONTAINER_RUNTIME must be exactly podman or docker" >&2; exit 2; }
+[[ -n "$real_runtime" ]] || { echo "FG-231 REFUSED: $runtime is required" >&2; exit 2; }
 command -v python3 >/dev/null || { echo "FG-231 REFUSED: python3 is required for the silent-server arm" >&2; exit 2; }
 command -v timeout >/dev/null || { echo "FG-231 REFUSED: timeout is required" >&2; exit 2; }
 command -v rg >/dev/null || { echo "FG-231 REFUSED: rg (ripgrep) is required" >&2; exit 2; }
@@ -91,20 +94,20 @@ p.write_text(after)
 PY
 }
 
-# The harness's own docker calls are bounded too: a daemon that stops
+# The harness's own runtime calls are bounded too: a daemon that stops
 # answering is one of the shapes under test, and an inventory that hangs
 # outside an arm would turn this proof into the hang it exists to refuse.
-docker_budget=30
+runtime_budget=30
 
 # The inventory is the proof's central cleanup assertion, so it must never
 # read as empty when it did not run: any failure is a named refusal.
 leftover_containers() {
   local rc=0
   local names
-  names=$(timeout -k 5 "$docker_budget" "$real_docker" ps -a --filter name=fogell-fg224-proof- --format '{{.Names}}' 2>"$scratch/inventory.stderr") \
+  names=$(timeout -k 5 "$runtime_budget" "$real_runtime" ps -a --filter name=fogell-fg224-proof- --format '{{.Names}}' 2>"$scratch/inventory.stderr") \
     || rc=$?
   if (( rc == 124 || rc == 137 )); then
-    echo "FG-231 REFUSED: docker did not answer the container inventory within ${docker_budget} s" >&2
+    echo "FG-231 REFUSED: $runtime did not answer the container inventory within ${runtime_budget} s" >&2
     exit 1
   elif (( rc != 0 )); then
     echo "FG-231 REFUSED: container inventory failed ($rc): $(tr '\n' ' ' <"$scratch/inventory.stderr")" >&2
@@ -153,7 +156,7 @@ run_arm() {
   fi
   leftovers=$(leftover_containers)
   if [[ -n "$leftovers" ]]; then
-    timeout -k 5 "$docker_budget" "$real_docker" rm -f $leftovers >/dev/null 2>&1 || true
+    timeout -k 5 "$runtime_budget" "$real_runtime" rm -f $leftovers >/dev/null 2>&1 || true
     echo "FG-231 REFUSED: arm $name left a controller container behind: $leftovers" >&2
     exit 1
   fi
@@ -167,22 +170,22 @@ run_arm() {
   arms_run=$((arms_run + 1))
 }
 
-# Proven to fail before it is trusted: a docker whose `ps` exits 1 must be a
+# Proven to fail before it is trusted: a runtime whose `ps` exits 1 must be a
 # refusal naming the inventory, never an empty inventory.
-mkdir -p "$scratch/docker-ps-fails"
-cat >"$scratch/docker-ps-fails/docker" <<EOS
+mkdir -p "$scratch/runtime-ps-fails"
+cat >"$scratch/runtime-ps-fails/$runtime" <<EOS
 #!/usr/bin/env bash
 if [[ "\${1:-}" = ps ]]; then
-  echo "Cannot connect to the Docker daemon (planted)" >&2
+  echo "Cannot connect to the container runtime (planted)" >&2
   exit 1
 fi
-exec "$real_docker" "\$@"
+exec "$real_runtime" "\$@"
 EOS
-chmod +x "$scratch/docker-ps-fails/docker"
-inventory_verdict=$( (real_docker="$scratch/docker-ps-fails/docker" leftover_containers >/dev/null) 2>&1; echo "rc=$?" )
-rg -q 'FG-231 REFUSED: container inventory failed \(1\): Cannot connect to the Docker daemon \(planted\)' <<<"$inventory_verdict" \
+chmod +x "$scratch/runtime-ps-fails/$runtime"
+inventory_verdict=$( (real_runtime="$scratch/runtime-ps-fails/$runtime" leftover_containers >/dev/null) 2>&1; echo "rc=$?" )
+rg -q 'FG-231 REFUSED: container inventory failed \(1\): Cannot connect to the container runtime \(planted\)' <<<"$inventory_verdict" \
   && rg -q '^rc=1$' <<<"$inventory_verdict" \
-  || { echo "FG-231 REFUSED: a failing docker ps was not refused by the inventory: $inventory_verdict" >&2; exit 1; }
+  || { echo "FG-231 REFUSED: a failing runtime ps was not refused by the inventory: $inventory_verdict" >&2; exit 1; }
 
 preexisting=$(leftover_containers)
 [[ -z "$preexisting" ]] \
@@ -246,45 +249,45 @@ run_arm run-host-restart-ignores-term "$copy" \
   'FG-224 REFUSED: line [0-9]+: `timeout -k 5 "\$1" "\$\{@:2\}"` exited 137 \(budget expired\) in bounded called from line [0-9]+'
 
 # Arms 4 and 5 need the digest-pinned image. Both end in the EXIT trap's
-# bounded reap, which must kill the `docker run` client, remove the container
+# bounded reap, which must kill the runtime client, remove the container
 # by name, and name the reap; each first reproduces the refusal that reached
 # the trap.
 if [[ -n "$controller_image" ]]; then
   reap_expected='controller container client \(pid [0-9]+\) did not exit within 15000 ms and was killed'
 
   # Arm 4: the container is up (its PID1 identity is compared against a name
-  # the controller cannot have, so the launch refuses) and `docker stop` never
+  # the controller cannot have, so the launch refuses) and runtime stop never
   # returns.
-  mkdir -p "$scratch/docker-stop-hangs" "$scratch/docker-run-delayed"
-  cat >"$scratch/docker-stop-hangs/docker" <<EOS
+  mkdir -p "$scratch/runtime-stop-hangs" "$scratch/runtime-run-delayed"
+  cat >"$scratch/runtime-stop-hangs/$runtime" <<EOS
 #!/usr/bin/env bash
 [[ "\${1:-}" = stop ]] && exec /bin/sleep infinity
-exec "$real_docker" "\$@"
+exec "$real_runtime" "\$@"
 EOS
-  # Arm 5: `docker run` takes 15 s to create the container, longer than the
+  # Arm 5: runtime run takes 15 s to create the container, longer than the
   # 10 s identity budget. The proof refuses with the container absent, the
-  # real `docker stop` fails fast on a name that does not exist yet, and the
+  # real runtime stop fails fast on a name that does not exist yet, and the
   # client then starts the controller during the reap. Nothing is mutated in
   # the proof itself: this is hosted job 100045425020's own sequence.
-  cat >"$scratch/docker-run-delayed/docker" <<EOS
+  cat >"$scratch/runtime-run-delayed/$runtime" <<EOS
 #!/usr/bin/env bash
 [[ "\${1:-}" = run ]] && /bin/sleep 15
-exec "$real_docker" "\$@"
+exec "$real_runtime" "\$@"
 EOS
-  chmod +x "$scratch/docker-stop-hangs/docker" "$scratch/docker-run-delayed/docker"
+  chmod +x "$scratch/runtime-stop-hangs/$runtime" "$scratch/runtime-run-delayed/$runtime"
 
   copy=$(stage container-stop-hangs)
   plant "$copy" \
     '    if [[ "$pid1_executable" != "$controller" ]]; then' \
     '    if [[ "$pid1_executable" != "$controller-never" ]]; then'
   run_arm container-stop-hangs "$copy" "$reap_expected" \
-    "PATH=$scratch/docker-stop-hangs:$PATH" "FOGELL_FG224_CONTROLLER_IMAGE=$controller_image"
+    "PATH=$scratch/runtime-stop-hangs:$PATH" "FOGELL_FG224_CONTROLLER_IMAGE=$controller_image"
   rg -q 'FG-224 REFUSED: container PID1 was /.*, expected /.* \(container running;' "$scratch/container-stop-hangs.stderr" \
     || { echo "FG-231 REFUSED: container-stop-hangs did not first refuse on PID1 identity with the container up" >&2; exit 1; }
 
   copy=$(stage container-run-delayed)
   run_arm container-run-delayed "$copy" "$reap_expected" \
-    "PATH=$scratch/docker-run-delayed:$PATH" "FOGELL_FG224_CONTROLLER_IMAGE=$controller_image"
+    "PATH=$scratch/runtime-run-delayed:$PATH" "FOGELL_FG224_CONTROLLER_IMAGE=$controller_image"
   rg -q 'FG-224 REFUSED: container PID1 was unreadable, expected .* \(container absent;' "$scratch/container-run-delayed.stderr" \
     || { echo "FG-231 REFUSED: container-run-delayed did not first refuse on an absent container" >&2; exit 1; }
 else

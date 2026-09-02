@@ -22,7 +22,7 @@ elif [[ $# -ne 0 ]]; then
   die "unexpected arguments"
 fi
 
-runtime="${FOGELL_CONTAINER_RUNTIME:-docker}"
+runtime="${FOGELL_CONTAINER_RUNTIME:-podman}"
 container="${FOGELL_PG_CONTAINER:-}"
 pg_user="${FOGELL_PG_USER:-fogell}"
 admin_db="${FOGELL_PG_ADMIN_DB:-fogell}"
@@ -181,7 +181,7 @@ VALUES ('30000000-0000-0000-0000-000000000081', '10000000-0000-0000-0000-0000000
         '2026-08-25T01:00:00Z');
 INSERT INTO nodes (id, organization_id, build_id, name, ordinal, required_trust_pool, required_capabilities, status)
 VALUES ('40000000-0000-0000-0000-000000000081', '10000000-0000-0000-0000-000000000081',
-        '30000000-0000-0000-0000-000000000081', 'rehearsal', 0, 'trusted-linux', ARRAY['linux','docker'], 'running');
+        '30000000-0000-0000-0000-000000000081', 'rehearsal', 0, 'trusted-linux', ARRAY['linux','podman'], 'running');
 INSERT INTO attempts
   (id, organization_id, node_id, ordinal, retry_of, state, fence, restore_epoch, lease_owner, lease_expires_at, result, created_at)
 VALUES

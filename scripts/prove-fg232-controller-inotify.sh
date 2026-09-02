@@ -30,6 +30,7 @@ set -Eeuo pipefail
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 container=${FOGELL_PG_CONTAINER:-fogell-fg060a}
 port=${FOGELL_PG_PORT:-55445}
+runtime=${FOGELL_CONTAINER_RUNTIME:-podman}
 # Distinct from the FG-224 proof's 18083 so the two can never contend.
 listen_port=${FOGELL_FG232_PORT:-18084}
 configuration=${FOGELL_BUILD_CONFIGURATION:-Release}
@@ -53,7 +54,7 @@ watch_bound=64
 launch_subdirectories=256
 
 # Every wait is bounded and every bound names what it waited for (FG-231).
-docker_budget=30
+runtime_budget=30
 process_budget=30
 reap_budget_ms=15000
 http_max_time=10
@@ -125,7 +126,7 @@ on_err() {
 trap 'on_err $? $LINENO "$BASH_COMMAND"' ERR
 
 admin() {
-  bounded "$docker_budget" docker exec "$container" psql -U fogell -d "$1" -v ON_ERROR_STOP=1 "${@:2}"
+  bounded "$runtime_budget" "$runtime" exec "$container" psql -U fogell -d "$1" -v ON_ERROR_STOP=1 "${@:2}"
 }
 
 release_controller() {
@@ -145,10 +146,10 @@ release_stand_in() {
 cleanup() {
   release_stand_in
   release_controller
-  bounded "$docker_budget" docker exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
+  bounded "$runtime_budget" "$runtime" exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
     -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$database' AND pid <> pg_backend_pid()" \
     -c "DROP DATABASE IF EXISTS $database" >/dev/null 2>&1 || true
-  bounded "$docker_budget" docker exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
+  bounded "$runtime_budget" "$runtime" exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
     -c "DROP OWNED BY $role" -c "DROP ROLE IF EXISTS $role" >/dev/null 2>&1 || true
   if [[ ${FOGELL_KEEP_FG232_PROOF:-0} = 1 ]]; then
     echo "FG-232 proof scratch retained: $scratch" >&2
@@ -170,7 +171,9 @@ command -v timeout >/dev/null || { echo "FG-232 REFUSED: coreutils timeout is re
 command -v python3 >/dev/null || { echo "FG-232 REFUSED: python3 is required for the counter and the stand-in" >&2; exit 2; }
 command -v rg >/dev/null || { echo "FG-232 REFUSED: rg (ripgrep) is required" >&2; exit 2; }
 command -v curl >/dev/null || { echo "FG-232 REFUSED: curl is required" >&2; exit 2; }
-command -v docker >/dev/null || { echo "FG-232 REFUSED: docker is required for the scratch database" >&2; exit 2; }
+[[ "$runtime" = podman || "$runtime" = docker ]] \
+  || { echo "FG-232 REFUSED: FOGELL_CONTAINER_RUNTIME must be exactly podman or docker" >&2; exit 2; }
+command -v "$runtime" >/dev/null || { echo "FG-232 REFUSED: $runtime is required for the scratch database" >&2; exit 2; }
 
 # The inotify instances and watches a process holds: an instance is a
 # descriptor whose /proc/<pid>/fd link reads `anon_inode:inotify` (so an

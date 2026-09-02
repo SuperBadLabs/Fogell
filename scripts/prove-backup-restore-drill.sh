@@ -39,7 +39,7 @@ trap 'exit 143' TERM
 
 fake_bin="$scratch/bin"
 mkdir -p "$fake_bin"
-fake_runtime="$fake_bin/docker"
+fake_runtime="$fake_bin/podman"
 
 cat > "$fake_runtime" <<'FAKE'
 #!/usr/bin/env bash
@@ -90,7 +90,7 @@ case "$tool" in
   psql)
     args="$*"
     database="$(database_from_args "$@")"
-    # docker exec -i preserves the caller's stdin.  Argument-only psql calls
+    # Runtime exec -i preserves the caller's stdin. Argument-only psql calls
     # must not wait for EOF from an operator's terminal or agent pipe; consume
     # stdin only for the migration/fixture/inventory calls that use it as the
     # SQL protocol.
@@ -226,7 +226,7 @@ run_drill() {
     FG085_FAKE_FAULT="$fault" \
     FG085_TEST_CORRUPT_AFTER_HASH="${FG085_TEST_CORRUPT_AFTER_HASH:-0}" \
     FG085_REPO_ROOT="$drill_repo_root" \
-    FOGELL_CONTAINER_RUNTIME=docker \
+    FOGELL_CONTAINER_RUNTIME=podman \
     FOGELL_PG_CONTAINER=fake-postgres \
     bash -x "$script" > "$scratch/$label.log" 2>&1 || rc=$?
   if [[ -n "$evidence_dir" ]]; then
