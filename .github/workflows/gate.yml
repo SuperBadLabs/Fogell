@@ -20,23 +20,28 @@
 #           lane also runs the compiled `audit-gate-lanes` tool, which proves
 #           the partition itself (every gate block inside one listed lane), so
 #           a hole in it fails that lane and with it the aggregate below
-#   drills  the postgres-backed proofs that were always separate workflow steps
-#           (runnable controller, its FG-232 inotify bound and FG-231 hang
-#           proof, backup/restore, migration rollback); they need the built
-#           tree, so this job builds it
+#   controller  the two FG-224 runnable-controller proofs and FG-232's inotify
+#           bound, on a build of just the two projects they run
+#           (Controller.Host, Run.Host)
+#   hang-proof  FG-231's six planted stalls in that proof — a 192 s step of
+#           budgeted waits on run 33595804856, serial by construction (one
+#           listen port, a leftover-controller check), so they get a job of
+#           their own
+#   database  the backup/restore and migration-rollback drills; pg_dump and
+#           psql come from the service container, so this job builds nothing
 #   gate    the one required check, aggregating all of the above; it fails
 #           unless every job succeeded, and is the only name branch protection
 #           looks for
 #
-# Wall clock is now the serial `plan` job (a checkout and one script call;
-# UNMEASURED hosted until the first run) plus the longest lane, rather than the
-# sum. Total runner minutes rise (each job repeats ~1 minute of setup),
-# which is free on a public repo.
+# Wall clock is now the serial `plan` job (5 s on run 33595804856) plus the
+# longest job, rather than the sum: that run took 474 s against 1103 s for the
+# single job it replaced. Total runner minutes rise (each job repeats ~1 minute
+# of setup), which is free on a public repo.
 #
-# THREE LANE NAMES ARE HARDCODED in step conditions below (`build` for the
-# store-summary step, `audits`/`stale-refs` for the fflat install). A rename in
-# the script would make those steps silently skip, so the plan job refuses a
-# lane list that lacks any of them.
+# FOUR LANE NAMES ARE HARDCODED in step conditions below (`build` for the
+# store-summary step, `audits`/`prelude`/`stale-refs` for the fflat install). A
+# rename in the script would make those steps silently skip, so the plan job
+# refuses a lane list that lacks any of them.
 #
 # What it CANNOT check: the differential receipts (they need the pinned Jenkins on
 # luigi) and the corpus scores (the corpus lives outside the repo). Those remain
@@ -88,8 +93,8 @@ env:
 jobs:
   plan:
     # Cheap and first: the lane list comes from the script. The partition proof
-    # is NOT here — it is a compiled audit tool and needs fflat, which only two
-    # lanes install; running it here would put ~40 s of toolchain setup on the
+    # is NOT here — it is a compiled audit tool and needs fflat, which only the
+    # three fflat lanes install; running it here would put ~40 s of toolchain setup on the
     # critical path every run. It runs in the `audits` lane instead, where a
     # hole fails that lane and therefore the aggregate `gate` below.
     runs-on: ubuntu-latest
@@ -108,7 +113,7 @@ jobs:
           echo "lanes: $lanes"
           # The names this workflow's step conditions hardcode must exist, or
           # those steps would skip silently (see the header).
-          for required in build audits stale-refs; do
+          for required in build audits prelude stale-refs; do
             jq -e --arg l "$required" 'index($l) != null' <<<"$lanes" >/dev/null \
               || { echo "::error::the script no longer lists lane '$required', which this workflow's step conditions name"; exit 1; }
           done
@@ -118,10 +123,9 @@ jobs:
     name: lane (${{ matrix.lane }})
     needs: plan
     runs-on: ubuntu-latest
-    # Longest lane projected at ~8 minutes from run 33571850280's step timings
-    # (the `build` lane's blocks summed to ~6m47s of script there, plus ~1 min
-    # of job setup); 30 leaves headroom for a slow runner while still bounding
-    # a hang. Without a
+    # Lanes measured 254-402 s on run 33595804856 (longest: stale-refs 402 s,
+    # audits 395 s, both before the fflat cap and tool-subset changes); 30
+    # leaves headroom for a slow runner while still bounding a hang. Without a
     # bound, GitHub's default is 360 minutes: on 2026-09-01 the PID-1 step hung
     # for ~39 and ~77 minutes (runs 33567964629 and 33564807004, attempt 1 of
     # each) and stopped only because a re-run cancelled them.
@@ -222,8 +226,9 @@ jobs:
           global-json-file: global.json
 
       - name: cache the fflat toolchain
-        # Only the two lanes that compile audit tools need fflat.
-        if: matrix.lane == 'audits' || matrix.lane == 'stale-refs'
+        # Only the three lanes that compile with fflat need it: two build audit
+        # tools, the prelude lane compiles its own fixtures.
+        if: contains(fromJSON('["audits","prelude","stale-refs"]'), matrix.lane)
         # FG-226. `fflat` is a 199 MB nupkg that unpacks to 496 MB, downloaded on
         # every run without this. The key pins the exact version, so a version
         # bump is a cache miss by construction and can never serve a stale
@@ -254,7 +259,7 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q ripgrep
 
       - name: install fflat
-        if: matrix.lane == 'audits' || matrix.lane == 'stale-refs'
+        if: contains(fromJSON('["audits","prelude","stale-refs"]'), matrix.lane)
         # FG-226. The audit tools are F# scripts compiled to native binaries by
         # fflat; `scripts/build-audits.sh` runs inside the gate itself.
         #
@@ -326,22 +331,15 @@ jobs:
         run: |
           rg -F 'tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj: EXPECTO!' "$RUNNER_TEMP/gate.log"
 
-  drills:
-    # The postgres-backed product proofs. These were always separate workflow
-    # steps after the script, running against the tree the script had built;
-    # they still need that tree, so this job builds it the way README says to.
+  controller:
+    # The two FG-224 runnable-controller proofs. They run the built Controller.Host
+    # and Run.Host apphosts and nothing else, so only those two projects (and
+    # their references) are restored and built — not the tests, not the other
+    # tools. The full-solution build this replaced took 56 s on run 33595804856.
+    # The FG-231 hang proof and the database drills, which shared this job
+    # there, have jobs of their own below: 192 s and 99 s that sat on this path.
     runs-on: ubuntu-latest
-    # The four proofs measured 40 s + 43 s + 12 s + 91 s on run 33571850280 (the
-    # FG-231 and FG-232 steps and this job's own restore+build are UNMEASURED
-    # hosted; FG-232 ran in about 1 s on HeMan; the
-    # dependency-lock proof's cold restore and build inside that run's single
-    # gate step took 75 s, the nearest measurement). Without
-    # a bound GitHub's default is 360 minutes, and two runs on 2026-09-01
-    # (33564807004, 33567964629) sat in_progress for 77 and 39 minutes after the
-    # PID-1 controller proof had already refused (docs/tickets/FG-231.md has the
-    # timestamps). The step bounds below are the sharp backstops; this is the
-    # blunt one.
-    timeout-minutes: 30
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16
@@ -377,21 +375,23 @@ jobs:
           global-json-file: global.json
 
       - name: install ripgrep
-        # scripts/prove-fg231-proof-bounds.sh refuses (exit 2) without `rg`, and
-        # the runner image does not ship it. The five older drill scripts use
-        # plain grep, which is why an earlier draft dropped this step — and
-        # would have turned every hosted run red at the FG-231 step.
+        # scripts/prove-fg232-controller-inotify.sh refuses by name without `rg`;
+        # the two FG-224 proofs use plain grep. The runner image does not ship
+        # ripgrep, so it is installed here.
         run: sudo apt-get update -q && sudo apt-get install -y -q ripgrep
 
-      - name: build the tree the drills exercise
-        # Locked restore, then a no-restore build: the same two commands README
-        # gives for a runnable controller. The `build` lane proves the lock
-        # graph and the source-cleared restore; this job only needs the
-        # binaries, and a lock violation here would fail the same way there.
+      - name: build the controller and run host
+        # Locked restore of exactly these two projects (their project references
+        # come with them), then no-restore builds, one project per invocation.
+        # The `build` lane proves the lock graph and the source-cleared restore
+        # over the whole solution; this job only needs two binaries, and a lock
+        # violation here would fail the same way there.
         run: |
           set -euo pipefail
-          dotnet restore --locked-mode
-          dotnet build -c Release --no-restore
+          dotnet restore src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj --locked-mode
+          dotnet restore tools/Fogell.Run.Host/Fogell.Run.Host.fsproj --locked-mode
+          dotnet build src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj -c Release --no-restore
+          dotnet build tools/Fogell.Run.Host/Fogell.Run.Host.fsproj -c Release --no-restore
 
       - name: runnable controller vertical slice (FG-224)
         # This is the product seam the project suites cannot prove independently:
@@ -437,13 +437,68 @@ jobs:
         # unavailable rather than zero; a stand-in at the bound is refused and
         # one under it passes with its count named), then the real controller
         # is started from a 256-subdirectory tree against the service database
-        # and must hold fewer than 64 watches. About 1 s on HeMan.
+        # and must hold fewer than 64 watches. 2 s hosted (run 33599152329, PR
+        # #318's head), about 1 s on HeMan. Lives here, not in `hang-proof`,
+        # because it runs the real controller like the two FG-224 steps above it.
         timeout-minutes: 10
         env:
           FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
           FOGELL_PG_PORT: 55440
           FOGELL_BUILD_CONFIGURATION: Release
         run: ./scripts/prove-fg232-controller-inotify.sh
+
+  hang-proof:
+    # FG-231: the runnable-controller proof shown to fail. Six planted stalls,
+    # each of which must become a named refusal within its budget, ran in
+    # series on run 33595804856: 18 + 13 + 40 + 46 + 47 + 27 s of arms inside a
+    # 192 s step. They cannot run concurrently — every arm binds the
+    # controller's one listen port
+    # (18083), and the proof's leftover check `pgrep`s for any surviving
+    # controller, which a sibling arm's live one would trip — so the job is
+    # the unit of parallelism, and this one runs beside the controller proofs
+    # rather than after them. Same build as `controller`, for the same reason.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fogell
+          POSTGRES_DB: fogell
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["55440:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fogell"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GATE_CHECKOUT_REF }}
+
+      - name: start pulling the PID-1 controller image
+        # Two of the six arms run the controller inside the pinned image; see
+        # the `controller` job for why the pull starts here.
+        run: |
+          nohup docker pull "$FG224_CONTROLLER_IMAGE" >"$RUNNER_TEMP/fg224-image-pull.log" 2>&1 &
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: install ripgrep
+        # scripts/prove-fg231-proof-bounds.sh refuses (exit 2) without `rg`, and
+        # the runner image does not ship it.
+        run: sudo apt-get update -q && sudo apt-get install -y -q ripgrep
+
+      - name: build the controller and run host
+        run: |
+          set -euo pipefail
+          dotnet restore src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj --locked-mode
+          dotnet restore tools/Fogell.Run.Host/Fogell.Run.Host.fsproj --locked-mode
+          dotnet build src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj -c Release --no-restore
+          dotnet build tools/Fogell.Run.Host/Fogell.Run.Host.fsproj -c Release --no-restore
 
       - name: runnable controller proof cannot hang (FG-231)
         # Plants six stalls in byte-mutated copies of the proof above — a
@@ -453,14 +508,41 @@ jobs:
         # the container only after the identity budget expired — and requires
         # each to become a named refusal within budget
         # with no controller left behind. This is the checker being shown to
-        # fail; the two FG-224 steps above are it passing.
+        # fail; the two steps in the `controller` job are it passing.
         timeout-minutes: 10
         env:
           FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
           FOGELL_PG_PORT: 55440
           FOGELL_BUILD_CONFIGURATION: Release
           FOGELL_FG224_CONTROLLER_IMAGE: ${{ env.FG224_CONTROLLER_IMAGE }}
-        run: ./scripts/prove-fg231-proof-bounds.sh
+        run: |
+          docker pull "$FOGELL_FG224_CONTROLLER_IMAGE" >/dev/null
+          ./scripts/prove-fg231-proof-bounds.sh
+
+  database:
+    # The PostgreSQL drills. Both scripts drive psql, pg_dump and pg_restore
+    # INSIDE the service container and run nothing built from this tree, so
+    # this job has no SDK, no build and no ripgrep: a checkout and postgres.
+    # 13 s + 86 s on run 33595804856.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fogell
+          POSTGRES_DB: fogell
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["55440:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fogell"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GATE_CHECKOUT_REF }}
 
       - name: backup/restore drill and hostile proof (FG-085a)
         # The postgres:16 service is also the client-tool distribution. Keeping
@@ -491,7 +573,7 @@ jobs:
     # the right direction, but a visible red with the failed job named is what
     # a reviewer can act on. It fails unless every job it aggregates succeeded;
     # `skipped` and `cancelled` are failures here, not neutral.
-    needs: [plan, lane, drills]
+    needs: [plan, lane, controller, hang-proof, database]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -500,11 +582,13 @@ jobs:
         env:
           PLAN: ${{ needs.plan.result }}
           LANE: ${{ needs.lane.result }}
-          DRILLS: ${{ needs.drills.result }}
+          CONTROLLER: ${{ needs.controller.result }}
+          HANG_PROOF: ${{ needs.hang-proof.result }}
+          DATABASE: ${{ needs.database.result }}
         run: |
           set -euo pipefail
           status=0
-          for job in PLAN LANE DRILLS; do
+          for job in PLAN LANE CONTROLLER HANG_PROOF DATABASE; do
             result="${!job}"
             echo "$job: $result"
             [ "$result" = "success" ] || status=1
