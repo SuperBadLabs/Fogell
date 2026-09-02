@@ -427,6 +427,19 @@ let admissionLimits =
                   Parser.parseWithLimits limits firstPreamble
                   |> positionedScalarError "first preamble scalar"
 
+              for label, laterStep in
+                  [ "direct pipeline body", "      echo /bbbbbb/"
+                    "raw pipeline body", "      echo /bbbbbb/ + env.X"
+                    "balanced pipeline body", "      echo [/bbbbbb/]"
+                    "parenthesised pipeline body", "      echo(/bbbbbb/)" ] do
+                  let preambleThenBody = "def first = /aaaaa/\n" + pipelineWithSteps laterStep
+
+                  Expect.equal
+                      (Parser.parseWithLimits limits preambleThenBody
+                       |> positionedScalarError label)
+                      firstPreambleError
+                      $"{label}: delayed preamble validation must restore source order"
+
               let preambleThenEpilogue = firstPreamble + "\ndef later = /bbbbbb/"
 
               Expect.equal

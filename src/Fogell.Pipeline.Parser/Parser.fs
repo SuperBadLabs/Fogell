@@ -680,6 +680,22 @@ let private validateNestedScalar (strippedColumns: int64) (origin: FParsec.Posit
     getUserState
     >>= fun state -> validateNestedScalarFrom state strippedColumns origin source
 
+let private validateEarlierNestedScalar
+    (strippedColumns: int64)
+    (origin: FParsec.Position)
+    (source: string)
+    : P<string> =
+    getUserState
+    >>= fun state ->
+            match Fogell.Groovy.Parser.Parser.parseWithLimits state.Limits source with
+            | Result.Error e when e.Code = ScalarTooLong ->
+                let rebased = rebaseAdmissionError strippedColumns origin e
+                // The top-level parser captures the preamble first but validates
+                // it after the pipeline body. Its refusal is earlier in source
+                // order and therefore deliberately replaces body parser state.
+                setUserState { state with ScalarRefusal = Some rebased } >>% source
+            | _ -> preturn source
+
 let private validatedBalancedBody strippedColumns openChar closeChar =
     getUserState .>>. getPosition .>>. balancedBody openChar closeChar
     >>= fun ((stateBeforeScan, origin), raw) ->
@@ -1132,7 +1148,10 @@ let private invalidWhenDirective () : P<'a> =
     >>. manySatisfy (fun c -> c <> '\n' && c <> '}' && c <> ';')
     >>= fun raw -> refuse $"a direct when directive requires `true` or `false`, got: {raw.Trim()}"
 
-let rec private whenCondition: P<WhenCondition> =
+let private whenCondition, private whenConditionRef =
+    createParserForwardedToRef<WhenCondition, ParserState> ()
+
+whenConditionRef.Value <-
     parse {
         let! _ = ws
         return! choice
@@ -1546,7 +1565,7 @@ let private pipelineParser: P<Pipeline> =
                    >>= rejectingDuplicateSections "options" (function TopOptions _ -> true | _ -> false)))
     .>>. (getPosition .>>. manyChars anyChar)
     >>= fun (((preambleOrigin, capturedPreamble), sections), (epilogueOrigin, capturedEpilogue)) ->
-            validateNestedScalar 0L preambleOrigin capturedPreamble
+            validateEarlierNestedScalar 0L preambleOrigin capturedPreamble
             >>. validateNestedScalar 0L epilogueOrigin capturedEpilogue
             >>% ((capturedPreamble, sections), capturedEpilogue)
     |>> fun ((capturedPreamble, sections), capturedEpilogue) ->
