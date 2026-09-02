@@ -4,6 +4,7 @@ open System
 open System.IO
 open System.Runtime.InteropServices
 open Microsoft.Win32.SafeHandles
+open Fogell.Domain
 
 /// Fogell.Execution's DllImport surface (ADR 0006). Every entry point is
 /// documented. `realpath(path, NULL)` is the one native allocation: its pointer
@@ -29,13 +30,18 @@ module internal Native =
     let private OpenNonBlocking = 0x800
 
     [<Literal>]
-    let private OpenDirectory = 0x10000
-
-    [<Literal>]
-    let private OpenNoFollow = 0x20000
-
-    [<Literal>]
     let private OpenCloseOnExec = 0x80000
+
+    /// FG-238. O_DIRECTORY and O_NOFOLLOW are per-architecture kernel ABI (see
+    /// `LinuxOpenFlags`): the asm-generic bits this module once hardcoded mean
+    /// O_DIRECT|O_LARGEFILE on arm64, where every directory open then fails
+    /// EINVAL and no open ever asks for no-follow. The table is resolved once
+    /// for the running process; an architecture it does not cover refuses every
+    /// descriptor-policy entry point with a reason rather than opening with bits
+    /// that mean something else.
+    let private requireOpenFlags () : Result<LinuxOpenFlags.Table, string> =
+        LinuxOpenFlags.current
+        |> Result.mapError (fun why -> $"descriptor policy unavailable: {why}")
 
     [<RequireQualifiedAccess>]
     type ProcessGroupQuery =
@@ -132,13 +138,13 @@ module internal Native =
     /// symlink ancestor. Walk from the filesystem root through live directory
     /// descriptors; the first genuinely missing component proves absence, while
     /// O_NOFOLLOW turns every symlink component into a refusal.
-    let private proveDirectoryMissingWithoutLinks (absoluteRoot: string) =
+    let private proveDirectoryMissingWithoutLinks (table: LinuxOpenFlags.Table) (absoluteRoot: string) =
         let systemRoot = Path.GetPathRoot absoluteRoot |> canonicalDirectoryPath
         let flags =
             OpenReadOnly
             ||| OpenNonBlocking
-            ||| OpenDirectory
-            ||| OpenNoFollow
+            ||| table.Directory
+            ||| table.NoFollow
             ||| OpenCloseOnExec
         let rootDescriptor = openFile(systemRoot, flags)
 
@@ -178,7 +184,8 @@ module internal Native =
 
     /// Open the selected scan root itself without following a final link and
     /// require its descriptor to retain the exact physical root identity.
-    let openDirectoryIfPresentWithoutLinks
+    let private openDirectoryIfPresentWithoutLinksUsing
+        (table: LinuxOpenFlags.Table)
         (root: string)
         : Result<SafeFileHandle option, string> =
         if not (OperatingSystem.IsLinux()) then
@@ -191,14 +198,14 @@ module internal Native =
                         lexicalRoot,
                         OpenReadOnly
                         ||| OpenNonBlocking
-                        ||| OpenDirectory
-                        ||| OpenNoFollow
+                        ||| table.Directory
+                        ||| table.NoFollow
                         ||| OpenCloseOnExec)
 
                 if descriptor < 0 then
                     let code = Marshal.GetLastPInvokeError()
                     if code = 2 then
-                        match proveDirectoryMissingWithoutLinks lexicalRoot with
+                        match proveDirectoryMissingWithoutLinks table lexicalRoot with
                         | Ok() -> Ok None
                         | Error why -> Error why
                     else
@@ -214,6 +221,10 @@ module internal Native =
             with ex ->
                 Error $"scan root validation failed ({ex.GetType().Name})"
 
+    let openDirectoryIfPresentWithoutLinks (root: string) : Result<SafeFileHandle option, string> =
+        requireOpenFlags ()
+        |> Result.bind (fun table -> openDirectoryIfPresentWithoutLinksUsing table root)
+
     let openDirectoryWithoutLinks (root: string) : Result<SafeFileHandle, string> =
         match openDirectoryIfPresentWithoutLinks root with
         | Ok(Some handle) -> Ok handle
@@ -223,7 +234,8 @@ module internal Native =
     /// Open one child directory relative to an already trusted live directory
     /// descriptor. O_NOFOLLOW closes the check/reopen race: replacing the child
     /// with a link before this call makes the open fail instead of traversing it.
-    let openChildDirectoryWithoutLinks
+    let private openChildDirectoryWithoutLinksUsing
+        (table: LinuxOpenFlags.Table)
         (parent: SafeFileHandle)
         (name: string)
         : Result<SafeFileHandle, string> =
@@ -242,8 +254,8 @@ module internal Native =
                     name,
                     OpenReadOnly
                     ||| OpenNonBlocking
-                    ||| OpenDirectory
-                    ||| OpenNoFollow
+                    ||| table.Directory
+                    ||| table.NoFollow
                     ||| OpenCloseOnExec,
                     0)
 
@@ -251,6 +263,10 @@ module internal Native =
                 Error $"scan directory is linked, missing, or unavailable (errno {Marshal.GetLastPInvokeError()})"
             else
                 Ok(new SafeFileHandle(nativeint descriptor, true))
+
+    let openChildDirectoryWithoutLinks (parent: SafeFileHandle) (name: string) : Result<SafeFileHandle, string> =
+        requireOpenFlags ()
+        |> Result.bind (fun table -> openChildDirectoryWithoutLinksUsing table parent name)
 
     let directoryDescriptorPath (handle: SafeFileHandle) =
         $"/proc/self/fd/{handle.DangerousGetHandle() |> int}"
@@ -272,14 +288,14 @@ module internal Native =
     /// missing component is created relative to its already trusted parent, so a
     /// `dir('new') { unstash ... }` boundary gains ordinary mkdir -p behavior
     /// without introducing a pathname-following gap.
-    let private openOrCreateDirectoryWithoutLinks (absoluteRoot: string) =
+    let private openOrCreateDirectoryWithoutLinks (table: LinuxOpenFlags.Table) (absoluteRoot: string) =
         let root = canonicalDirectoryPath absoluteRoot
         let systemRoot = Path.GetPathRoot root |> canonicalDirectoryPath
         let flags =
             OpenReadOnly
             ||| OpenNonBlocking
-            ||| OpenDirectory
-            ||| OpenNoFollow
+            ||| table.Directory
+            ||| table.NoFollow
             ||| OpenCloseOnExec
         let descriptor = openFile(systemRoot, flags)
 
@@ -345,7 +361,7 @@ module internal Native =
     /// physical path also exposes every directory link in its ancestor chain.
     /// The returned stream owns the descriptor, so copying from it cannot be
     /// redirected by a pathname swap after this check.
-    let openFileWithoutLinks (root: string) (relative: string) : Result<FileStream, string> =
+    let private openFileWithoutLinksUsing (table: LinuxOpenFlags.Table) (root: string) (relative: string) : Result<FileStream, string> =
         if not (OperatingSystem.IsLinux()) then
             Error "stash link containment requires Linux descriptor semantics"
         elif
@@ -372,7 +388,7 @@ module internal Native =
                         let descriptor =
                             openFile (
                                 lexicalCandidate,
-                                OpenReadOnly ||| OpenNonBlocking ||| OpenNoFollow ||| OpenCloseOnExec)
+                                OpenReadOnly ||| OpenNonBlocking ||| table.NoFollow ||| OpenCloseOnExec)
 
                         if descriptor < 0 then
                             let code = Marshal.GetLastPInvokeError()
@@ -414,11 +430,16 @@ module internal Native =
             with ex ->
                 Error $"selected path validation failed ({ex.GetType().Name})"
 
+    let openFileWithoutLinks (root: string) (relative: string) : Result<FileStream, string> =
+        requireOpenFlags ()
+        |> Result.bind (fun table -> openFileWithoutLinksUsing table root relative)
+
     /// Create or replace one workspace file relative to directory descriptors.
     /// Every ancestor is opened with O_DIRECTORY|O_NOFOLLOW and the final leaf
     /// with O_NOFOLLOW, so a symlink swap cannot redirect unstash outside the
     /// workspace between validation and write.
-    let createWorkspaceFileWithoutLinks
+    let private createWorkspaceFileWithoutLinksUsing
+        (table: LinuxOpenFlags.Table)
         (workspace: string)
         (relative: string)
         : Result<FileStream, string> =
@@ -433,7 +454,7 @@ module internal Native =
             Error "restore path is not a strict relative path"
         else
             let root = canonicalDirectoryPath workspace
-            match openOrCreateDirectoryWithoutLinks root with
+            match openOrCreateDirectoryWithoutLinks table root with
             | Error why -> Error why
             | Ok rootHandle ->
                 let mutable current = rootHandle
@@ -448,8 +469,8 @@ module internal Native =
                             let flags =
                                 OpenReadOnly
                                 ||| OpenNonBlocking
-                                ||| OpenDirectory
-                                ||| OpenNoFollow
+                                ||| table.Directory
+                                ||| table.NoFollow
                                 ||| OpenCloseOnExec
                             let mutable child = openFileAt(parent, segment, flags, 0)
 
@@ -480,7 +501,7 @@ module internal Native =
                                 OpenWriteOnly
                                 ||| OpenCreate
                                 ||| OpenTruncate
-                                ||| OpenNoFollow
+                                ||| table.NoFollow
                                 ||| OpenCloseOnExec,
                                 384)
 
@@ -495,6 +516,10 @@ module internal Native =
                                 Error $"restore target descriptor is unwritable ({ex.GetType().Name})"
                 finally
                     current.Dispose()
+
+    let createWorkspaceFileWithoutLinks (workspace: string) (relative: string) : Result<FileStream, string> =
+        requireOpenFlags ()
+        |> Result.bind (fun table -> createWorkspaceFileWithoutLinksUsing table workspace relative)
 
     /// Signal a single process. Returns false when it no longer exists.
     let signalProcess (pid: int) (signum: int) : bool =
