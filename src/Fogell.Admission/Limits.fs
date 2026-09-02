@@ -103,11 +103,8 @@ module Limits =
             let mutable statementHead = true
             let mutable commandHead = false
             let mutable sawLineBreak = false
-            let mutable lastWasBlockClose = false
             let mutable awaitingControlParen = false
-            let mutable statementBracePending = false
             let controlParens = System.Collections.Generic.Stack<bool>()
-            let statementBraces = System.Collections.Generic.Stack<bool>()
             let mutable expressionNesting = 0
             let mutable err = None
             let mutable i = 0
@@ -129,16 +126,12 @@ module Limits =
                 sawLineBreak <- true
                 // Command-form arguments must begin on their head's line.
                 // Do not reset HaveOperand generally: Fogell permits a binary
-                // operator after newline trivia (`a\n / b`). Only a brace
-                // proven by a control/body keyword may start a new statement
-                // here. A closure is an expression operand, so
-                // resetting after its `}` would let the following division
-                // masquerade as a slashy and hide structural depth.
+                // operator after newline trivia (`a\n / b`). A `}` is also a
+                // completed operand when it closes a closure; this lexical
+                // guard cannot prove otherwise, so it never resets one. That
+                // conservative choice can expose slashy-looking structure to
+                // the limits, but cannot hide real structure from them.
                 commandHead <- false
-
-                if lastWasBlockClose && expressionNesting = 0 then
-                    needsOperand <- true
-                    statementHead <- true
 
             while err.IsNone && i < source.Length do
                 let c = source.[i]
@@ -201,23 +194,7 @@ module Limits =
                         statementHead <- false
                         commandHead <- false
                         sawLineBreak <- false
-                        lastWasBlockClose <- false
                 else
-                    let commentStarts =
-                        c = '/'
-                        && i + 1 < source.Length
-                        && (source.[i + 1] = '/' || source.[i + 1] = '*')
-
-                    if
-                        c <> ' '
-                        && c <> '\t'
-                        && c <> '\r'
-                        && c <> '\n'
-                        && c <> '{'
-                        && not commentStarts
-                    then
-                        statementBracePending <- false
-
                     match c with
                     | ' ' | '\t' -> ()
                     | '\r' | '\n' -> markTriviaBreak ()
@@ -262,7 +239,6 @@ module Limits =
                             statementHead <- false
                             commandHead <- false
                             sawLineBreak <- false
-                            lastWasBlockClose <- false
                     | '{' | '[' | '(' ->
                         depth <- depth + 1
                         recordNode ()
@@ -284,27 +260,19 @@ module Limits =
                             statementHead <- false
                             commandHead <- false
                             sawLineBreak <- false
-                            lastWasBlockClose <- false
                         elif c = '[' then
                             expressionNesting <- expressionNesting + 1
                             needsOperand <- true
                             statementHead <- false
                             commandHead <- false
                             sawLineBreak <- false
-                            lastWasBlockClose <- false
                         else
                             // A brace begins either a statement body or an
                             // expression literal; both allow an operand first.
-                            // Only a control/else body is proven to be the
-                            // former. A bare or trailing closure can itself
-                            // occur at a statement head and must stay unknown.
-                            statementBraces.Push statementBracePending
-                            statementBracePending <- false
                             needsOperand <- true
                             statementHead <- true
                             commandHead <- false
                             sawLineBreak <- false
-                            lastWasBlockClose <- false
                     | '}' | ']' | ')' ->
                         depth <- depth - 1
                         recordNode ()
@@ -320,24 +288,17 @@ module Limits =
                                 // body, not division by the condition.
                                 needsOperand <- true
                                 statementHead <- true
-                                statementBracePending <- true
                             else
                                 needsOperand <- false
                                 statementHead <- false
 
-                            lastWasBlockClose <- false
                         elif c = ']' then
                             expressionNesting <- max 0 (expressionNesting - 1)
                             needsOperand <- false
                             statementHead <- false
-                            lastWasBlockClose <- false
                         else
-                            let closedStatementBrace =
-                                if statementBraces.Count = 0 then false else statementBraces.Pop()
-
                             needsOperand <- false
                             statementHead <- false
-                            lastWasBlockClose <- closedStatementBrace
 
                         commandHead <- false
                         sawLineBreak <- false
@@ -373,16 +334,13 @@ module Limits =
                                 needsOperand <- true
                                 statementHead <- false
                                 commandHead <- false
-                            | "else" | "try" | "finally" | "do" ->
+                            | "else" ->
                                 // An unbraced else body begins a statement just
-                                // like a completed control header. The other
-                                // body keywords likewise prove a following
-                                // brace is a statement block.
+                                // like a completed control header.
                                 awaitingControlParen <- false
                                 needsOperand <- true
                                 statementHead <- true
                                 commandHead <- false
-                                statementBracePending <- true
                             | "def" | "final" | "new" | "instanceof" | "as" ->
                                 awaitingControlParen <- false
                                 needsOperand <- true
@@ -407,14 +365,12 @@ module Limits =
                                 statementHead <- false
 
                             sawLineBreak <- false
-                            lastWasBlockClose <- false
                     | ';' ->
                         needsOperand <- true
                         statementHead <- true
                         commandHead <- false
                         awaitingControlParen <- false
                         sawLineBreak <- false
-                        lastWasBlockClose <- false
                     | '+' | '-' when i + 1 < source.Length && source.[i + 1] = c && not needsOperand ->
                         // Postfix increment/decrement leaves a complete value.
                         i <- i + 1
@@ -423,7 +379,6 @@ module Limits =
                         statementHead <- false
                         commandHead <- false
                         sawLineBreak <- false
-                        lastWasBlockClose <- false
                     | '/' | '=' | '+' | '-' | '*' | '%' | '&' | '|' | '^' | '!' | '~'
                     | '<' | '>' | ',' | ':' | '?' | '.' ->
                         needsOperand <- true
@@ -431,7 +386,6 @@ module Limits =
                         commandHead <- false
                         awaitingControlParen <- false
                         sawLineBreak <- false
-                        lastWasBlockClose <- false
                     | _ ->
                         // Unknown punctuation is deliberately not promoted to
                         // an expression ender. If the grammar accepts it, a
@@ -439,7 +393,6 @@ module Limits =
                         // if it does not, the parser will fail closed.
                         commandHead <- false
                         sawLineBreak <- false
-                        lastWasBlockClose <- false
 
                 i <- i + 1
 

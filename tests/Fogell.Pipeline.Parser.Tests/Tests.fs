@@ -402,7 +402,9 @@ let admissionLimits =
                   for closureLabel, closure in
                       [ "assigned", "def x = { -> 4 }"
                         "bare", "{ -> 4 }"
-                        "trailing", "foo { -> 4 }" ] do
+                        "trailing", "foo { -> 4 }"
+                        "member-keyword", "foo.do { -> 4 }"
+                        "control-body closure", "if (true) { -> 4 }" ] do
                       for triviaLabel, trivia in [ "plain", ""; "commented", " /* trivia */" ] do
                           let closureDivisionDepth = closure + trivia + newline + " / " + hiddenDepth + " / 2"
                           let label = $"{closureLabel}/{triviaLabel}/{newlineLabel}"
@@ -416,27 +418,38 @@ let admissionLimits =
                           | Error e -> Expect.equal e.Code NestingTooDeep $"{label}: Groovy retains the closure guard"
                           | Ok _ -> failtestf "%s: the Groovy route admitted depth hidden after a closure" label
 
-                  let scriptBody =
-                      "pipeline { agent any stages { stage('B') { steps { script { def x = { -> 4 }"
-                      + newline
-                      + " / "
-                      + hiddenDepth
-                      + " / 2 } } } } } }"
+                          let scriptBody =
+                              "pipeline { agent any stages { stage('B') { steps { script { "
+                              + closureDivisionDepth
+                              + " } } } } } }"
 
-                  match Parser.parseWithLimits Limits.defaults scriptBody with
-                  | Error e -> Expect.equal e.Code NestingTooDeep $"{newlineLabel}: Declarative script body retains guard"
-                  | Ok _ -> failtestf "%s: Declarative admitted depth hidden after a closure" newlineLabel
+                          match Parser.parseWithLimits Limits.defaults scriptBody with
+                          | Error e ->
+                              Expect.equal e.Code NestingTooDeep $"{label}: Declarative script body retains guard"
+                          | Ok _ -> failtestf "%s: Declarative admitted depth hidden after a closure" label
 
                   let lowDepth = { limits with MaxDepth = 2; MaxScalarBytes = 100 }
                   let statementSlashy = "if (true) {} /* trivia */" + newline + "/(((2)))/"
 
-                  Expect.isOk
-                      (Limits.precheck lowDepth statementSlashy)
-                      $"{newlineLabel}: a proven statement block permits a following slashy"
+                  match Limits.precheck lowDepth statementSlashy with
+                  | Error e ->
+                      Expect.equal e.Code NestingTooDeep $"{newlineLabel}: ambiguous block/slashy is conservative"
+                  | Ok _ -> failtestf "%s: an ambiguous brace reset and hid slashy-shaped depth" newlineLabel
+
+                  let separatedSlashy = "if (true) {}; /* trivia */" + newline + "/(((2)))/"
 
                   Expect.isOk
-                      (Fogell.Groovy.Parser.Parser.parseWithLimits lowDepth statementSlashy)
-                      $"{newlineLabel}: the Groovy route preserves the statement-block/slashy control"
+                      (Limits.precheck lowDepth separatedSlashy)
+                      $"{newlineLabel}: an explicit separator permits the following slashy"
+
+                  Expect.isOk
+                      (Fogell.Groovy.Parser.Parser.parseWithLimits lowDepth separatedSlashy)
+                      $"{newlineLabel}: Groovy preserves the explicit-separator slashy control"
+
+                  let shallowStatementSlashy = "if (true) {}" + newline + "/((2))/"
+                  Expect.isOk
+                      (Fogell.Groovy.Parser.Parser.parseWithLimits Limits.defaults shallowStatementSlashy)
+                      $"{newlineLabel}: ordinary shallow statement slashies remain within the conservative bound"
 
               let elseDepth = "if (true) {} else /a'aa/; if (((true))) {}"
 
