@@ -31,8 +31,10 @@ PRELUDE="$(pwd)/scripts/fsx/prelude.fsx"
 
 # `--check`, not merely `-x`. Run standalone this would otherwise compare a
 # possibly STALE base binary against freshly compiled mutants, and every verdict
-# would be about two different versions of the checker.
-if ! audit_check=$(./scripts/build-audits.sh --check 2>&1); then
+# would be about two different versions of the checker. Named: this proof runs
+# ONE tool, and the hosted stale-refs lane builds only that one, so asking
+# after all nine would fail the lane on eight binaries it never touches.
+if ! audit_check=$(./scripts/build-audits.sh --check audit-stale-refs 2>&1); then
   echo "STALE-REF PROOF FAILED: audit binaries missing or stale — run scripts/build-audits.sh" >&2
   printf '%s\n' "$audit_check" | tail -20 >&2
   exit 1
@@ -122,8 +124,12 @@ mutant_prepare() {
 }
 mutant_build_all() {
   local jobs_max d
+  # One compile per core: nproc/3 was 1 on the 4-core runner, and the ten
+  # mutants took 180 s in series there (run 33595804856). Measured in
+  # scripts/build-audits.sh (2026-09-02, 4-core mask): 69 s serial vs 33 s at
+  # one job per core for nine compiles.
   jobs_max=$(nproc 2>/dev/null || echo 4)
-  jobs_max=$(( jobs_max / 3 )); [ "$jobs_max" -lt 1 ] && jobs_max=1
+  [ "$jobs_max" -lt 1 ] && jobs_max=1
   for d in "${MUTANT_DIRS[@]}"; do
     while [ "$(jobs -rp | wc -l)" -ge "$jobs_max" ]; do wait -n; done
     {
