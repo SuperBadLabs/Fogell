@@ -834,6 +834,45 @@ module FogellSide =
                     | Some _ -> None
                     | None -> Some "the retry(<count>) option needs one positive integer count")
 
+            // FG-239 / FG-240. `options { timeout(time: 1, unit: 'NOPE') }` is a
+            // COMPILE refusal on Jenkins at either level — MEASURED on 2.568.1
+            // (2026-09-03): `Expecting "class java.util.concurrent.TimeUnit" for
+            // parameter "unit" but got "NOPE"`, FAILURE, nothing runs. UNPROVEN BY
+            // RECEIPT (FG-129: a compile-shaped refusal seals none). The parse is
+            // `WalkerRules.timeoutMs`, the same rule the deadline computation uses,
+            // so the two cannot disagree about what is unusable.
+            //
+            // VALIDATED HERE, beside the other option checks and before the SCM
+            // block, because the deadline computation that also validates lives
+            // where its `Timeout set to expire` banner must print — after the
+            // checkout (receipt `checkout-scm-timeout-env`) — and the validation
+            // rode along with the banner: a pipeline-level bad unit refused only
+            // after an SCM build had cloned and left the Jenkinsfile (FG-240), and
+            // a stage-level bad unit was refused by the walk without marking the
+            // model rejected, so the pipeline `post` still ran (FG-239). The
+            // deadline computation keeps its place; only the judgement moved.
+            let timeoutArgErrors =
+                let pipelineErrors =
+                    pipeline.Options
+                    |> List.filter (fun o -> o.Name = "timeout")
+                    |> List.choose (fun o ->
+                        match WalkerRules.timeoutMs o with
+                        | Ok _ -> None
+                        | Error e -> Some $"ERROR: pipeline declares an unusable timeout option: {e}")
+
+                let stageErrors =
+                    pipeline.Stages
+                    |> Pipeline.flattenStages
+                    |> List.collect (fun st ->
+                        st.Options
+                        |> List.filter (fun o -> o.Name = "timeout")
+                        |> List.choose (fun o ->
+                            match WalkerRules.timeoutMs o with
+                            | Ok _ -> None
+                            | Error e -> Some $"ERROR: stage '{st.Name}' declares an unusable timeout option: {e}"))
+
+                pipelineErrors @ stageErrors
+
             // FG-053(b). `unstable()` with NO message is a COMPILE refusal — MEASURED
             // on Jenkins 2.568.1: `Missing required parameter: "message"`, nothing
             // runs, empty workspace. UNPROVEN BY RECEIPT (FG-129).
@@ -1060,6 +1099,15 @@ module FogellSide =
                 compileRejected <- true
                 bump BuildStatus.Failure
             | None -> ()
+
+            // FG-239 / FG-240. The first unusable timeout option refuses the model.
+            match timeoutArgErrors with
+            | first :: _ ->
+                emit first
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
+            | [] -> ()
 
             match skipStagesArgError with
             | Some e ->
@@ -1313,7 +1361,14 @@ module FogellSide =
                       Persistence = persistence }
 
             // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
-            let pipelineDeadline, pipelineDeclaredDeadline, pipelineOptionError = deadlineFromOptions pipeline.Options None
+            // FG-240: a rejected model computes no deadline — its unusable option was
+            // refused above, before the SCM block, and computing here would emit the
+            // same error a second time.
+            let pipelineDeadline, pipelineDeclaredDeadline, pipelineOptionError =
+                if compileRejected then
+                    None, None, None
+                else
+                    deadlineFromOptions pipeline.Options None
 
             match pipelineOptionError with
             | Some e ->
