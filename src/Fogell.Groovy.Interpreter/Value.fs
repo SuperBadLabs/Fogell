@@ -206,9 +206,10 @@ module Value =
     /// A total, host-safe answer for the subset of Groovy values which Fogell
     /// orders (see `tryCompare`). `OrderingCycleDetected` means the pair takes
     /// Jenkins' hash fallback and a reference cycle inside either element would
-    /// overflow there; `Unorderable` is every other fallback pair — a
-    /// non-identical map, list or range on either side, two scalars of
-    /// different classes, closures, functions and nominal Jenkins values —
+    /// overflow there; `Unorderable` is every other fallback pair — a map or
+    /// list on either side that is not the same object on both, any range on
+    /// either side (a range value carries no reference identity), two scalars
+    /// of different classes, closures, functions and nominal Jenkins values —
     /// whose Java hash order this engine does not model.
     type Ordered =
         | Order of int
