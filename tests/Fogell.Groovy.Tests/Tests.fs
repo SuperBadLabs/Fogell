@@ -2464,9 +2464,9 @@ let cyclicValues =
               let unequal = sharedDag (VInt 2L) 26
 
               Expect.equal (Value.tryEq left right) (Value.Answer true) "equal shared DAGs terminate without re-expansion"
-              Expect.equal (Value.tryCompare left right) (Value.Order 0) "ordering shared DAGs terminates without re-expansion"
+              Expect.equal (Value.tryCompare left right) Value.Unorderable "ordering shared acyclic DAGs refuses by name (FG-205) and terminates without re-expansion"
               Expect.equal (Value.tryEq left unequal) (Value.Answer false) "memoization cannot turn a leaf mismatch into equality"
-              Expect.equal (Value.tryCompare left unequal) (Value.Order -1) "memoization retains the first nonzero leaf order"
+              Expect.equal (Value.tryCompare left unequal) Value.Unorderable "a leaf mismatch between acyclic lists is still Jenkins' hash fallback, not a structural order"
 
               let directLeft = ref [ VNull ]
               let directRight = ref [ VNull ]
@@ -2887,6 +2887,80 @@ let fg015bSortAndRangeReview =
                     "echo", [ "[1, 2, 3]" ]
                     "echo", [ "[1, 2, 3]" ] ]
                   "plain and compound RHS run before the failed write; no form mutates the range"
+          } ]
+
+/// FG-205. The `sort` builtin against Jenkins' `NumberAwareComparator`, measured
+/// on the pinned lab (the probe table on the ticket; receipt
+/// `fg205-cyclic-map-sort`). Groovy swallows `Cannot compare` and orders the
+/// pair by `hashCode()`: a cyclic map anywhere inside either element overflows
+/// there, and an acyclic map sorts by Java hash order — which this engine does
+/// not model, so it refuses by name instead of printing the structural order
+/// it printed before this ticket.
+let fg205SortFallback =
+    let runS src =
+        Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk src)
+
+    let refuses script =
+        match (runS script).Fault with
+        | Some(Unsupported why) ->
+            Expect.stringStarts why "unsupported_collection_ordering:" $"{script} refused under another name"
+        | other -> failtestf "%s sorted instead of refusing by name: %A" script other
+
+    testList
+        "FG-205 sort follows Jenkins' hash fallback boundary"
+        [ test "acyclic maps and lists refuse by name instead of sorting structurally" {
+              for script in
+                  [ "return [[b: 2], [a: 1]].sort()"
+                    "return [[a: 1], [a: 0]].sort()"
+                    "return [[k: 1], [k: 1]].sort()"
+                    "return [[a: 1], 100].sort()"
+                    "return [[2], [1]].sort()" ] do
+                  refuses script
+          }
+
+          test "scalars of different classes refuse; same-class scalars and null still order as measured" {
+              for script in
+                  [ "return ['ab', 5000].sort()"
+                    "return [5000, 'ab'].sort()"
+                    "return [true, 1].sort()"
+                    "return ['a', 1].sort()" ] do
+                  refuses script
+
+              let ints = runS "return [3, 1, 2].sort()"
+              Expect.equal ints.Returned (Some(VList(ref [ VInt 1L; VInt 2L; VInt 3L ]))) "integral order is unchanged"
+              let strings = runS "return ['b', 'a', null].sort()"
+
+              Expect.equal
+                  strings.Returned
+                  (Some(VList(ref [ VNull; VStr "a"; VStr "b" ])))
+                  "null first, then code-unit order (measured)"
+
+              let bools = runS "return [true, false].sort()"
+              Expect.equal bools.Returned (Some(VList(ref [ VBool false; VBool true ]))) "false before true (measured)"
+          }
+
+          test "a cyclic map anywhere in a hash-fallback pair faults as Jenkins' StackOverflowError" {
+              let cyclic = "def m = [k: 1]\nm.self = m\n"
+
+              for sorted in [ "[[1, m], [2]]"; "[m, 5]"; "[5, m]"; "[[k: 1, self: null], m]"; "[[m], [m]]" ] do
+                  let caught =
+                      runS (cyclic + $"try {{ {sorted}.sort() }} catch (Throwable e) {{ return 'caught' }}\nreturn 'missed'")
+
+                  Expect.isNone caught.Fault $"{sorted}: the overflow is a survivable scripted fault"
+                  Expect.equal caught.Returned (Some(VStr "caught")) $"{sorted}: caught by Throwable"
+
+              let notException =
+                  runS (cyclic + "try { [[1, m], [2]].sort() } catch (Exception e) { return 'wrong' }")
+
+              match notException.Fault with
+              | Some(CyclicValue Ordering) -> ()
+              | other -> failtestf "Exception intercepted the StackOverflowError: %A" other
+          }
+
+          test "the same map on both sides returns before the fallback" {
+              let alias = runS "def m = [k: 1]\nm.self = m\nreturn [m, m].sort().size()"
+              Expect.isNone alias.Fault "identity short-circuits"
+              Expect.equal alias.Returned (Some(VInt 2L)) "both entries remain"
           } ]
 
 /// FG-180. Command-form calls in EXPRESSION position, and the constructs the
@@ -3624,4 +3698,4 @@ let fg015ClosureAudit =
 
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg190192TriviaState; fg015ClosureAudit; fg015bSortAndRangeReview; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; scmMapValues; junitSummaryValues; callableResolution; mapIdentity; cyclicValues ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg190192TriviaState; fg015ClosureAudit; fg015bSortAndRangeReview; fg205SortFallback; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; scmMapValues; junitSummaryValues; callableResolution; mapIdentity; cyclicValues ])
