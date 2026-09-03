@@ -1,8 +1,8 @@
-# Differential receipt — options-ansicolor.Jenkinsfile
+# Differential receipt — options-ansicolor-binding.Jenkinsfile
 
 jenkins-core: 2.568.1
-seal:         c3d1460af9218cb439878e7ceab4939f0dc7935ae00751ebaa87393d11b47b21
-case-digest:  16d723961cf7320212759a1ae344167ddf955dec25c097607d6fb56333757333
+seal:         301f95580a472b7e412d4af397a45a078177b73cc898659e8a3fc164f18179c8
+case-digest:  e6a2e049c1f09f1cb864bc4583aee84e84ee22475b680445e293744002150c3a
 sealed-output: sequence
 
 VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
@@ -81,26 +81,24 @@ VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash
 
 ## Jenkins
   result:         success
-  workspace-hash: 3340e11f62904914bb7efa7bcb1fad3a4384b543e44e3d2e081f4e6cc26ee649
+  workspace-hash: 9e187eb829939e89f40d7c730917d2a1256f8a6f05f64b3aab7747396a338edd
   output (5 lines):
-    | + echo plain
+    | Did you forget the `def` keyword? WorkflowScript seems to be setting a field named x (to a value of type String) which could lead to memory leaks or other issues.
     | + echo TERM=[xterm]
     | + cat term.txt
     | TERM=[xterm]
-    | a narrated line
+    | x=xterm
   workspace:
-    dacf36547c77  plain.txt
     dd9499a25c20  term.txt
 
 ## Fogell
   result:         success
-  workspace-hash: 3340e11f62904914bb7efa7bcb1fad3a4384b543e44e3d2e081f4e6cc26ee649
+  workspace-hash: 9e187eb829939e89f40d7c730917d2a1256f8a6f05f64b3aab7747396a338edd
   output (5 lines):
-    | + echo plain
+    | Did you forget the `def` keyword? WorkflowScript seems to be setting a field named x (to a value of type String) which could lead to memory leaks or other issues.
     | + echo TERM=[xterm]
     | + cat term.txt
     | TERM=[xterm]
-    | a narrated line
+    | x=xterm
   workspace:
-    dacf36547c77  plain.txt
     dd9499a25c20  term.txt

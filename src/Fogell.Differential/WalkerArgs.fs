@@ -16,11 +16,16 @@ module WalkerArgs =
     // COMPARE — a suppression keyed on this wording alone was the same
     // unconditional-shape-match defect as the retired secret-warning dialect:
     // a build printing the sentence was silently dropped from comparison.
+    /// The advisory's TEXT, apart from its emission: FG-123 renders the
+    /// `ansiColor` option argument before the SCM block and must print any
+    /// advisory it raises AFTER the provenance line Jenkins prints first, so it
+    /// captures the text here and emits it there. One definition of the wording.
+    let defKeywordAdvisory (name: string, value: Value) =
+        $"Did you forget the `def` keyword? WorkflowScript seems to be setting a field named {name} "
+        + $"(to a value of type {GString.javaTypeName value}) which could lead to memory leaks or other issues."
+
     let adviseNewBinding (runCtx: WalkerCtx) (name: string, value: Value) =
-        runCtx.Emit (
-            $"Did you forget the `def` keyword? WorkflowScript seems to be setting a field named {name} "
-            + $"(to a value of type {GString.javaTypeName value}) which could lead to memory leaks or other issues."
-        )
+        runCtx.Emit(defKeywordAdvisory (name, value))
 
     /// Values in an `environment { }` block interpolate `${NAME}` / `$NAME`
     /// against what is already visible, which is why `PATH = "/x:${PATH}"` is

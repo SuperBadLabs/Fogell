@@ -1082,6 +1082,95 @@ module FogellSide =
                 bump BuildStatus.Failure
             | None -> ()
 
+            //
+            // FG-123. The map name is EVALUATED, because Jenkins evaluates it.
+            // MEASURED on Jenkins 2.568.1 (2026-09-02, transient probe jobs):
+            // `ansiColor("${'xterm'}")` sets TERM=xterm, `ansiColor("${env.JOB_NAME}")`
+            // sets TERM to the job name, `ansiColor('xt' + 'erm')` sets TERM=xterm,
+            // and the argument is evaluated BEFORE the `environment` block applies,
+            // so `env.MAPNAME` over a declared MAPNAME and `env.NOPE` both give the
+            // text `null` — every one of them SUCCESS; a bare unknown name fails
+            // with MissingPropertyException. This code copied the parser's
+            // unevaluated text — `${'xterm'}`, `${env.JOB_NAME}`, `xt' + 'erm`,
+            // `${env.MAPNAME}` — into TERM and reported success: a green build
+            // carrying the wrong bytes. The argument
+            // now goes through the same strict literal/GString/expression renderer
+            // as a step argument, with the same run-scoped script binding, over the
+            // Jenkins-provided values ONLY, and it is judged HERE, after the
+            // option and step argument checks above and before the SCM block
+            // below — so a model those checks reject never evaluates it (Codex on
+            // PR #341; the pipeline-level `timeout` argument check is the stated
+            // exception, it sits after the SCM block with its banner), an unusable
+            // argument refuses before any checkout effect, and the SCM wrapper
+            // values are deliberately not visible to it (what
+            // Jenkins gives an option that reads GIT_COMMIT is unmeasured; on
+            // Jenkins the checkout runs inside the option's wrapper). Receipts:
+            // `options-ansicolor-gstring`, `options-ansicolor-env`,
+            // `options-ansicolor-expression`, `options-ansicolor-declared-env`,
+            // `options-ansicolor-env-unknown`, `options-ansicolor-binding`.
+            //
+            // FAIL CLOSED, not fall back: a placeholder the renderer cannot resolve
+            // or evaluate is refused by name below (FG-103), never copied verbatim —
+            // that was the defect. What Jenkins prints for such an argument is
+            // UNMEASURED and not claimed.
+            // The def-keyword advisory an assignment raises is CAPTURED, not
+            // emitted: Jenkins prints its SCM provenance line before it can
+            // evaluate anything in the Jenkinsfile it just fetched, so the
+            // advisory must follow `Obtained Jenkinsfile …` in compared output
+            // (Codex on PR #341; by construction, UNPROVEN by receipt — no SCM
+            // case assigns a binding in an option). `flushAnsiColorAdvisories`
+            // below emits it at that point, or immediately when there is no SCM.
+            let ansiColorAdvisories = ResizeArray<string>()
+
+            let ansiColorEnv, ansiColorRenderError =
+                match ansiColorOptions with
+                | [ o ] when not compileRejected ->
+                    match ansiColorMap o with
+                    | Some m ->
+                        let key = if List.isEmpty o.Positional then "colorMapName" else "#0"
+                        let optionEnv = Map.ofList jenkinsProvided
+
+                        try
+                            // THE RUN-SCOPED BINDING, not the stateless `GString.render`:
+                            // Jenkins evaluates the argument in the script's own binding,
+                            // so `ansiColor("${x = 'xterm'; x}")` leaves `x` readable by a
+                            // later step and prints the def-keyword advisory (MEASURED,
+                            // Codex on PR #336; receipt `options-ansicolor-binding`). A
+                            // throwaway binding set TERM correctly and then failed the
+                            // later read.
+                            [ "TERM",
+                              GString.renderInto
+                                  runCtx.ScriptBinding
+                                  (fun (name, value) ->
+                                      ansiColorAdvisories.Add(WalkerArgs.defKeywordAdvisory (name, value)))
+                                  optionEnv
+                                  o
+                                  key
+                                  m ],
+                            None
+                        with
+                        | GString.MissingProperty name ->
+                            [], Some $"the ansiColor(<colorMapName>) argument names an unknown property: {name}"
+                        | GString.UnsupportedExpression detail ->
+                            [], Some $"the ansiColor(<colorMapName>) argument cannot be evaluated: {detail}"
+                    | None -> [], None
+                | _ -> [], None
+
+            match ansiColorRenderError with
+            | Some e ->
+                emit $"ERROR: pipeline declares an unusable ansiColor option: {e}"
+                root.Failed.Value <- true
+                compileRejected <- true
+                bump BuildStatus.Failure
+            | None -> ()
+
+            let flushAnsiColorAdvisories () =
+                if not root.Failed.Value then
+                    for line in ansiColorAdvisories do
+                        emit line
+
+                ansiColorAdvisories.Clear()
+
             match scm with
             | Some spec when not root.Failed.Value ->
                 // BEFORE the option can apply. Jenkins must FETCH and PARSE the
@@ -1092,6 +1181,8 @@ module FogellSide =
                 // output and workspace agree — a divergence invented by the
                 // wrapper's placement rather than by either engine.
                 emit $"Obtained Jenkinsfile from git {spec.Url}"
+                // FG-123. The option's advisory, AFTER the provenance line.
+                flushAnsiColorAdvisories ()
 
                 // `options { skipDefaultCheckout() }` suppresses the Declarative
                 // auto-checkout; the Obtained line still prints (the definition
@@ -1143,7 +1234,7 @@ module FogellSide =
                                   "GIT_BRANCH", $"origin/{spec.Branch}"
                                   "GIT_URL", spec.Url ]
                             | None -> []
-            | _ -> ()
+            | _ -> flushAnsiColorAdvisories ()
 
             // FG-053. HERE: after SCM provenance AND after the auto-checkout,
             // before the stage walk. Jenkins cannot activate a Declarative
@@ -1181,14 +1272,6 @@ module FogellSide =
             // It joins the BASE layer beside the SCM wrapper values, for the
             // same reason they are there: a declared `environment { TERM = ... }`
             // must override it, because a declaration applies INSIDE the wrapper.
-            let ansiColorEnv =
-                match ansiColorOptions with
-                | [ o ] when not ansiColorRejected ->
-                    match ansiColorMap o with
-                    | Some m -> [ "TERM", m.Trim().Trim('\'', '"') ]
-                    | None -> []
-                | _ -> []
-
             let envForWith =
                 WalkerArgs.envForWith (jenkinsProvided @ scmWrapperEnv @ ansiColorEnv) pipeline
 
