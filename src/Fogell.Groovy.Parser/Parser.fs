@@ -386,8 +386,8 @@ let private arg: P<Arg> =
 /// FG-174. Refuses a DUPLICATE NAMED ARGUMENT — the same rule the declarative parser
 /// applies, for the same reason: Groovy assembles a call's named arguments into a MAP
 /// LITERAL, and Jenkins rejects the pipeline before running anything. MEASURED on the
-/// pinned lab in both spellings, and UNPROVEN by receipt for the reason FG-129 gives —
-/// a compile-shaped refusal emits nothing comparable. See the declarative parser's note.
+/// pinned lab in both spellings, and UNPROVEN by receipt (a compile refusal is sealable
+/// since FG-129 landed; none is sealed for this shape). See the declarative parser's note.
 ///
 /// BOTH parsers enforce it because both produce calls, and a rule held by only one of
 /// them is the shape of half the findings on this branch — the script path and the stage

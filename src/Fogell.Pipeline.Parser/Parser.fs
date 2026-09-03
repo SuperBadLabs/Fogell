@@ -371,8 +371,8 @@ let private wholeValue (p: P<'a>) : P<'a> =
 /// command form, `when { equals … }`, and `when { environment … }` — each failing with
 /// nothing in the log but `Started by user unknown or anonymous` and an EMPTY workspace.
 /// Fogell took the FIRST matching key every time, and in the `when` cases ran the earlier
-/// stage before quietly skipping the gated one. UNPROVEN by receipt: a compile-shaped
-/// refusal emits nothing comparable (FG-129).
+/// stage before quietly skipping the gated one. UNPROVEN by receipt (a compile refusal
+/// is sealable since FG-129 landed; none is sealed for this shape).
 ///
 /// IT LIVES HERE, ABOVE EVERY CALLER, ON PURPOSE. The first version of this fix guarded
 /// only step arguments, and the review found `when { equals actual: 1, actual: 2 }` the
@@ -520,8 +520,8 @@ let private argList allowCommandHead
     // returnStatus: 'false')` makes Jenkins fail with nothing in the log but `Started by
     // user unknown or anonymous` and an EMPTY workspace: nothing ran at all. Fogell took
     // the first flag, suppressed the `exit 7`, ran the following step and reported
-    // success. UNPROVEN by receipt — a compile-shaped refusal cannot be receipted, which
-    // is FG-129 — so the probe and the parser tests carry it.
+    // success. UNPROVEN by receipt (sealable since FG-129 landed; none sealed for this
+    // shape), so the probe and the parser tests carry it.
     //
     // WHY PARSE TIME, when refusing at dispatch would have been the smaller change:
     // Jenkins rejects the MODEL, so NO stage runs. A refusal at the step would let every
@@ -651,7 +651,7 @@ let private stepBlock: P<Step list> =
 /// EOF is bare. Command-form arguments (`timeout time: 1`) and a trailing block
 /// are still calls and reach the ordinary step grammar, where the walker judges
 /// them. MEASURED on Jenkins 2.568.1 for `timestamps` by FG-053's verifier;
-/// UNPROVEN by receipt (FG-129: a compile-shaped refusal seals none).
+/// UNPROVEN by receipt (sealable since FG-129 landed; none sealed for this shape).
 let private optionsBlock: P<Step list> =
     let bareEntry =
         attempt (
@@ -1696,8 +1696,8 @@ let private pipelineParser: P<Pipeline> =
                    >>= rejectingDuplicateSections "tools" (function TopTools _ -> true | _ -> false)
                    >>= rejectingDuplicateSections "stages" (function TopStages _ -> true | _ -> false)
                    >>= rejectingDuplicateSections "post" (function TopPost _ -> true | _ -> false)
-                   // FG-132. MEASURED on Jenkins 2.568.1, UNPROVEN by receipt (FG-129: a
-                   // compile-shaped refusal cannot seal one): two top-level `options { }`
+                   // FG-132. MEASURED on Jenkins 2.568.1, UNPROVEN by receipt (sealable
+                   // since FG-129 landed; none sealed for this shape): two top-level `options { }`
                    // blocks, both holding valid directives, give `Multiple occurrences of
                    // the options section` and the model is refused on cardinality alone.
                    // Guard the TOP level only: a stage-level pair is legal (five corpus

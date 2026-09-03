@@ -683,7 +683,8 @@ module FogellSide =
                     // closure, and the argument check above cannot see a closure. Jenkins
                     // refuses the model, so accepting it ran a build the reference engine
                     // will not compile. MEASURED on Jenkins 2.568.1 by FG-053's verifier;
-                    // UNPROVEN by receipt (FG-129: a compile-shaped refusal seals none).
+                    // UNPROVEN by receipt (sealable since FG-129 landed; none sealed for
+                    // this shape).
                     Some "the timestamps() option takes no block"
                 else
                     None
@@ -740,8 +741,9 @@ module FogellSide =
             // retries the whole pipeline, which this engine does not do), so both
             // have moved out of this set. What remains refused is everything Jenkins
             // accepts whose semantics are not reproduced here.
-            // SCOPE, measured against the lab and UNPROVEN BY RECEIPT for the FG-129
-            // reason above: Jenkins enumerates a DIFFERENT valid set for a stage
+            // SCOPE, measured against the lab and UNPROVEN BY RECEIPT (a compile
+            // refusal is sealable since FG-129 landed; none is sealed for this
+            // shape): Jenkins enumerates a DIFFERENT valid set for a stage
             // `options` block than for the pipeline one and refuses pipeline-only
             // names there — `stage { options { buildDiscarder(...) } }` is
             // jenkins=failure. Fogell refuses far more narrowly than that (only
@@ -817,8 +819,8 @@ module FogellSide =
                 pipeline.Options |> List.filter (fun o -> o.Name = "skipStagesAfterUnstable")
 
             // FG-053(b). A stage `retry` with a missing or non-integer count is a
-            // COMPILE refusal, not a default. UNPROVEN BY RECEIPT for the FG-129
-            // reason — no compile-shaped refusal is sealable — and measured on
+            // COMPILE refusal, not a default. UNPROVEN BY RECEIPT (sealable since
+            // FG-129 landed; none sealed for this shape) and measured on
             // Jenkins 2.568.1:
             // `options { retry('nope') }` gives
             // `Expecting "int" but got "nope" of type class java.lang.String`
@@ -837,8 +839,10 @@ module FogellSide =
             // FG-239 / FG-240. `options { timeout(time: 1, unit: 'NOPE') }` is a
             // COMPILE refusal on Jenkins at either level — MEASURED on 2.568.1
             // (2026-09-03): `Expecting "class java.util.concurrent.TimeUnit" for
-            // parameter "unit" but got "NOPE"`, FAILURE, nothing runs. UNPROVEN BY
-            // RECEIPT (FG-129: a compile-shaped refusal seals none). The parse is
+            // parameter "unit" but got "NOPE"`, FAILURE, nothing runs. Receipts:
+            // `compile-refusal-timeout-unit-stage`,
+            // `compile-refusal-timeout-unit-pipeline` (FG-129 compares the refusal
+            // disposition, result and workspace). The parse is
             // `WalkerRules.timeoutMs`, the same rule the deadline computation uses,
             // so the two cannot disagree about what is unusable.
             //
@@ -875,7 +879,8 @@ module FogellSide =
 
             // FG-053(b). `unstable()` with NO message is a COMPILE refusal — MEASURED
             // on Jenkins 2.568.1: `Missing required parameter: "message"`, nothing
-            // runs, empty workspace. UNPROVEN BY RECEIPT (FG-129).
+            // runs, empty workspace. UNPROVEN BY RECEIPT (sealable since FG-129
+            // landed; none sealed for this shape).
             //
             // A BLANK message is different and is handled at the STEP, not here:
             // `unstable(message: '')` compiles, so `+ echo before` RUNS and the build
@@ -911,8 +916,8 @@ module FogellSide =
                 |> List.filter (fun st -> st.Name = "unstable")
                 |> List.tryPick (fun st ->
                     // ARITY is compile-shaped too, and I had inferred it was runtime.
-                    // UNPROVEN BY RECEIPT (FG-129: no compile-shaped refusal is
-                    // sealable), measured on Jenkins 2.568.1 — `unstable('a','b')` gives
+                    // UNPROVEN BY RECEIPT (sealable since FG-129 landed; none sealed
+                    // for this shape), measured on Jenkins 2.568.1 — `unstable('a','b')` gives
                     // `Arguments to "unstable" must be explicitly named.` with an
                     // EMPTY workspace, where routing it through the blank-message
                     // runtime path had already run the preceding step. Three

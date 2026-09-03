@@ -1,0 +1,33 @@
+# Differential receipt — compile-refusal-timeout-unit-stage.Jenkinsfile
+
+jenkins-core: 2.568.1
+seal:         4a2a250b062315c6074ba27f3cbbd3458a1ea8c07210a1c727bf9b21b6fe739f
+case-digest:  bcd627bfb213e0cd834b79987a6ff8a291ad9c01da5573698784afe7f850e8dc
+sealed-output: omitted
+
+VERDICT: PROVEN (tier 1) — same pre-execution refusal, same result, same workspace hash; output not compared
+
+## Comparison contract
+  PRE-EXECUTION REFUSAL: disposition, terminal result and workspace hash are compared and sealed.
+    Compiler narration, output, timestamp coverage and failure-reason wording are omitted
+    from comparison because no user Pipeline code ran.
+  NOT SEALED, in full: this contract block; the workspace FILE LISTING below
+    (the workspace HASH is sealed, the listing under it is not); and any engine
+    notes. The FG-119 RECOVERED provenance block is NOT in this seal but IS bound
+    by its own `recovered-seal:` line (FG-128) over this seal and the whole block,
+    heading and narration included (FG-234), accepted only immediately before the
+    VERDICT line; removing block and line TOGETHER is not detectable here. Output and timestamp evidence
+    are omitted and are neither compared nor sealed when either engine refused.
+    So `--verify-seals` passing does NOT mean this document is unaltered — it means
+    the sealed fields are. FG-169 is the PLANNED redesign to bind the whole document
+    minus fenced regions; it is NOT implemented, so this list is what holds today.
+
+## Jenkins
+  disposition: refused-before-execution
+  result:         failure
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+
+## Fogell
+  disposition: refused-before-execution
+  result:         failure
+  workspace-hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855

@@ -2635,7 +2635,7 @@ let bareOptionEntries =
               // property read, never a method call, so no option name can be valid
               // without parentheses, arguments or a block. MEASURED on Jenkins
               // 2.568.1 for `timestamps` by FG-053's verifier; UNPROVEN by receipt
-              // (FG-129: a compile-shaped refusal seals none).
+              // (sealable since FG-129 landed; none sealed for this shape).
               refused "top-level timestamps" (top "timestamps") "timestamps"
               refused "stage-level timestamps" (stage "timestamps") "timestamps"
               refused "top-level disableConcurrentBuilds" (top "disableConcurrentBuilds") "disableConcurrentBuilds"
@@ -3224,7 +3224,7 @@ let structure =
           // stages run first. MEASURED on the pinned lab: Jenkins logs only `Started by
           // user unknown or anonymous` and leaves the workspace empty, while Fogell took
           // the first flag, suppressed `exit 7` and reported success. UNPROVEN by
-          // receipt: a compile-shaped refusal cannot be receipted (FG-129).
+          // receipt (sealable since FG-129 landed; none sealed for this shape).
           test "a duplicate named argument is refused" {
               err (mk "    stage('B') { steps { sh script: 'exit 7', returnStatus: true, returnStatus: 'false' } }")
               |> ignore
@@ -3660,8 +3660,8 @@ let structure =
           }
 
           test "FG-132 a duplicate top-level options section is refused" {
-              // MEASURED on Jenkins 2.568.1, UNPROVEN by receipt (FG-129: a
-              // compile-shaped refusal cannot seal one): two top-level `options { }`
+              // MEASURED on Jenkins 2.568.1, UNPROVEN by receipt (sealable since
+              // FG-129 landed; none sealed for this shape): two top-level `options { }`
               // blocks, both holding valid directives, give `Multiple occurrences of
               // the options section` — refused on cardinality alone, before anything
               // runs. The guard counts sections, not their contents, so the
