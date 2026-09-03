@@ -15,8 +15,18 @@ postgres="$repo/scripts/ci-postgres.sh"
 local_postgres="$repo/scripts/pg-test-db.sh"
 controller="$repo/scripts/prove-runnable-controller.sh"
 inotify="$repo/scripts/prove-fg232-controller-inotify.sh"
-scratch=$(mktemp -d /tmp/fogell-fg233-proof.XXXXXX)
-trap 'rm -rf -- "$scratch"' EXIT
+scratch_root=$(cd -- "${TMPDIR:-/tmp}" && pwd -P) \
+  || { printf 'FG-233 REFUSED: temporary directory root is unavailable\n' >&2; exit 2; }
+scratch=$(mktemp -d "${scratch_root%/}/fogell-fg233-proof.XXXXXX")
+scratch=$(cd -- "$scratch" && pwd -P) \
+  || { printf 'FG-233 REFUSED: temporary proof directory is unavailable\n' >&2; exit 2; }
+cleanup_scratch() {
+  case "$scratch" in
+    "${scratch_root%/}"/fogell-fg233-proof.*) rm -rf -- "$scratch" ;;
+    *) printf 'FG-233 REFUSED: unsafe cleanup path: %s\n' "$scratch" >&2 ;;
+  esac
+}
+trap cleanup_scratch EXIT
 
 refuse() {
   printf 'FG-233 REFUSED: %s\n' "$*" >&2
