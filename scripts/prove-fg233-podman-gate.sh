@@ -74,7 +74,7 @@ for name in service-container fixed-port missing-job-runtime missing-cleanup-gua
   cp "$postgres" "$scratch/$name-postgres.sh"
 done
 
-sed -i '0,/^jobs:$/s//  services:\n    planted:\njobs:/' "$scratch/service-container-gate.yml"
+sed -i '0,/^  lane:$/s//  lane:\n    services:\n      planted:\n        image: docker.io\/library\/postgres:16/' "$scratch/service-container-gate.yml"
 expect_refusal service-container 'service containers select the runner runtime implicitly'
 
 sed -i 's/127\.0\.0\.1::5432/127.0.0.1:55440:5432/' "$scratch/fixed-port-postgres.sh"
