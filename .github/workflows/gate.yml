@@ -217,7 +217,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           # The checked-in NuGet graphs contain the F# SDK's implicit
-          # FSharp.Core reference, so the SDK and locks are one versioned unit.
+          # FSharp.Core reference, so the SDK pins the version the locks
+          # record; the hash they record is nuget.org's, not the SDK's
+          # bundled library-pack (FG-237).
           global-json-file: global.json
 
       - name: cache the fflat toolchain

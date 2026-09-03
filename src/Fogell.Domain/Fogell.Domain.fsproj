@@ -7,5 +7,6 @@
     <Compile Include="Status.fs" />
     <Compile Include="Model.fs" />
     <Compile Include="RetryDecision.fs" />
+    <Compile Include="LinuxOpenFlags.fs" />
   </ItemGroup>
 </Project>

@@ -44,6 +44,15 @@ After those status corrections, canonical board accounting is `rows=223`,
   with SDK 10.0.301, `--locked-mode`, `--no-cache`, an isolated package cache,
   and nuget.org as the source; all 26 projects restored. Lockfiles are therefore
   unchanged. Reconsider only with a clean reproducible package-source record.
+
+  **Corrected 2026-09-02 (FG-237).** The finding was real and this paragraph
+  was wrong. The lock pinned FSharp.Core 10.1.301 to the hash of the copy in
+  the SDK's implicit `FSharp/library-packs` source, not the nuget.org package;
+  an isolated cache and `--no-cache` remove cached packages, not an implicit
+  source, so the probe above could not see it. With
+  `-p:DisableImplicitLibraryPacksFolder=true` the same restore fails NU1403 on
+  HeMan. The lockfiles are regenerated and the property is now set in
+  `Directory.Build.props`; see `docs/tickets/FG-237.md`.
 - Malformed `withCredentials` requests returning 201 and then failing before
   credential-bound effects matches the current execution-time contract proved
   by FG-044b. Admission-time 422 with no durable build or consumed idempotency
