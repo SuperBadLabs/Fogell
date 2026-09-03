@@ -4,6 +4,11 @@
 # hosted controller, hang, build, and database jobs are its live runtime proof.
 set -euo pipefail
 
+for required_command in rg sed; do
+  command -v "$required_command" >/dev/null \
+    || { printf 'FG-233 REFUSED: %s is required\n' "$required_command" >&2; exit 2; }
+done
+
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 workflow="$repo/.github/workflows/gate.yml"
 postgres="$repo/scripts/ci-postgres.sh"
