@@ -42,9 +42,9 @@ case "${1:-}" in
 
     mapping=$("$runtime" port "$container" 5432/tcp) \
       || die "could not read the allocated PostgreSQL host port"
-    port=${mapping##*:}
-    [[ "$mapping" = 127.0.0.1:* && "$port" =~ ^[0-9]+$ ]] \
+    [[ "$mapping" =~ 127\.0\.0\.1:([0-9]+) ]] \
       || die "unexpected PostgreSQL port mapping: $mapping"
+    port=${BASH_REMATCH[1]}
 
     ready=0
     for _ in $(seq 1 60); do
