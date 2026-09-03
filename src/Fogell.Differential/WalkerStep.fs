@@ -269,6 +269,8 @@ module WalkerStep =
                 match materializeDurableWorkspace () with
                 | Result.Error why -> Executor.refusedBeforeRunning why
                 | Result.Ok() ->
+                    let redactedAdmission = runCtx.CreateRedactedAdmission()
+
                     Executor.runStep
                         { Name = step.Name
                           Script = script
@@ -292,7 +294,16 @@ module WalkerStep =
                           // not fail-open: interrupt and failFast still arrive through
                           // Interrupt, and the executor waits interrupt-only.
                           TimeoutMs = WalkerCancellation.remainingMs runCtx deadline
+                          // Generated step output has not crossed the raw
+                          // matcher and retains ordinary run-wide masking.
                           OnLine = Some runCtx.Emit
+                          OnGeneratedLine = Some runCtx.Admit
+                          OnRedactedLine = None
+                          OnRedactedOutput = None
+                          // Only shell bytes carry exact raw-matcher provenance.
+                          // Admission is synchronous under the matcher lock;
+                          // external publication drains independently.
+                          OnRedactedAdmission = Some redactedAdmission
                           // External cancellation only — a failFast sibling. The
                           // deadline reaches the shell runner through TimeoutMs and
                           // self-working steps through DeadlineExpired, so an expired
@@ -312,6 +323,11 @@ module WalkerStep =
                             deadline
                             |> Option.map (fun d -> fun () -> runCtx.RunClock.ElapsedMilliseconds >= d.AtMs)
                           Secrets = ctx.Secrets
+                          // Unlike the lexical environment above, masking is a
+                          // live run-wide capability. A sibling may register a
+                          // credential after this shell starts.
+                          MaskingSecrets = Some runCtx.BoundSecrets
+                          MaskingSecretsLock = Some runCtx.MaskingSecretsLock
                           Named = renderedNamed
                           Artifacts = Some(ArtifactStore.under artifactRoot)
                           BuildKey = jobName }

@@ -73,6 +73,141 @@ let progressiveOutputPublication =
               Expect.isEmpty published "unsafe transformed bytes never cross the progressive boundary"
           }
 
+          test "FG-236 redacted publication rechecks credentials bound after the raw snapshot" {
+              let published = ResizeArray<string>()
+              let ctx = WalkerCtx.create 0L false (Some published.Add)
+              let late = Secrets.inMemoryTextBinding "LATE" "late-bound-secret"
+
+              // Models a raw matcher result produced from its earlier inventory
+              // and queued before the callback runs. Registration wins the
+              // WalkerCtx output lock, so publication must recheck the literal.
+              ctx.BindSecrets [ late ]
+              ctx.EmitRedacted (RedactedTextOps.raw "late-bound-secret")
+
+              Expect.equal (ctx.Output()) [ "****" ] "the terminal trace masks the late-bound credential"
+              Expect.equal
+                  (List.ofSeq published)
+                  [ "****" ]
+                  "the late-bound credential is masked at the atomic publication boundary"
+
+              let rawStars = WalkerCtx.create 0L false None
+              let starBearing = Secrets.inMemoryTextBinding "STARS" "a****b"
+              let queuedBeforeBinding = RedactedTextOps.raw "a****b"
+              rawStars.BindSecrets [ starBearing ]
+              rawStars.EmitRedacted queuedBeforeBinding
+              Expect.equal
+                  (rawStars.Output())
+                  [ "****" ]
+                  "literal four-star runs are not mistaken for matcher-produced tokens"
+          }
+
+          test "FG-236 a late binding remasks a stalled external publication queue across lines" {
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let published = ResizeArray<string>()
+
+              let ctx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          published.Add line
+
+                          if line = "blocker" then
+                              callbackEntered.Set()
+                              releaseCallback.Wait()))
+
+              let blocker = Threading.Tasks.Task.Run(fun () -> ctx.Emit "blocker")
+              let admit = ctx.CreateRedactedAdmission()
+
+              try
+                  Expect.isTrue (callbackEntered.Wait 2_000) "the external publisher is genuinely stalled"
+                  admit (RedactedText.Raw "Sec")
+                  admit (RedactedText.Raw "ret")
+                  let binding = Secrets.inMemoryTextBinding "LATE" "Secret"
+                  ctx.BindSecrets [ binding ]
+
+                  Expect.equal
+                      (ctx.Output())
+                      [ "blocker"; "Sec"; "ret" ]
+                      "trace admission precedes the later credential registration"
+              finally
+                  releaseCallback.Set()
+
+              blocker.GetAwaiter().GetResult()
+              ctx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq published)
+                  [ "blocker"; "****" ]
+                  "pending external lines are rechecked together before actual publication"
+
+              use separateEntered = new Threading.ManualResetEventSlim(false)
+              use releaseSeparate = new Threading.ManualResetEventSlim(false)
+              let separatelyPublished = ResizeArray<string>()
+
+              let separateCtx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          separatelyPublished.Add line
+
+                          if line = "blocker" then
+                              separateEntered.Set()
+                              releaseSeparate.Wait()))
+
+              let separateBlocker = Threading.Tasks.Task.Run(fun () -> separateCtx.Emit "blocker")
+
+              try
+                  Expect.isTrue (separateEntered.Wait 2_000) "the separate-stream control is genuinely stalled"
+                  let firstStream = separateCtx.CreateRedactedAdmission()
+                  let secondStream = separateCtx.CreateRedactedAdmission()
+                  firstStream (RedactedText.Raw "Sec")
+                  secondStream (RedactedText.Raw "ret")
+                  separateCtx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+              finally
+                  releaseSeparate.Set()
+
+              separateBlocker.GetAwaiter().GetResult()
+              separateCtx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq separatelyPublished)
+                  [ "blocker"; "Sec"; "ret" ]
+                  "pending lines from separate shell streams never compose one credential"
+          }
+
+          test "FG-236 redacted publication preserves adjacent canonical tokens" {
+              let ctx = WalkerCtx.create 0L false None
+              let star = Secrets.inMemoryTextBinding "STAR" "*"
+
+              ctx.BindSecrets [ star ]
+              ctx.EmitRedacted ((OutputRedactionPolicy [ "*" ]).MaskRedacted "**")
+
+              Expect.equal
+                  (ctx.Output())
+                  [ "********" ]
+                  "two adjacent raw-matcher tokens retain their separate cardinality"
+
+              let unmatchedCtx = WalkerCtx.create 0L false None
+              let pair = Secrets.inMemoryTextBinding "PAIR" "**"
+              unmatchedCtx.BindSecrets [ pair ]
+              unmatchedCtx.EmitRedacted (RedactedTextOps.raw "*")
+              Expect.equal
+                  (unmatchedCtx.Output())
+                  [ "*" ]
+                  "a shorter unmatched all-star fragment remains ordinary output"
+
+              let boundaryCtx = WalkerCtx.create 0L false None
+              let short = Secrets.inMemoryTextBinding "SHORT" "x"
+              let spanning = Secrets.inMemoryTextBinding "SPANNING" "a****"
+              boundaryCtx.BindSecrets [ short; spanning ]
+              boundaryCtx.EmitRedacted ((OutputRedactionPolicy [ "x" ]).MaskRedacted "ax")
+              Expect.equal
+                  (boundaryCtx.Output())
+                  [ "a****" ]
+                  "non-star forms cannot span an existing canonical token boundary"
+          }
+
           test "a slow callback cannot hold the output lock or block a later emitter" {
               use callbackEntered = new Threading.ManualResetEventSlim(false)
               use releaseCallback = new Threading.ManualResetEventSlim(false)
@@ -9120,6 +9255,111 @@ let credentialEchoMasking =
                           "the raw secret is absent from every compared line"
               finally
                   if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "FG-236 raw masking retains credentials after their lexical scope ends" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg236-run-mask-" + Guid.NewGuid().ToString("N"))
+
+              let secret = String.replicate 10 "A1b2C3d4E"
+              let encoded = Convert.ToBase64String(Text.Encoding.UTF8.GetBytes secret)
+              let first, second = encoded.Substring(0, 76), encoded.Substring 76
+              let credentials = Map.ofList [ "live-text", SecretText secret ]
+
+              let source =
+                  "pipeline { agent any stages { stage('mask') { steps { "
+                  + "withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN')]) { sh 'true' }; "
+                  + $"sh 'printf \"{first}\\n{second}\\n\"' "
+                  + "} } } }"
+
+              try
+                  match FogellSide.runWithCredentials credentials [] root "job" source with
+                  | Error why -> failtestf "run-scoped masking pipeline refused outside execution: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the post-binding shell completes"
+                      Expect.contains trace.Output "****" "the separator-split registered form is redacted"
+                      Expect.isFalse
+                          (trace.Output |> List.exists (fun line -> line.Contains first || line.Contains second))
+                          "neither physical fragment is published after lexical credential cleanup"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "FG-236 run-wide raw masking keeps the canonical token idempotent" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg236-run-token-" + Guid.NewGuid().ToString("N"))
+
+              let credentials = Map.ofList [ "live-text", SecretText "*" ]
+              let source =
+                  "pipeline { agent any stages { stage('mask') { steps { "
+                  + "withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN')]) { sh 'true' }; "
+                  + "sh 'printf \"*\\n\"' } } } }"
+
+              try
+                  match FogellSide.runWithCredentials credentials [] root "job" source with
+                  | Error why -> failtestf "canonical-token pipeline refused outside execution: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the post-binding shell completes"
+                      Expect.contains trace.Output "****" "the one-character credential is redacted"
+                      Expect.isFalse
+                          (trace.Output |> List.exists (fun line -> line.Contains "****************"))
+                          "the walker does not remask the raw matcher's canonical token"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "FG-236 non-shell output retains run-wide masking provenance" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg236-nonshell-mask-" + Guid.NewGuid().ToString("N"))
+
+              let secret = "late-nonshell-secret"
+              let credentials = Map.ofList [ "live-text", SecretText secret ]
+              let source =
+                  "pipeline { agent any stages { stage('mask') { steps { "
+                  + "withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN')]) { sh 'true' }; "
+                  + $"echo '{secret}' }} }} }} }}"
+
+              try
+                  match FogellSide.runWithCredentials credentials [] root "job" source with
+                  | Error why -> failtestf "non-shell run-scoped masking pipeline refused outside execution: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the post-binding echo completes"
+                      Expect.contains trace.Output "****" "the non-shell callback retains the run-wide mask"
+                      Expect.isFalse
+                          (trace.Output |> List.exists (fun line -> line.Contains secret))
+                          "the post-scope credential is not published by echo"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "FG-236 a running shell enrolls a credential bound later by a sibling" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg236-live-mask-" + Guid.NewGuid().ToString("N"))
+
+              let secret = String.replicate 10 "Z9y8X7w6V"
+              let encoded = Convert.ToBase64String(Text.Encoding.UTF8.GetBytes secret)
+              let first, second = encoded.Substring(0, 76), encoded.Substring 76
+              let credentials = Map.ofList [ "live-text", SecretText secret ]
+
+              let source =
+                  "pipeline { agent any stages { stage('fanout') { parallel { "
+                  + "stage('emitter') { steps { sh 'touch shell-started; while [ ! -f bound-ready ]; do sleep 0.01; done; "
+                  + $"printf \"{first}\\n{second}\\n\"' }} }} "
+                  + "stage('binder') { steps { sh 'while [ ! -f shell-started ]; do sleep 0.01; done'; "
+                  + "withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN')]) { sh 'touch bound-ready; sleep 0.2' } "
+                  + "} } } } } }"
+
+              try
+                  match FogellSide.runWithCredentials credentials [] root "job" source with
+                  | Error why -> failtestf "live run-scoped masking pipeline refused outside execution: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "both synchronized branches complete"
+                      Expect.contains trace.Output "****" "the late-registered split form is redacted"
+                      Expect.isFalse
+                          (trace.Output |> List.exists (fun line -> line.Contains first || line.Contains second))
+                          "the already-running shell publishes neither physical fragment"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
           } ]
 
 /// FG-044b(c). A suffix-shaped nested credential key is an unsupported request,
@@ -9275,10 +9515,9 @@ let credentialKeyBoundaryRefusal =
                     "the ordinary successor ran")
           } ]
 
-/// FG-235. Progressive process output is line-framed before the masker sees it,
-/// so CR/LF-bearing literal credentials must be refused before any sibling is
-/// materialized. Raw-stream masking is the separate compatibility-restoration
-/// boundary; this slice proves the current refusal is atomic and non-secret.
+/// FG-235. FG-236 protects single-line forms across output-inserted separators;
+/// selected credentials which own CR/LF remain outside that raw-matcher grammar.
+/// This slice proves the refusal is atomic and non-secret.
 let credentialLineBreakRefusal =
     let credentials =
         Map.ofList
@@ -9354,7 +9593,7 @@ let credentialLineBreakRefusal =
 
               for label, id, field, unsafe, secretFragments in cases do
                   let expected =
-                      $"ERROR: {Secrets.UnsupportedMultilineCredentialCode}: credential '{id}' {field} contains a line break that progressive masking cannot safely protect; refusing to bind credentials"
+                      $"ERROR: {Secrets.UnsupportedMultilineCredentialCode}: credential '{id}' {field} contains a line break that raw-output redaction cannot register safely; refusing to bind credentials"
 
                   Expect.equal
                       (WalkerOrchestration.credentialLineBreakRefusalErrors

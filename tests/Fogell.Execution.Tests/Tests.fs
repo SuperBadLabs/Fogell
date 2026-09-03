@@ -64,7 +64,13 @@ let private request root script =
       WorkspaceRoot = None
       DeadlineExpired = None
       Secrets = []
+      MaskingSecrets = None
+      MaskingSecretsLock = None
       OnLine = None
+      OnGeneratedLine = None
+      OnRedactedLine = None
+      OnRedactedOutput = None
+      OnRedactedAdmission = None
       Named = []
       Artifacts = None
       BuildKey = "test" }
@@ -1858,6 +1864,7 @@ let eventDrivenWaits =
               Expect.equal result.Outcome (Completed 0) "the direct step completed"
               Expect.isLessThan sw.ElapsedMilliseconds 2_000L "capture reuses the reader bound instead of adding a second five-second wait"
               Expect.equal result.Stdout "arrived" "bytes received before the bound survive truncation"
+              Expect.isFalse result.StdoutReachedEof "the bounded snapshot is never mislabeled as true EOF"
           }
 
           test "a production containment anchor is reaped before callback EOF is required" {
@@ -4030,7 +4037,13 @@ let externalInterrupt =
                         WorkspaceRoot = None
                         DeadlineExpired = Some(fun () -> true)
                         Secrets = []
+                        MaskingSecrets = None
+                        MaskingSecretsLock = None
                         OnLine = None
+                        OnGeneratedLine = None
+                        OnRedactedLine = None
+                        OnRedactedOutput = None
+                        OnRedactedAdmission = None
                         Named = [ "testResults", "report.xml" ]
                         Artifacts = None
                         BuildKey = "k" }
@@ -4063,7 +4076,13 @@ let externalInterrupt =
                         WorkspaceRoot = None
                         DeadlineExpired = Some(fun () -> true)
                         Secrets = []
+                        MaskingSecrets = None
+                        MaskingSecretsLock = None
                         OnLine = None
+                        OnGeneratedLine = None
+                        OnRedactedLine = None
+                        OnRedactedOutput = None
+                        OnRedactedAdmission = None
                         Named = [ "testResults", "nothing-matches-*.xml" ]
                         Artifacts = None
                         BuildKey = "k" }
@@ -5692,7 +5711,405 @@ let externalInterrupt =
 let maskingOnOutputPath =
     testList
         "FG-071 masking is ON the output path, not merely available"
-        [ test "a secret echoed by the step is masked in BOTH streamed and buffered output" {
+        [ test "FG-236 raw masking spans every chunk boundary and one physical separator per gap" {
+              let literal = "SuperSecret-Value-123"
+              let lower = literal.ToLowerInvariant()
+              let base64 = Convert.ToBase64String(Text.Encoding.UTF8.GetBytes literal)
+              let policy = OutputRedactionPolicy [ literal; lower; base64 ]
+
+              let separated (separator: string) (width: int) (form: string) =
+                  let text = Text.StringBuilder()
+
+                  for index = 0 to form.Length - 1 do
+                      text.Append form[index] |> ignore
+
+                      if index < form.Length - 1 && (index + 1) % width = 0 then
+                          text.Append separator |> ignore
+
+                  text.ToString()
+
+              for form in [ literal; lower; base64 ] do
+                  for separator in [ "\n"; "\r"; "\r\n" ] do
+                      for width in [ 1; 2; 5; 11 ] do
+                          let raw = "before=" + separated separator width form + "=after"
+
+                          for boundary = 0 to raw.Length do
+                              let matcher = policy.CreateMatcher()
+                              let actual =
+                                  matcher.Push(raw.Substring(0, boundary))
+                                  + matcher.Push(raw.Substring boundary)
+                                  + matcher.Complete()
+
+                              Expect.equal
+                                  actual
+                                  "before=****=after"
+                                  $"{separator.Length}-char separator, width {width}, chunk boundary {boundary}"
+          }
+
+          test "FG-236 matcher preserves near misses, overlaps, EOF prefixes, and its derived bound" {
+              let policy = OutputRedactionPolicy [ "abcd"; "abcdef"; "bcde" ]
+              let matcher = policy.CreateMatcher()
+              let raw = "xabc\r\nX--abcdef--bc\rde-y"
+              let output = Text.StringBuilder()
+
+              for c in raw do
+                  output.Append(matcher.Push(string c)) |> ignore
+                  Expect.isLessThanOrEqual matcher.PendingCharacters matcher.MaximumPendingCharacters "pending state stays bounded"
+
+              output.Append(matcher.Complete()) |> ignore
+              Expect.equal (output.ToString()) "xabc\r\nX--****--****-y" "only complete adjacent forms are redacted"
+
+              let partial = policy.CreateMatcher()
+              Expect.equal (partial.Push "ab" + partial.Complete()) "ab" "a true EOF preserves an incomplete near-match"
+
+              let eofOverlap = OutputRedactionPolicy [ "ab"; "abcd"; "c" ]
+              Expect.equal (eofOverlap.Mask "abc") "********" "EOF replays a shorter match's suffix through overlapping forms"
+
+              let eofPrefix = OutputRedactionPolicy [ "baa"; "a" ]
+              Expect.equal (eofPrefix.Mask "ba") "b****" "EOF replays an incomplete prefix's suffix through complete forms"
+
+              let repeatedBreak = policy.CreateMatcher()
+              let unchanged = repeatedBreak.Push "a\r\n\r\nbcd" + repeatedBreak.Complete()
+              Expect.equal unchanged "a\r\n\r\nbcd" "two physical separators terminate adjacency"
+          }
+
+          test "FG-236 near-match work is linear in total output rather than its unread tail" {
+              let secret = String.replicate 9_999 "a" + "b"
+              let ordinary = String.replicate 200_000 "a"
+              let policy = OutputRedactionPolicy [ secret ]
+              let clock = Stopwatch.StartNew()
+              let actual = policy.Mask ordinary
+              clock.Stop()
+
+              Expect.equal actual ordinary "a near miss remains ordinary output"
+              Expect.isLessThan
+                  clock.ElapsedMilliseconds
+                  5_000L
+                  "200k hostile near-prefix characters do not replay the 10k credential suffix"
+          }
+
+          test "FG-236 streaming matcher agrees with a leftmost-longest reference grammar" {
+              let forms = [ "abcd"; "abcdef"; "bcde"; "baa"; "a"; "aba"; "cab" ]
+              let orderedForms = forms |> List.distinct |> List.sortByDescending String.length
+
+              let referenceMask (raw: string) =
+                  let output = Text.StringBuilder()
+                  let mutable position = 0
+
+                  let tryMatchAt start (form: string) =
+                      let mutable cursor = start
+                      let mutable formIndex = 0
+                      let mutable matches = true
+
+                      while matches && formIndex < form.Length do
+                          if cursor >= raw.Length || raw[cursor] <> form[formIndex] then
+                              matches <- false
+                          else
+                              cursor <- cursor + 1
+                              formIndex <- formIndex + 1
+
+                              if formIndex < form.Length && cursor < raw.Length then
+                                  match raw[cursor] with
+                                  | '\r' ->
+                                      cursor <- cursor + 1
+
+                                      if cursor < raw.Length && raw[cursor] = '\n' then
+                                          cursor <- cursor + 1
+                                  | '\n' -> cursor <- cursor + 1
+                                  | _ -> ()
+
+                      if matches then Some cursor else None
+
+                  while position < raw.Length do
+                      let matchedEnd =
+                          orderedForms
+                          |> List.tryPick (tryMatchAt position)
+
+                      match matchedEnd with
+                      | Some next ->
+                          output.Append "****" |> ignore
+                          position <- next
+                      | None ->
+                          output.Append raw[position] |> ignore
+                          position <- position + 1
+
+                  output.ToString()
+
+              let policy = OutputRedactionPolicy forms
+              let random = Random 236
+              let alphabet = [| 'a'; 'b'; 'c'; 'd'; 'e'; 'f'; 'x'; '\r'; '\n' |]
+
+              for caseIndex = 0 to 499 do
+                  let raw =
+                      String(Array.init (random.Next(0, 81)) (fun _ -> alphabet[random.Next alphabet.Length]))
+
+                  let expected = referenceMask raw
+                  Expect.equal (policy.Mask raw) expected $"batch case {caseIndex}"
+
+                  let matcher = policy.CreateMatcher()
+                  let actual = Text.StringBuilder()
+                  let mutable position = 0
+
+                  while position < raw.Length do
+                      let width = min (random.Next(1, 9)) (raw.Length - position)
+                      actual.Append(matcher.Push(raw.Substring(position, width))) |> ignore
+                      position <- position + width
+
+                      Expect.isLessThanOrEqual
+                          matcher.PendingCharacters
+                          matcher.MaximumPendingCharacters
+                          $"streaming case {caseIndex} remains bounded"
+
+                  actual.Append(matcher.Complete()) |> ignore
+                  Expect.equal (actual.ToString()) expected $"streaming case {caseIndex}"
+          }
+
+          test "FG-236 raw line framing matches CR, LF, CRLF, empty, and unterminated lines" {
+              let lines = System.Collections.Generic.List<string>()
+              let framer = ProcessGroup.RawLineFramer lines.Add
+
+              for chunk in [ "one\r"; "\ntwo\rthr"; "ee\n\nfour" ] do
+                  framer.Push chunk
+
+              framer.Complete()
+              Expect.sequenceEqual lines [ "one"; "two"; "three"; ""; "four" ] "framing matches StreamReader.ReadLine"
+          }
+
+          test "FG-236 masks wrapped base64 in progressive and buffered shell output" {
+              let root = tempRoot ()
+              let secret = String.replicate 10 "A1b2C3d4E"
+              let binding = Secrets.bind root "TOKEN" secret
+              let encoded = Convert.ToBase64String(Text.Encoding.UTF8.GetBytes secret)
+              let first, second = encoded.Substring(0, 76), encoded.Substring 76
+              let streamed = System.Collections.Generic.List<string>()
+
+              let r =
+                  Executor.runStep
+                      { request root "printf '%s' \"$TOKEN\" | base64" with
+                          Environment = Secrets.environmentFor [ binding ]
+                          Secrets = [ binding ]
+                          OnLine = Some streamed.Add }
+
+              Expect.equal r.Status Success "the shell step succeeds"
+              let progressive = String.Join("\n", streamed)
+
+              for label, output in [ "progressive", progressive; "buffered", r.Stdout ] do
+                  Expect.stringContains output "****" $"{label} output contains the redaction token"
+                  Expect.isFalse (output.Contains first) $"{label} output withholds the 76-character fragment"
+                  Expect.isFalse (output.Contains second) $"{label} output withholds the trailing fragment"
+          }
+
+          test "FG-236 masks wrapped base64 from an opaque binary file credential" {
+              let root = tempRoot ()
+              let bytes = Array.init 90 (fun index -> byte (0x80 + index % 64))
+              let binding = Secrets.bindBytes root "OPAQUE_FILE" bytes
+              let encoded = Convert.ToBase64String bytes
+              let first, second = encoded.Substring(0, 76), encoded.Substring 76
+              let streamed = System.Collections.Generic.List<string>()
+
+              let r =
+                  Executor.runStep
+                      { request root "base64 \"$OPAQUE_FILE\"" with
+                          Environment = Secrets.environmentFor [ binding ]
+                          Secrets = [ binding ]
+                          OnLine = Some streamed.Add }
+
+              Expect.equal r.Status Success "the binary credential can be consumed"
+
+              for label, output in [ "progressive", String.Join("\n", streamed); "buffered", r.Stdout ] do
+                  Expect.stringContains output "****" $"{label} output contains the redaction token"
+                  Expect.isFalse (output.Contains first) $"{label} output withholds the 76-character fragment"
+                  Expect.isFalse (output.Contains second) $"{label} output withholds the trailing fragment"
+          }
+
+          test "FG-236 stdout and stderr cannot compose one credential across streams" {
+              let streamed = System.Collections.Generic.List<string>()
+              let policy = OutputRedactionPolicy [ "CrossStream" ]
+
+              let r =
+                  ProcessGroup.run
+                      { RunRequest.create ("#!/bin/sh\nprintf Cross; sleep 0.2; printf Stream >&2", tempRoot ()) with
+                          OutputRedaction = Some policy
+                          OnLine = Some streamed.Add
+                          SuppressStdoutEcho = true
+                          ReapGroup = false }
+
+              Expect.equal r.Outcome (Completed 0) "the split-stream control succeeds"
+              Expect.equal r.Stdout "Cross" "stdout retains its incomplete half at true EOF"
+              Expect.equal r.Stderr "Stream\n" "stderr owns independent matcher state"
+              Expect.isFalse
+                  ((String.Join("\n", streamed)).Contains "****")
+                  "halves from different streams never compose into a redaction"
+          }
+
+          test "FG-236 secret-bearing raw reader preserves callback line order" {
+              let streamed = System.Collections.Generic.List<string>()
+              let policy = OutputRedactionPolicy [ "Secret" ]
+
+              let r =
+                  ProcessGroup.run
+                      { RunRequest.create ("#!/bin/sh\nprintf 'first\\nSec\\nret\\nlast\\n'", tempRoot ()) with
+                          OutputRedaction = Some policy
+                          OnLine = Some streamed.Add
+                          ReapGroup = false }
+
+              Expect.equal r.Outcome (Completed 0) "the ordered-output control succeeds"
+              Expect.sequenceEqual
+                  streamed
+                  [ "first"; "****"; "last" ]
+                  "raw matching precedes framing without reordering published lines"
+          }
+
+          test "FG-236 publishes a proven-safe short line without waiting for a long form" {
+              use firstLine = new Threading.ManualResetEventSlim(false)
+              let streamed = System.Collections.Generic.List<string>()
+              let policy = OutputRedactionPolicy [ String.replicate 10_000 "x" + "z" ]
+
+              let running =
+                  Threading.Tasks.Task.Run(fun () ->
+                      ProcessGroup.run
+                          { RunRequest.create ("#!/bin/sh\nprintf 'ready\\n'; sleep 1; printf 'done\\n'", tempRoot ()) with
+                              OutputRedaction = Some policy
+                              OnLine =
+                                  Some(fun line ->
+                                      streamed.Add line
+
+                                      if line = "ready" then
+                                          firstLine.Set())
+                              ReapGroup = false })
+
+              Expect.isTrue
+                  (firstLine.Wait 500)
+                  "a safe line is delivered while the credential-bearing process is still running"
+
+              let r = running.GetAwaiter().GetResult()
+              Expect.equal r.Outcome (Completed 0) "the progressive-output control succeeds"
+              Expect.sequenceEqual streamed [ "ready"; "done" ] "safe lines retain their order"
+          }
+
+          test "FG-236 capture keeps the pipeline value raw but masks its public copy and stderr" {
+              let root = tempRoot ()
+              let secret = String.replicate 10 "Z9y8X7w6V"
+              let binding = Secrets.bind root "TOKEN" secret
+              let encoded = Convert.ToBase64String(Text.Encoding.UTF8.GetBytes secret)
+
+              let r =
+                  Executor.runStep
+                      { request root "printf '%s' \"$TOKEN\" | base64; printf '%s' \"$TOKEN\" | base64 >&2" with
+                          Environment = Secrets.environmentFor [ binding ]
+                          Secrets = [ binding ]
+                          CaptureStdout = true }
+
+              Expect.stringContains r.CapturedStdoutRaw.Value (encoded.Substring(0, 76)) "the pipeline receives byte-faithful stdout"
+              Expect.isFalse (r.Stdout.Contains(encoded.Substring(0, 76))) "the public stdout copy is masked"
+              Expect.isFalse (r.Stderr.Contains(encoded.Substring(0, 76))) "stderr is independently masked"
+              Expect.stringContains r.Stdout "****" "the public stdout records a redaction"
+              Expect.stringContains r.Stderr "****" "stderr records a separate redaction"
+              Expect.isSome r.ProcessGroupId "credential text cannot corrupt the private process-group control frame"
+          }
+
+          test "FG-236 withholds an ambiguous capture prefix at bounded cutoff" {
+              let root = tempRoot ()
+              let pidFile = Path.Combine(root, "escaped-secret-holder.pid")
+              let prefix = "captured-prefix"
+              let binding = Secrets.bind root "TOKEN" (prefix + "-tail")
+              let mutable escapedPid = None
+
+              try
+                  let r =
+                      Executor.runStep
+                          { request root $"setsid /bin/sh -c 'echo $$ > {pidFile}; sleep 30' 2>/dev/null & i=0; while [ ! -s {pidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; sleep 0.01; done; printf '{prefix}'" with
+                              Secrets = [ binding ]
+                              CaptureStdout = true }
+
+                  escapedPid <- waitForPidFile pidFile
+                  Expect.isSome escapedPid "the escaped descendant established the open-pipe precondition"
+                  Expect.equal r.Status Success "the direct leader still succeeds"
+                  Expect.stringContains r.CapturedStdoutRaw.Value prefix "the pipeline retains bytes received before the bound"
+                  Expect.isFalse (r.Stdout.Contains prefix) "the public copy never flushes the ambiguous prefix"
+              finally
+                  escapedPid
+                  |> Option.orElseWith (fun () -> waitForPidFile pidFile)
+                  |> Option.iter (fun pid ->
+                      Native.signalProcess pid Native.SIGKILL |> ignore
+                      Expect.isTrue (waitForReap pid) "the escaped fixture is cleaned up")
+          }
+
+          test "FG-236 an open provenance callback reader fails closed" {
+              let prove label configureCallback =
+                  let root = tempRoot ()
+                  let pidFile = Path.Combine(root, $"fg236-open-redacted-{label}.pid")
+                  let streamed = Collections.Concurrent.ConcurrentQueue<RedactedText>()
+
+                  try
+                      Expect.throwsT<TimeoutException>
+                          (fun () ->
+                              let request =
+                                  { RunRequest.create (
+                                        $"setsid /bin/sh -c 'echo $$ > {pidFile}; sleep 30' 2>/dev/null & i=0; while [ ! -s {pidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; sleep 0.01; done; printf 'early-line\\n'",
+                                        root) with
+                                      ReapGroup = false
+                                      OutputRedaction = Some(OutputRedactionPolicy [ "credential" ]) }
+
+                              ProcessGroup.run (configureCallback streamed request) |> ignore)
+                          "a provenance callback cannot turn bounded reader truncation into success"
+
+                      Expect.isNonEmpty streamed $"the {label} provenance callback received output before the bounded failure"
+                  finally
+                      match waitForPidFile pidFile with
+                      | Some pid ->
+                          Native.signalGroup pid Native.SIGKILL |> ignore
+                          Expect.isTrue (waitForReap pid) $"the escaped {label} provenance-reader fixture is cleaned up"
+                      | None -> failtest $"the escaped {label} provenance-reader fixture never established its precondition"
+
+              prove "queued" (fun streamed request ->
+                  { request with OnRedactedLine = Some streamed.Enqueue })
+
+              prove "admission" (fun streamed request ->
+                  { request with OnRedactedAdmission = Some streamed.Enqueue })
+          }
+
+          test "FG-236 does not remask output that already became the canonical token" {
+              let root = tempRoot ()
+              let binding = Secrets.bind root "TOKEN" "*"
+              let r = Executor.runStep { request root "#!/bin/sh\nprintf '*'" with Secrets = [ binding ] }
+
+              Expect.equal r.Status Success "the one-character credential is admitted"
+              Expect.equal r.Stdout "****\n" "one redaction remains the canonical four-character token"
+
+              let short = Secrets.bind root "SHORT" "x"
+              let spanning = Secrets.bind root "SPANNING" "a****"
+              let streamed = System.Collections.Generic.List<string>()
+
+              let boundary =
+                  Executor.runStep
+                      { request root "#!/bin/sh\nprintf ax" with
+                          Secrets = [ short; spanning ]
+                          OnLine = Some streamed.Add }
+
+              Expect.equal boundary.Status Success "the overlapping-form control succeeds"
+              Expect.equal
+                  (List.ofSeq streamed)
+                  [ "a****" ]
+                  "stream publication does not match ordinary text across a canonical token boundary"
+              Expect.equal
+                  boundary.Stdout
+                  "a****\n"
+                  "the final buffer pass agrees with the streamed canonical-token boundary"
+          }
+
+          test "FG-236 parses the private process-group frame before overlapping credential redaction" {
+              let root = tempRoot ()
+              let binding = Secrets.bind root "TOKEN" "__FOGELL_PGID"
+              let r = Executor.runStep { request root "printf safe" with Secrets = [ binding ] }
+
+              Expect.equal r.Status Success "the step succeeds"
+              Expect.isSome r.ProcessGroupId "the unredacted private control frame still binds containment"
+              Expect.isFalse (r.Stdout.Contains "__FOGELL_PGID") "the private marker never becomes build output"
+              Expect.isFalse (r.Stderr.Contains "__FOGELL_PGID") "the private marker never becomes diagnostic output"
+          }
+
+          test "a secret echoed by the step is masked in BOTH streamed and buffered output" {
               // REVIEW FIX (Codex P1, PR #11). The masker existed and was unit
               // tested, but nothing called it, so a step that printed the secret
               // leaked it while the board claimed masking was done. This test
@@ -5773,6 +6190,170 @@ let maskingOnOutputPath =
 
               Expect.stringContains streamedText "TOKEN" "the warning names the variable"
               Expect.stringContains streamedText "reversed" "the warning names the defeating encoding"
+          }
+
+          test "FG-236 generated shell warnings retain ordinary masking provenance" {
+              let root = tempRoot ()
+              let transformed = Secrets.bind root "TOKEN" "s3cr3t-value"
+              let warningOverlap = Secrets.bind root "OTHER" "TOKEN"
+              let ordinary = System.Collections.Generic.List<string>()
+              let redacted = System.Collections.Generic.List<string>()
+
+              Executor.runStep
+                  { request root "printf '%s\n' \"$(echo s3cr3t-value | rev)\"" with
+                      Secrets = [ transformed; warningOverlap ]
+                      OnLine =
+                          Some(fun line ->
+                              ordinary.Add(Secrets.mask [ warningOverlap ] line))
+                      OnRedactedLine = Some(fun line -> redacted.Add line) }
+              |> ignore
+
+              let ordinaryText = String.Join("\n", ordinary)
+              let redactedText = String.Join("\n", redacted)
+
+              Expect.stringContains
+                  ordinaryText
+                  "WARNING: **** appears in output reversed-encoded"
+                  "the synthesized warning crosses the ordinary run-wide masker"
+
+              Expect.isFalse
+                  (ordinaryText.Contains "WARNING: TOKEN appears")
+                  "another credential cannot leak through the generated variable name"
+
+              Expect.stringContains redactedText "eulav-t3rc3s" "raw shell bytes use the redacted callback"
+              Expect.isFalse (redactedText.Contains "WARNING:") "generated warnings never inherit raw provenance"
+          }
+
+          test "FG-236 process-generated termination narration retains ordinary masking provenance" {
+              let root = tempRoot ()
+              let binding = Secrets.bind root "TOKEN" "Terminated"
+              let ordinary = System.Collections.Generic.List<string>()
+              let redacted = System.Collections.Generic.List<string>()
+
+              Executor.runStep
+                  { request root "sleep 30" with
+                      Secrets = [ binding ]
+                      TimeoutMs = Some 100L
+                      OnLine =
+                          Some(fun line ->
+                              ordinary.Add(Secrets.mask [ binding ] line))
+                      OnRedactedLine = Some(fun line -> redacted.Add line) }
+              |> ignore
+
+              let ordinaryText = String.Join("\n", ordinary)
+              let redactedText = String.Join("\n", redacted)
+
+              Expect.contains ordinary "****" "the synthesized termination line crosses the ordinary run-wide masker"
+              Expect.isFalse
+                  (ordinaryText.Contains "Terminated")
+                  "the generated narration cannot publish a credential literal"
+              Expect.isFalse
+                  (redactedText.Contains "Terminated")
+                  "generated termination narration never inherits raw provenance"
+
+              let historical = System.Collections.Generic.List<string>()
+
+              Executor.runStep
+                  { request root "sleep 30" with
+                      Secrets = [ binding ]
+                      TimeoutMs = Some 100L
+                      OnLine = Some historical.Add }
+              |> ignore
+
+              Expect.contains
+                  historical
+                  "****"
+                  "the historical direct callback receives masked generated narration"
+              Expect.isFalse
+                  ((String.Join("\n", historical)).Contains "Terminated")
+                  "a direct callback cannot receive the credential-shaped generated line"
+          }
+
+          test "FG-236 raw-only timeout output has no generated-line fallback" {
+              let root = tempRoot ()
+              let binding = Secrets.bind root "TOKEN" "Terminated"
+              let redacted = System.Collections.Generic.List<string>()
+
+              let r =
+                  Executor.runStep
+                      { request root "sleep 30" with
+                          Secrets = [ binding ]
+                          TimeoutMs = Some 100L
+                          OnLine = None
+                          OnRedactedLine = Some(fun line -> redacted.Add line) }
+
+              let published = String.Join("\n", redacted)
+              Expect.equal r.Status Aborted "the timeout still aborts the step"
+              Expect.isFalse
+                  (published.Contains "Terminated")
+                  "generated narration cannot fall back to the raw-only callback"
+              Expect.isFalse
+                  (r.Stdout.Contains "Terminated" || r.Stderr.Contains "Terminated")
+                  "the credential-shaped narration is absent from every buffered result"
+          }
+
+          test "FG-236 returned buffers recheck credentials learned by the queued callback" {
+              for shape, secret, emitted, enrollmentLine in
+                  [ "separator-split", "latebuffersecret", "late\\nbuffer\\nsecret\\n", "late"
+                    "literal-stars", "a****b", "a****b\\n", "a****b" ] do
+                let binding = Secrets.inMemoryTextBinding "LATE" secret
+
+                for label, script, captureStdout, selectBuffer in
+                    [ "stdout", $"printf '{emitted}'", false, (fun (r: StepResult) -> r.Stdout)
+                      // Non-capture shell output is deliberately merged onto one
+                      // ordered pipe. Capture mode leaves stderr independent.
+                      "stderr", $"printf '{emitted}' >&2", true, (fun (r: StepResult) -> r.Stderr) ] do
+                  let inventoryLock = obj ()
+                  let mutable inventory = []
+                  let mutable sampledUnderRegistrationLock = false
+
+                  let currentInventory () =
+                      if Threading.Monitor.IsEntered inventoryLock then
+                          sampledUnderRegistrationLock <- true
+
+                      lock inventoryLock (fun () -> inventory)
+
+                  let enrollAfterSnapshot line =
+                      if line = enrollmentLine then
+                          lock inventoryLock (fun () -> inventory <- [ binding ])
+
+                  let r =
+                      Executor.runStep
+                          { request (tempRoot ()) script with
+                              MaskingSecrets = Some currentInventory
+                              MaskingSecretsLock = Some inventoryLock
+                              CaptureStdout = captureStdout
+                              OnRedactedLine = Some enrollAfterSnapshot }
+
+                  let buffered = selectBuffer r
+                  let case = $"{shape}/{label}"
+                  Expect.equal r.Status Success $"{case}: the step completes"
+                  Expect.isTrue
+                      sampledUnderRegistrationLock
+                      $"{case}: separator-aware sampling shares the registration linearization lock"
+                  Expect.isNonEmpty (currentInventory ()) $"{case}: the queued callback registered the credential"
+                  Expect.isFalse (buffered.Contains secret) $"{case}: the final buffer cannot retain the stale literal"
+                  Expect.stringContains buffered "****" $"{case}: the final inventory masks the returned buffer"
+          }
+
+          test "FG-236 a raw-only callback cannot suppress a buffered leak warning" {
+              let root = tempRoot ()
+              let binding = Secrets.bind root "TOKEN" "s3cr3t-value"
+              let redacted = System.Collections.Generic.List<string>()
+
+              let r =
+                  Executor.runStep
+                      { request root "printf '%s\n' \"$(echo s3cr3t-value | rev)\"" with
+                          Secrets = [ binding ]
+                          OnLine = None
+                          OnRedactedLine = Some(fun line -> redacted.Add line) }
+
+              Expect.exists
+                  redacted
+                  (fun line -> line.Contains "eulav-t3rc3s")
+                  "the transformed process bytes reached the raw callback"
+              Expect.stringContains r.Stderr "WARNING: TOKEN appears" "the missing ordinary sink keeps the warning buffered"
+              Expect.stringContains r.Stderr "reversed-encoded" "the buffered warning names the defeating transform"
           }
 
           test "a transformed secret on STDERR is reported even with no OnLine callback" {

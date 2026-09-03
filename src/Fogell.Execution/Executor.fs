@@ -44,7 +44,21 @@ type StepRequest =
       /// scaffolding at the workspace's @tmp sibling even inside `dir()`, and the
       /// executed script's $0 is observable.
       WorkspaceRoot: string option
+      /// Historical public callback. Process bytes are decoded only after raw
+      /// masking; executor-generated shell narration is masked before delivery.
       OnLine: (string -> unit) option
+      /// Ordinary executor-generated output callback for a caller such as the
+      /// Walker which already owns run-wide publication masking.
+      OnGeneratedLine: (string -> unit) option
+      /// Shell stdout/stderr already canonicalized by the raw matcher. When
+      /// absent, direct callers retain the historical [OnLine] callback.
+      OnRedactedLine: (string -> unit) option
+      /// Provenance-preserving shell callback. Walker uses this instead of
+      /// inferring tokens from visible four-star runs.
+      OnRedactedOutput: (RedactedText -> unit) option
+      /// Synchronous trace admission used only when the caller can defer its
+      /// external transport. It runs under the registration/matcher lock.
+      OnRedactedAdmission: (RedactedText -> unit) option
       /// Named arguments as written (`artifacts:`, `testResults:`, `pattern:`).
       Named: (string * string) list
       /// Where publishing steps write. None disables them by failing closed.
@@ -67,14 +81,20 @@ type StepRequest =
       /// `timeout` bounds them too. Kept separate from [Interrupt] so the reported
       /// CAUSE stays correct.
       DeadlineExpired: (unit -> bool) option
-      /// FG-071. Secret bindings live for this step. Output is masked against
-      /// them ON THE WAY OUT — including the streaming path.
+      /// FG-071. Lexically active bindings for this step.
       ///
       /// REVIEW FIX (Codex P1, PR #11): the masker and leak detector existed but
       /// nothing called them, so a step running `cat "$TOKEN_FILE"` streamed the
       /// literal secret while the board claimed masking was done. A capability
       /// reachable only from its own tests is not a capability.
       Secrets: SecretBinding list
+      /// FG-236. Optional monotonic run-wide inventory for raw shell output.
+      /// A provider keeps a shell live to credentials registered later by a
+      /// parallel branch; direct executor callers fall back to [Secrets].
+      MaskingSecrets: (unit -> SecretBinding list) option
+      /// Optional lock shared with [MaskingSecrets] registration. When present,
+      /// raw matching, framing, and callback admission linearize under it.
+      MaskingSecretsLock: obj option
       /// Identifies this build in the artifact store.
       BuildKey: string }
 
@@ -178,29 +198,53 @@ module Executor =
         else
             // Mask on the way out, streaming path included: a secret that reaches
             // the console before the run ends has already leaked.
-            let maskText (t: string) =
-                if List.isEmpty request.Secrets then t else Secrets.mask request.Secrets t
+            let secretsForOutput =
+                match request.MaskingSecrets with
+                | Some bindings -> bindings
+                | None -> fun () -> request.Secrets
+
+            let outputRedaction =
+                match request.MaskingSecrets with
+                | Some bindings -> Some(Secrets.outputRedactionLive bindings request.MaskingSecretsLock)
+                | None -> Secrets.outputRedaction request.Secrets
 
             let leakReports = System.Collections.Generic.List<string>()
 
+            let decodedRedactedLine = request.OnRedactedLine |> Option.orElse request.OnLine
+
+            let generatedLine =
+                match request.OnGeneratedLine with
+                | Some emit -> Some emit
+                | None ->
+                    request.OnLine
+                    |> Option.map (fun emit ->
+                        fun line -> emit (Secrets.mask (secretsForOutput ()) line))
+
+            let taggedRedactedLine = request.OnRedactedAdmission |> Option.orElse request.OnRedactedOutput
+
             let onLine =
-                match request.OnLine with
-                | None -> None
-                | Some f ->
-                    Some(fun (line: string) ->
-                        let masked = maskText line
+                match taggedRedactedLine, decodedRedactedLine with
+                | None, None -> None
+                | tagged, decoded ->
+                    Some(fun (line: RedactedText) ->
+                        // With a policy, ProcessGroup has already redacted the
+                        // raw stream before framing this line. Re-masking is not
+                        // idempotent for credentials such as `*`.
+                        let masked = line.Text
 
                         // Detection runs on the MASKED text: anything still
                         // recognisable is an encoding masking cannot cover, and
                         // naming it is the whole point of FG-071.
-                        for leak in Secrets.detectLeaks request.Secrets masked do
+                        for leak in Secrets.detectUnregisteredLeaks (secretsForOutput ()) masked do
                             let note = $"WARNING: {leak.Variable} appears in output {leak.Encoding}-encoded; masking cannot cover this form"
 
                             if not (leakReports.Contains note) then
-                                leakReports.Add note
-                                f note
+                                generatedLine |> Option.iter (fun emit -> leakReports.Add note; emit note)
 
-                        f masked)
+                        match tagged, decoded with
+                        | Some publish, _ -> publish line
+                        | None, Some publish -> publish masked
+                        | None, None -> ())
 
             let runResult =
                 ProcessGroup.run
@@ -210,7 +254,26 @@ module Executor =
                         WorkspaceRoot = request.WorkspaceRoot
                         Environment = request.Environment
                         TimeoutMs = request.TimeoutMs
-                        OnLine = onLine
+                        // Secret-free direct calls keep the historical string
+                        // callback. Once a policy exists, process bytes must use
+                        // the provenance-preserving callback below.
+                        OnLine = if Option.isSome outputRedaction then None else request.OnLine
+                        // Some ignore is intentionally distinct from None: a
+                        // raw-only caller has no ordinary sink, so generated
+                        // narration must not fall back to the raw callback.
+                        OnGeneratedLine =
+                            if Option.isSome request.OnRedactedAdmission then None
+                            else Some(defaultArg generatedLine ignore)
+                        OnGeneratedAdmission =
+                            if Option.isSome request.OnRedactedAdmission then
+                                Some(defaultArg generatedLine ignore)
+                            else
+                                None
+                        OnRedactedLine =
+                            if Option.isSome request.OnRedactedAdmission then None else onLine
+                        OnRedactedAdmission =
+                            if Option.isSome request.OnRedactedAdmission then onLine else None
+                        OutputRedaction = outputRedaction
                         SuppressStdoutEcho = request.CaptureStdout }
 
             // REVIEW FIX (Codex, PR #13): detection lived only inside the stdout
@@ -219,12 +282,49 @@ module Executor =
             // FG-071 promises. Reverse/hex/char-split forms survive masking BY
             // DESIGN, so the warning is the entire guarantee, and it has to cover
             // every path out of the step.
-            let maskedStdout = maskText runResult.Stdout
-            let maskedStderr = maskText runResult.Stderr
+            let recheckAlreadyRedacted value =
+                match outputRedaction with
+                | Some policy -> policy.MaskAlreadyRedacted value
+                | None -> value
+
+            let requireProvenance stream =
+                function
+                | Some value -> value
+                | None -> invalidOp $"{stream} crossed raw redaction without token provenance"
+
+            let maskedStdout =
+                match outputRedaction with
+                | Some policy when request.CaptureStdout && runResult.StdoutReachedEof ->
+                    (policy.MaskRedacted runResult.Stdout).Text
+                | Some policy when request.CaptureStdout ->
+                    (policy.MaskAvailablePrefixRedacted runResult.Stdout).Text
+                | Some _ ->
+                    runResult.StdoutRedacted
+                    |> requireProvenance "stdout"
+                    |> recheckAlreadyRedacted
+                    |> fun value -> value.Text
+                | _ -> runResult.Stdout
+
+            // Stderr and non-capture stdout crossed the raw matcher, but its
+            // live inventory is sampled before each chunk. A sibling can bind
+            // after that snapshot and before the queued line callback runs.
+            // Recheck the returned buffers against the final inventory just as
+            // WalkerCtx does at its publication boundary. Capture stdout is the
+            // sole intentionally raw sink and is handled by the policy above.
+            let maskedStderr =
+                match outputRedaction with
+                | Some _ ->
+                    runResult.StderrRedacted
+                    |> requireProvenance "stderr"
+                    |> recheckAlreadyRedacted
+                    |> fun value -> value.Text
+                | None -> runResult.Stderr
+
+            let bufferedSecrets = secretsForOutput ()
 
             let bufferedLeaks =
                 [ maskedStdout; maskedStderr ]
-                |> List.collect (Secrets.detectLeaks request.Secrets)
+                |> List.collect (Secrets.detectUnregisteredLeaks bufferedSecrets)
                 |> List.map (fun l ->
                     $"WARNING: {l.Variable} appears in output {l.Encoding}-encoded; masking cannot cover this form")
                 |> List.distinct
@@ -232,7 +332,7 @@ module Executor =
 
             for note in bufferedLeaks do
                 leakReports.Add note
-                request.OnLine |> Option.iter (fun f -> f note)
+                generatedLine |> Option.iter (fun f -> f note)
 
             let run = runResult
 

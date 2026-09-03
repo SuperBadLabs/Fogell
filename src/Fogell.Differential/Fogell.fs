@@ -1492,7 +1492,13 @@ module FogellSide =
             // refuses to produce a trace instead.
             let leakedVars =
                 runCtx.OutputWithActiveSecrets()
-                |> List.collect (fun (l, active) -> if List.isEmpty active then [] else Secrets.detectLeaks active l)
+                |> List.collect (fun (l, active, alreadyRedacted) ->
+                    if List.isEmpty active then
+                        []
+                    elif alreadyRedacted then
+                        Secrets.detectUnregisteredLeaks active l
+                    else
+                        Secrets.detectLeaks active l)
                 |> List.map (fun leak -> leak.Variable)
                 |> List.distinct
 

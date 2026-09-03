@@ -10,6 +10,15 @@ open Fogell.Execution
 type OutputPublicationException(message: string, inner: exn) =
     inherit Exception(message, inner)
 
+type private PendingPublication =
+    { Order: int64
+      Prefix: string
+      Value: RedactedText
+      /// Stable identity for one Executor invocation. Only adjacent physical
+      /// lines from the same raw stream may be reassembled for a late-binding
+      /// separator-aware recheck; parallel shells must remain independent.
+      RedactedStream: obj option }
+
 /// FG-105. The walker's run-scoped mutable state — one value constructed per
 /// build, passed explicitly where the 2,000-line closure used to capture it.
 ///
@@ -43,6 +52,17 @@ type WalkerCtx =
       /// divergence.
       /// Receipt: `parallel-always-failfast`.
       Emit: string -> unit
+      /// Append shell output already processed by the run-scoped raw matcher.
+      /// It still receives timestamps, leak screening, ordering, and external
+      /// publication, while preserving exact matcher-token provenance.
+      EmitRedacted: RedactedText -> unit
+      /// Atomically admit ordinary output while letting the external publisher
+      /// drain independently. ProcessGroup uses this inside its masking lock.
+      Admit: string -> unit
+      /// Mint one provenance-bearing admission sink per shell invocation.
+      /// Its stable identity prevents pending lines from parallel shells from
+      /// being combined during a late-binding separator-aware recheck.
+      CreateRedactedAdmission: unit -> (RedactedText -> unit)
       /// FG-053. Turn on `options { timestamps() }` for the rest of the build.
       ///
       /// A SETTER rather than a `create` parameter because the pipeline's
@@ -64,6 +84,14 @@ type WalkerCtx =
       /// LEAK CHECK only — output emitted from here on can leak these values,
       /// output before merely coincides.
       BindSecrets: SecretBinding list -> unit
+      /// Locked snapshot of every credential registered before this call.
+      /// Shell raw-stream redaction consumes this run-scoped inventory; a
+      /// credential does not become safe merely because its lexical binding
+      /// ended or belongs to another branch.
+      BoundSecrets: unit -> SecretBinding list
+      /// The registration/publication lock shared with raw stream masking so a
+      /// credential cannot land between inventory sampling and queue admission.
+      MaskingSecretsLock: obj
       /// Locked snapshot of the raw output lines, in emission order.
       Output: unit -> string list
       /// Wait for the ordered external publisher and surface its first failure.
@@ -71,7 +99,7 @@ type WalkerCtx =
       FlushOutput: unit -> unit
       /// Locked snapshot pairing each line with the secrets that were already
       /// bound when it was emitted — the leak scan's exact input.
-      OutputWithActiveSecrets: unit -> (string * SecretBinding list) list
+      OutputWithActiveSecrets: unit -> (string * SecretBinding list * bool) list
       /// Worst-of accumulator for the build status. Monotone: a later Bump can
       /// only worsen the result, never walk it back (retry uses a throwaway
       /// sink for exactly that reason — see BranchCtx.Sink).
@@ -176,7 +204,7 @@ module WalkerCtx =
         // reads, or parallel writers. Monitor re-entrancy lets a nested Emit
         // enqueue and return; the outer drain publishes it next.
         let publicationLock = obj ()
-        let publications = System.Collections.Generic.Queue<int64 * string>()
+        let publications = System.Collections.Generic.Queue<PendingPublication>()
         let mutable nextPublicationOrder = 0L
         let mutable publicationActive = false
         let mutable publicationFailure: OutputPublicationException option = None
@@ -196,10 +224,10 @@ module WalkerCtx =
 
                 match next with
                 | None -> draining <- false
-                | Some(_, line) ->
+                | Some item ->
                     try
                         // External code runs with neither WalkerCtx lock held.
-                        publish line
+                        publish (item.Prefix + item.Value.Text)
                     with ex ->
                         let failure =
                             match ex with
@@ -255,6 +283,7 @@ module WalkerCtx =
         /// never touches a shell — so masking the shell and echo paths could
         /// not have caught it.
         let boundSecrets = ResizeArray<SecretBinding * int>()
+        let redactedOutputIndexes = System.Collections.Generic.HashSet<int>()
 
         let engineNotes = ResizeArray<string>()
         let durableIds = ResizeArray<string>()
@@ -270,77 +299,208 @@ module WalkerCtx =
         // trailing space. Receipt: `options-timestamps`.
         let mutable timestamps = false
 
-        { Emit =
-            fun line ->
-                let shouldDrain =
-                    lock outputLock (fun () ->
-                        let safe =
-                            if boundSecrets.Count = 0 then
-                                line
-                            else
-                                Secrets.mask (boundSecrets |> Seq.map fst |> List.ofSeq) line
+        let startDeferredDrain publish =
+            System.Threading.ThreadPool.QueueUserWorkItem(fun _ ->
+                try
+                    drainPublications publish
+                with :? OutputPublicationException ->
+                    // The failure is sticky in publicationFailure and is
+                    // surfaced by FlushOutput at the persisted boundary.
+                    ())
+            |> ignore
 
-                        // A transformed secret can survive the ordinary masker.
-                        // The terminal trace refuses those lines later, but a
-                        // progressive callback happens NOW and must not publish the
-                        // bytes first. Executor emits the safe warning separately;
-                        // retain the line for the terminal leak guard and suppress
-                        // only its external publication.
-                        let safeToPublish =
-                            boundSecrets.Count = 0
-                            || (Secrets.detectLeaks (boundSecrets |> Seq.map fst |> List.ofSeq) safe
-                                |> List.isEmpty)
+        let remaskPendingPublications secrets =
+            lock publicationLock (fun () ->
+                let pending = publications.ToArray()
+                publications.Clear()
+                let mutable index = 0
 
-                        // AFTER masking, deliberately. The prefix carries no secret,
-                        // and masking a line whose start has already moved would let
-                        // an offset-based masker act on the wrong span.
-                        let stamped =
-                            if timestamps then
-                                // INVARIANT CULTURE. `ToString(format)` uses the
-                                // CURRENT culture, whose time separator is not always
-                                // `:` — a process running under one of those would
-                                // emit `T03.54.07.729Z`, which `Trace.timestampPrefix`
-                                // does not match, so Fogell would neither strip nor
-                                // count its own prefix. The engine's output would
-                                // depend on the operator's locale.
-                                let now =
-                                    System.DateTime.UtcNow.ToString(
-                                        "yyyy-MM-ddTHH:mm:ss.fffZ",
-                                        System.Globalization.CultureInfo.InvariantCulture)
-                                $"[{now}] {safe}"
-                            else
-                                safe
+                while index < pending.Length do
+                    if Option.isNone pending[index].RedactedStream then
+                        let item = pending[index]
+                        publications.Enqueue
+                            { item with
+                                Value = Secrets.maskAlreadyRedacted secrets item.Value }
+                        index <- index + 1
+                    else
+                        let start = index
+                        let stream = pending[index].RedactedStream.Value
 
-                        output.Add stamped
-                        // Enqueue under the trace lock, after masking/leak screening,
-                        // so the assigned monotonic order is exactly Output() order.
-                        // The single callback consumer runs below, outside this lock.
-                        if safeToPublish && Option.isSome onOutput then
-                            lock publicationLock (fun () ->
-                                match publicationFailure with
-                                | Some failure -> raise failure
-                                | None ->
-                                    let order = nextPublicationOrder
-                                    nextPublicationOrder <- nextPublicationOrder + 1L
-                                    publications.Enqueue(order, stamped)
+                        while (
+                            index < pending.Length
+                            && (match pending[index].RedactedStream with
+                                | Some candidate -> obj.ReferenceEquals(stream, candidate)
+                                | None -> false)) do
+                            index <- index + 1
 
-                                    if publicationActive then
-                                        false
-                                    else
-                                        publicationActive <- true
-                                        true)
+                        let joined =
+                            pending[start .. index - 1]
+                            |> Seq.map _.Value
+                            |> RedactedText.JoinLines
+
+                        let reframed =
+                            Secrets.maskAlreadyRedacted secrets joined
+                            |> _.SplitLines()
+                        let originalCount = index - start
+                        let mutable equalPrefix = 0
+
+                        while (
+                            equalPrefix < originalCount
+                            && equalPrefix < reframed.Length
+                            && pending[start + equalPrefix].Value.Text = reframed[equalPrefix].Text) do
+                            equalPrefix <- equalPrefix + 1
+
+                        let mutable equalSuffix = 0
+
+                        while (
+                            equalSuffix < originalCount - equalPrefix
+                            && equalSuffix < reframed.Length - equalPrefix
+                            && pending[index - 1 - equalSuffix].Value.Text = reframed[reframed.Length - 1 - equalSuffix].Text) do
+                            equalSuffix <- equalSuffix + 1
+
+                        for lineIndex = 0 to reframed.Length - 1 do
+                            // Cross-line matches can collapse several pending
+                            // physical lines into one canonical token. In that
+                            // case the last contributing line owns the timestamp,
+                            // matching the point at which the match completed.
+                            let sourceIndex =
+                                if lineIndex < equalPrefix then
+                                    start + lineIndex
+                                elif lineIndex >= reframed.Length - equalSuffix then
+                                    index - (reframed.Length - lineIndex)
+                                else
+                                    let changedOutputIndex = lineIndex - equalPrefix
+                                    let changedOutputCount = reframed.Length - equalPrefix - equalSuffix
+                                    let changedInputEnd = index - equalSuffix
+                                    changedInputEnd - changedOutputCount + changedOutputIndex
+
+                            let source = pending[sourceIndex]
+                            publications.Enqueue
+                                { source with
+                                    Value = reframed[lineIndex] })
+
+        let emitCore deferExternalDrain alreadyRedacted redactedStream safeAndLeaks =
+            let shouldDrain =
+                lock outputLock (fun () ->
+                    let secrets = boundSecrets |> Seq.map fst |> List.ofSeq
+                    let (safeValue: RedactedText), leaks = safeAndLeaks secrets
+                    let safe = safeValue.Text
+
+                    // A transformed secret can survive the ordinary masker.
+                    // The terminal trace refuses those lines later, but a
+                    // progressive callback happens NOW and must not publish the
+                    // bytes first. Executor emits the safe warning separately;
+                    // retain the line for the terminal leak guard and suppress
+                    // only its external publication.
+                    let safeToPublish =
+                        List.isEmpty secrets || List.isEmpty leaks
+
+                    // AFTER masking, deliberately. The prefix carries no secret,
+                    // and masking a line whose start has already moved would let
+                    // an offset-based masker act on the wrong span.
+                    let prefix =
+                        if timestamps then
+                            // INVARIANT CULTURE. `ToString(format)` uses the
+                            // CURRENT culture, whose time separator is not always
+                            // `:` — a process running under one of those would
+                            // emit `T03.54.07.729Z`, which `Trace.timestampPrefix`
+                            // does not match, so Fogell would neither strip nor
+                            // count its own prefix. The engine's output would
+                            // depend on the operator's locale.
+                            let now =
+                                System.DateTime.UtcNow.ToString(
+                                    "yyyy-MM-ddTHH:mm:ss.fffZ",
+                                    System.Globalization.CultureInfo.InvariantCulture)
+                            $"[{now}] "
                         else
-                            false)
+                            ""
 
-                match shouldDrain, onOutput with
-                | true, Some publish -> drainPublications publish
-                | _ -> ()
+                    let stamped = prefix + safe
+
+                    let outputIndex = output.Count
+                    output.Add stamped
+
+                    if alreadyRedacted then
+                        redactedOutputIndexes.Add outputIndex |> ignore
+                    // Enqueue under the trace lock, after masking/leak screening,
+                    // so the assigned monotonic order is exactly Output() order.
+                    // The single callback consumer runs below, outside this lock.
+                    if safeToPublish && Option.isSome onOutput then
+                        lock publicationLock (fun () ->
+                            match publicationFailure with
+                            | Some failure -> raise failure
+                            | None ->
+                                let order = nextPublicationOrder
+                                nextPublicationOrder <- nextPublicationOrder + 1L
+                                publications.Enqueue
+                                    { Order = order
+                                      Prefix = prefix
+                                      Value = safeValue
+                                      RedactedStream = redactedStream }
+
+                                if publicationActive then
+                                    false
+                                else
+                                    publicationActive <- true
+                                    true)
+                    else
+                        false)
+
+            match shouldDrain, onOutput, deferExternalDrain with
+            | true, Some publish, true -> startDeferredDrain publish
+            | true, Some publish, false -> drainPublications publish
+            | _ -> ()
+
+        let emit line =
+            emitCore false false None (fun secrets ->
+                let safe =
+                    if List.isEmpty secrets then RedactedText.Raw line else Secrets.maskRedacted secrets line
+
+                safe, Secrets.detectLeaks secrets safe.Text)
+
+        let emitRedacted (line: RedactedText) =
+            emitCore false true None (fun secrets ->
+                let safe =
+                    if List.isEmpty secrets then line else Secrets.maskAlreadyRedacted secrets line
+
+                safe, Secrets.detectUnregisteredLeaks secrets safe.Text)
+
+        let admit line =
+            emitCore true false None (fun secrets ->
+                let safe =
+                    if List.isEmpty secrets then RedactedText.Raw line else Secrets.maskRedacted secrets line
+
+                safe, Secrets.detectLeaks secrets safe.Text)
+
+        { Emit = emit
+          EmitRedacted = emitRedacted
+          Admit = admit
+          CreateRedactedAdmission =
+            fun () ->
+                let stream = obj ()
+
+                fun (line: RedactedText) ->
+                    emitCore true true (Some stream) (fun secrets ->
+                        let safe =
+                            if List.isEmpty secrets then line else Secrets.maskAlreadyRedacted secrets line
+
+                        safe, Secrets.detectUnregisteredLeaks secrets safe.Text)
           EnableTimestamps = fun () -> lock outputLock (fun () -> timestamps <- true)
           BindSecrets =
             fun bindings ->
                 lock outputLock (fun () ->
                     for b in bindings do
-                        boundSecrets.Add(b, output.Count))
+                        boundSecrets.Add(b, output.Count)
+
+                    if not (List.isEmpty bindings) then
+                        boundSecrets
+                        |> Seq.map fst
+                        |> List.ofSeq
+                        |> remaskPendingPublications)
+          BoundSecrets =
+            fun () ->
+                lock outputLock (fun () -> boundSecrets |> Seq.map fst |> List.ofSeq)
+          MaskingSecretsLock = outputLock
           Output = fun () -> lock outputLock (fun () -> List.ofSeq output)
           FlushOutput = flushPublications
           OutputWithActiveSecrets =
@@ -352,7 +512,8 @@ module WalkerCtx =
                         (boundSecrets
                          |> Seq.filter (fun (_, from) -> from <= i)
                          |> Seq.map fst
-                         |> List.ofSeq))
+                         |> List.ofSeq),
+                        redactedOutputIndexes.Contains i)
                     |> List.ofSeq)
           Bump = fun s -> lock statusLock (fun () -> status <- BuildStatus.worstOf status s)
           Status = fun () -> lock statusLock (fun () -> status)

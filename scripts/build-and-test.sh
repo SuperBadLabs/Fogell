@@ -157,6 +157,13 @@ if lane_active build; then
   ./scripts/prove-fg235-multiline-secrets.sh \
     || { echo "MULTILINE CREDENTIAL PROGRESSIVE-OUTPUT PROOF FAILED"; exit 1; }
 
+  # FG-236. Registered forms must be redacted on each raw decoded stream before
+  # CR/LF framing. Kill mutants that remove the grammar bound, sever the
+  # executor-to-reader policy, or let redaction corrupt the private PGID frame.
+  echo "=== separator-transparent raw-stream masking proof (FG-236, blocking) ==="
+  ./scripts/prove-fg236-stream-masking.sh \
+    || { echo "RAW-STREAM MASKING PROOF FAILED"; exit 1; }
+
   # FG-228. Stash containment depends on both refusing linked-directory prefixes
   # and copying only from a descriptor whose physical identity is the selected
   # lexical workspace path. Recreate the old two-part traversal mechanism in a

@@ -88,10 +88,10 @@ module Secrets =
     [<Literal>]
     let private MinimumBinaryDistinctBytes = 4
 
-    /// ProcessGroup publishes physical lines after .NET has removed their CR/LF
-    /// terminators. A credential containing either character cannot be matched as
-    /// one registered form on that progressive path. Reject it before binding until
-    /// masking moves to the raw byte streams ahead of line framing (FG-235).
+    /// FG-235. FG-236's raw matcher protects single-line registered forms when
+    /// output inserts one CR/LF/CRLF separator between their characters. A
+    /// credential which owns a line ending is not such a form, so keep refusing
+    /// it before binding rather than silently widening that grammar.
     let containsPhysicalLineBreak (value: string) =
         not (isNull value)
         && value.IndexOfAny([| '\r'; '\n' |]) >= 0
@@ -100,7 +100,7 @@ module Secrets =
         if containsPhysicalLineBreak value then
             invalidArg
                 parameterName
-                $"{UnsupportedMultilineCredentialCode}: credential text must contain neither CR nor LF while progressive output masking is line-framed"
+                $"{UnsupportedMultilineCredentialCode}: raw-output redaction accepts only single-line credential text"
 
     type internal SecretFilePhase =
         | Opened
@@ -313,7 +313,7 @@ module Secrets =
         if credential.ContainsTextLineBreak then
             invalidArg
                 (nameof credential)
-                $"{UnsupportedMultilineCredentialCode}: credential text must contain neither CR nor LF while progressive output masking is line-framed"
+                $"{UnsupportedMultilineCredentialCode}: raw-output redaction accepts only single-line credential text"
         bindBytesPrepared directory variableName credential.Content credential.Forms
 
     let bind (directory: string) (variableName: string) (value: string) : SecretBinding =
@@ -372,8 +372,10 @@ module Secrets =
     let environmentForPathOnly (bindings: SecretBinding list) =
         bindings |> List.map (fun b -> b.PathVariable, b.FilePath)
 
-    /// Replace every registered form with `****`.
-    let mask (bindings: SecretBinding list) (text: string) =
+    /// Every form which is safe to redact as one complete match. Kept in one
+    /// definition so line-oriented emitters and FG-236's raw-stream matcher do
+    /// not silently disagree about file paths or derived encodings.
+    let maskingForms (bindings: SecretBinding list) =
         bindings
         |> List.collect (fun b ->
             // A file() credential's BOUND VALUE is the path — Jenkins masks it
@@ -381,10 +383,48 @@ module Secrets =
             // too, alongside the content and its encodings.
             let pathForms =
                 if b.ValueVariableCarriesPath && b.FilePath <> "" then [ b.FilePath ] else []
-
             b.Forms.MaskForms @ pathForms)
+        |> List.distinct
         |> List.sortByDescending String.length
-        |> List.fold (fun (acc: string) form -> acc.Replace(form, "****")) text
+
+    /// Build one immutable policy; ProcessGroup derives independent mutable
+    /// matchers from it for stdout and stderr.
+    let outputRedaction (bindings: SecretBinding list) =
+        let policy = OutputRedactionPolicy(maskingForms bindings)
+        if policy.IsEmpty then None else Some policy
+
+    /// A monotonic run-scoped inventory. Each stream matcher enrolls newly
+    /// registered forms before processing its next decoded chunk.
+    let outputRedactionLive (bindings: unit -> SecretBinding list) synchronizationRoot =
+        OutputRedactionPolicy((fun () -> bindings () |> maskingForms), synchronizationRoot)
+
+    /// Replace every registered form with `****`, retaining exact provenance
+    /// so a not-yet-published line can be rechecked after later registration.
+    let maskRedacted (bindings: SecretBinding list) (text: string) =
+        let policy = OutputRedactionPolicy(maskingForms bindings)
+        policy.MaskRedacted text
+
+    let mask (bindings: SecretBinding list) (text: string) =
+        (maskRedacted bindings text).Text
+
+    /// Recheck output which already crossed the raw matcher against the latest
+    /// run-wide inventory. A binding may race the matcher's earlier snapshot but
+    /// cannot race WalkerCtx's locked publication boundary. Short all-star
+    /// credentials would otherwise expand an existing canonical `****` token.
+    /// Only spans carrying exact raw-matcher provenance are opaque. Literal
+    /// four-star runs remain raw and can match a credential learned before the
+    /// locked publication boundary.
+    let maskAlreadyRedacted (bindings: SecretBinding list) (value: RedactedText) =
+        let forms = maskingForms bindings |> List.toArray
+
+        let apply raw =
+            if Array.isEmpty forms then
+                RedactedTextOps.raw raw
+            else
+                let matcher = SeparatorTolerantMasker(fun () -> forms)
+                RedactedTextOps.append (matcher.PushRedacted raw) (matcher.CompleteRedacted())
+
+        RedactedTextOps.mapRawFragments apply value
 
     /// FG-071. After masking, look for forms the mask does not cover. A hit means
     /// a secret reached the log in a shape masking cannot catch — reported, never
@@ -399,6 +439,16 @@ module Secrets =
               if b.Value <> "" && maskedText.Contains b.Value then
                   { Variable = b.ValueVariable; Encoding = "literal" }
 
+              for name, form in b.Forms.LeakForms do
+                  if maskedText.Contains form then
+                      { Variable = b.ValueVariable; Encoding = name } ]
+
+    /// Scan output that already crossed the registered-form matcher. Literal
+    /// detection here would mistake the canonical `****` replacement for a
+    /// one-character `*` credential; only transformations outside the masking
+    /// inventory remain meaningful at this boundary.
+    let detectUnregisteredLeaks (bindings: SecretBinding list) (maskedText: string) : Leak list =
+        [ for b in bindings do
               for name, form in b.Forms.LeakForms do
                   if maskedText.Contains form then
                       { Variable = b.ValueVariable; Encoding = name } ]

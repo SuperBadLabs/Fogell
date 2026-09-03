@@ -189,7 +189,15 @@ type internal WaitEnd =
 type RunResult =
     { Outcome: Outcome
       Stdout: string
+      /// Exact token provenance for non-capture stdout which crossed the raw
+      /// matcher. None means [Stdout] is raw/unredacted capture output.
+      StdoutRedacted: RedactedText option
+      /// True only when the stdout reader observed a real EOF. Capture mode may
+      /// return a bounded snapshot while an escaped descendant holds the pipe.
+      StdoutReachedEof: bool
       Stderr: string
+      /// Exact token provenance for stderr which crossed the raw matcher.
+      StderrRedacted: RedactedText option
       DurationMs: int64
       ProcessGroupId: int option
       Termination: Termination option
@@ -214,6 +222,25 @@ type RunRequest =
       /// Called with each output line as it arrives, so a running build streams
       /// rather than materialising at the end (FG-040 / JB-LOG-002 parity).
       OnLine: (string -> unit) option
+      /// Engine-authored narration has not crossed [OutputRedaction]. Keep its
+      /// publication provenance separate from process bytes so the caller can
+      /// apply its ordinary run-wide mask. None preserves the direct-call API by
+      /// falling back to [OnLine].
+      OnGeneratedLine: (string -> unit) option
+      /// Synchronous trace admission for engine-authored narration. Walker uses
+      /// this under the same registration lock as raw matching; its external
+      /// transport drains independently.
+      OnGeneratedAdmission: (string -> unit) option
+      /// Provenance-preserving callback used by Executor/Walker. When absent,
+      /// redacted process lines fall back to decoded [OnLine] strings.
+      OnRedactedLine: (RedactedText -> unit) option
+      /// Synchronous trace admission invoked inside [OutputRedaction]'s lock.
+      /// This closes the matcher-to-trace registration window without running
+      /// a potentially slow external publisher under that lock.
+      OnRedactedAdmission: (RedactedText -> unit) option
+      /// FG-236. Opaque raw-output policy. Stdout and stderr each create an
+      /// independent matcher before CR/LF framing.
+      OutputRedaction: OutputRedactionPolicy option
       /// FG-174. `sh(returnStdout: true)` CAPTURES stdout instead of printing it.
       ///
       /// Seen on pinned Jenkins: the xtrace line still appears in the console — Jenkins
@@ -256,6 +283,11 @@ type RunRequest =
           TimeoutMs = None
           GraceMs = 2_000
           OnLine = None
+          OnGeneratedLine = None
+          OnGeneratedAdmission = None
+          OnRedactedLine = None
+          OnRedactedAdmission = None
+          OutputRedaction = None
           SuppressStdoutEcho = false
           ReapGroup = true
           Interrupt = None
@@ -263,6 +295,67 @@ type RunRequest =
           WorkspaceRoot = None }
 
 module ProcessGroup =
+
+    /// Incremental equivalent of StreamReader.ReadLine: CR, LF and CRLF frame
+    /// lines, while EOF publishes a final unterminated non-empty line. Keeping
+    /// this after the raw masker is the ordering guarantee FG-236 requires.
+    type internal RawLineFramer(publish: string -> unit) =
+        let line = Text.StringBuilder()
+        let mutable afterCr = false
+
+        member _.Push(text: string) =
+            for c in text do
+                if afterCr && c = '\n' then
+                    afterCr <- false
+                else
+                    afterCr <- false
+
+                    if c = '\r' || c = '\n' then
+                        publish (line.ToString())
+                        line.Clear() |> ignore
+                        afterCr <- c = '\r'
+                    else
+                        line.Append c |> ignore
+
+        member _.Complete() =
+            if line.Length > 0 then
+                publish (line.ToString())
+                line.Clear() |> ignore
+
+    /// The same framing grammar with per-character redaction provenance kept
+    /// beside every published line.
+    type internal RedactedLineFramer(publish: RedactedText -> unit) =
+        let line = RedactedTextBuilder()
+        let mutable lineLength = 0
+        let mutable afterCr = false
+
+        member _.Push(value: RedactedText) =
+            for index = 0 to value.Text.Length - 1 do
+                let c = value.Text[index]
+
+                if afterCr && c = '\n' then
+                    afterCr <- false
+                else
+                    afterCr <- false
+
+                    if c = '\r' || c = '\n' then
+                        publish (line.ToRedactedText())
+                        line.Clear()
+                        lineLength <- 0
+                        afterCr <- c = '\r'
+                    else
+                        if value.TokenCharacters[index] then
+                            line.AppendProtected(string c)
+                        else
+                            line.AppendRaw c
+
+                        lineLength <- lineLength + 1
+
+        member _.Complete() =
+            if lineLength > 0 then
+                publish (line.ToRedactedText())
+                line.Clear()
+                lineLength <- 0
 
     [<RequireQualifiedAccess>]
     type internal ProcessIdentityState =
@@ -1130,6 +1223,8 @@ module ProcessGroup =
 
         let stdout = Text.StringBuilder()
         let stderr = Text.StringBuilder()
+        let stdoutRedacted = RedactedTextBuilder()
+        let stderrRedacted = RedactedTextBuilder()
         let completionOptions = Tasks.TaskCreationOptions.RunContinuationsAsynchronously
         let reportedPgid = Tasks.TaskCompletionSource<int * int>(completionOptions)
         let stdoutClosed = Tasks.TaskCompletionSource<unit>(completionOptions)
@@ -1143,8 +1238,8 @@ module ProcessGroup =
 
         proc.Exited.Add(fun _ -> processExited.TrySetResult(()) |> ignore)
 
-        let publishLine line =
-            match request.OnLine with
+        let enqueueAction action =
+            match action with
             | None -> ()
             | Some callback ->
                 lock lineCallbackGate (fun () ->
@@ -1162,10 +1257,29 @@ module ProcessGroup =
                                     // the final continuation is sufficient because
                                     // every successor first propagates its antecedent.
                                     previous.GetAwaiter().GetResult()
-                                    callback line),
+                                    callback ()),
                                 CancellationToken.None,
                                 Tasks.TaskContinuationOptions.None,
                                 Tasks.TaskScheduler.Default))
+
+        let enqueueLine callback line =
+            enqueueAction (callback |> Option.map (fun publish -> fun () -> publish line))
+
+        let publishLine line = enqueueLine request.OnLine line
+
+        let publishRedactedLine line =
+            match request.OnRedactedAdmission, request.OnRedactedLine with
+            | Some admit, _ -> admit line
+            | None, Some publish -> enqueueAction (Some(fun () -> publish line))
+            | None, None -> enqueueLine request.OnLine line.Text
+
+        let publishGeneratedLine line =
+            match request.OnGeneratedAdmission with
+            | Some admit ->
+                match request.OutputRedaction with
+                | Some policy -> policy.Synchronize(fun () -> admit line)
+                | None -> admit line
+            | None -> enqueueLine (request.OnGeneratedLine |> Option.orElse request.OnLine) line
 
         let closeAndGetLineCallbackTail () =
             lock lineCallbackGate (fun () ->
@@ -1176,6 +1290,13 @@ module ProcessGroup =
             if line <> null then
                 lock sink (fun () -> sink.AppendLine line |> ignore)
                 publishLine line
+
+        let emitRedacted (sink: Text.StringBuilder) (taggedSink: RedactedTextBuilder) (line: RedactedText) =
+            lock sink (fun () ->
+                sink.AppendLine line.Text |> ignore
+                taggedSink.AppendLine line)
+
+            publishRedactedLine line
 
         // CAPTURED STDOUT IS READ AS ONE STREAM, NOT REASSEMBLED FROM LINES.
         //
@@ -1206,24 +1327,34 @@ module ProcessGroup =
                     | null -> stdoutClosed.TrySetResult(()) |> ignore
                     | line -> emit stdout line))
 
+        let handleStderrLine (line: string) =
+            if line.StartsWith(pgidMarker, StringComparison.Ordinal) then
+                // the leader's own pid: the real group id. Never surfaced to the
+                // caller as build output.
+                match
+                    line.Substring(pgidMarker.Length).Split(
+                        ' ',
+                        StringSplitOptions.RemoveEmptyEntries)
+                with
+                | [| rawPid; rawAnchor |] ->
+                    match Int32.TryParse rawPid, Int32.TryParse rawAnchor with
+                    | (true, pid), (true, anchor) -> reportedPgid.TrySetResult(pid, anchor) |> ignore
+                    | _ -> ()
+                | _ -> ()
+            else
+                emit stderr line
+
+        let handleRedactedStderrLine (line: RedactedText) =
+            if line.Text.StartsWith(pgidMarker, StringComparison.Ordinal) then
+                handleStderrLine line.Text
+            else
+                emitRedacted stderr stderrRedacted line
+
         proc.ErrorDataReceived.Add(fun e ->
             lock stderrCallbackGate (fun () ->
                 match e.Data with
                 | null -> stderrClosed.TrySetResult(()) |> ignore
-                | line when line.StartsWith pgidMarker ->
-                    // the leader's own pid: the real group id. Never surfaced to the
-                    // caller as build output.
-                    match
-                        line.Substring(pgidMarker.Length).Split(
-                            ' ',
-                            StringSplitOptions.RemoveEmptyEntries)
-                    with
-                    | [| rawPid; rawAnchor |] ->
-                        match Int32.TryParse rawPid, Int32.TryParse rawAnchor with
-                        | (true, pid), (true, anchor) -> reportedPgid.TrySetResult(pid, anchor) |> ignore
-                        | _ -> ()
-                    | _ -> ()
-                | line -> emit stderr line))
+                | line -> handleStderrLine line))
 
         proc.Start() |> ignore
 
@@ -1254,6 +1385,106 @@ module ProcessGroup =
         // snapshot below is taken, precisely in the case the ticket is about.
         let captureBuffer = Text.StringBuilder()
 
+        let startRedactingReader
+            (reader: IO.StreamReader)
+            callbackGate
+            (closed: Tasks.TaskCompletionSource<unit>)
+            publish
+            stripInitialControlFrame
+            =
+            let policy = request.OutputRedaction.Value
+
+            task {
+                let masker = policy.CreateMatcher()
+                let framer = RedactedLineFramer publish
+                let controlPrefix = Text.StringBuilder()
+                let mutable controlResolved = not stripInitialControlFrame
+                let mutable reachedEof = false
+
+                let feedBuildOutput text =
+                    if not (String.IsNullOrEmpty text) then
+                        framer.Push(masker.PushRedacted text)
+
+                let feed text =
+                    if controlResolved then
+                        feedBuildOutput text
+                    else
+                        controlPrefix.Append text |> ignore
+                        let buffered = controlPrefix.ToString()
+                        let newline = buffered.IndexOf '\n'
+
+                        if newline >= 0 then
+                            let controlLine = buffered.Substring(0, newline).TrimEnd '\r'
+                            controlResolved <- true
+
+                            if controlLine.StartsWith(pgidMarker, StringComparison.Ordinal) then
+                                // Parse the private bootstrap frame before any
+                                // credential form can alter its pid fields.
+                                handleStderrLine controlLine
+                                feedBuildOutput (buffered.Substring(newline + 1))
+                            else
+                                feedBuildOutput buffered
+
+                            controlPrefix.Clear() |> ignore
+                        elif buffered.Length > pgidMarker.Length + 64 then
+                            // The bootstrap frame is fixed and short. If it is
+                            // malformed, stop granting it unbounded private state
+                            // and treat the bytes as ordinary build output.
+                            controlResolved <- true
+                            feedBuildOutput buffered
+                            controlPrefix.Clear() |> ignore
+
+                try
+                    let chunk = Array.zeroCreate<char> 4096
+                    let mutable reading = true
+
+                    while reading do
+                        let! n = reader.ReadAsync(chunk, 0, chunk.Length)
+
+                        if n > 0 then
+                            lock callbackGate (fun () ->
+                                policy.Synchronize(fun () -> feed (String(chunk, 0, n))))
+                        else
+                            reading <- false
+
+                    reachedEof <- true
+
+                    lock callbackGate (fun () ->
+                        policy.Synchronize(fun () ->
+                            if not controlResolved && controlPrefix.Length > 0 then
+                                feedBuildOutput (controlPrefix.ToString())
+                                controlPrefix.Clear() |> ignore
+
+                            framer.Push(masker.CompleteRedacted())
+                            framer.Complete()))
+                finally
+                    // On an exceptional/cut-off read, never flush an ambiguous
+                    // pending prefix. A real EOF is the sole authority to do so.
+                    if not reachedEof then
+                        controlPrefix.Clear() |> ignore
+
+                    closed.TrySetResult(()) |> ignore
+            }
+            :> Tasks.Task
+
+        let redactingStdoutReader =
+            match request.OutputRedaction, request.SuppressStdoutEcho with
+            | Some _, false ->
+                Some(
+                    startRedactingReader
+                        proc.StandardOutput
+                        stdoutCallbackGate
+                        stdoutClosed
+                        (emitRedacted stdout stdoutRedacted)
+                        false)
+            | _ -> None
+
+        let redactingStderrReader =
+            match request.OutputRedaction with
+            | Some _ ->
+                Some(startRedactingReader proc.StandardError stderrCallbackGate stderrClosed handleRedactedStderrLine true)
+            | None -> None
+
         let capturedStdout =
             if request.SuppressStdoutEcho then
                 let reader = proc.StandardOutput
@@ -1261,26 +1492,38 @@ module ProcessGroup =
                 // boundary can never split a multi-byte character. Reading bytes here to
                 // make the comment above literally true would introduce that bug.
                 Some(
-                    Tasks.Task.Run(fun () ->
+                    task {
                         let chunk = Array.zeroCreate<char> 4096
-                        let mutable n = reader.Read(chunk, 0, chunk.Length)
+                        let mutable reading = true
 
-                        while n > 0 do
-                            lock captureBuffer (fun () -> captureBuffer.Append(chunk, 0, n) |> ignore)
-                            n <- reader.Read(chunk, 0, chunk.Length)))
+                        while reading do
+                            let! n = reader.ReadAsync(chunk, 0, chunk.Length)
+
+                            if n > 0 then
+                                lock captureBuffer (fun () -> captureBuffer.Append(chunk, 0, n) |> ignore)
+                            else
+                                reading <- false
+                    }
+                    :> Tasks.Task)
             else
-                proc.BeginOutputReadLine()
+                if redactingStdoutReader.IsNone then
+                    proc.BeginOutputReadLine()
+
                 None
 
-        proc.BeginErrorReadLine()
+        if redactingStderrReader.IsNone then
+            proc.BeginErrorReadLine()
 
         let stdoutReaderCompleted: Tasks.Task =
             match capturedStdout with
             | Some task -> task
-            | None -> stdoutClosed.Task :> Tasks.Task
+            | None -> redactingStdoutReader |> Option.defaultValue (stdoutClosed.Task :> Tasks.Task)
+
+        let stderrReaderCompleted: Tasks.Task =
+            redactingStderrReader |> Option.defaultValue (stderrClosed.Task :> Tasks.Task)
 
         let allReadersCompleted =
-            Tasks.Task.WhenAll [| stdoutReaderCompleted; stderrClosed.Task :> Tasks.Task |]
+            Tasks.Task.WhenAll [| stdoutReaderCompleted; stderrReaderCompleted |]
 
         // Capture mode intentionally permits an escaped holder of the raw stdout
         // pipe and retains the bytes already read. Stderr still publishes through
@@ -1288,7 +1531,7 @@ module ProcessGroup =
         // snapshot: otherwise an escaped stderr writer could enqueue after return.
         let callbackReadersCompleted: Tasks.Task =
             if request.SuppressStdoutEcho then
-                stderrClosed.Task :> Tasks.Task
+                stderrReaderCompleted
             else
                 allReadersCompleted
 
@@ -1493,7 +1736,12 @@ module ProcessGroup =
             // snapshotting the tail, so an escaped writer cannot append later.
             let tail = closeAndGetLineCallbackTail ()
 
-            if Option.isSome request.OnLine && not callbackReadersReachedEof then
+            let processOutputCallbackPresent =
+                Option.isSome request.OnLine
+                || Option.isSome request.OnRedactedLine
+                || Option.isSome request.OnRedactedAdmission
+
+            if processOutputCallbackPresent && not callbackReadersReachedEof then
                 Some(
                     TimeoutException(
                         $"OnLine reader did not reach EOF within the shared {budgetMs}ms output-drain budget"))
@@ -1584,9 +1832,9 @@ module ProcessGroup =
                 // the shell itself on both engines. The cause is the SNAPSHOT taken
                 // when the wait ended, never a fresh sample.
                 if waitEnd = WaitEnd.Expired then
-                    publishLine "Cancelling nested steps due to timeout"
+                    publishGeneratedLine "Cancelling nested steps due to timeout"
 
-                publishLine "Sending interrupt signal to process"
+                publishGeneratedLine "Sending interrupt signal to process"
 
                 settleBeforeSignal 300
                 let outputBeforeSignal = lock stdout (fun () -> stdout.ToString())
@@ -1614,7 +1862,7 @@ module ProcessGroup =
                         |> Array.exists (fun line -> line.Trim() = "Terminated"))
 
                 if not shellSaidIt then
-                    publishLine "Terminated"
+                    publishGeneratedLine "Terminated"
                 // Distinguish the two ways a step can fail to finish. Both take
                 // the same signal path; only the reported cause differs.
                 (if waitEnd = WaitEnd.Interrupted then Cancelled else TimedOut), t, completionClock, 300, callbackReadersReachedEof
@@ -1627,6 +1875,16 @@ module ProcessGroup =
                 outputCompletionBudget
                 outputCompletionClock
                 callbackReadersReachedEof
+
+        let readerFailure =
+            if allReadersCompleted.IsFaulted then
+                try
+                    allReadersCompleted.GetAwaiter().GetResult()
+                    None
+                with error ->
+                    Some error
+            else
+                None
 
         // The guard outlives the inner leader. This closes the interval between
         // leader exit and group reaping: if Run.Host dies there, stdin reaches
@@ -1682,24 +1940,40 @@ module ProcessGroup =
         // WHY NOT SIMPLY WAIT LONGER: the bound is what stops an escaped descendant from
         // holding the engine open forever, which is the one failure mode worse than a
         // wrong value. Truncation removes the need to choose between them.
+        // Capture completion is sampled BEFORE the buffer. If EOF races this
+        // snapshot, false is conservative and the public copy withholds an
+        // ambiguous suffix; true proves every append preceded the snapshot.
+        let stdoutReachedEof = stdoutReaderCompleted.IsCompletedSuccessfully
+
         let capturedText =
             capturedStdout
             |> Option.map (fun _ -> lock captureBuffer (fun () -> captureBuffer.ToString()))
 
         let bufferedStdout = lock stdout (fun () -> stdout.ToString())
         let bufferedStderr = lock stderr (fun () -> stderr.ToString())
+        let bufferedStdoutRedacted =
+            match request.OutputRedaction, request.SuppressStdoutEcho with
+            | Some _, false -> Some(lock stdout (fun () -> stdoutRedacted.ToRedactedText()))
+            | _ -> None
+
+        let bufferedStderrRedacted =
+            request.OutputRedaction
+            |> Option.map (fun _ -> lock stderr (fun () -> stderrRedacted.ToRedactedText()))
 
         let result =
             { Outcome = outcome
               Stdout = defaultArg capturedText bufferedStdout
+              StdoutRedacted = bufferedStdoutRedacted
+              StdoutReachedEof = stdoutReachedEof
               Stderr = bufferedStderr
+              StderrRedacted = bufferedStderrRedacted
               DurationMs = sw.ElapsedMilliseconds
               ProcessGroupId = pgid
               Termination = termination
               CleanupFailure = cleanupFailure
               DurableId = mintedDurableId }
 
-        match lineCallbackFailure with
+        match readerFailure |> Option.orElse lineCallbackFailure with
         | None -> result
         | Some error ->
             Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw()
