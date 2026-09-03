@@ -52,8 +52,8 @@ liveness_host_pid=""
 # reaped one orphan bash and one orphan runtime client. Nothing bounded the
 # EXIT trap's container stop or its bare wait on the backgrounded run client,
 # and one of them never returned. Whether the container was still
-# being created (the identity loop ran its whole budget on fast exec failures
-# failures, and a cold pull of this image was measured at 14 s on run
+# being created (the identity loop ran its whole budget on fast exec failures,
+# and a cold pull of this image was measured at 14 s on run
 # 33567174871) or the daemon had stopped answering is not recorded by that
 # log; both shapes are bounded here. A proof that cannot finish refusing is
 # worse than one that fails, since nothing names the call it is stuck in.
