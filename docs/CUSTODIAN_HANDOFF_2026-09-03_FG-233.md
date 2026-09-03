@@ -16,12 +16,12 @@ the next custodian.
 - Host: `heman`.
 - Canonical repository: `${HOME}/projects/fogell`.
 - `origin/main` observed before this handoff publication:
-  `8dcd7e0a7031eabc4ba95a8aa3537493aad784aa`.
+  `cca52659a70b573e15305354f6850c1a474a8ff5`.
 - Observed `origin/main` tree:
-  `08158fe055d086315a083b7117810e3802f68a98`.
+  `017ab2e773357a025b62d9bf8ef20cda5c8f3622`.
 - Latest observed main gate:
-  [run 33717759353](https://github.com/SuperBadLabs/Fogell/actions/runs/33717759353),
-  successful.
+  [run 33809984538](https://github.com/SuperBadLabs/Fogell/actions/runs/33809984538),
+  successful on that exact main head.
 - Handoff branch: `codex/custodian-handoff-fg233-2026-09-03`.
 - This document's PR and merge record identify the commit containing the
   handoff. Do not add a predicted self-reference.
@@ -50,9 +50,11 @@ rootless-Podman PostgreSQL, requests a runtime-allocated loopback port with
 validated state, and stops its own container under a guarded `always()`
 cleanup step.
 
-The same runtime and dynamic-port contract reaches the local database helper,
-controller proof, controller inotify proof, backup/restore drill, and migration
-rollback drill. Cleanup is armed before container start, so a runtime that
+The local database helper defaults to the same runtime-allocated port contract;
+its supported second argument remains an explicit, validated fixed-port opt-in
+for a caller that needs one. The controller proof, controller inotify proof,
+backup/restore drill, and migration rollback drill consume the selected port.
+Cleanup is armed before container start, so a runtime that
 creates a container and then exits nonzero does not strand it before state
 export. Literal container names, explicit ports, runtime names, and observed
 port mappings are validated before use. Diagnostic retention for the controller
@@ -157,8 +159,11 @@ passed all ten checks.
 
 - Podman is the selected runtime. Do not reintroduce GitHub Actions
   `services:` or any implicit Docker dependency into the gate.
-- No CI or local PostgreSQL helper may reserve a fixed host port. Container port
-  5432 is stable; the loopback host port must be runtime-allocated and read back.
+- CI and the default local PostgreSQL path must not reserve a fixed host port.
+  Container port 5432 is stable; the default loopback host port is
+  runtime-allocated and read back. `pg-test-db.sh` deliberately retains a
+  validated explicit host-port second argument for opt-in local callers; that
+  interface is not deprecated by FG-233.
 - Cleanup must be both guarded and armed before start. A setup failure must not
   create either a stranded container or a misleading secondary cleanup failure.
 - Consumers must use the exported validated port; merely allocating a dynamic
@@ -171,7 +176,7 @@ passed all ten checks.
 
 ## Current repository and queue snapshot
 
-At `8dcd7e0a7031eabc4ba95a8aa3537493aad784aa`, the native audits derive:
+At `cca52659a70b573e15305354f6850c1a474a8ff5`, the native audits derive:
 
 ```text
 rows=233; DONE=173; open=60; open P0/P1/P2/P3=2/19/32/7
@@ -190,13 +195,19 @@ The two mechanically open P0s are:
 That is inventory, not an automatic assignment. Re-derive priority and choose an
 impact dimension deliberately.
 
-The GitHub API reported one open PR:
+The GitHub API reported one other open PR besides this handoff:
 [#364](https://github.com/SuperBadLabs/Fogell/pull/364), FG-237/FG-238, head
 `5a27fb93976b403da4632210c031fd92ee9bf9d7`. At this snapshot all ten checks
 were green, both canonical reviewers covered the exact head, and unresolved
 thread count was zero. It was mergeable, but this handoff did not merge it.
 Fetch and recheck head, base, review content, conflicts, and repository policy
 before acting.
+
+Concurrent wizard handoff PR #370 merged while this artifact was being
+published. Its `docs/WIZARD_HANDOFF_2026-09-03.md` and
+`docs/WIZARD_RECEIPT_2026-09-03.md` are preserved in this branch and should be
+read as a companion repository-wide account; neither supersedes this FG-233
+failure-specific record.
 
 ## Cleanup and ownership state
 

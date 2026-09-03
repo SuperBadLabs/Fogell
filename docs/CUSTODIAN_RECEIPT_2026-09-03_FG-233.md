@@ -48,18 +48,21 @@ This receipt indexes the detailed
 ## Successor snapshot and cautions
 
 - Fetch before branching. This receipt observed `origin/main` at
-  `8dcd7e0a7031eabc4ba95a8aa3537493aad784aa`, tree
-  `08158fe055d086315a083b7117810e3802f68a98`.
+  `cca52659a70b573e15305354f6850c1a474a8ff5`, tree
+  `017ab2e773357a025b62d9bf8ef20cda5c8f3622`.
 - Latest observed main gate
-  [33717759353](https://github.com/SuperBadLabs/Fogell/actions/runs/33717759353)
-  was successful.
+  [33809984538](https://github.com/SuperBadLabs/Fogell/actions/runs/33809984538)
+  was successful on that exact head.
 - Board snapshot: rows=233, DONE=173, open=60, open
   P0/P1/P2/P3=2/19/32/7. Open P0s are FG-026b and FG-236.
 - Open PR #364 was exact-head reviewed, thread-clean, mergeable, and ten-check
   green at observation time; recheck it before acting.
-- Preserve explicit Podman selection, runtime-allocated loopback ports,
-  validated readback, cleanup armed before start, and the blocking FG-233
-  hostile/mutation proof.
+- Preserve explicit Podman selection, runtime-allocated CI/default-local
+  loopback ports, validated readback, cleanup armed before start, and the
+  blocking FG-233 hostile/mutation proof. `pg-test-db.sh` retains a supported,
+  validated explicit-port opt-in for local callers.
+- Read the concurrently merged `docs/WIZARD_HANDOFF_2026-09-03.md` as a
+  companion repository-wide account.
 - The dedicated FG-233 database was removed. Older containers and worktrees are
   ownership-sensitive and were not cleaned up.
 
