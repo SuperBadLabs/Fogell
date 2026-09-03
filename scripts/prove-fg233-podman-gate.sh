@@ -80,7 +80,7 @@ expect_refusal service-container 'service containers select the runner runtime i
 sed -i 's/127\.0\.0\.1::5432/127.0.0.1:55440:5432/' "$scratch/fixed-port-postgres.sh"
 expect_refusal fixed-port 'does not request a runtime-allocated host port'
 
-sed -i '0,/^  FOGELL_CONTAINER_RUNTIME: podman$/d' "$scratch/missing-job-runtime-gate.yml"
+sed -i '0,/^  FOGELL_CONTAINER_RUNTIME: podman$/{/^  FOGELL_CONTAINER_RUNTIME: podman$/d;}' "$scratch/missing-job-runtime-gate.yml"
 expect_refusal missing-job-runtime 'must select Podman exactly once'
 
 sed -i "0,/if: always() && env.FOGELL_PG_CONTAINER != ''/s//if: always()/" "$scratch/missing-cleanup-guard-gate.yml"
