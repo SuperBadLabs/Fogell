@@ -7,7 +7,18 @@ repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 container=${FOGELL_PG_CONTAINER:-fogell-fg060a}
 port=${FOGELL_PG_PORT:-}
 runtime=${FOGELL_CONTAINER_RUNTIME:-podman}
-[[ -n "$port" && "$port" =~ ^[0-9]+$ ]] \
+[[ "$runtime" = podman || "$runtime" = docker ]] \
+  || { echo "FG-224 REFUSED: FOGELL_CONTAINER_RUNTIME must be exactly podman or docker" >&2; exit 2; }
+command -v "$runtime" >/dev/null \
+  || { echo "FG-224 REFUSED: $runtime is required for the scratch database and PID-1 proof" >&2; exit 2; }
+command -v timeout >/dev/null \
+  || { echo "FG-224 REFUSED: coreutils timeout is required to bound this proof" >&2; exit 2; }
+[[ "$container" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] \
+  || { echo "FG-224 REFUSED: FOGELL_PG_CONTAINER must be a literal container name" >&2; exit 2; }
+[[ -n "$port" && "$port" =~ ^[0-9]{1,5}$ ]] \
+  || { echo "FG-224 REFUSED: FOGELL_PG_PORT must be set to the runtime-allocated PostgreSQL host port" >&2; exit 2; }
+port_number=$((10#$port))
+(( port_number >= 1 && port_number <= 65535 )) \
   || { echo "FG-224 REFUSED: FOGELL_PG_PORT must be set to the runtime-allocated PostgreSQL host port" >&2; exit 2; }
 database="fogell_fg224_$$_$(date +%s)"
 role="fogell_fg224_runtime_$$_$(date +%s)"
@@ -15,6 +26,13 @@ listen_port=${FOGELL_FG224_PORT:-18083}
 configuration=${FOGELL_BUILD_CONFIGURATION:-Release}
 base_url="http://127.0.0.1:${listen_port}"
 scratch=$(mktemp -d /tmp/fogell-fg224-proof.XXXXXX)
+cleanup_scratch() {
+  case "$scratch" in
+    /tmp/fogell-fg224-proof.*) rm -rf -- "$scratch" ;;
+    *) echo "FG-224 REFUSED: unsafe cleanup path" >&2 ;;
+  esac
+}
+trap cleanup_scratch EXIT
 state_root="$scratch/state"
 token_file="$scratch/token"
 weak_token_file="$scratch/weak-token"
@@ -212,19 +230,28 @@ cleanup() {
     esac
   fi
 }
+
+mapping_rc=0
+mapping=$(bounded "$runtime_budget" "$runtime" port "$container" 5432/tcp) || mapping_rc=$?
+if budget_expired "$mapping_rc"; then
+  echo "FG-224 REFUSED: $runtime did not report the PostgreSQL port within ${runtime_budget} s" >&2
+  exit 2
+elif (( mapping_rc != 0 )); then
+  echo "FG-224 REFUSED: $runtime could not report the PostgreSQL port" >&2
+  exit 2
+fi
+mapping_pattern='^(5432/tcp[[:space:]]+->[[:space:]]+)?127\.0\.0\.1:([0-9]+)$'
+[[ "$mapping" =~ $mapping_pattern ]] \
+  || { echo "FG-224 REFUSED: PostgreSQL has an unexpected port mapping: $mapping" >&2; exit 2; }
+mapped_port=$((10#${BASH_REMATCH[2]}))
+(( mapped_port == port_number )) \
+  || { echo "FG-224 REFUSED: FOGELL_PG_PORT does not match the selected PostgreSQL container" >&2; exit 2; }
 trap cleanup EXIT
 
 controller="$repo/src/Fogell.Controller.Host/bin/$configuration/net10.0/Fogell.Controller.Host"
 run_host="$repo/tools/Fogell.Run.Host/bin/$configuration/net10.0/Fogell.Run.Host"
 [[ -x "$controller" ]] || { echo "FG-224 REFUSED: controller host is not built" >&2; exit 2; }
 [[ -x "$run_host" ]] || { echo "FG-224 REFUSED: run host is not built" >&2; exit 2; }
-command -v timeout >/dev/null \
-  || { echo "FG-224 REFUSED: coreutils timeout is required to bound this proof" >&2; exit 2; }
-[[ "$runtime" = podman || "$runtime" = docker ]] \
-  || { echo "FG-224 REFUSED: FOGELL_CONTAINER_RUNTIME must be exactly podman or docker" >&2; exit 2; }
-command -v "$runtime" >/dev/null \
-  || { echo "FG-224 REFUSED: $runtime is required for the scratch database and PID-1 proof" >&2; exit 2; }
-
 # Rootless Podman otherwise maps an explicit numeric container user to a
 # subordinate host id that cannot write the bind-mounted scratch directory.
 # keep-id preserves the proof's least-privilege user and its host ownership.
