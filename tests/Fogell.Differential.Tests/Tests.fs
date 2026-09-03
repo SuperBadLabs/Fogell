@@ -7402,7 +7402,8 @@ fi
 /// FG-239 / FG-240. An unusable `timeout` unit is a COMPILE refusal on Jenkins at
 /// either level — MEASURED on 2.568.1 (2026-09-03): `Expecting "class
 /// java.util.concurrent.TimeUnit" for parameter "unit" but got "NOPE"`, FAILURE,
-/// nothing runs. UNPROVEN BY RECEIPT (FG-129). Before this list the stage form was
+/// nothing runs. Receipts `compile-refusal-timeout-unit-stage` and
+/// `compile-refusal-timeout-unit-pipeline`. Before this list the stage form was
 /// refused by the walk without marking the model rejected, so the pipeline `post`
 /// ran and an SCM build reported itself executed (FG-239), and the pipeline form
 /// was validated after the SCM block, so an SCM build cloned first (FG-240).
