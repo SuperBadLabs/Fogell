@@ -191,7 +191,7 @@ for migration in "${migrations[@]}"; do
     >/dev/null
 done
 
-psql_db "$source_db" >/dev/null <<'SQL'
+psql_db "$source_db" -v runtime="$runtime" >/dev/null <<'SQL'
 UPDATE controller_metadata SET restore_epoch = 2 WHERE singleton;
 INSERT INTO organizations (id, slug)
 VALUES ('10000000-0000-0000-0000-000000000001', 'fg085a-org');
@@ -209,7 +209,7 @@ INSERT INTO nodes
 VALUES
   ('40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001',
    '30000000-0000-0000-0000-000000000001', 'deploy', 0, 'trusted-linux',
-   ARRAY['linux', 'podman'], 'running');
+   ARRAY['linux', :'runtime'], 'running');
 INSERT INTO attempts
   (id, organization_id, node_id, ordinal, retry_of, state, fence, restore_epoch,
    lease_owner, lease_expires_at, result, created_at)
