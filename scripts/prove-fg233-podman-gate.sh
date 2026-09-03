@@ -4,7 +4,7 @@
 # hosted controller, hang, build, and database jobs are its live runtime proof.
 set -euo pipefail
 
-for required_command in bash basename chmod cp date dirname mkdir mktemp rm rg sed seq tail timeout tr; do
+for required_command in bash basename chmod cp date dirname mkdir mktemp rm rg sed seq sleep tail timeout tr; do
   command -v "$required_command" >/dev/null \
     || { printf 'FG-233 REFUSED: %s is required\n' "$required_command" >&2; exit 2; }
 done
