@@ -59,8 +59,8 @@ This receipt indexes the detailed
   green at observation time; recheck it before acting.
 - Preserve explicit Podman selection, runtime-allocated CI/default-local
   loopback ports, validated readback, cleanup armed before start, and the
-  blocking FG-233 hostile/mutation proof. `pg-test-db.sh` retains a supported,
-  validated explicit-port opt-in for local callers.
+  blocking FG-233 hostile/mutation proof. `scripts/pg-test-db.sh` retains a
+  supported, validated explicit-port opt-in for local callers.
 - Read the concurrently merged `docs/WIZARD_HANDOFF_2026-09-03.md` as a
   companion repository-wide account.
 - The dedicated FG-233 database was removed. Older containers and worktrees are

@@ -161,9 +161,9 @@ passed all ten checks.
   `services:` or any implicit Docker dependency into the gate.
 - CI and the default local PostgreSQL path must not reserve a fixed host port.
   Container port 5432 is stable; the default loopback host port is
-  runtime-allocated and read back. `pg-test-db.sh` deliberately retains a
-  validated explicit host-port second argument for opt-in local callers; that
-  interface is not deprecated by FG-233.
+  runtime-allocated and read back. `scripts/pg-test-db.sh` deliberately retains
+  a validated explicit host-port second argument for opt-in local callers;
+  that interface is not deprecated by FG-233.
 - Cleanup must be both guarded and armed before start. A setup failure must not
   create either a stranded container or a misleading secondary cleanup failure.
 - Consumers must use the exported validated port; merely allocating a dynamic
