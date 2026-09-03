@@ -7399,6 +7399,168 @@ fi
               Expect.isFalse (opaque.Contains "git@example") "opaque spelling is absent"
           } ]
 
+/// FG-239 / FG-240. An unusable `timeout` unit is a COMPILE refusal on Jenkins at
+/// either level — MEASURED on 2.568.1 (2026-09-03): `Expecting "class
+/// java.util.concurrent.TimeUnit" for parameter "unit" but got "NOPE"`, FAILURE,
+/// nothing runs. UNPROVEN BY RECEIPT (FG-129). Before this list the stage form was
+/// refused by the walk without marking the model rejected, so the pipeline `post`
+/// ran and an SCM build reported itself executed (FG-239), and the pipeline form
+/// was validated after the SCM block, so an SCM build cloned first (FG-240).
+let timeoutUnitRefusals =
+    let withWorkspace label (f: string -> string -> unit) =
+        let root =
+            IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg239-{label}-{Guid.NewGuid():N}")
+
+        IO.Directory.CreateDirectory root |> ignore
+
+        try
+            f root (IO.Path.Combine(root, "job"))
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    let refusedShape (optionBody: string) (stageOptionBody: string) =
+        "pipeline { agent any "
+        + (if optionBody = "" then "" else "options { " + optionBody + " } ")
+        + "stages { stage('must-not-run') { "
+        + (if stageOptionBody = "" then "" else "options { " + stageOptionBody + " } ")
+        + "steps { sh 'touch stage-marker.txt' } } } "
+        + "post { always { sh 'touch post-marker.txt' } } }"
+
+    let assertCompileRefusal label source root workspace =
+        match FogellSide.run [] root "job" source with
+        | Error why -> failtestf "%s did not reach the compile-shaped refusal: %s" label why
+        | Ok trace ->
+            Expect.equal trace.Result "failure" $"{label}: terminal result"
+            Expect.equal trace.Disposition RefusedBeforeExecution $"{label}: refused, not executed"
+            Expect.isTrue trace.ReportedFailureReason $"{label}: the refusal is explained"
+            Expect.isEmpty trace.Output $"{label}: the diagnostic is normalized as engine narration"
+            Expect.isEmpty trace.WorkspaceFiles $"{label}: semantic workspace is empty"
+            Expect.isTrue (IO.Directory.Exists workspace) $"{label}: workspace setup completed"
+
+            Expect.isEmpty
+                (IO.Directory.EnumerateFileSystemEntries(workspace, "*", IO.SearchOption.AllDirectories)
+                 |> Seq.toList)
+                $"{label}: no stage or post effect"
+
+    let runGit cwd args =
+        let start = Diagnostics.ProcessStartInfo()
+        start.FileName <- "git"
+        start.WorkingDirectory <- cwd
+        start.RedirectStandardOutput <- true
+        start.RedirectStandardError <- true
+        start.UseShellExecute <- false
+
+        for name, value in
+            [ "GIT_AUTHOR_NAME", "fogell"
+              "GIT_AUTHOR_EMAIL", "fogell@example.invalid"
+              "GIT_COMMITTER_NAME", "fogell"
+              "GIT_COMMITTER_EMAIL", "fogell@example.invalid" ] do
+            start.Environment[name] <- value
+
+        for a in args do
+            start.ArgumentList.Add a
+
+        use proc = Diagnostics.Process.Start start
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        if proc.ExitCode <> 0 then
+            failwithf "git %s failed: %s" (String.concat " " args) stderr
+
+        stdout.TrimEnd()
+
+    let assertScmRefusalBeforeCheckout (label: string) (script: string) =
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg240-{label}-{Guid.NewGuid():N}")
+        let sourceRepo = IO.Path.Combine(root, "source")
+        let bareRepo = IO.Path.Combine(root, "remote.git")
+        let workspaceRoot = IO.Path.Combine(root, "workspace")
+        let workspace = IO.Path.Combine(workspaceRoot, "job")
+
+        try
+            IO.Directory.CreateDirectory(sourceRepo) |> ignore
+            IO.Directory.CreateDirectory(workspaceRoot) |> ignore
+            runGit sourceRepo [ "init"; "-b"; "main" ] |> ignore
+            IO.File.WriteAllText(IO.Path.Combine(sourceRepo, "Jenkinsfile"), script)
+            runGit sourceRepo [ "add"; "Jenkinsfile" ] |> ignore
+            runGit sourceRepo [ "commit"; "-m"; $"attested {label} definition" ] |> ignore
+            runGit root [ "init"; "--bare"; bareRepo ] |> ignore
+            runGit sourceRepo [ "push"; bareRepo; "main:main" ] |> ignore
+            let scm = { Url = bareRepo; Branch = "main" }
+
+            match FogellSide.runScm [] workspaceRoot "job" scm script with
+            | Error why -> failtestf "%s: matching local SCM did not reach the refusal: %s" label why
+            | Ok trace ->
+                Expect.equal trace.Result "failure" $"{label}: the refusal controls the SCM result"
+                Expect.equal trace.Disposition RefusedBeforeExecution $"{label}: refused, not executed"
+                Expect.isTrue trace.ReportedFailureReason $"{label}: the refusal is explained"
+                Expect.isEmpty trace.Output $"{label}: no checkout or stage narration survives"
+                Expect.isEmpty trace.WorkspaceFiles $"{label}: checkout produced no semantic files"
+                Expect.isTrue (IO.Directory.Exists workspace) $"{label}: workspace setup completed"
+
+                Expect.isEmpty
+                    (IO.Directory.EnumerateFileSystemEntries(workspace, "*", IO.SearchOption.AllDirectories)
+                     |> Seq.toList)
+                    $"{label}: no .git, checkout, stage or post effect"
+        finally
+            if IO.Directory.Exists root then
+                IO.Directory.Delete(root, true)
+
+    testList
+        "FG-239 FG-240 timeout unit refusals"
+        [ test "a stage-level unusable unit refuses the model before every effect" {
+              // FG-239. The observable that used to fail: post-marker.txt existed.
+              for label, stageOption in
+                  [ "unit", "timeout(time: 1, unit: 'NOPE')"
+                    "time", "timeout(time: 'soon', unit: 'MINUTES')" ] do
+                  withWorkspace label (fun root workspace ->
+                      assertCompileRefusal label (refusedShape "" stageOption) root workspace)
+          }
+
+          test "a nested stage's unusable unit is found too" {
+              let source =
+                  "pipeline { agent any stages { stage('outer') { stages { stage('inner') { "
+                  + "options { timeout(time: 1, unit: 'NOPE') } steps { sh 'touch stage-marker.txt' } "
+                  + "} } } } post { always { sh 'touch post-marker.txt' } } }"
+
+              withWorkspace "nested" (fun root workspace -> assertCompileRefusal "nested" source root workspace)
+          }
+
+          test "a pipeline-level unusable unit still refuses before every effect on a plain pipeline" {
+              withWorkspace "pipeline" (fun root workspace ->
+                  assertCompileRefusal "pipeline" (refusedShape "timeout(time: 1, unit: 'NOPE')" "") root workspace)
+          }
+
+          test "a pipeline-level unusable unit on an SCM pipeline refuses before the checkout" {
+              // FG-240. Before: `Obtained Jenkinsfile …`, the clone narration and the
+              // Jenkinsfile in the workspace preceded the refusal.
+              assertScmRefusalBeforeCheckout "pipeline-scm" (refusedShape "timeout(time: 1, unit: 'NOPE')" "")
+          }
+
+          test "a stage-level unusable unit on an SCM pipeline refuses before the checkout" {
+              assertScmRefusalBeforeCheckout "stage-scm" (refusedShape "" "timeout(time: 1, unit: 'NOPE')")
+          }
+
+          test "valid units at both levels still run and announce their budget" {
+              withWorkspace "valid" (fun root workspace ->
+                  let source =
+                      "pipeline { agent any options { timeout(time: 2, unit: 'MINUTES') } "
+                      + "stages { stage('s') { options { timeout(time: 30, unit: 'SECONDS') } "
+                      + "steps { sh 'touch stage-marker.txt' } } } }"
+
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "valid control refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "valid units run"
+                      Expect.isTrue (IO.File.Exists(IO.Path.Combine(workspace, "stage-marker.txt"))) "the stage ran"
+
+                      Expect.equal
+                          (trace.Output |> List.filter (fun l -> l.StartsWith "Timeout set to expire in") |> List.length)
+                          2
+                          "both budgets are announced exactly once")
+          } ]
+
 /// FG-123a. Pipeline `options { ansiColor(...) }` is a Declarative directive,
 /// not the block-taking scripted step with the same name. Jenkins refuses a
 /// trailing closure while compiling the model, before checkout or build effects.
@@ -10112,4 +10274,5 @@ let main argv =
               stashSymlinkContainment
               dirWorkspaceLifecycle
               parallelsAlwaysFailFastArguments
-              ansiColorTrailingBlocks ])
+              ansiColorTrailingBlocks
+              timeoutUnitRefusals ])
