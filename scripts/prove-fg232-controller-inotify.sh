@@ -51,6 +51,10 @@ database="fogell_fg232_$$_$(date +%s)"
 role="fogell_fg232_runtime_$$_$(date +%s)"
 scratch=$(mktemp -d /tmp/fogell-fg232-proof.XXXXXX)
 cleanup_scratch() {
+  if [[ ${FOGELL_KEEP_FG232_PROOF:-0} = 1 ]]; then
+    echo "FG-232 proof scratch retained: $scratch" >&2
+    return
+  fi
   case "$scratch" in
     /tmp/fogell-fg232-proof.*) rm -rf -- "$scratch" ;;
     *) echo "FG-232 REFUSED: unsafe cleanup path" >&2 ;;

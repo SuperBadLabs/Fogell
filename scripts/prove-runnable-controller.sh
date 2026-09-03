@@ -27,6 +27,10 @@ configuration=${FOGELL_BUILD_CONFIGURATION:-Release}
 base_url="http://127.0.0.1:${listen_port}"
 scratch=$(mktemp -d /tmp/fogell-fg224-proof.XXXXXX)
 cleanup_scratch() {
+  if [[ ${FOGELL_KEEP_FG224_PROOF:-0} = 1 ]]; then
+    echo "FG-224 proof scratch retained: $scratch" >&2
+    return
+  fi
   case "$scratch" in
     /tmp/fogell-fg224-proof.*) rm -rf -- "$scratch" ;;
     *) echo "FG-224 REFUSED: unsafe cleanup path" >&2 ;;
