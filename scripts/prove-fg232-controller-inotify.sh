@@ -29,8 +29,10 @@ set -Eeuo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 container=${FOGELL_PG_CONTAINER:-fogell-fg060a}
-port=${FOGELL_PG_PORT:-55445}
+port=${FOGELL_PG_PORT:-}
 runtime=${FOGELL_CONTAINER_RUNTIME:-podman}
+[[ -n "$port" && "$port" =~ ^[0-9]+$ ]] \
+  || { echo "FG-232 REFUSED: FOGELL_PG_PORT must be set to the runtime-allocated PostgreSQL host port" >&2; exit 2; }
 # Distinct from the FG-224 proof's 18083 so the two can never contend.
 listen_port=${FOGELL_FG232_PORT:-18084}
 configuration=${FOGELL_BUILD_CONFIGURATION:-Release}
