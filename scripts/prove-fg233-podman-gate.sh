@@ -211,4 +211,17 @@ failed_start_removals=$(rg -c '^rm -f fogell-fg233-failed-start$' "$failed_start
 [[ "$failed_start_removals" = 2 ]] \
   || { refuse "a failed local PostgreSQL start was not cleaned up (found $failed_start_removals removals)"; exit 1; }
 
+rm -f "$failed_start_calls"
+failed_ci_start_rc=0
+PATH="$scratch/bin:$PATH" FG233_FAILED_START_CALLS="$failed_start_calls" \
+  FOGELL_CONTAINER_RUNTIME=podman GITHUB_RUN_ID=fg233 GITHUB_JOB=failed-start \
+  GITHUB_RUN_ATTEMPT=1 bash "$postgres" start \
+  >"$scratch/failed-ci-start.log" 2>&1 || failed_ci_start_rc=$?
+[[ "$failed_ci_start_rc" != 0 ]] \
+  || { refuse "the hosted PostgreSQL helper accepted a failed container start"; exit 1; }
+failed_ci_runs=$(rg -c '^run --detach --rm --name fogell-gate-postgres-' "$failed_start_calls" || true)
+failed_ci_removals=$(rg -c '^rm -f fogell-gate-postgres-' "$failed_start_calls" || true)
+[[ "$failed_ci_runs" = 1 && "$failed_ci_removals" = 1 ]] \
+  || { refuse "a failed hosted PostgreSQL start was not cleaned up (found $failed_ci_runs runs and $failed_ci_removals removals)"; exit 1; }
+
 echo "FG-233 PROOF PASS: Podman is explicit, Actions services are absent, four jobs own guarded disposable PostgreSQL lifecycles, and hosted plus local host ports are runtime-allocated"

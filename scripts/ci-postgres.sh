@@ -28,6 +28,9 @@ case "${1:-}" in
     }
     trap cleanup_failed_start EXIT
 
+    # Arm cleanup before run: a runtime may create the named container and
+    # still return nonzero, before the workflow has an exported name to stop.
+    started=1
     "$runtime" run --detach --rm --name "$container" \
       --publish 127.0.0.1::5432 \
       --env POSTGRES_USER=fogell \
@@ -38,7 +41,6 @@ case "${1:-}" in
       --health-timeout 5s \
       --health-retries 60 \
       "$image" >/dev/null
-    started=1
 
     mapping=$("$runtime" port "$container" 5432/tcp) \
       || die "could not read the allocated PostgreSQL host port"
