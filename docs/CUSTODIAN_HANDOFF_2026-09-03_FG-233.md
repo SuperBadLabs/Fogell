@@ -55,8 +55,10 @@ controller proof, controller inotify proof, backup/restore drill, and migration
 rollback drill. Cleanup is armed before container start, so a runtime that
 creates a container and then exits nonzero does not strand it before state
 export. Literal container names, explicit ports, runtime names, and observed
-port mappings are validated before use. `KEEP=1` remains the explicit
-diagnostic-retention path.
+port mappings are validated before use. Diagnostic retention for the controller
+proofs is selected by `FOGELL_KEEP_FG224_PROOF=1`,
+`FOGELL_KEEP_FG231_PROOF=1`, and `FOGELL_KEEP_FG232_PROOF=1`, respectively.
+Do not substitute a generic `KEEP` variable for those ticket-specific controls.
 
 `scripts/prove-fg233-podman-gate.sh` is blocking. It kills ten planted
 regressions covering restored Actions services, restored fixed ports, missing
