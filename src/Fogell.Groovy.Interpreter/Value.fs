@@ -204,9 +204,12 @@ module Value =
         | Unmodelled
 
     /// A total, host-safe answer for the subset of Groovy values which Fogell
-    /// orders. `OrderingCycleDetected` means structural comparison revisited the
-    /// same pair and Jenkins would overflow; `Unorderable` keeps closures and
-    /// functions out of the host runtime's generic comparer.
+    /// orders (see `tryCompare`). `OrderingCycleDetected` means the pair takes
+    /// Jenkins' hash fallback and a reference cycle inside either element would
+    /// overflow there; `Unorderable` is every other fallback pair — a
+    /// non-identical map, list or range on either side, two scalars of
+    /// different classes, closures, functions and nominal Jenkins values —
+    /// whose Java hash order this engine does not model.
     type Ordered =
         | Order of int
         | OrderingCycleDetected
@@ -500,124 +503,44 @@ module Value =
             let answer = go [] a b
             if cycle then CycleDetected else Answer answer
 
-    /// Cycle-aware structural ordering for collection builtins. This preserves
-    /// the old discriminated-union ordering for acyclic values while ensuring
-    /// no runtime `compare` can follow a script-constructed reference cycle.
+    /// Host-safe ordering for the `sort` builtin, shaped by what Jenkins'
+    /// `NumberAwareComparator` was MEASURED to do on the pinned lab (FG-205,
+    /// receipt `fg205-cyclic-map-sort` and the probe table on the ticket):
     ///
-    /// Jenkins' top-level alias case (`[a, a].sort()`) returns normally, but two
-    /// distinct wrapper lists which both contain the same cyclic `a` overflow.
-    /// Therefore the identity shortcut belongs only at the comparator entry;
-    /// recursive collection comparison must descend and detect the repeated pair.
+    /// - the same list or map object on both sides orders equal before anything
+    ///   else is inspected (`left == right`), so `[a, a].sort()` returns even
+    ///   when `a` is cyclic;
+    /// - `null` orders first; two integral numbers compare numerically; two
+    ///   strings by UTF-16 code unit; two booleans false-first;
+    /// - EVERY other pair takes Groovy's fallback: the `Cannot compare` error is
+    ///   swallowed and both elements' `hashCode()` decide. That covers a map,
+    ///   list or range on either side and two scalars of different classes
+    ///   (`'ab'` against `5000`, `true` against `1`). A reference cycle anywhere
+    ///   inside either element overflows there — a StackOverflowError, an Error
+    ///   and not an Exception — which `OrderingCycleDetected` reports even when
+    ///   the elements differ before the cycle is reached (`[[1, m], [2]]`). An
+    ///   acyclic pair sorts by Java hash order on Jenkins, and unequal elements
+    ///   that tie on hash were measured to come out reversed from either
+    ///   insertion order (by Groovy's source, an inconsistent comparison under
+    ///   the sort's run detection). Fogell does not model Java hash codes: by
+    ///   that source an interpolated GString and a literal String hash
+    ///   differently, and `VInt` does not know Integer from Long. Such a pair
+    ///   is therefore `Unorderable` and the
+    ///   builtin refuses by name, where until FG-205 it sorted structurally and
+    ///   printed an order Jenkins does not produce.
     let tryCompare (a: Value) (b: Value) : Ordered =
-        let mutable cycle = false
-        let mutable unorderable = false
-        let completed = System.Collections.Generic.HashSet<obj * obj>(ReferencePairComparer())
+        let integral =
+            function
+            | VInt v
+            | VInteger v
+            | VArithmeticInteger v -> Some v
+            | _ -> None
 
-        let rank = function
-            | VNull -> 0
-            | VBool _ -> 1
-            | VInt _ -> 2
-            | VInteger _ -> 2
-            | VArithmeticInteger _ -> 2
-            | VFloat _ -> 2
-            | VStr _ -> 3
-            | VList _ -> 4
-            | VRange _ -> 4
-            | VMap _ -> 5
-            | VJUnitSummary _ -> 6
-            | VScmMap _ -> 7
-            | VScmKeySet _ -> 8
-            | VClosure _ -> 9
-            | VFunc _ -> 10
-
-        let seenPair (seen: (obj * obj) list) left right =
-            seen
-            |> List.exists (fun (priorLeft, priorRight) ->
-                System.Object.ReferenceEquals(priorLeft, left)
-                && System.Object.ReferenceEquals(priorRight, right))
-
-        let rec compareValues seen left right =
-            let leftRank = rank left
-            let rightRank = rank right
-
-            if leftRank <> rightRank then
-                compare leftRank rightRank
+        let hashFallback () =
+            if hasReferenceCycle a || hasReferenceCycle b then
+                OrderingCycleDetected
             else
-                match left, right with
-                | VNull, VNull -> 0
-                | VBool x, VBool y -> compare x y
-                | VInt x, VInt y -> compare x y
-                | VInteger x, VInteger y
-                | VInteger x, VInt y
-                | VInt x, VInteger y
-                | VArithmeticInteger x, VArithmeticInteger y
-                | VArithmeticInteger x, VInt y
-                | VInt x, VArithmeticInteger y
-                | VArithmeticInteger x, VInteger y
-                | VInteger x, VArithmeticInteger y -> compare x y
-                | VStr x, VStr y -> compare x y
-                | VList xs, VList ys ->
-                    let pair = box xs, box ys
-
-                    if completed.Contains pair then
-                        0
-                    elif seenPair seen (box xs) (box ys) then
-                        cycle <- true
-                        0
-                    else
-                        let answer = compareLists (pair :: seen) xs.Value ys.Value
-                        if answer = 0 && not cycle && not unorderable then completed.Add pair |> ignore
-                        answer
-                | VRange xs, VRange ys -> compareLists seen (rangeItems xs) (rangeItems ys)
-                | VRange xs, VList ys -> compareLists seen (rangeItems xs) ys.Value
-                | VList xs, VRange ys -> compareLists seen xs.Value (rangeItems ys)
-                | VMap xs, VMap ys ->
-                    let pair = box xs, box ys
-
-                    if completed.Contains pair then
-                        0
-                    elif seenPair seen (box xs) (box ys) then
-                        cycle <- true
-                        0
-                    else
-                        let answer = compareEntries (pair :: seen) (Map.toList xs.Value) (Map.toList ys.Value)
-                        if answer = 0 && not cycle && not unorderable then completed.Add pair |> ignore
-                        answer
-                | VJUnitSummary _, VJUnitSummary _
-                | VScmMap _, VScmMap _
-                | VScmKeySet _, VScmKeySet _
-                | VClosure _, VClosure _
-                | VFunc _, VFunc _ ->
-                    unorderable <- true
-                    0
-                | _ -> 0
-
-        and compareLists seen left right =
-            match left, right with
-            | [], [] -> 0
-            | [], _ -> -1
-            | _, [] -> 1
-            | x :: xs, y :: ys ->
-                let first = compareValues seen x y
-                if first <> 0 || cycle || unorderable then first else compareLists seen xs ys
-
-        and compareEntries seen left right =
-            match left, right with
-            | [], [] -> 0
-            | [], _ -> -1
-            | _, [] -> 1
-            | (leftKey, leftValue) :: leftTail, (rightKey, rightValue) :: rightTail ->
-                let keyOrder = compare leftKey rightKey
-
-                if keyOrder <> 0 then
-                    keyOrder
-                else
-                    let valueOrder = compareValues seen leftValue rightValue
-
-                    if valueOrder <> 0 || cycle || unorderable then
-                        valueOrder
-                    else
-                        compareEntries seen leftTail rightTail
+                Unorderable
 
         if
             containsNominalJenkinsValue a
@@ -627,15 +550,18 @@ module Value =
         then
             Unorderable
         else
-            let answer =
-                match a, b with
-                | VList xs, VList ys when System.Object.ReferenceEquals(xs, ys) -> 0
-                | VMap xs, VMap ys when System.Object.ReferenceEquals(xs, ys) -> 0
-                | _ -> compareValues [] a b
-
-            if cycle then OrderingCycleDetected
-            elif unorderable then Unorderable
-            else Order answer
+            match a, b with
+            | VList xs, VList ys when System.Object.ReferenceEquals(xs, ys) -> Order 0
+            | VMap xs, VMap ys when System.Object.ReferenceEquals(xs, ys) -> Order 0
+            | VNull, VNull -> Order 0
+            | VNull, _ -> Order -1
+            | _, VNull -> Order 1
+            | VStr x, VStr y -> Order(compare x y)
+            | VBool x, VBool y -> Order(compare x y)
+            | _ ->
+                match integral a, integral b with
+                | Some x, Some y -> Order(compare x y)
+                | _ -> hashFallback ()
 
     /// Groovy truthiness: null, false, 0, "" and empty collections are falsy.
     let isTruthy =

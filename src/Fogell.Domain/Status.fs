@@ -11,7 +11,7 @@ type BuildStatus =
 
 module BuildStatus =
 
-    /// Severity rank. Higher wins in [worstOf]. Chosen to match Jenkins'
+    /// Severity order. Higher wins in [worstOf]. Chosen to match Jenkins'
     /// observable aggregation: a failing stage makes the build fail; an
     /// unstable stage only degrades it; an abort dominates because the operator
     /// asked for it and must not be masked by a later failure.

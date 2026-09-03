@@ -226,7 +226,7 @@ module Interpreter =
         "unsupported_assignment_target: Fogell cannot model this assignment target; refusing before the RHS instead of reporting success without a write"
 
     let collectionOrderingRefusal =
-        "unsupported_collection_ordering: Fogell cannot safely order this value type; refusing instead of invoking the host runtime comparer"
+        "unsupported_collection_ordering: Jenkins orders these elements by their Java hashCode (FG-205: measured for maps, lists and scalars of different classes), an order Fogell does not model; refusing instead of sorting them structurally"
 
     exception private Stop of Fault
     exception private ReturnSignal of Value
