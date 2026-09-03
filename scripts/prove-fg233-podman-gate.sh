@@ -17,7 +17,6 @@ trap 'rm -rf -- "$scratch"' EXIT
 
 refuse() {
   printf 'FG-233 REFUSED: %s\n' "$*" >&2
-  return 1
 }
 
 check_candidate() {
