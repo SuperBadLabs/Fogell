@@ -186,6 +186,12 @@ if lane_active build; then
 fi
 
 if lane_active audits; then
+  # FG-233. GitHub service containers silently choose Docker and the fixed
+  # PostgreSQL port failed run 33693320962 before checkout. Prove the workflow
+  # selects Podman, owns each database lifecycle, and asks the runtime for an
+  # unused host port; the hosted jobs separately exercise the live semantics.
+  ./scripts/prove-fg233-podman-gate.sh || { echo "FG-233 PODMAN GATE PROOF FAILED"; exit 1; }
+
   # FG-104. BLOCKING. Every MEASURED claim must cite a receipt or admit UNPROVEN. The
   # backlog it was introduced against (30) is zero, so the check now fails the build instead
   # of printing at it — an advisory check nobody must act on decays into noise.

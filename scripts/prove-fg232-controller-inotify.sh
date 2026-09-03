@@ -29,7 +29,20 @@ set -Eeuo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 container=${FOGELL_PG_CONTAINER:-fogell-fg060a}
-port=${FOGELL_PG_PORT:-55445}
+port=${FOGELL_PG_PORT:-}
+runtime=${FOGELL_CONTAINER_RUNTIME:-podman}
+[[ "$runtime" = podman || "$runtime" = docker ]] \
+  || { echo "FG-232 REFUSED: FOGELL_CONTAINER_RUNTIME must be exactly podman or docker" >&2; exit 2; }
+command -v "$runtime" >/dev/null \
+  || { echo "FG-232 REFUSED: $runtime is required for the scratch database" >&2; exit 2; }
+command -v timeout >/dev/null || { echo "FG-232 REFUSED: coreutils timeout is required to bound this proof" >&2; exit 2; }
+[[ "$container" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] \
+  || { echo "FG-232 REFUSED: FOGELL_PG_CONTAINER must be a literal container name" >&2; exit 2; }
+[[ -n "$port" && "$port" =~ ^[0-9]{1,5}$ ]] \
+  || { echo "FG-232 REFUSED: FOGELL_PG_PORT must be set to the runtime-allocated PostgreSQL host port" >&2; exit 2; }
+port_number=$((10#$port))
+(( port_number >= 1 && port_number <= 65535 )) \
+  || { echo "FG-232 REFUSED: FOGELL_PG_PORT must be set to the runtime-allocated PostgreSQL host port" >&2; exit 2; }
 # Distinct from the FG-224 proof's 18083 so the two can never contend.
 listen_port=${FOGELL_FG232_PORT:-18084}
 configuration=${FOGELL_BUILD_CONFIGURATION:-Release}
@@ -37,6 +50,17 @@ base_url="http://127.0.0.1:${listen_port}"
 database="fogell_fg232_$$_$(date +%s)"
 role="fogell_fg232_runtime_$$_$(date +%s)"
 scratch=$(mktemp -d /tmp/fogell-fg232-proof.XXXXXX)
+cleanup_scratch() {
+  if [[ ${FOGELL_KEEP_FG232_PROOF:-0} = 1 ]]; then
+    echo "FG-232 proof scratch retained: $scratch" >&2
+    return
+  fi
+  case "$scratch" in
+    /tmp/fogell-fg232-proof.*) rm -rf -- "$scratch" ;;
+    *) echo "FG-232 REFUSED: unsafe cleanup path" >&2 ;;
+  esac
+}
+trap cleanup_scratch EXIT
 state_root="$scratch/state"
 token_file="$scratch/token"
 host_log="$scratch/controller.log"
@@ -53,7 +77,7 @@ watch_bound=64
 launch_subdirectories=256
 
 # Every wait is bounded and every bound names what it waited for (FG-231).
-docker_budget=30
+runtime_budget=30
 process_budget=30
 reap_budget_ms=15000
 http_max_time=10
@@ -125,7 +149,7 @@ on_err() {
 trap 'on_err $? $LINENO "$BASH_COMMAND"' ERR
 
 admin() {
-  bounded "$docker_budget" docker exec "$container" psql -U fogell -d "$1" -v ON_ERROR_STOP=1 "${@:2}"
+  bounded "$runtime_budget" "$runtime" exec "$container" psql -U fogell -d "$1" -v ON_ERROR_STOP=1 "${@:2}"
 }
 
 release_controller() {
@@ -145,10 +169,10 @@ release_stand_in() {
 cleanup() {
   release_stand_in
   release_controller
-  bounded "$docker_budget" docker exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
+  bounded "$runtime_budget" "$runtime" exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
     -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$database' AND pid <> pg_backend_pid()" \
     -c "DROP DATABASE IF EXISTS $database" >/dev/null 2>&1 || true
-  bounded "$docker_budget" docker exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
+  bounded "$runtime_budget" "$runtime" exec "$container" psql -U fogell -d postgres -v ON_ERROR_STOP=1 \
     -c "DROP OWNED BY $role" -c "DROP ROLE IF EXISTS $role" >/dev/null 2>&1 || true
   if [[ ${FOGELL_KEEP_FG232_PROOF:-0} = 1 ]]; then
     echo "FG-232 proof scratch retained: $scratch" >&2
@@ -159,6 +183,22 @@ cleanup() {
     esac
   fi
 }
+
+mapping_rc=0
+mapping=$(bounded "$runtime_budget" "$runtime" port "$container" 5432/tcp) || mapping_rc=$?
+if budget_expired "$mapping_rc"; then
+  echo "FG-232 REFUSED: $runtime did not report the PostgreSQL port within ${runtime_budget} s" >&2
+  exit 2
+elif (( mapping_rc != 0 )); then
+  echo "FG-232 REFUSED: $runtime could not report the PostgreSQL port" >&2
+  exit 2
+fi
+mapping_pattern='^(5432/tcp[[:space:]]+->[[:space:]]+)?127\.0\.0\.1:([0-9]+)$'
+[[ "$mapping" =~ $mapping_pattern ]] \
+  || { echo "FG-232 REFUSED: PostgreSQL has an unexpected port mapping: $mapping" >&2; exit 2; }
+mapped_port=$((10#${BASH_REMATCH[2]}))
+(( mapped_port == port_number )) \
+  || { echo "FG-232 REFUSED: FOGELL_PG_PORT does not match the selected PostgreSQL container" >&2; exit 2; }
 trap cleanup EXIT
 
 controller="$repo/src/Fogell.Controller.Host/bin/$configuration/net10.0/Fogell.Controller.Host"
@@ -166,12 +206,9 @@ run_host="$repo/tools/Fogell.Run.Host/bin/$configuration/net10.0/Fogell.Run.Host
 [[ -x "$controller" ]] || { echo "FG-232 REFUSED: controller host is not built" >&2; exit 2; }
 [[ -x "$run_host" ]] || { echo "FG-232 REFUSED: run host is not built" >&2; exit 2; }
 [[ -d /proc/self/fdinfo ]] || { echo "FG-232 REFUSED: /proc/<pid>/fdinfo is required to count inotify watches" >&2; exit 2; }
-command -v timeout >/dev/null || { echo "FG-232 REFUSED: coreutils timeout is required to bound this proof" >&2; exit 2; }
 command -v python3 >/dev/null || { echo "FG-232 REFUSED: python3 is required for the counter and the stand-in" >&2; exit 2; }
 command -v rg >/dev/null || { echo "FG-232 REFUSED: rg (ripgrep) is required" >&2; exit 2; }
 command -v curl >/dev/null || { echo "FG-232 REFUSED: curl is required" >&2; exit 2; }
-command -v docker >/dev/null || { echo "FG-232 REFUSED: docker is required for the scratch database" >&2; exit 2; }
-
 # The inotify instances and watches a process holds: an instance is a
 # descriptor whose /proc/<pid>/fd link reads `anon_inode:inotify` (so an
 # instance holding no watches still counts), and its watches are the

@@ -70,6 +70,10 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
+  # FG-233. The owner's container runtime is explicit. GitHub service
+  # containers silently select Docker and require a shared host-port number;
+  # run 33693320962 failed before checkout when that fixed port was occupied.
+  FOGELL_CONTAINER_RUNTIME: podman
   # THE EXACT HEAD, not the synthetic merge ref. On a pull_request event checkout
   # defaults to `refs/pull/N/merge`, a merge of the head into its base that
   # exists nowhere else. The branch-push run used to be the one that tested the
@@ -136,22 +140,6 @@ jobs:
       fail-fast: false
       matrix:
         lane: ${{ fromJSON(needs.plan.outputs.lanes) }}
-    services:
-      # Needed by the `build` lane (Store and Controller.Api suites, FG-026).
-      # Services cannot be conditional per matrix entry; the other lanes carry
-      # it unused at ~16 s each.
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: fogell
-          POSTGRES_DB: fogell
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports: ["55440:5432"]
-        options: >-
-          --health-cmd "pg_isready -U fogell"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -163,6 +151,13 @@ jobs:
           # it will not report a clean tree it never compared against. Giving
           # it the ref is the workflow's job.
           fetch-depth: 0
+
+      - name: start PostgreSQL under Podman
+        if: matrix.lane == 'build'
+        # Only the build lane runs Store and Controller.Api suites (FG-026).
+        # The runtime allocates an unused host port and publishes its value
+        # through GITHUB_ENV; no runner-global port is assumed.
+        run: ./scripts/ci-postgres.sh start
 
       - name: name the audit's comparison ref
         # Only the `stale-refs` lane reads FOGELL_STALE_REF_BASE, but the step
@@ -304,7 +299,6 @@ jobs:
       - name: gate lane ${{ matrix.lane }}
         env:
           FOGELL_GATE_LANES: ${{ matrix.lane }}
-          FOGELL_TEST_DATABASE_URL: "Host=127.0.0.1;Port=55440;Username=fogell;Database=fogell"
         # The log is kept for the step below. `pipefail` is set explicitly rather
         # than trusted to the runner's default shell: the exit status this step
         # reports must be the gate's, never tee's.
@@ -331,6 +325,10 @@ jobs:
         run: |
           rg -F 'tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj: EXPECTO!' "$RUNNER_TEMP/gate.log"
 
+      - name: stop PostgreSQL
+        if: always() && matrix.lane == 'build' && env.FOGELL_PG_CONTAINER != ''
+        run: ./scripts/ci-postgres.sh stop
+
   controller:
     # The two FG-224 runnable-controller proofs. They run the built Controller.Host
     # and Run.Host apphosts and nothing else, so only those two projects (and
@@ -340,35 +338,25 @@ jobs:
     # there, have jobs of their own below: 192 s and 99 s that sat on this path.
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: fogell
-          POSTGRES_DB: fogell
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports: ["55440:5432"]
-        options: >-
-          --health-cmd "pg_isready -U fogell"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.GATE_CHECKOUT_REF }}
+
+      - name: start PostgreSQL under Podman
+        run: ./scripts/ci-postgres.sh start
 
       - name: start pulling the PID-1 controller image
         # The PID-1 proof below runs the controller inside a digest-pinned image
         # of ~850 MB. Pulling it inside that step cost ~14 s of its 51 s on run
         # 33567174871 while the network sat idle through the build before it.
         # Start the pull here, detached, so it overlaps the build. The PID-1
-        # step still runs its own synchronous `docker pull`, which no-ops on a
+        # step still runs its own synchronous runtime pull, which no-ops on a
         # finished pull and waits on one in flight, so nothing below depends on
         # this having completed. Output goes to a file: a background process
         # holding the step's stdout would keep the step from ending.
         run: |
-          nohup docker pull "$FG224_CONTROLLER_IMAGE" >"$RUNNER_TEMP/fg224-image-pull.log" 2>&1 &
+          nohup "$FOGELL_CONTAINER_RUNTIME" pull "$FG224_CONTROLLER_IMAGE" >"$RUNNER_TEMP/fg224-image-pull.log" 2>&1 &
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -401,8 +389,6 @@ jobs:
         # so this is the backstop for a bound that itself fails to fire.
         timeout-minutes: 10
         env:
-          FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
-          FOGELL_PG_PORT: 55440
           FOGELL_BUILD_CONFIGURATION: Release
         run: ./scripts/prove-runnable-controller.sh
 
@@ -414,16 +400,14 @@ jobs:
         # a real nested step, then binds Run.Host, shell, and sleep extinction.
         # 51 s on run 33567962039. This is the step that hung on 2026-09-01:
         # the proof refused 13.7 s in and nothing bounded its EXIT trap's
-        # `docker stop` or the `wait` on the `docker run` client (FG-231).
+        # runtime stop call or the wait on its run client (FG-231).
         timeout-minutes: 10
         env:
-          FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
-          FOGELL_PG_PORT: 55440
           FOGELL_BUILD_CONFIGURATION: Release
           FOGELL_FG224_CONTROLLER_IMAGE: ${{ env.FG224_CONTROLLER_IMAGE }}
         run: |
           # Completes or no-ops the pull started before the build step.
-          docker pull "$FOGELL_FG224_CONTROLLER_IMAGE" >/dev/null
+          "$FOGELL_CONTAINER_RUNTIME" pull "$FOGELL_FG224_CONTROLLER_IMAGE" >/dev/null
           ./scripts/prove-runnable-controller.sh
 
       - name: controller inotify footprint is bounded regardless of cwd (FG-232)
@@ -442,10 +426,12 @@ jobs:
         # because it runs the real controller like the two FG-224 steps above it.
         timeout-minutes: 10
         env:
-          FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
-          FOGELL_PG_PORT: 55440
           FOGELL_BUILD_CONFIGURATION: Release
         run: ./scripts/prove-fg232-controller-inotify.sh
+
+      - name: stop PostgreSQL
+        if: always() && env.FOGELL_PG_CONTAINER != ''
+        run: ./scripts/ci-postgres.sh stop
 
   hang-proof:
     # FG-231: the runnable-controller proof shown to fail. Six planted stalls,
@@ -459,29 +445,19 @@ jobs:
     # rather than after them. Same build as `controller`, for the same reason.
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: fogell
-          POSTGRES_DB: fogell
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports: ["55440:5432"]
-        options: >-
-          --health-cmd "pg_isready -U fogell"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.GATE_CHECKOUT_REF }}
 
+      - name: start PostgreSQL under Podman
+        run: ./scripts/ci-postgres.sh start
+
       - name: start pulling the PID-1 controller image
         # Two of the six arms run the controller inside the pinned image; see
         # the `controller` job for why the pull starts here.
         run: |
-          nohup docker pull "$FG224_CONTROLLER_IMAGE" >"$RUNNER_TEMP/fg224-image-pull.log" 2>&1 &
+          nohup "$FOGELL_CONTAINER_RUNTIME" pull "$FG224_CONTROLLER_IMAGE" >"$RUNNER_TEMP/fg224-image-pull.log" 2>&1 &
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -504,53 +480,42 @@ jobs:
         # Plants six stalls in byte-mutated copies of the proof above — a
         # controller ignoring SIGTERM, a silent HTTP socket, a Run.Host that
         # never exits (leaving on SIGTERM, and ignoring it), a post-launch
-        # refusal whose `docker stop` hangs, and a `docker run` that creates
+        # refusal whose runtime stop hangs, and a runtime run that creates
         # the container only after the identity budget expired — and requires
         # each to become a named refusal within budget
         # with no controller left behind. This is the checker being shown to
         # fail; the two steps in the `controller` job are it passing.
         timeout-minutes: 10
         env:
-          FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
-          FOGELL_PG_PORT: 55440
           FOGELL_BUILD_CONFIGURATION: Release
           FOGELL_FG224_CONTROLLER_IMAGE: ${{ env.FG224_CONTROLLER_IMAGE }}
         run: |
-          docker pull "$FOGELL_FG224_CONTROLLER_IMAGE" >/dev/null
+          "$FOGELL_CONTAINER_RUNTIME" pull "$FOGELL_FG224_CONTROLLER_IMAGE" >/dev/null
           ./scripts/prove-fg231-proof-bounds.sh
+
+      - name: stop PostgreSQL
+        if: always() && env.FOGELL_PG_CONTAINER != ''
+        run: ./scripts/ci-postgres.sh stop
 
   database:
     # The PostgreSQL drills. Both scripts drive psql, pg_dump and pg_restore
-    # INSIDE the service container and run nothing built from this tree, so
+    # INSIDE the Podman PostgreSQL container and run nothing built from this tree, so
     # this job has no SDK, no build and no ripgrep: a checkout and postgres.
     # 13 s + 86 s on run 33595804856.
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: fogell
-          POSTGRES_DB: fogell
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports: ["55440:5432"]
-        options: >-
-          --health-cmd "pg_isready -U fogell"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.GATE_CHECKOUT_REF }}
 
+      - name: start PostgreSQL under Podman
+        run: ./scripts/ci-postgres.sh start
+
       - name: backup/restore drill and hostile proof (FG-085a)
-        # The postgres:16 service is also the client-tool distribution. Keeping
+        # The postgres:16 container is also the client-tool distribution. Keeping
         # pg_dump/pg_restore inside that container gives the drill exact-major
         # tools without a mutable apt install or network download.
-        env:
-          FOGELL_CONTAINER_RUNTIME: docker
-          FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
         run: |
           ./scripts/prove-backup-restore-drill.sh
           ./scripts/backup-restore-drill.sh
@@ -558,13 +523,14 @@ jobs:
       - name: migration rollback rehearsal and hostile proof (FG-081)
         # Restore-based rollback is a PostgreSQL property. Run the positive
         # forward/back/forward sequence and its false-green controls against the
-        # same exact-major service/client container used by the backup drill.
-        env:
-          FOGELL_CONTAINER_RUNTIME: docker
-          FOGELL_PG_CONTAINER: ${{ job.services.postgres.id }}
+        # same exact-major client/server container used by the backup drill.
         run: |
           ./scripts/prove-migration-rollback-drill.sh
           ./scripts/migration-rollback-drill.sh
+
+      - name: stop PostgreSQL
+        if: always() && env.FOGELL_PG_CONTAINER != ''
+        run: ./scripts/ci-postgres.sh stop
 
   gate:
     # THE REQUIRED CHECK. Branch protection requires exactly one context named
