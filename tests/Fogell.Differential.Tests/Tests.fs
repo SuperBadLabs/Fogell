@@ -2020,6 +2020,113 @@ let userOutputSurvives =
                   "no frame, no trace, no reason"
           }
 
+          test "FG-243: a multi-line exception message is the head's, when a frame confirms it" {
+              // MEASURED (receipt `fg243-when-regex-fault-uncaught`): a `when` expression
+              // throwing PatternSyntaxException prints the head, the pattern, a caret and
+              // then 66 frames — the first four `java.base/` ones; the head was compared
+              // as output and the failure counted as unreported because the first frame
+              // was three lines away.
+              let jenkinsFailure =
+                  [ "order:[caught]"
+                    "Stage \"after\" skipped due to earlier failure(s)"
+                    "Also:   hudson.remoting.ProxyException: org.jenkinsci.plugins.workflow.actions.ErrorAction$ErrorId: e1fe9236-9654-4145-9786-b50ba11ba1e7"
+                    "hudson.remoting.ProxyException: java.util.regex.PatternSyntaxException: Unmatched closing ')' near index 0"
+                    "a)b|ab"
+                    "^"
+                    "at java.base/java.util.regex.Pattern.error(Unknown Source)"
+                    "at org.codehaus.groovy.runtime.InvokerHelper.matchRegex(InvokerHelper.java:366)"
+                    "at java.base/java.lang.Thread.run(Unknown Source)" ]
+
+              Expect.equal
+                  (Trace.normaliseOutput jenkinsFailure)
+                  [ "order:[caught]"; "Stage \"after\" skipped due to earlier failure(s)" ]
+                  "the wrapped marker, the head, its two message lines and the frames are all narration"
+
+              Expect.isTrue (Trace.reportedFailureReason jenkinsFailure) "the confirmed trace explains the failure"
+
+              // The remoting wrapper on the marker is accepted only behind the measured
+              // `Also:` prefix; the bare wrapped form is a build's own line.
+              let bareWrappedMarker =
+                  [ "hudson.remoting.ProxyException: org.jenkinsci.plugins.workflow.actions.ErrorAction$ErrorId: e1fe9236-9654-4145-9786-b50ba11ba1e7" ]
+
+              Expect.equal (Trace.normaliseOutput bareWrappedMarker) bareWrappedMarker "unmeasured form compares"
+              Expect.isFalse (Trace.reportedFailureReason bareWrappedMarker) "and explains nothing"
+
+              // The JDK's own module-prefixed frames confirm on their own: the first cut
+              // of this rule rejected `java.base/` and the receipt was confirmed only six
+              // lines down by a Groovy frame (found by the verifier's probe).
+              let jdkOnlyFrames =
+                  [ "java.util.regex.PatternSyntaxException: Unmatched closing ')' near index 0"
+                    "a)b|ab"
+                    "^"
+                    "at java.base/java.util.regex.Pattern.error(Unknown Source)"
+                    "at java.base/java.util.regex.Pattern.compile(Unknown Source)"
+                    "real output" ]
+
+              Expect.equal (Trace.normaliseOutput jdkOnlyFrames) [ "real output" ] "a java.base/ frame confirms across the message"
+              Expect.isTrue (Trace.reportedFailureReason jdkOnlyFrames) "and the trace is the reason"
+
+              // A plain package frame confirms too; a package-less script frame does not.
+              Expect.equal
+                  (Trace.normaliseOutput [ "java.lang.AssertionError: x"; "detail"; "at org.codehaus.groovy.runtime.callsite.CallSiteArray.defaultCall(CallSiteArray.java:47)" ])
+                  []
+                  "a plain package frame confirms"
+
+              Expect.equal
+                  (Trace.normaliseOutput [ "java.lang.AssertionError: x"; "detail"; "at WorkflowScript.run(WorkflowScript:49)" ])
+                  [ "java.lang.AssertionError: x"; "detail"; "at WorkflowScript.run(WorkflowScript:49)" ]
+                  "a package-less script frame does not reach back over a line"
+
+              // The same head with NO frame within the bound is a build's own text.
+              let echoed =
+                  [ "java.util.regex.PatternSyntaxException: printed by my build"
+                    "a)b|ab"
+                    "^"
+                    "and my build moves on" ]
+
+              Expect.equal (Trace.normaliseOutput echoed) echoed "no frame, no window: every line compares"
+              Expect.isFalse (Trace.reportedFailureReason echoed) "and it explains nothing"
+
+              // The bound is load-bearing: a frame beyond it does not reach back.
+              let farFrame =
+                  [ "java.lang.AssertionError: nine lines of my own report follow" ]
+                  @ [ for n in 1 .. Trace.stackTraceMessageContinuationBound + 1 -> $"report line {n}" ]
+                  @ [ "at org.example.Mine.run(Mine.java:1)" ]
+
+              Expect.equal (Trace.normaliseOutput farFrame) farFrame "beyond the bound the head is output"
+              Expect.isFalse (Trace.reportedFailureReason farFrame) "and no trace is implied"
+
+              // At the bound exactly, the frame confirms the head.
+              let atBound =
+                  [ "java.lang.AssertionError: eight lines of message follow" ]
+                  @ [ for n in 1 .. Trace.stackTraceMessageContinuationBound -> $"message line {n}" ]
+                  @ [ "at org.example.Mine.run(Mine.java:1)"; "real output" ]
+
+              Expect.equal (Trace.normaliseOutput atBound) [ "real output" ] "at the bound the whole trace is narration"
+
+              // A second head inside the span ends the first head's claim: heads are
+              // judged one at a time, never chained through each other's text.
+              let twoHeads =
+                  [ "java.io.IOException: first, unconfirmed"
+                    "java.io.UncheckedIOException: second, confirmed"
+                    "at org.example.Mine.run(Mine.java:1)" ]
+
+              Expect.equal
+                  (Trace.normaliseOutput twoHeads)
+                  [ "java.io.IOException: first, unconfirmed" ]
+                  "only the head a frame confirms is narration"
+
+              // Across message lines only a JVM-shaped frame confirms: the FG-002f
+              // look-alike (an exception name, a line, `at index.js(10)`) stays output.
+              let lookAlike =
+                  [ "hudson.AbortException: printed by a build, not thrown"
+                    "an ordinary line, so no stack trace is implied"
+                    "at index.js(10)" ]
+
+              Expect.equal (Trace.normaliseOutput lookAlike) lookAlike "a non-JVM frame does not reach back over a line"
+              Expect.isFalse (Trace.reportedFailureReason lookAlike) "and explains nothing"
+          }
+
           test "the secret-interpolation warning is contextual for BOTH engines" {
               // FG-100. Fogell emits Jenkins' own head+body sequence — an earlier
               // one-line wording of Fogell's own had to be recognised by shape ALONE,

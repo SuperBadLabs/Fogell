@@ -389,10 +389,15 @@ module Trace =
         || t.StartsWith "Cancelling nested steps"
         || t.StartsWith "Sending interrupt signal to process"
 
+    /// FG-243. When the build ran on an agent the controller prints this marker
+    /// (and the exception head under it) behind a `hudson.remoting.ProxyException:`
+    /// wrapper; the wrapper is remoting's, not the build's, and is accepted here —
+    /// only behind the `Also:` prefix it was measured with (Codex, PR #388): the
+    /// bare wrapped form is unmeasured and stays a build's own line.
     let private isErrorActionIdDiagnostic (t: string) =
         Text.RegularExpressions.Regex.IsMatch(
             t,
-            @"^(Also:\s+)?org\.jenkinsci\.plugins\.workflow\.actions\.ErrorAction\$ErrorId: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            @"^(Also:\s+(hudson\.remoting\.ProxyException:\s+)?)?org\.jenkinsci\.plugins\.workflow\.actions\.ErrorAction\$ErrorId: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
         )
 
     let isDiagnosticLine (t: string) =
@@ -457,8 +462,63 @@ module Trace =
 
         if matched.Success then Some matched.Groups[1].Value else None
 
-    let private startsStackTrace (head: string) (next: string) =
-        Option.isSome (tryStackTraceHeadMessage head) && isStackFrame next
+    /// FG-243. How many lines a Java exception MESSAGE may span between its head
+    /// and the first `at …(…)` frame. `PatternSyntaxException` prints three
+    /// (description, the pattern, a caret); an `AssertionError` or a multi-line
+    /// `error()` message prints as many as the message holds. Bounded so a
+    /// build that echoes an exception name and then, much later, a frame-shaped
+    /// line does not lose the pages in between.
+    let stackTraceMessageContinuationBound = 8
+
+    /// FG-243. A frame that may confirm a head ACROSS message lines must look
+    /// like the JVM's own: an optional module (`java.base/`) or plugin loader
+    /// (`PluginClassLoader for x//`) prefix, a class path of at least three
+    /// dotted segments, and a source location in parentheses — `Foo.java:12`,
+    /// `Unknown Source`, `Native Method`, or any identifier with an optional `:line` (a Groovy
+    /// `Script:12`; the location is shape-checked only, so `at a.b.c(d)` also
+    /// confirms — the three-segment class path carries the guard). The looser
+    /// [isStackFrame] stays the rule for a frame on the very next line — the
+    /// FG-002f known limit — because widening the window with the loose shape
+    /// would swallow a build that prints an exception name, a line of its own
+    /// and then `at index.js(10)`, the look-alike row that test holds; a
+    /// package-less frame such as `at WorkflowScript.run(WorkflowScript:49)` is
+    /// not a confirmer either. The verifier's probe against the first cut of
+    /// this rule found every `java.base/` frame rejected, so the receipt was
+    /// confirmed after six message lines by a Groovy frame instead of after two
+    /// by the JDK's — the module prefix is here because of it.
+    let private isJavaStackFrame (line: string) =
+        Text.RegularExpressions.Regex.IsMatch(
+            line,
+            @"^at (?:[\w$.<>/ -]+//|[\w.]+/)?[\w$]+(?:\.[\w$<>]+){2,}\((?:Unknown Source|Native Method|[A-Za-z_$][\w$.-]*(?::\d+)?)\)$"
+        )
+
+    /// FG-243. If [cleaned].[i] is an exception head that a frame confirms — any
+    /// frame on the very next line, or a JVM-shaped one after at most
+    /// [stackTraceMessageContinuationBound] non-empty, non-annotation, non-head
+    /// continuation lines — the number of continuation lines the message spans;
+    /// `None` when no frame confirms it. The old rule was the `Some 0` case only,
+    /// so a `PatternSyntaxException` head (three message lines) was compared as
+    /// output and counted as no reason.
+    let private stackTraceContinuation (cleaned: string[]) (i: int) : int option =
+        if Option.isNone (tryStackTraceHeadMessage cleaned[i]) then
+            None
+        else
+            let rec scan k =
+                let j = i + 1 + k
+
+                if j >= cleaned.Length || k > stackTraceMessageContinuationBound then
+                    None
+                elif (k = 0 && isStackFrame cleaned[j]) || (k > 0 && isJavaStackFrame cleaned[j]) then
+                    Some k
+                elif cleaned[j] = "" || cleaned[j].StartsWith "[Pipeline]" || Option.isSome (tryStackTraceHeadMessage cleaned[j]) then
+                    None
+                else
+                    scan (k + 1)
+
+            scan 0
+
+    let private startsStackTrace (cleaned: string[]) (i: int) =
+        Option.isSome (stackTraceContinuation cleaned i)
 
     /// Normalise one output line so engine-specific decoration does not count as
     /// a semantic difference. Every rule here is a measured difference between
@@ -656,6 +716,8 @@ module Trace =
         let isWarnTail (l: string) = l.StartsWith "See https://jenkins.io/redirect/groovy-string-interpolation"
 
         let mutable inStackTrace = false
+        // FG-243. Message-continuation lines still owed to the head that opened the window.
+        let mutable continuationLeft = 0
         let mutable pastFirstOutputStep = false
 
         // Banner suppression applies only to a trace that HAS the Jenkins graph
@@ -675,14 +737,23 @@ module Trace =
             let raw = cleaned[i]
             let next = if i + 1 < cleaned.Length then cleaned[i + 1] else ""
 
-            let headStartsTrace = startsStackTrace raw next
+            let headContinuation = if continuationLeft > 0 then None else stackTraceContinuation cleaned i
+            let headStartsTrace = Option.isSome headContinuation
+            let isContinuation = continuationLeft > 0
 
-            // A head only opens the window when a frame really follows it.
-            if headStartsTrace then inStackTrace <- true
-            elif not (isStackFrame raw) then inStackTrace <- false
+            // A head only opens the window when a frame really follows it — directly,
+            // or after the bounded message continuation the head owes (FG-243).
+            if headStartsTrace then
+                inStackTrace <- true
+                continuationLeft <- headContinuation.Value
+            elif isContinuation then
+                continuationLeft <- continuationLeft - 1
+            elif not (isStackFrame raw) then
+                inStackTrace <- false
 
             let suppress =
                 (isStackFrame raw && inStackTrace)
+                || isContinuation
                 || (hasAnnotations && isGraphAnnotation raw)
                 // `dir()`'s banner, by CONTEXT: `Running in <abs path>` counts as the
                 // banner only immediately after the `[Pipeline] dir` annotation — a
@@ -884,13 +955,10 @@ module Trace =
 
         let clean (l: string) = (stripDecoration stripTimestamps l).Trim()
 
+        let cleaned = all |> Array.map clean
+
         let hasStackTrace =
-            all
-            |> Array.mapi (fun i l ->
-                let raw = clean l
-                let next = if i + 1 < all.Length then clean all[i + 1] else ""
-                startsStackTrace raw next)
-            |> Array.exists id
+            cleaned |> Array.mapi (fun i _ -> startsStackTrace cleaned i) |> Array.exists id
 
         hasStackTrace
         || (all
@@ -960,6 +1028,12 @@ module Trace =
           "  sentences ALSO count as the abort's reported reason"
           "excluded: `Failed in branch <name>` and ERROR-class reason lines — counted as"
           "  the reported reason; the wording comes from whichever plugin implements the step"
+          "excluded: a Java exception head, the message lines it spans (at most 8, FG-243)"
+          "  and the `at …(…)` frames under it — ONLY when a frame confirms the head (the"
+          "  next line, or a JVM-shaped frame after the message lines), so a build echoing"
+          "  an exception name keeps it; the confirmed trace counts as the"
+          "  reported reason; a remoting `hudson.remoting.ProxyException:` wrapper on the"
+          "  ErrorAction marker is the controller's, not the build's, and is excluded too"
           "not compared: wall-clock duration, log ordering across stdout/stderr, diagnostic wording" ]
     /// Back-compat for callers with no script in hand (tests, ad-hoc tools).
     /// A trace built through the differential always passes the script's answer.
