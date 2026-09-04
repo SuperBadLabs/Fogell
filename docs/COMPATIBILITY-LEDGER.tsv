@@ -55,7 +55,7 @@ captjt_jenkins-pipeline-express.Jenkinsfile	admitted	-	parsed; execution NOT att
 charlires_golang-docker-jenkins.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 choiis_Cpp-IOCP-Server.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 chrsoo_microservices.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-cinqict_jenkinsdev.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
+cinqict_jenkinsdev.Jenkinsfile	1	-	receipt:cinqict_jenkinsdev
 clintmod_unit-testing-jenkinsfile.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 cloud-bulldozer_scale-ci-pipeline.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 cloudogu_ces-build-lib.Jenkinsfile	3	malformed_syntax	malformed_syntax Expecting: '}' @3:16
@@ -66,7 +66,7 @@ cloudogu_reveal.js-docker-example.Jenkinsfile	3	malformed_syntax	malformed_synta
 concur_jenkins-yml-workflowLibs.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 cvitter_jenkins-pipeline-examples.Jenkinsfile	1	-	receipt:cvitter_jenkins-pipeline-examples
 darinpope_jenkinsfile-library.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-devops-ws_learn-pipeline-java.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
+devops-ws_learn-pipeline-java.Jenkinsfile	1	-	receipt:devops-ws_learn-pipeline-java
 eggsy84_gcp-spring-boot-app.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 eldada_jenkins-pipeline-kubernetes.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 esign-consulting_logistics.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
