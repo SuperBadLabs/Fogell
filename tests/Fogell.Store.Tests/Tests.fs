@@ -1150,6 +1150,7 @@ let tenantIsolation =
                         GRANT SELECT, UPDATE (restore_epoch) ON controller_metadata TO {roleName};
                         GRANT SELECT ON organization_work_roots TO {roleName};
                         GRANT SELECT, UPDATE ON attempts, nodes, builds TO {roleName};
+                        GRANT SELECT, UPDATE ON effect_checkpoints TO {roleName};
                         GRANT INSERT ON events, outbox TO {roleName};
                         GRANT USAGE ON SEQUENCE events_id_seq, outbox_id_seq TO {roleName}"
 
@@ -3706,6 +3707,188 @@ let effectCheckpoints =
               Expect.equal (checkpointCount org admitted.AttemptId) 0 "invalid inputs are side-effect free"
           } ]
 
+/// FG-026b. The bounded reconciliation trigger and its operator surface. This
+/// list is deliberately separate from the ten-test FG-026 slice above, which the
+/// gate's effect-ledger proof pins by name and count.
+let effectReconciliation =
+    let uncertaintySurface (org: OrganizationId) (attempt: AttemptId) =
+        use conn = new Npgsql.NpgsqlConnection(connectionString)
+        conn.Open()
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <-
+            "SELECT (SELECT count(*) FROM events e
+                      WHERE e.organization_id = @o AND e.attempt_id = @a AND e.kind = 'effect.uncertain'),
+                    (SELECT count(*) FROM outbox o
+                      WHERE o.organization_id = @o AND o.topic = 'effect.uncertain'
+                        AND o.body->>'attempt' = @a::text),
+                    (SELECT string_agg(e.payload->>'effect_key' || '|' || (e.payload->>'uncertain_from') || '|' || (e.payload->>'reason'), ',' ORDER BY e.id)
+                       FROM events e
+                      WHERE e.organization_id = @o AND e.attempt_id = @a AND e.kind = 'effect.uncertain'),
+                    (SELECT string_agg(o.body->>'effect_key' || '|' || (o.body->>'uncertain_from') || '|' || (o.body->>'reason') || '|' || (o.body->>'build'), ',' ORDER BY o.id)
+                       FROM outbox o
+                      WHERE o.organization_id = @o AND o.topic = 'effect.uncertain'
+                        AND o.body->>'attempt' = @a::text)"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        use reader = cmd.ExecuteReader()
+        Expect.isTrue (reader.Read()) "surface query returned a row"
+        let events = reader.GetInt64 0
+        let outbox = reader.GetInt64 1
+        let eventBodies = if reader.IsDBNull 2 then "" else reader.GetString 2
+        let outboxBodies = if reader.IsDBNull 3 then "" else reader.GetString 3
+        reader.Close()
+        events, outbox, eventBodies, outboxBodies
+
+    let expireLeases (org: OrganizationId) (attempts: AttemptId list) =
+        use conn = new Npgsql.NpgsqlConnection(connectionString)
+        conn.Open()
+        use expire = conn.CreateCommand()
+        expire.CommandText <-
+            "UPDATE attempts SET lease_expires_at = clock_timestamp() - interval '1 second'
+             WHERE organization_id = @o AND id = ANY(@ids)"
+        expire.Parameters.AddWithValue("o", org.Value) |> ignore
+        expire.Parameters.AddWithValue("ids", attempts |> List.map (fun a -> a.Value) |> Array.ofList) |> ignore
+        Expect.equal (expire.ExecuteNonQuery()) attempts.Length "every named authority expired"
+
+    let reconcileOk org reason =
+        match store.ReconcileStaleEffects(org, reason) with
+        | Ok checkpoints -> checkpoints
+        | Error error -> failtestf "effect reconciliation failed: %s" error
+
+    testList
+        "FG-026b effect reconciliation"
+        [ test "a lease-expiry pass classifies stale work once and publishes one effect.uncertain event and outbox row per checkpoint" {
+              let org, project = freshProject ()
+              let preparedAttempt, preparedFence = runningAttempt org project "fg026b-prepared" "agent-p" 60
+              let appliedAttempt, appliedFence = runningAttempt org project "fg026b-applied" "agent-a" 60
+              let liveAttempt, liveFence = runningAttempt org project "fg026b-live" "agent-live" 60
+              let payload = [| 2uy; 6uy; 98uy |]
+
+              prepareEffectOk org preparedAttempt.AttemptId preparedFence "agent-p" "file-drop-receipt:p" payload |> ignore
+              prepareEffectOk org appliedAttempt.AttemptId appliedFence "agent-a" "file-drop-receipt:a" payload |> ignore
+              advanceEffectOk org appliedAttempt.AttemptId appliedFence "agent-a" "file-drop-receipt:a" payload RecordApplied |> ignore
+              prepareEffectOk org liveAttempt.AttemptId liveFence "agent-live" "file-drop-receipt:live" payload |> ignore
+
+              let foreignOrg, foreignProject = freshProject ()
+              let foreignAttempt, foreignFence =
+                  runningAttempt foreignOrg foreignProject "fg026b-foreign" "agent-foreign" 60
+              prepareEffectOk foreignOrg foreignAttempt.AttemptId foreignFence "agent-foreign" "file-drop-receipt:f" payload |> ignore
+
+              expireLeases org [ preparedAttempt.AttemptId; appliedAttempt.AttemptId ]
+              expireLeases foreignOrg [ foreignAttempt.AttemptId ]
+
+              let classified = reconcileOk org "lease_expired"
+              Expect.equal classified.Length 2 "only the stale effects in the requested organization"
+              let origins = classified |> List.map (fun c -> c.EffectKey, c.UncertainOrigin) |> Map.ofList
+              Expect.equal origins.["file-drop-receipt:p"] (Some UncertainAfterPrepare) "prepared origin retained"
+              Expect.equal origins.["file-drop-receipt:a"] (Some UncertainAfterApply) "applied origin retained"
+
+              let pEvents, pOutbox, pEventBody, pOutboxBody = uncertaintySurface org preparedAttempt.AttemptId
+              Expect.equal (pEvents, pOutbox) (1L, 1L) "exactly one event and one outbox row for the prepared checkpoint"
+              Expect.equal pEventBody "file-drop-receipt:p|prepared|lease_expired" "event names key, origin and trigger reason"
+              Expect.equal
+                  pOutboxBody
+                  $"file-drop-receipt:p|prepared|lease_expired|{preparedAttempt.BuildId.Value}"
+                  "outbox names key, origin, reason and build lineage"
+
+              let aEvents, aOutbox, aEventBody, _ = uncertaintySurface org appliedAttempt.AttemptId
+              Expect.equal (aEvents, aOutbox) (1L, 1L) "exactly one event and one outbox row for the applied checkpoint"
+              Expect.equal aEventBody "file-drop-receipt:a|applied|lease_expired" "applied origin is observable"
+
+              let liveEvents, liveOutbox, _, _ = uncertaintySurface org liveAttempt.AttemptId
+              Expect.equal (liveEvents, liveOutbox) (0L, 0L) "a live checkpoint is neither classified nor surfaced"
+              let foreignEvents, foreignOutbox, _, _ = uncertaintySurface foreignOrg foreignAttempt.AttemptId
+              Expect.equal (foreignEvents, foreignOutbox) (0L, 0L) "another organization's stale work is untouched by this tenant's pass"
+              Expect.isEmpty (store.ListUncertainEffects foreignOrg) "the foreign organization lists nothing"
+
+              Expect.equal (reconcileOk org "lease_expired") [] "a second pass finds nothing stale"
+              let pEventsAgain, pOutboxAgain, _, _ = uncertaintySurface org preparedAttempt.AttemptId
+              Expect.equal (pEventsAgain, pOutboxAgain) (1L, 1L) "a second pass publishes nothing more"
+
+              let listed = store.ListUncertainEffects org |> List.map (fun c -> c.EffectKey)
+              Expect.equal listed [ "file-drop-receipt:p"; "file-drop-receipt:a" ] "the tenant listing carries both classified effects"
+
+              match store.AdvanceEffect(org, preparedAttempt.AttemptId, preparedFence, "agent-p", "file-drop-receipt:p", payload, RecordApplied) with
+              | Error _ -> ()
+              | Ok _ -> failtest "an uncertain checkpoint must never advance again"
+
+              Expect.equal (reconcileOk org "lease_expired") [] "a third pass after the refused advance still publishes nothing"
+          }
+
+          test "a reconciliation reason must be a stable lowercase code" {
+              let org, _ = freshProject ()
+
+              Expect.throwsT<ArgumentException>
+                  (fun () -> store.ReconcileStaleEffects(org, "Lease Expired") |> ignore)
+                  "mixed case and whitespace are refused before any transaction"
+
+              Expect.throwsT<ArgumentException>
+                  (fun () -> store.ReconcileStaleEffects(org, "") |> ignore)
+                  "an empty reason is refused"
+          }
+
+          test "activating a restore classifies pre-restore prepared and applied effects atomically with the epoch bump" {
+              let org, project = freshProject ()
+              let preparedAttempt, preparedFence = runningAttempt org project "fg026b-restore-p" "agent-p" 300
+              let appliedAttempt, appliedFence = runningAttempt org project "fg026b-restore-a" "agent-a" 300
+              let confirmedAttempt, confirmedFence = runningAttempt org project "fg026b-restore-c" "agent-c" 300
+              let payload = [| 42uy |]
+
+              prepareEffectOk org preparedAttempt.AttemptId preparedFence "agent-p" "file-drop-receipt:p" payload |> ignore
+              prepareEffectOk org appliedAttempt.AttemptId appliedFence "agent-a" "file-drop-receipt:a" payload |> ignore
+              advanceEffectOk org appliedAttempt.AttemptId appliedFence "agent-a" "file-drop-receipt:a" payload RecordApplied |> ignore
+              prepareEffectOk org confirmedAttempt.AttemptId confirmedFence "agent-c" "file-drop-receipt:c" payload |> ignore
+              advanceEffectOk org confirmedAttempt.AttemptId confirmedFence "agent-c" "file-drop-receipt:c" payload RecordApplied |> ignore
+              advanceEffectOk org confirmedAttempt.AttemptId confirmedFence "agent-c" "file-drop-receipt:c" payload RecordConfirmed |> ignore
+
+              Expect.isEmpty (store.ListUncertainEffects org) "every checkpoint is live before the restore"
+
+              let before = store.CurrentRestoreEpoch()
+              let after = store.ActivateRestore()
+              Expect.isGreaterThan after.Value before.Value "epoch advanced"
+
+              let listed =
+                  store.ListUncertainEffects org
+                  |> List.map (fun c -> c.EffectKey, c.UncertainOrigin)
+                  |> Map.ofList
+              Expect.equal listed.Count 2 "the prepared and applied checkpoints became uncertain in the restore"
+              Expect.equal listed.["file-drop-receipt:p"] (Some UncertainAfterPrepare) "prepared origin retained across restore"
+              Expect.equal listed.["file-drop-receipt:a"] (Some UncertainAfterApply) "applied origin retained across restore"
+
+              let pEvents, pOutbox, pEventBody, _ = uncertaintySurface org preparedAttempt.AttemptId
+              Expect.equal (pEvents, pOutbox) (1L, 1L) "the restore published one event and one outbox row for the prepared checkpoint"
+              Expect.equal pEventBody "file-drop-receipt:p|prepared|restore_epoch_advanced" "the restore reason is carried"
+              let aEvents, aOutbox, _, aOutboxBody = uncertaintySurface org appliedAttempt.AttemptId
+              Expect.equal (aEvents, aOutbox) (1L, 1L) "the restore published one pair for the applied checkpoint"
+              Expect.equal
+                  aOutboxBody
+                  $"file-drop-receipt:a|applied|restore_epoch_advanced|{appliedAttempt.BuildId.Value}"
+                  "the outbox binds the build lineage"
+              let cEvents, cOutbox, _, _ = uncertaintySurface org confirmedAttempt.AttemptId
+              Expect.equal (cEvents, cOutbox) (0L, 0L) "a confirmed checkpoint is final and surfaces nothing"
+
+              Expect.equal (reconcileOk org "controller_startup") [] "the startup pass after a restore finds nothing left to classify"
+              let pEventsAgain, _, _, _ = uncertaintySurface org preparedAttempt.AttemptId
+              Expect.equal pEventsAgain 1L "the startup pass published nothing more"
+          }
+
+          test "the FG-026 marking primitive still publishes no operator surface" {
+              let org, project = freshProject ()
+              let attempt, fence = runningAttempt org project "fg026b-mark-only" "agent-m" 60
+              let payload = [| 1uy |]
+              prepareEffectOk org attempt.AttemptId fence "agent-m" "file-drop-receipt:m" payload |> ignore
+              expireLeases org [ attempt.AttemptId ]
+
+              match store.MarkStaleEffectsUncertain org with
+              | Ok [ marked ] -> Expect.equal marked.State EffectUncertain "marked uncertain"
+              | Ok other -> failtestf "expected one marked checkpoint, observed %A" other
+              | Error error -> failtestf "marking failed: %s" error
+
+              let events, outbox, _, _ = uncertaintySurface org attempt.AttemptId
+              Expect.equal (events, outbox) (0L, 0L) "MarkStaleEffectsUncertain is the surface-free primitive FG-026 closed"
+              Expect.equal (reconcileOk org "lease_expired") [] "a trigger pass after the primitive has nothing left and stays silent"
+          } ]
+
 /// FG-027b Store foundation. This proves durable retry arbitration and replay;
 /// scheduler/controller retry policy and dispatch remain deliberately outside
 /// this package.
@@ -4978,6 +5161,7 @@ let main argv =
                           admission
                           fencing
                           effectCheckpoints
+                          effectReconciliation
                           retryDecisions
                           scheduling
                           logs ]))

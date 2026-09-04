@@ -613,6 +613,158 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         else
             None
 
+    /// FG-026b. One bounded classification pass for one organization inside the
+    /// caller's transaction. Lock attempts first so prepare/advance and
+    /// reconciliation never invert the attempt -> checkpoint order, then move
+    /// every prepared/applied checkpoint whose captured authority is no longer
+    /// live to uncertain. The origin records whether the external call might
+    /// have happened before authority was lost.
+    let markStaleEffects (conn: NpgsqlConnection) (tx: NpgsqlTransaction) (org: OrganizationId) =
+        use authorityLocks = conn.CreateCommand()
+        authorityLocks.Transaction <- tx
+        authorityLocks.CommandText <-
+            "SELECT /* FG026_MARKER_SNAPSHOT */ a.id
+             FROM attempts a
+             JOIN effect_checkpoints e
+               ON e.organization_id = a.organization_id AND e.attempt_id = a.id
+             WHERE e.organization_id = @o AND e.state IN ('prepared', 'applied')
+             ORDER BY a.id
+             FOR UPDATE OF a"
+        authorityLocks.Parameters.AddWithValue("o", org.Value) |> ignore
+        use locked = authorityLocks.ExecuteReader()
+        while locked.Read() do ()
+        locked.Close()
+
+        use update = conn.CreateCommand()
+        update.Transaction <- tx
+        update.CommandText <-
+            $"UPDATE effect_checkpoints e
+              SET uncertain_from = e.state,
+                  state = 'uncertain',
+                  uncertain_at = clock_timestamp()
+              WHERE e.organization_id = @o
+                AND e.state IN ('prepared', 'applied')
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM attempts a
+                    WHERE a.organization_id = e.organization_id
+                      AND a.id = e.attempt_id
+                      AND a.fence = e.fence
+                      AND a.lease_owner = e.authority_owner
+                      AND a.lease_expires_at > clock_timestamp()
+                      AND a.state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
+                      AND a.restore_epoch = e.restore_epoch
+                      AND a.restore_epoch = (
+                          SELECT restore_epoch FROM controller_metadata WHERE singleton
+                      )
+                )
+              RETURNING {effectProjection}"
+        update.Parameters.AddWithValue("o", org.Value) |> ignore
+        use reader = update.ExecuteReader()
+        let checkpoints = [ while reader.Read() do yield readCheckpoint reader ]
+        reader.Close()
+
+        checkpoints
+        |> List.sortBy (fun checkpoint ->
+            checkpoint.AttemptId.Value, checkpoint.EffectKey)
+
+    let uncertainOriginColumn (checkpoint: EffectCheckpoint) =
+        match checkpoint.UncertainOrigin with
+        | Some UncertainAfterPrepare -> "prepared"
+        | Some UncertainAfterApply -> "applied"
+        | None -> failwith "a newly uncertain effect checkpoint must record its origin"
+
+    /// FG-026b. The operator-visible surface of one classification pass: exactly
+    /// one `effect.uncertain` event and one outbox row per checkpoint that this
+    /// pass moved, committed with the state change that produced them. Build
+    /// lineage is derived through attempts -> nodes inside the tenant context,
+    /// and a checkpoint without lineage is a truth failure, not a silent skip.
+    let publishEffectUncertainty
+        (conn: NpgsqlConnection)
+        (tx: NpgsqlTransaction)
+        (org: OrganizationId)
+        (reason: string)
+        (checkpoints: EffectCheckpoint list)
+        =
+        for checkpoint in checkpoints do
+            use publish = conn.CreateCommand()
+            publish.Transaction <- tx
+            publish.CommandText <-
+                "WITH lineage AS (
+                     SELECT n.build_id
+                       FROM attempts a
+                       JOIN nodes n ON n.organization_id = a.organization_id AND n.id = a.node_id
+                      WHERE a.organization_id = @o AND a.id = @a
+                 ), emitted_event AS (
+                     INSERT INTO events (organization_id, build_id, attempt_id, kind, payload)
+                     SELECT @o, build_id, @a, 'effect.uncertain',
+                            jsonb_build_object(
+                                'effect_key', @k,
+                                'uncertain_from', @origin,
+                                'reason', @reason)
+                       FROM lineage
+                     RETURNING 1
+                 ), emitted_outbox AS (
+                     INSERT INTO outbox (organization_id, topic, body)
+                     SELECT @o, 'effect.uncertain',
+                            jsonb_build_object(
+                                'build', build_id::text,
+                                'attempt', @a::text,
+                                'effect_key', @k,
+                                'uncertain_from', @origin,
+                                'reason', @reason)
+                       FROM lineage
+                     RETURNING 1
+                 )
+                 SELECT (SELECT count(*) FROM emitted_event),
+                        (SELECT count(*) FROM emitted_outbox)"
+            publish.Parameters.AddWithValue("o", org.Value) |> ignore
+            publish.Parameters.AddWithValue("a", checkpoint.AttemptId.Value) |> ignore
+            publish.Parameters.AddWithValue("k", checkpoint.EffectKey) |> ignore
+            publish.Parameters.AddWithValue("origin", uncertainOriginColumn checkpoint) |> ignore
+            publish.Parameters.AddWithValue("reason", reason) |> ignore
+            use emitted = publish.ExecuteReader()
+            emitted.Read() |> ignore
+
+            if emitted.GetInt64 0 <> 1L || emitted.GetInt64 1 <> 1L then
+                failwith "effect uncertainty truth was not emitted exactly once per classified checkpoint"
+
+            emitted.Close()
+
+    let reconcileStaleEffectsIn
+        (conn: NpgsqlConnection)
+        (tx: NpgsqlTransaction)
+        (org: OrganizationId)
+        (reason: string)
+        =
+        let checkpoints = markStaleEffects conn tx org
+        publishEffectUncertainty conn tx org reason checkpoints
+        checkpoints
+
+    let validateReconciliationReason (reason: string) =
+        if
+            String.IsNullOrWhiteSpace reason
+            || reason.Length > 128
+            || not (reason |> Seq.forall (fun c -> Char.IsLower c || Char.IsDigit c || c = '_'))
+        then
+            invalidArg (nameof reason) "reconciliation reason must be a stable lowercase code of at most 128 characters"
+
+    /// A RepeatableRead pass can lose a serialization or deadlock race against a
+    /// concurrent prepare/advance; that is retried a bounded number of times and
+    /// every other failure is returned as-is.
+    let retrySerializationFailure (action: unit -> 'a) : Result<'a, string> =
+        let rec run attemptNumber =
+            try
+                action () |> Ok
+            with
+            | :? PostgresException as error
+                when (error.SqlState = "40001" || error.SqlState = "40P01")
+                     && attemptNumber < 3 ->
+                run (attemptNumber + 1)
+            | ex -> Error ex.Message
+
+        run 1
+
     member _.Migrate() = Migrations.run maintenanceConnectionString
 
     member _.Ping() =
@@ -1198,77 +1350,43 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
     member _.MarkStaleEffectsUncertain(org: OrganizationId) : Result<EffectCheckpoint list, string> =
         let markOnce () =
             use conn = openConn ()
+            // RepeatableRead gives the lock and update statements one stable
+            // marker snapshot. A checkpoint committed after this query began
+            // is deliberately left for the next bounded reconciliation pass.
             use tx = beginTenantTransactionAt conn org System.Data.IsolationLevel.RepeatableRead
 
             try
-                // RepeatableRead gives the lock and update statements one stable
-                // marker snapshot. A checkpoint committed after this query began
-                // is deliberately left for the next bounded reconciliation pass.
-                // Lock attempts first so prepare/advance and reconciliation never
-                // invert the attempt -> checkpoint order.
-                use authorityLocks = conn.CreateCommand()
-                authorityLocks.Transaction <- tx
-                authorityLocks.CommandText <-
-                    "SELECT /* FG026_MARKER_SNAPSHOT */ a.id
-                     FROM attempts a
-                     JOIN effect_checkpoints e
-                       ON e.organization_id = a.organization_id AND e.attempt_id = a.id
-                     WHERE e.organization_id = @o AND e.state IN ('prepared', 'applied')
-                     ORDER BY a.id
-                     FOR UPDATE OF a"
-                authorityLocks.Parameters.AddWithValue("o", org.Value) |> ignore
-                use locked = authorityLocks.ExecuteReader()
-                while locked.Read() do ()
-                locked.Close()
-
-                use update = conn.CreateCommand()
-                update.Transaction <- tx
-                update.CommandText <-
-                    $"UPDATE effect_checkpoints e
-                      SET uncertain_from = e.state,
-                          state = 'uncertain',
-                          uncertain_at = clock_timestamp()
-                      WHERE e.organization_id = @o
-                        AND e.state IN ('prepared', 'applied')
-                        AND NOT EXISTS (
-                            SELECT 1
-                            FROM attempts a
-                            WHERE a.organization_id = e.organization_id
-                              AND a.id = e.attempt_id
-                              AND a.fence = e.fence
-                              AND a.lease_owner = e.authority_owner
-                              AND a.lease_expires_at > clock_timestamp()
-                              AND a.state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
-                              AND a.restore_epoch = e.restore_epoch
-                              AND a.restore_epoch = (
-                                  SELECT restore_epoch FROM controller_metadata WHERE singleton
-                              )
-                        )
-                      RETURNING {effectProjection}"
-                update.Parameters.AddWithValue("o", org.Value) |> ignore
-                use reader = update.ExecuteReader()
-                let checkpoints = [ while reader.Read() do yield readCheckpoint reader ]
-                reader.Close()
+                let checkpoints = markStaleEffects conn tx org
                 tx.Commit()
-
                 checkpoints
-                |> List.sortBy (fun checkpoint ->
-                    checkpoint.AttemptId.Value, checkpoint.EffectKey)
             with _ ->
                 (try tx.Rollback() with _ -> ())
                 reraise ()
 
-        let rec run attemptNumber =
-            try
-                markOnce () |> Ok
-            with
-            | :? PostgresException as error
-                when (error.SqlState = "40001" || error.SqlState = "40P01")
-                     && attemptNumber < 3 ->
-                run (attemptNumber + 1)
-            | ex -> Error ex.Message
+        retrySerializationFailure markOnce
 
-        run 1
+    /// FG-026b. The bounded production trigger. Classifies stale prepared/applied
+    /// effects for one organization exactly as MarkStaleEffectsUncertain does and,
+    /// in the same transaction, publishes one `effect.uncertain` event and outbox
+    /// row per newly uncertain checkpoint carrying the trigger reason. Idempotent:
+    /// a second pass finds nothing stale and publishes nothing. Nothing here ever
+    /// re-invokes an effect; the surface exists so an operator can.
+    member _.ReconcileStaleEffects(org: OrganizationId, reason: string) : Result<EffectCheckpoint list, string> =
+        validateReconciliationReason reason
+
+        let reconcileOnce () =
+            use conn = openConn ()
+            use tx = beginTenantTransactionAt conn org System.Data.IsolationLevel.RepeatableRead
+
+            try
+                let checkpoints = reconcileStaleEffectsIn conn tx org reason
+                tx.Commit()
+                checkpoints
+            with _ ->
+                (try tx.Rollback() with _ -> ())
+                reraise ()
+
+        retrySerializationFailure reconcileOnce
 
     member _.ListUncertainEffects(org: OrganizationId) : EffectCheckpoint list =
         use conn = openConn ()
@@ -1858,6 +1976,12 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                     failwith "restore reconciliation truth was not emitted exactly once per invalidated attempt"
 
                 invalidated.Close()
+
+                // FG-026b. The epoch bump above is visible inside this transaction,
+                // so every prepared/applied checkpoint captured under the previous
+                // epoch is classified here, atomically with the restore, and its
+                // operator surface carries the restore reason.
+                reconcileStaleEffectsIn conn tx org "restore_epoch_advanced" |> ignore
 
             tx.Commit()
             RestoreEpoch epoch
