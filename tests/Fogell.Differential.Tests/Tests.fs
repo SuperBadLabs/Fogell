@@ -3996,6 +3996,30 @@ let timestampPrefixIsConditional =
                   "an engine's prefix is at column zero; a build's is not"
           } ]
 
+/// FG-245. durable-task executes `script.sh.copy`, so a build that prints `$0`
+/// (dash's `not found` line does) ends in `.copy` on BOTH engines. The two
+/// durable-id normalisers rewrite the `@tmp/durable-<8hex>/script.sh` PREFIX
+/// only: the Jenkins-side shape regex and the Fogell-side exact-id replacement
+/// must both leave the suffix in place, or the first corpus file to print `$0`
+/// would compare a stabilised Jenkins line against a literal Fogell one.
+let durableShapeKeepsCopySuffix =
+    testList
+        "FG-245 durable-script normalisers keep the .copy suffix"
+        [ test "the Jenkins-side shape rewrites the id and keeps .copy" {
+              let line = "/var/jenkins_home/workspace/j@tmp/durable-0a1b2c3d/script.sh.copy: 1: ./gradlew: not found"
+              let output = Trace.normaliseOutputShaped false true [] [] [ line ]
+              Expect.equal output [ "/var/jenkins_home/workspace/j@tmp/durable-<id>/script.sh.copy: 1: ./gradlew: not found" ] "prefix stabilised, suffix literal"
+          }
+          test "the Jenkins-side shape leaves a non-hex id literal" {
+              let line = "x@tmp/durable-zzzzzzzz/script.sh.copy"
+              Expect.equal (Trace.normaliseOutputShaped false true [] [] [ line ]) [ line ] "only an 8-hex id is durable-task's"
+          }
+          test "the Fogell-side exact-id replacement keeps .copy" {
+              let line = "/ws/j@tmp/durable-0a1b2c3d/script.sh.copy: 1: ./gradlew: not found"
+              let output = Trace.normaliseOutputShaped false false [ "@tmp/durable-0a1b2c3d/script.sh", "@tmp/durable-<id>/script.sh" ] [] [ line ]
+              Expect.equal output [ "/ws/j@tmp/durable-<id>/script.sh.copy: 1: ./gradlew: not found" ] "the exact id folds, the suffix survives"
+          } ]
+
 /// FG-118. Timestamp coverage belongs to the lines that survive the complete
 /// contextual normaliser, not to the raw console. Keeping the prefix bit beside
 /// its own line is load-bearing: filtering first and zipping by index recreates
@@ -11352,6 +11376,7 @@ let main argv =
               returnFlagContract
               timestampPrefixIsConditional
               timestampCoverageUsesComparedSurvivors
+              durableShapeKeepsCopySuffix
               compileRefusalDisposition
               credentialStoreDecoding
               credentialEchoMasking
