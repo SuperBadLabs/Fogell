@@ -19,7 +19,9 @@ type ControllerConfig =
       MaxPipelineBytes: int
       MaxLogChunks: int
       PollMilliseconds: int
-      LeaseSeconds: int }
+      LeaseSeconds: int
+      /// FG-026b. Which registered external-effect producers are enabled.
+      EffectProducers: EffectProducerConfig }
 
 module ControllerConfig =
 
@@ -457,19 +459,25 @@ module ControllerConfig =
                             match prepareStateRoot stateRootValue with
                             | Error error -> Error error
                             | Ok _ ->
-                                Ok
-                                    { RuntimeDatabaseUrl = runtimeValue
-                                      MaintenanceDatabaseUrl = maintenanceValue
-                                      ApiToken = token
-                                      ListenUrl = listenValue
-                                      StateRoot = stateRootValue
-                                      RunHostPath = runHostValue
-                                      SetsidPath = setsidValue
-                                      TrustPool = value trustPool
-                                      MaxPipelineBytes = value maxPipeline
-                                      MaxLogChunks = value maxLogs
-                                      PollMilliseconds = value poll
-                                      LeaseSeconds = value lease }
+                                // FG-026b. Optional FOGELL_EFFECT_FILE_DROP_ROOT and
+                                // FOGELL_EFFECT_KILL_AT; both absent enables nothing.
+                                match EffectProducerConfig.loadFromEnvironment stateRootValue with
+                                | Error error -> Error error
+                                | Ok effectProducers ->
+                                    Ok
+                                        { RuntimeDatabaseUrl = runtimeValue
+                                          MaintenanceDatabaseUrl = maintenanceValue
+                                          ApiToken = token
+                                          ListenUrl = listenValue
+                                          StateRoot = stateRootValue
+                                          RunHostPath = runHostValue
+                                          SetsidPath = setsidValue
+                                          TrustPool = value trustPool
+                                          MaxPipelineBytes = value maxPipeline
+                                          MaxLogChunks = value maxLogs
+                                          PollMilliseconds = value poll
+                                          LeaseSeconds = value lease
+                                          EffectProducers = effectProducers }
 
     let internal loadWithSetsidLauncher setsidLauncher =
         loadWithSetsidLauncherAndTokenReader readTokenFileSecurely setsidLauncher
