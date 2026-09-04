@@ -933,7 +933,8 @@ let endpoints =
                     HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}/logs"
                     HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}/attempts/{Guid.NewGuid()}/artifacts/output.bin"
                     HttpMethod.Post, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}/cancel"
-                    HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/scheduler/explain" ]
+                    HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/scheduler/explain"
+                    HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/effects/uncertain" ]
 
               for method, url in routes do
                   let code, body = send method url None (Some "k") (Some pipeline)
@@ -2312,6 +2313,32 @@ let effectDispatch =
         with :? InvalidOperationException as ex when ex.Message = abortSentinel ->
             ()
 
+    /// The production worker against the shared test store, with the file-drop
+    /// simulator enabled and no kill hook. Its scan is the lease-expiry trigger.
+    let newWorker () =
+        let stateRoot = IO.Path.Combine(dropRoot, "worker-state")
+        IO.Directory.CreateDirectory stateRoot |> ignore
+
+        let workerConfig: ControllerConfig =
+            { RuntimeDatabaseUrl = connectionString
+              MaintenanceDatabaseUrl = connectionString + ";Application Name=fg026b-maintenance"
+              ApiToken = token
+              ListenUrl = "http://127.0.0.1:0"
+              StateRoot = stateRoot
+              RunHostPath = "/bin/true"
+              SetsidPath = ControllerConfig.trustedSetsidLauncher
+              TrustPool = "trusted-linux"
+              MaxPipelineBytes = 1024
+              MaxLogChunks = 100
+              PollMilliseconds = 50
+              LeaseSeconds = 60
+              EffectProducers = { FileDropRoot = Some dropRoot; KillAt = None } }
+
+        new LocalWorker(
+            workerConfig,
+            store,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<LocalWorker>.Instance)
+
     let withEffectEnvironment (root: string option) (kill: string option) f =
         let names = [ "FOGELL_EFFECT_FILE_DROP_ROOT"; "FOGELL_EFFECT_KILL_AT" ]
         let previous = names |> List.map (fun name -> name, Environment.GetEnvironmentVariable name)
@@ -2785,29 +2812,7 @@ let effectDispatch =
           }
 
           test "the production lease-expiry trigger classifies an abort in the prepare, invoke and apply windows as tenant-scoped uncertainty with an operator surface and never re-invokes; a confirmed row survives lease loss unlisted" {
-              let stateRoot = IO.Path.Combine(dropRoot, "trigger-state")
-              IO.Directory.CreateDirectory stateRoot |> ignore
-
-              let workerConfig: ControllerConfig =
-                  { RuntimeDatabaseUrl = connectionString
-                    MaintenanceDatabaseUrl = connectionString + ";Application Name=fg026b-maintenance"
-                    ApiToken = token
-                    ListenUrl = "http://127.0.0.1:0"
-                    StateRoot = stateRoot
-                    RunHostPath = "/bin/true"
-                    SetsidPath = ControllerConfig.trustedSetsidLauncher
-                    TrustPool = "trusted-linux"
-                    MaxPipelineBytes = 1024
-                    MaxLogChunks = 100
-                    PollMilliseconds = 50
-                    LeaseSeconds = 60
-                    EffectProducers = { FileDropRoot = Some dropRoot; KillAt = None } }
-
-              let worker =
-                  new LocalWorker(
-                      workerConfig,
-                      store,
-                      Microsoft.Extensions.Logging.Abstractions.NullLogger<LocalWorker>.Instance)
+              use worker = newWorker ()
 
               let surface (org: OrganizationId) (attempt: AttemptId) =
                   use conn = new Npgsql.NpgsqlConnection(connectionString)
@@ -2894,8 +2899,78 @@ let effectDispatch =
                   Expect.equal invocations.Value invocationsAtAbort $"%A{window}: still nothing re-invoked"
                   Expect.equal (receiptCount org) receiptsAtAbort $"%A{window}: still nothing written"
               // FG026B_NO_MANUAL_STORE_END
+          }
 
-              worker.Dispose()
+          test "GET effects/uncertain lists one organization's uncertain effects read-only, denies other organizations their view of it, and refuses a malformed organization" {
+              let app, baseUrl = startServer 1000
+
+              try
+                  use worker = newWorker ()
+                  let owner = "local:fg026b-route:owner"
+                  let org, claim = runningClaim "fg026b-route" owner
+                  let authority = EffectAuthority.ofClaim owner claim
+                  let invocations, invocation = counted claim Success
+                  let key = effectKey claim
+                  let url (o: OrganizationId) = $"{baseUrl}/api/v1/organizations/{o.Value}/effects/uncertain"
+
+                  let emptyCode, emptyBody = send HttpMethod.Get (url org) (Some token) None None
+                  Expect.equal emptyCode 200 "an organization with nothing uncertain lists an empty set"
+                  Expect.equal
+                      emptyBody
+                      $"{{\"organization_id\":\"{org.Value}\",\"effects\":[]}}"
+                      "the empty listing names the organization and no effects"
+
+                  abortedRun store authority (withHook EffectKillWindow.AfterInvoke) invocation
+                  expireLease org claim.AttemptId
+                  worker.ScanOrganization(org, Threading.CancellationToken.None).Result |> ignore
+
+                  let code, body = send HttpMethod.Get (url org) (Some token) None None
+                  Expect.equal code 200 "the tenant listing is served"
+                  use document = JsonDocument.Parse body
+                  let root = document.RootElement
+                  Expect.equal (root.GetProperty("organization_id").GetString()) (org.Value.ToString()) "the response names the organization"
+                  let effects = root.GetProperty("effects").EnumerateArray() |> List.ofSeq
+                  Expect.equal effects.Length 1 "exactly one uncertain effect"
+                  let effect = effects.Head
+                  Expect.equal (effect.GetProperty("attempt_id").GetString()) (claim.AttemptId.Value.ToString()) "attempt_id"
+                  Expect.equal (effect.GetProperty("effect_key").GetString()) key "effect_key"
+                  Expect.equal (effect.GetProperty("fence").GetInt64()) claim.Fence.Value "fence"
+                  Expect.equal (effect.GetProperty("authority_owner").GetString()) owner "authority_owner"
+                  Expect.equal (effect.GetProperty("uncertain_from").GetString()) "prepared" "uncertain_from names the window"
+                  Expect.equal
+                      (effect.GetProperty("payload_sha256").GetString())
+                      (Convert.ToHexStringLower(Security.Cryptography.SHA256.HashData invocation.Payload))
+                      "payload_sha256 is the digest of the exact prepared bytes"
+                  Expect.equal
+                      (effect.GetProperty("restore_epoch").GetInt64())
+                      (store.CurrentRestoreEpoch().Value)
+                      "restore_epoch is the epoch the effect was prepared under"
+                  Expect.equal (effect.EnumerateObject() |> Seq.length) 7 "the wire shape has exactly the seven documented fields"
+
+                  let otherOrg, _ = freshProject ()
+                  let otherCode, otherBody = send HttpMethod.Get (url otherOrg) (Some token) None None
+                  Expect.equal otherCode 200 "another organization is served its own view"
+                  Expect.equal
+                      otherBody
+                      $"{{\"organization_id\":\"{otherOrg.Value}\",\"effects\":[]}}"
+                      "another organization sees nothing of this tenant's uncertainty"
+
+                  let malformedCode, malformedBody =
+                      send HttpMethod.Get $"{baseUrl}/api/v1/organizations/not-a-uuid/effects/uncertain" (Some token) None None
+                  Expect.equal malformedCode 400 "a malformed organization is refused"
+                  Expect.stringContains malformedBody "malformed_identifier" "with the stable code"
+
+                  let unauthorizedCode, unauthorizedBody = send HttpMethod.Get (url org) None None None
+                  Expect.equal unauthorizedCode 401 "no bearer, no listing"
+                  Expect.isFalse (unauthorizedBody.Contains key) "an unauthenticated caller learns no effect key"
+
+                  let postCode, _ = send HttpMethod.Post (url org) (Some token) None (Some "{}")
+                  Expect.equal postCode 405 "the surface is read-only: nothing replays, resolves or dismisses through it"
+
+                  Expect.equal invocations.Value 1 "listing never invokes"
+                  Expect.equal (receiptCount org) 1 "listing never writes"
+              finally
+                  app.StopAsync() |> Async.AwaitTask |> Async.RunSynchronously
           }
 
           test "effect dispatch teardown" {
