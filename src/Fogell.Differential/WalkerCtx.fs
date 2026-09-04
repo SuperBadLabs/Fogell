@@ -366,6 +366,7 @@ module WalkerCtx =
         let publicationItemLeaks secrets (item: PendingPublication) (value: RedactedText) =
             Secrets.detectUnregisteredLeaksRedacted secrets value
             @ Secrets.detectLeaks secrets item.Prefix
+            @ Secrets.detectRegisteredLeaks secrets item.Prefix
             @ Secrets.detectBoundaryLeaks secrets item.Prefix value
 
         let retainPublicationLeaks leaks =
@@ -561,6 +562,7 @@ module WalkerCtx =
                         List.isEmpty secrets
                         || (List.isEmpty leaks
                             && List.isEmpty (Secrets.detectLeaks secrets prefix)
+                            && List.isEmpty (Secrets.detectRegisteredLeaks secrets prefix)
                             && List.isEmpty (Secrets.detectBoundaryLeaks secrets prefix safeValue))
 
                     let stamped = prefix + safe

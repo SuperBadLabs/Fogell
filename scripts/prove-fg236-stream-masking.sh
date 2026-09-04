@@ -267,6 +267,15 @@ sed -i 's/^                            && List\.isEmpty (Secrets\.detectLeaks se
 kill_differential_mutant timestamp-prefix 'a credential-shaped timestamp cannot cross progressive publication'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 
+# The prefix is engine-authored and bypasses the matcher. Literal-only leak
+# screening misses registered derived forms such as uppercase `Z` for secret z.
+target='                            && List.isEmpty (Secrets.detectRegisteredLeaks secrets prefix)'
+[[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
+  || { echo 'FG-236 proof: timestamp-registered-prefix mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                            && List\.isEmpty (Secrets\.detectRegisteredLeaks secrets prefix)$/                            \&\& true/' "$walker_ctx"
+kill_differential_mutant timestamp-registered-prefix 'a registered derived form in a timestamp cannot cross progressive publication'
+cp "$scratch/walker-ctx.clean" "$walker_ctx"
+
 # Prefix and value are individually safe but their composition can complete a
 # credential. This check is separate from the prefix-only scan so canonical
 # redaction-token provenance remains opaque.
@@ -288,11 +297,20 @@ cp "$scratch/secrets.clean" "$secrets"
 
 # The terminal trace uses the same composed-boundary rule. Publication refusal
 # alone is insufficient because callback-free runs must also fail closed.
-target='                            @ Secrets.detectBoundaryLeaks active prefix value'
+target='                    @ Secrets.detectBoundaryLeaks active prefix value'
 [[ $(rg -F -c "$target" "$fogell") == 1 ]] \
   || { echo 'FG-236 proof: terminal-timestamp-boundary mutation target is not unique' >&2; exit 1; }
-sed -i 's/^                            @ Secrets\.detectBoundaryLeaks active prefix value$//' "$fogell"
+sed -i 's/^                    @ Secrets\.detectBoundaryLeaks active prefix value$//' "$fogell"
 kill_differential_mutant terminal-timestamp-boundary 'the composed timestamp/output credential escaped terminal refusal'
+cp "$scratch/fogell.clean" "$fogell"
+
+# Terminal truth must independently scan the unmasked engine prefix for every
+# registered matcher form; progressive suppression alone cannot prove refusal.
+target='                    Secrets.detectRegisteredLeaks active prefix'
+[[ $(rg -F -c "$target" "$fogell") == 1 ]] \
+  || { echo 'FG-236 proof: terminal-timestamp-registered-prefix mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                    Secrets\.detectRegisteredLeaks active prefix$/                    []/' "$fogell"
+kill_differential_mutant terminal-timestamp-registered-prefix 'the registered derived timestamp form escaped terminal refusal'
 cp "$scratch/fogell.clean" "$fogell"
 
 # A future sibling binding can complete a credential begun in an already
@@ -488,4 +506,4 @@ sed -i 's/^                          OnRedactedLine = None$/                    
 sed -i 's/^                          CreateRedactedAdmission = Some runCtx\.CreateRedactedAdmission$/                          CreateRedactedAdmission = None/' "$walker_step"
 kill_differential_mutant idempotence 'canonical-token pipeline refused outside execution'
 
-echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, inactive-callback, executor-stream-provenance, executor-buffer-provenance, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, timestamp-prefix, timestamp-boundary, timestamp-boundary-provenance, terminal-timestamp-boundary, open-stream-barrier, pending-publication, pending-leak-screen, transformed-token-provenance, committed-history, completed-history, committed-prefix-projection, non-expanding-binding, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'
+echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, inactive-callback, executor-stream-provenance, executor-buffer-provenance, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, timestamp-prefix, timestamp-registered-prefix, timestamp-boundary, timestamp-boundary-provenance, terminal-timestamp-boundary, terminal-timestamp-registered-prefix, open-stream-barrier, pending-publication, pending-leak-screen, transformed-token-provenance, committed-history, completed-history, committed-prefix-projection, non-expanding-binding, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'

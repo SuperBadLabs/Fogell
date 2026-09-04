@@ -434,7 +434,9 @@ let progressiveOutputPublication =
               let published = ResizeArray<string>()
               let timestampCtx = WalkerCtx.create 0L false (Some published.Add)
               let year = DateTime.UtcNow.Year.ToString(Globalization.CultureInfo.InvariantCulture)
-              timestampCtx.BindSecrets [ Secrets.inMemoryTextBinding "YEAR" year ]
+              let timestampStem = year + "-"
+              let reversedTimestampStem = String(timestampStem.ToCharArray() |> Array.rev)
+              timestampCtx.BindSecrets [ Secrets.inMemoryTextBinding "YEAR" reversedTimestampStem ]
               timestampCtx.EnableTimestamps()
               let stream = timestampCtx.CreateRedactedAdmission()
               stream.Admit (RedactedText.Raw "ok")
@@ -453,6 +455,33 @@ let progressiveOutputPublication =
                   |> List.map _.Variable
 
               Expect.contains leakedVariables "YEAR" "terminal screening still refuses the synthesized prefix"
+
+              let derivedPublished = ResizeArray<string>()
+              let derivedCtx = WalkerCtx.create 0L false (Some derivedPublished.Add)
+              let derived = Secrets.inMemoryTextBinding "DERIVED" "z"
+              derivedCtx.BindSecrets [ derived ]
+              derivedCtx.EnableTimestamps()
+              let derivedStream = derivedCtx.CreateRedactedAdmission()
+              derivedStream.Admit (RedactedText.Raw "ok")
+              derivedStream.Complete()
+              derivedCtx.FlushOutput()
+
+              Expect.isEmpty
+                  derivedPublished
+                  "a registered derived form in a timestamp cannot cross progressive publication"
+              let derivedOutput =
+                  derivedCtx.OutputWithActiveSecrets()
+
+              let derivedPrefix =
+                  derivedOutput |> List.exactlyOne |> fun (_, _, _, prefix, _) -> prefix
+
+              Expect.isNonEmpty
+                  (Secrets.detectRegisteredLeaks [ derived ] derivedPrefix)
+                  "terminal screening sees registered derived forms in the synthesized prefix"
+
+              Expect.isNonEmpty
+                  (FogellSide.terminalOutputLeaks derivedOutput)
+                  "the registered derived timestamp form escaped terminal refusal"
 
               let boundaryPublished = ResizeArray<string>()
               let boundaryCtx = WalkerCtx.create 0L false (Some boundaryPublished.Add)
@@ -9165,6 +9194,7 @@ let workspaceManifestV2 =
                       "the same strict collector refuses an actually missing or wrong root"
               finally
                   if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+
           }
 
           test "FG-236 production admission retains a pending stream across mid-fragment binding" {

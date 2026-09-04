@@ -467,6 +467,19 @@ module Secrets =
                   if maskedText.Contains form then
                       { Variable = b.ValueVariable; Encoding = name } ]
 
+    /// Screen engine-authored text which did not pass through the masker. This
+    /// includes every form the matcher would redact, not only the literal and
+    /// transformed forms retained by the post-mask leak detector.
+    let detectRegisteredLeaks (bindings: SecretBinding list) (text: string) : Leak list =
+        [ for b in bindings do
+              let pathForms =
+                  if b.ValueVariableCarriesPath && b.FilePath <> "" then [ b.FilePath ] else []
+
+              for form in b.Forms.MaskForms @ pathForms do
+                  if form <> "" && text.Contains form then
+                      { Variable = b.ValueVariable; Encoding = "registered" } ]
+        |> List.distinct
+
     /// Scan output that already crossed the registered-form matcher. Literal
     /// detection here would mistake the canonical `****` replacement for a
     /// one-character `*` credential; only transformations outside the masking

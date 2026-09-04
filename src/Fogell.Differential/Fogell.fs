@@ -10,6 +10,25 @@ open Fogell.Ir
 /// The Fogell side. Parses the same Jenkinsfile, walks its stages, executes each
 /// step, and reduces the run to a [Trace] in the same canonical form.
 module FogellSide =
+    let internal terminalOutputLeaks
+        (output: (string * SecretBinding list * bool * string * RedactedText) list)
+        =
+        output
+        |> List.collect (fun (line, active, alreadyRedacted, prefix, value) ->
+            if List.isEmpty active then
+                []
+            else
+                let prefixLeaks =
+                    Secrets.detectRegisteredLeaks active prefix
+                    @ Secrets.detectBoundaryLeaks active prefix value
+
+                if alreadyRedacted then
+                    Secrets.detectUnregisteredLeaksRedacted active value
+                    @ Secrets.detectLeaks active prefix
+                    @ prefixLeaks
+                else
+                    Secrets.detectLeaks active line @ prefixLeaks)
+
 
     /// A build-scoped agent HOME owned by Fogell rather than by the controller
     /// account. Its root is an explicit execution input, never controller
@@ -1547,16 +1566,7 @@ module FogellSide =
             // refuses to produce a trace instead.
             let leakedVars =
                 (runCtx.PublicationLeaks()
-                 @ (runCtx.OutputWithActiveSecrets()
-                    |> List.collect (fun (l, active, alreadyRedacted, prefix, value) ->
-                        if List.isEmpty active then
-                            []
-                        elif alreadyRedacted then
-                            Secrets.detectUnregisteredLeaksRedacted active value
-                            @ Secrets.detectLeaks active prefix
-                            @ Secrets.detectBoundaryLeaks active prefix value
-                        else
-                            Secrets.detectLeaks active l)))
+                 @ terminalOutputLeaks (runCtx.OutputWithActiveSecrets()))
                 |> List.map (fun leak -> leak.Variable)
                 |> List.distinct
 
