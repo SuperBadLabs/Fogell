@@ -165,7 +165,7 @@ target='                |> List.map (Secrets.mask bufferedSecrets)'
 [[ $(rg -F -c "$target" "$executor") == 1 ]] \
   || { echo 'FG-236 proof: buffered-warning mutation target is not unique' >&2; exit 1; }
 sed -i 's/^                |> List\.map (Secrets\.mask bufferedSecrets)$/                |> List.map id/' "$executor"
-kill_mutant buffered-warning 'a credential cannot leak through a buffered variable name'
+kill_mutant buffered-warning 'the buffered warning crosses ordinary masking'
 
 # ProcessGroup authors timeout/cancellation narration after its raw matcher.
 # Losing the ordinary callback routes those lines to the raw callback fallback
