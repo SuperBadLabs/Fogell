@@ -9616,6 +9616,75 @@ let compileRefusalDisposition =
                   if IO.Directory.Exists root then IO.Directory.Delete(root, true)
           }
 
+          test "FG-133: an option refusal says WHY — unknown, known-but-unimplemented, or wrong scope" {
+              // MEASURED on Jenkins 2.568.1 (receipts `compile-refusal-option-unknown-pipeline`,
+              // `compile-refusal-option-unknown-stage` and
+              // `compile-refusal-option-pipeline-only-at-stage`): the reference enumerates 39 valid
+              // names at pipeline scope and 24 at stage scope, so a refusal here can name which
+              // of three places the reader should look. Before FG-133 every case read
+              // "does not support".
+              let captured (source: string) =
+                  let lines = ResizeArray<string>()
+                  let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg133-{Guid.NewGuid():N}")
+
+                  let hooks =
+                      { OnOutput = lines.Add
+                        IsRestartedRun = false
+                        ShouldExecute = fun _ _ -> true
+                        StageWasCommitted = fun _ -> false
+                        SkippedStatus = fun _ _ -> None
+                        SkippedStageWarning = fun _ _ -> None
+                        OnStepStarted = fun _ _ _ -> ()
+                        OnStepStageWarning = fun _ _ _ -> ()
+                        OnStepFinished = fun _ _ _ _ -> ()
+                        OnStageCommitted = fun _ -> ()
+                        OnRetryAttempt = fun _ _ -> ()
+                        RetryAttemptsSoFar = fun _ -> 1
+                        PollInputAnswer = None
+                        OnInputClosed = fun _ _ _ -> ()
+                        OnInputAnswerVoided = fun _ _ _ -> () }
+
+                  try
+                      match FogellSide.runWithCredentialsAndPersistence Map.empty root "job" hooks source with
+                      | Error why -> failtestf "refusal did not produce a trace: %s" why
+                      | Ok result ->
+                          Expect.equal result.Disposition RefusedBeforeExecution "compile-shaped rejection"
+                          lines |> Seq.filter (fun l -> l.StartsWith "ERROR:") |> List.ofSeq
+                  finally
+                      if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+
+              let pipelineWith options =
+                  $"pipeline {{ agent any options {{ {options} }} stages {{ stage('s') {{ steps {{ echo 'x' }} }} }} }}"
+
+              let stageWith options =
+                  $"pipeline {{ agent any stages {{ stage('s') {{ options {{ {options} }} steps {{ echo 'x' }} }} }} }}"
+
+              Expect.equal
+                  (captured (pipelineWith "bogusOption()"))
+                  [ "ERROR: pipeline declares option(s) this engine does not support: bogusOption (unknown to Jenkins at either scope; Jenkins refuses it too)" ]
+                  "a name Jenkins does not know, at pipeline scope"
+
+              Expect.equal
+                  (captured (pipelineWith "retry(2)"))
+                  [ "ERROR: pipeline declares option(s) this engine does not support: retry (known to Jenkins at pipeline scope; not implemented by this engine)" ]
+                  "a name Jenkins runs at pipeline scope (measured SUCCESS) that this engine does not implement there"
+
+              Expect.equal
+                  (captured (stageWith "bogusOption()"))
+                  [ "ERROR: stage declares option(s) this engine does not support at stage scope: bogusOption (unknown to Jenkins at either scope; Jenkins refuses it too) — refusing rather than running them with the wrong semantics" ]
+                  "a name Jenkins does not know, at stage scope"
+
+              Expect.equal
+                  (captured (stageWith "skipStagesAfterUnstable()"))
+                  [ "ERROR: stage declares option(s) this engine does not support at stage scope: skipStagesAfterUnstable (a pipeline-only option; Jenkins refuses it at stage scope too) — refusing rather than running them with the wrong semantics" ]
+                  "a pipeline-only name inside a stage block (measured: Jenkins refuses it there)"
+
+              Expect.equal
+                  (captured (stageWith "ansiColor('xterm')"))
+                  [ "ERROR: stage declares option(s) this engine does not support at stage scope: ansiColor (known to Jenkins at stage scope; not implemented by this engine at stage scope) — refusing rather than running them with the wrong semantics" ]
+                  "a name Jenkins accepts at stage scope that this engine honours only at pipeline scope"
+          }
+
           test "Fogell capability gaps remain engine-unavailable rather than reference refusals" {
               let source =
                   "pipeline { agent { kubernetes label: 'docker', yaml: 'apiVersion: v1' } stages { stage('one') { steps { echo 'x' } } } }"

@@ -299,7 +299,14 @@ NFT
     # The pid list is read with a BUILTIN (no fork): a command substitution or a
     # `cat` would itself be a scope member and count as a survivor (measured —
     # the first survivor check refused every teardown).
-    others() { local q; left=0; mapfile -t pids < "$procs" 2>/dev/null; for q in "${pids[@]}"; do [ "$q" = "$$" ] || left=$((left+1)); done; }
+    others() {
+      local q; left=0
+      # An unreadable pid list is a refusal, not an empty scope (Copilot on PR #399).
+      if ! mapfile -t pids < "$procs" 2>/dev/null; then
+        log "REFUSED to remove $FENCE_TABLE: cannot read $procs — the fence stays"; exit 3
+      fi
+      for q in "${pids[@]}"; do [ "$q" = "$$" ] || left=$((left+1)); done
+    }
     for _ in 1 2 3; do
       others; for p in "${pids[@]}"; do
         [ "$p" = "$$" ] && continue
