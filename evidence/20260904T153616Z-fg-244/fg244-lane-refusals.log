@@ -1,0 +1,26 @@
+FG-244 corpus-lane refusals, host HeMan, worktree /home/srikanth/projects/fogell/.claude/worktrees/agent-a6fe56d17e6616184, base ac3e934e57841b11128379d1ce6797039093bac8, 2026-09-04T21:27:32Z
+FOGELL_CORPUS=/sn8100/work/exchange/crucible-gate/corpus. Nothing below executes a corpus file: each refusal precedes the lease, both fences and the CLI (scripts/run-corpus-differential.sh, refusal order in its header).
+
+### (1) a file OUTSIDE the pinned corpus: /tmp/claude-1000/-home-srikanth-projects-fogell--claude-worktrees-qa-mission-checklist-ab7d3f/784b2435-6099-417f-8ae8-1b50ea1fbe32/scratchpad/outside.Jenkinsfile
+$ scripts/run-corpus-differential.sh /tmp/claude-1000/-home-srikanth-projects-fogell--claude-worktrees-qa-mission-checklist-ab7d3f/784b2435-6099-417f-8ae8-1b50ea1fbe32/scratchpad/outside.Jenkinsfile
+corpus lane: REFUSED: /tmp/claude-1000/-home-srikanth-projects-fogell--claude-worktrees-qa-mission-checklist-ab7d3f/784b2435-6099-417f-8ae8-1b50ea1fbe32/scratchpad/outside.Jenkinsfile is not a pinned corpus file under /sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles — this lane executes corpus files only
+exit 2
+
+### (2) a pinned corpus file NOT on differential/corpus-allowlist.tsv: /sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/Ableton_python-pipeline-utils.Jenkinsfile
+    sha256 541ede0e8e35b5c87c42af09c47f6b31c3e171dddbe51eeed9fa46b128cece1b
+$ scripts/run-corpus-differential.sh /sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/Ableton_python-pipeline-utils.Jenkinsfile
+corpus lane: verifying the pinned manifest
+corpus lane: REFUSED: Ableton_python-pipeline-utils.Jenkinsfile (sha256 541ede0e8e35b5c87c42af09c47f6b31c3e171dddbe51eeed9fa46b128cece1b) is not on the executed-surface allowlist — read it, record its surface in differential/corpus-allowlist.tsv, then run
+exit 2
+
+### the allowlist at this base (stems):
+cvitter_jenkins-pipeline-examples
+hamitmizrak_Devops_Jenkinsfile
+allcloud-io_jenkins-pipeline-tutorial
+cinqict_jenkinsdev
+devops-ws_learn-pipeline-java
+
+### lane lease on luigi after the refusals (must be free: a refusal before the lease takes nothing)
+lease free
+### Jenkins fence after the refusals (must be ABSENT: a refusal before apply applies nothing)
+present rc=1 (1 = absent)

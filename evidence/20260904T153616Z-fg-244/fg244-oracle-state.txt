@@ -1,0 +1,24 @@
+FG-244 oracle state, host HeMan, worktree /home/srikanth/projects/fogell/.claude/worktrees/agent-a6fe56d17e6616184, base ac3e934e57841b11128379d1ce6797039093bac8
+
+== BEFORE the Jenkins fence apply/prove/remove (fg244-jenkins-fence-proof.log) ==
+date -u: 2026-09-04T21:27:12Z
+$ curl -s 'http://luigi:18083/computer/api/json?tree=busyExecutors,totalExecutors'
+{"_class":"hudson.model.ComputerSet","busyExecutors":0,"totalExecutors":8}
+$ ssh luigi 'podman inspect jenkins-lab --format "{{.State.StartedAt}} restarts={{.RestartCount}}"'
+2026-09-04 09:54:08.628225523 +0000 UTC restarts=0
+$ scripts/no-egress-fence.sh jenkins started-at
+2026-09-04 09:54:08.628225523 +0000 UTC
+$ scripts/no-egress-fence.sh jenkins present; echo rc=$?   (1 = absent, 0 = PRESENT, 3 = lookup failed)
+rc=1
+
+== AFTER the Jenkins fence apply/prove/remove (proof script exit 0) ==
+date -u: 2026-09-04T21:27:22Z
+$ curl -s 'http://luigi:18083/computer/api/json?tree=busyExecutors,totalExecutors'
+{"_class":"hudson.model.ComputerSet","busyExecutors":0,"totalExecutors":8}
+$ ssh luigi 'podman inspect jenkins-lab --format "{{.State.StartedAt}} restarts={{.RestartCount}}"'
+2026-09-04 09:54:08.628225523 +0000 UTC restarts=0
+$ scripts/no-egress-fence.sh jenkins started-at
+2026-09-04 09:54:08.628225523 +0000 UTC
+$ scripts/no-egress-fence.sh jenkins present; echo rc=$?   (1 = absent, 0 = PRESENT, 3 = lookup failed)
+rc=1
+

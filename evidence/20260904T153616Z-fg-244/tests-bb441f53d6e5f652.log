@@ -1,0 +1,3 @@
+project: tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj
+working-directory: /tmp/fogell-evidence-source.WWzYTz/source
+EXPECTO! 370 tests run in 00:00:04.3488757 for Fogell.Differential – 370 passed, 0 ignored, 0 failed, 0 errored. Success!
