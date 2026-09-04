@@ -666,14 +666,19 @@ module WalkerCtx =
           BindSecrets =
             fun bindings ->
                 lock outputLock (fun () ->
-                    for b in bindings do
-                        boundSecrets.Add(b, output.Count)
-
-                    if not (List.isEmpty bindings) then
+                    let previousMaskingForms =
                         boundSecrets
                         |> Seq.map fst
                         |> List.ofSeq
-                        |> remaskPendingPublications)
+                        |> Secrets.maskingForms
+
+                    for b in bindings do
+                        boundSecrets.Add(b, output.Count)
+
+                    let active = boundSecrets |> Seq.map fst |> List.ofSeq
+
+                    if Secrets.maskingForms active <> previousMaskingForms then
+                        remaskPendingPublications active)
           BoundSecrets =
             fun () ->
                 lock outputLock (fun () -> boundSecrets |> Seq.map fst |> List.ofSeq)

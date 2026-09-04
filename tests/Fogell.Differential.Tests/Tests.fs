@@ -628,6 +628,35 @@ let progressiveOutputPublication =
                   (terminalOnly.Output())
                   [ "****" ]
                   "terminal remasking does not depend on an external callback"
+
+              let proveNonExpandingBindingRemainsProgressive label prepareBinding =
+                  use published = new Threading.ManualResetEventSlim(false)
+                  let ctx =
+                      WalkerCtx.create
+                          0L
+                          false
+                          (Some(fun line -> if line = label then published.Set()))
+
+                  prepareBinding ctx
+                  let stream = ctx.CreateRedactedAdmission()
+                  prepareBinding ctx
+                  stream.Admit (RedactedText.Raw label)
+
+                  try
+                      Expect.isTrue
+                          (published.Wait 2_000)
+                          "a non-expanding binding does not create an EOF publication barrier"
+                  finally
+                      stream.Complete()
+                      ctx.FlushOutput()
+
+              proveNonExpandingBindingRemainsProgressive
+                  "after-empty-binding"
+                  (fun ctx -> ctx.BindSecrets [ Secrets.inMemoryTextBinding "EMPTY" "" ])
+              let duplicate = Secrets.inMemoryTextBinding "DUPLICATE" "already-known-secret"
+              proveNonExpandingBindingRemainsProgressive
+                  "after-duplicate-binding"
+                  (fun ctx -> ctx.BindSecrets [ duplicate ])
           }
 
           test "FG-236 an incomplete publication lifecycle fails closed at flush" {
