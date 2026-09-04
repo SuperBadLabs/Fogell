@@ -92,8 +92,10 @@ export FOGELL_JENKINS_ENV_CMD FOGELL_JENKINS_GIT_VERSION_CMD
 # dir; the oracle's busy check below is the only cross-user, cross-host guard.
 # The lock lives in the user's runtime dir, or in a per-user 0700 directory
 # under /tmp — never loose in world-writable /tmp (Copilot on PR #399).
+# A caller-set runtime dir is held to the same test as the fallback: a
+# directory, owned by this user, not a symlink, writable (Copilot on PR #401).
 lock_dir=${XDG_RUNTIME_DIR:-}
-if [ -z "$lock_dir" ] || [ ! -d "$lock_dir" ] || [ ! -w "$lock_dir" ]; then
+if [ -z "$lock_dir" ] || [ ! -d "$lock_dir" ] || [ -L "$lock_dir" ] || [ ! -O "$lock_dir" ] || [ ! -w "$lock_dir" ]; then
   lock_dir="/tmp/fogell-corpus-lane-$(id -u)"
   [ -d "$lock_dir" ] || mkdir -m 0700 "$lock_dir" 2>/dev/null || true
   [ -d "$lock_dir" ] && [ -O "$lock_dir" ] && [ ! -L "$lock_dir" ] || die "lane lock directory $lock_dir is not a directory owned by this user"
@@ -250,9 +252,18 @@ elif [ "$rc" = 0 ]; then
     done
   fi
   if [ -n "$batch_ok" ]; then
+    # A rename that fails is reported and fails the lane; it cannot be silent
+    # (Codex and Copilot on PR #401). A same-directory rename after a
+    # successful copy is the one step here that has no realistic failure.
     for i in "${!staged[@]}"; do
-      mv -f -- "${staged[$i]}" "${dests[$i]}" && echo "corpus lane: promoted $(basename "${dests[$i]}") into $FOGELL_RECEIPT_DIR"
+      if mv -f -- "${staged[$i]}" "${dests[$i]}"; then
+        echo "corpus lane: promoted $(basename "${dests[$i]}") into $FOGELL_RECEIPT_DIR"
+      else
+        echo "corpus lane: could NOT rename $(basename "${dests[$i]}") into place — receipts before it in this batch are promoted, this one and later ones are not" >&2
+        batch_ok=; rc=2; break
+      fi
     done
+    [ -n "$batch_ok" ] || for tmp in "${staged[@]}"; do rm -f -- "$tmp"; done
   else
     for tmp in "${staged[@]}"; do rm -f -- "$tmp"; done
     rc=2
