@@ -155,7 +155,17 @@ target='                                generatedLine |> Option.iter (fun emit -
 [[ $(rg -F -c "$target" "$executor") == 1 ]] \
   || { echo 'FG-236 proof: missing-warning-sink mutation target is not unique' >&2; exit 1; }
 sed -i 's/^                                generatedLine |> Option\.iter (fun emit -> leakReports\.Add note; emit note)$/                                leakReports.Add note; decoded |> Option.iter (fun emit -> emit note)/' "$executor"
-kill_mutant missing-warning-sink 'the missing ordinary sink keeps the warning buffered'
+kill_mutant missing-warning-sink 'the buffered warning crosses ordinary masking'
+
+# Buffered synthesized warnings are public StepResult output too. Appending the
+# original variable-bearing text can disclose a second credential whose value
+# equals that variable name even though callback publication was masked.
+cp "$scratch/executor.clean" "$executor"
+target='                |> List.map (Secrets.mask bufferedSecrets)'
+[[ $(rg -F -c "$target" "$executor") == 1 ]] \
+  || { echo 'FG-236 proof: buffered-warning mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                |> List\.map (Secrets\.mask bufferedSecrets)$/                |> List.map id/' "$executor"
+kill_mutant buffered-warning 'a credential cannot leak through a buffered variable name'
 
 # ProcessGroup authors timeout/cancellation narration after its raw matcher.
 # Losing the ordinary callback routes those lines to the raw callback fallback
@@ -343,4 +353,4 @@ sed -i 's/^                          OnRedactedLine = None$/                    
 sed -i 's/^                          CreateRedactedAdmission = Some runCtx\.CreateRedactedAdmission$/                          CreateRedactedAdmission = None/' "$walker_step"
 kill_differential_mutant idempotence 'canonical-token pipeline refused outside execution'
 
-echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, capture-cutoff, generated-warning, missing-warning-sink, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, pending-publication, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'
+echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, pending-publication, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'

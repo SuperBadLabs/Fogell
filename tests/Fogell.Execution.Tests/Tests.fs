@@ -6373,12 +6373,13 @@ let maskingOnOutputPath =
           test "FG-236 a raw-only callback cannot suppress a buffered leak warning" {
               let root = tempRoot ()
               let binding = Secrets.bind root "TOKEN" "s3cr3t-value"
+              let warningOverlap = Secrets.bind root "OTHER" "TOKEN"
               let redacted = System.Collections.Generic.List<string>()
 
               let r =
                   Executor.runStep
                       { request root "printf '%s\n' \"$(echo s3cr3t-value | rev)\"" with
-                          Secrets = [ binding ]
+                          Secrets = [ binding; warningOverlap ]
                           OnLine = None
                           OnRedactedLine = Some(fun line -> redacted.Add line) }
 
@@ -6386,7 +6387,8 @@ let maskingOnOutputPath =
                   redacted
                   (fun line -> line.Contains "eulav-t3rc3s")
                   "the transformed process bytes reached the raw callback"
-              Expect.stringContains r.Stderr "WARNING: TOKEN appears" "the missing ordinary sink keeps the warning buffered"
+              Expect.stringContains r.Stderr "WARNING: **** appears" "the buffered warning crosses ordinary masking"
+              Expect.isFalse (r.Stderr.Contains "WARNING: TOKEN appears") "a credential cannot leak through a buffered variable name"
               Expect.stringContains r.Stderr "reversed-encoded" "the buffered warning names the defeating transform"
           }
 

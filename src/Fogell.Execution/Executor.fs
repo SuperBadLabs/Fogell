@@ -349,6 +349,10 @@ module Executor =
                 |> List.distinct
                 |> List.filter (fun note -> not (leakReports.Contains note))
 
+            let maskedBufferedLeaks =
+                bufferedLeaks
+                |> List.map (Secrets.mask bufferedSecrets)
+
             for note in bufferedLeaks do
                 leakReports.Add note
                 generatedLine |> Option.iter (fun f -> f note)
@@ -445,10 +449,10 @@ module Executor =
               // A caller with no OnLine still has to SEE the warning, or FG-071's
               // "never silent" promise depends on how the caller chose to read.
               Stderr =
-                if List.isEmpty bufferedLeaks then
+                if List.isEmpty maskedBufferedLeaks then
                     maskedStderr
                 else
-                    maskedStderr + String.concat "\n" bufferedLeaks + "\n"
+                    maskedStderr + String.concat "\n" maskedBufferedLeaks + "\n"
               DurationMs = run.DurationMs
               ProcessGroupId = run.ProcessGroupId
               Termination = run.Termination
