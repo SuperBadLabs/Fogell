@@ -1,0 +1,26 @@
+[2026-09-04T21:25:26Z] FG-244 Fogell-side fence proof, host HeMan, user srikanth, worktree /home/srikanth/projects/fogell/.claude/worktrees/agent-a6fe56d17e6616184, base ac3e934e57841b11128379d1ce6797039093bac8
+[2026-09-04T21:25:26Z] fence script sha256 328f25a1c4a5db8d; fenced command: true
+[2026-09-04T21:25:26Z] $ sudo -n nft list tables | rg fogell   (before)
+[2026-09-04T21:25:26Z]   (none)
+[2026-09-04T21:25:26Z] $ FOGELL_FENCE_PROBE_LAN_IP=192.168.4.1 scripts/no-egress-fence.sh fogell run -- true
+[2026-09-04T21:25:26Z]   Pseudo-terminal will not be allocated because stdin is not a terminal.
+[2026-09-04T21:25:26Z]   fence: fogell fence loaded for scope user.slice/user-1000.slice/user@1000.service/fogell.slice/fogell-fence.slice/fogell-fence-20260904T212526Z-1258796.scope (table fogell_fence_u1000_20260904T212526Z_1258796): reachable = 192.168.4.117:18083, 192.168.4.117:22 (collector), loopback minus DNS stubs
+[2026-09-04T21:25:26Z]   fence: fogell PASS https refused (curl https://example.com exit 6)
+[2026-09-04T21:25:26Z]   fence: fogell PASS direct-ip refused (curl http://1.1.1.1/ exit 7 in 2 ms)
+[2026-09-04T21:25:26Z]   fence: fogell PASS refusal is fast (2 ms)
+[2026-09-04T21:25:26Z]   fence: fogell PASS lan refused (curl http://192.168.4.1/ exit 7)
+[2026-09-04T21:25:26Z]   fence: fogell PASS dns refused (getent hosts example.com exit 2)
+[2026-09-04T21:25:26Z]   fence: fogell PASS oracle reachable (http://luigi:18083/api/json)
+[2026-09-04T21:25:27Z]   fence: fogell PASS collector ssh reachable (ssh luigi true)
+[2026-09-04T21:25:27Z]   fence: fogell PASS rules live (2 packets rejected so far)
+[2026-09-04T21:25:27Z]   fence: fogell fence PROVEN; running: true
+[2026-09-04T21:25:27Z]   fence: command exit 0; 2 packets rejected over the whole fenced run (probes included)
+[2026-09-04T21:25:27Z]   fence: fogell fence removed (fogell_fence_u1000_20260904T212526Z_1258796); 0 leftover process(es) killed first
+[2026-09-04T21:25:27Z] exit 0
+[2026-09-04T21:25:27Z] $ sudo -n nft list tables | rg fogell   (after; must be none)
+[2026-09-04T21:25:27Z]   (none)
+[2026-09-04T21:25:27Z] $ scripts/no-egress-fence.sh fogell status
+[2026-09-04T21:25:27Z]   fence: fogell fence ABSENT (no run in progress)
+[2026-09-04T21:25:27Z] $ curl -sS -m 8 -o /dev/null -w '%{http_code}' https://example.com   (outside the scope HeMan keeps egress)
+[2026-09-04T21:25:27Z]   200
+[2026-09-04T21:25:27Z] RESULT: OK
