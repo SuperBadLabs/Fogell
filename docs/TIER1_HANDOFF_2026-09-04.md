@@ -212,7 +212,9 @@ FG-133 receipts landed under this session).
 
 Read with the sections above; this is the addendum, not a replacement.
 
-- **Closed: FG-245.** Four `sh`-bearing corpus files PROVEN tier-1 under the
+- **Landed: FG-245, filed PARTIAL** (merged through PR #413 as `d06394cc`;
+  Copilot coverage of the merged head is the one remainder, see the
+  ticket). Four `sh`-bearing corpus files PROVEN tier-1 under the
   fence as FAILURE receipts on an empty workspace —
   `sixeyed_jenkins-pipeline-demos`, `llknur_jenkinsfile-pipeline-project`,
   `linuxacademy_cicd-pipeline-train-schedule-cd` and `-dockerdeploy` (the
