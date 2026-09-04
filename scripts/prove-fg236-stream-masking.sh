@@ -76,7 +76,7 @@ cp "$walker_ctx" "$scratch/walker-ctx.clean"
 target='            finalizeAll output'
 [[ $(rg -F -c "$target" "$redaction") == 2 ]] \
   || { echo 'FG-236 proof: EOF-suffix mutation targets drifted' >&2; exit 1; }
-sed -i '/member _.CompleteRedacted()/,/output.ToRedactedText()/ s/^            finalizeAll output$/            while pending.Count > 0 do let item = pending.Dequeue() in output.AppendRaw item.Character; output.AppendRaw(item.TrailingSeparator.ToString())/' "$redaction"
+sed -i '/member _.CompleteRedacted()/,/output.ToRedactedText()/ s/^            finalizeAll output$/            while pending.Count > 0 do let item = pending.Dequeue() in output.AppendRaw item.Character; output.AppendRaw(item.TrailingSeparator.ToRedactedText().Text)/' "$redaction"
 kill_mutant eof-suffix "EOF replays a shorter match's suffix through overlapping forms"
 
 # If repeated line endings are treated as transparent forever, matcher memory is
