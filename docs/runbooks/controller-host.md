@@ -55,6 +55,30 @@ Every setting in this list is required, and a whitespace-only value is treated
 as missing. In particular, `FOGELL_LOCAL_TRUST_POOL` must name a nonblank pool;
 startup refuses a blank value before the controller can bind or admit work.
 
+Two further settings are optional (FG-026b) and enable the registered
+external-effect producer:
+
+```text
+FOGELL_EFFECT_FILE_DROP_ROOT        absolute, existing, writable directory disjoint from FOGELL_STATE_ROOT; absent = no producer enabled
+FOGELL_EFFECT_KILL_AT               prepare | invoke | apply | confirm; crash-window proof only, refused without the drop root
+```
+
+With the drop root set, every attempt that reaches a natural terminal writes one
+receipt `<root>/<organization>/<attempt>.receipt` through the FG-026 ledger
+(prepare, invoke, applied, confirmed) before its terminal status is published;
+a refused or uncertain effect fails the attempt closed into
+`reconciliation_required` (reason `effect_dispatch_unconfirmed`). Every worker
+scan and every startup classify stale prepared/applied ledger rows as uncertain,
+publish one `effect.uncertain` event and outbox row per row, and never
+re-invoke them; `GET /api/v1/organizations/{org}/effects/uncertain` lists them
+read-only. The kill hook exists only for `scripts/prove-fg026b-effect-dispatch.sh`
+and must never be set on a service.
+
+The maintenance identity that performs a restore (`ActivateRestore`) needs
+`SELECT, UPDATE` on `effect_checkpoints` in addition to its attempt, node,
+build, event and outbox grants: a restore now classifies pre-restore
+prepared/applied effects in the same transaction as the epoch bump.
+
 The controller currently has no authenticated approval broker. Fresh admission
 therefore rejects an `input` step unless a usable explicit, inherited stage, or
 pipeline timeout provably bounds it. The refusal is `execution_unsupported` with
