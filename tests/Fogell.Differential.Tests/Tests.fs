@@ -562,6 +562,38 @@ let progressiveOutputPublication =
                   [ "Sec"; "****" ]
                   "the stored trace retains committed context and masks the completing suffix"
 
+              use eofCallbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseEofCallback = new Threading.ManualResetEventSlim(false)
+              let eofPublished = ResizeArray<string>()
+              let eofCtx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          eofPublished.Add line
+
+                          if line = "Sec" then
+                              eofCallbackEntered.Set()
+                              releaseEofCallback.Wait()))
+              let completedStream = eofCtx.CreateRedactedAdmission()
+
+              try
+                  completedStream.Admit (RedactedText.Raw "Sec")
+                  Expect.isTrue
+                      (eofCallbackEntered.Wait 2_000)
+                      "the completed-stream control has a committed prefix in flight"
+                  completedStream.Admit (RedactedText.Raw "ret")
+                  completedStream.Complete()
+                  eofCtx.BindSecrets [ Secrets.inMemoryTextBinding "AFTER_EOF" "Secret" ]
+              finally
+                  releaseEofCallback.Set()
+
+              eofCtx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq eofPublished, eofCtx.Output())
+                  ([ "Sec"; "****" ], [ "Sec"; "****" ])
+                  "completed stream history survives until its queued suffix is remasked"
+
               let terminalOnly = WalkerCtx.create 0L false None
               let terminalStream = terminalOnly.CreateRedactedAdmission()
               terminalStream.Admit (RedactedText.Raw "Sec")

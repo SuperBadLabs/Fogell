@@ -344,6 +344,16 @@ sed -i 's/^                        not (committedPublicationOrders\.Contains ite
 kill_differential_mutant committed-history 'a future binding preserves committed publication and terminal audit history'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 
+# EOF closes admission but not necessarily publication: a callback can still
+# hold one committed line while a later line from the completed stream remains
+# queued. Its history is required until that suffix commits or is remasked.
+target='            if stream.Completed && not (streamHasPendingPublication stream) then'
+[[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
+  || { echo 'FG-236 proof: completed-history mutation target is not unique' >&2; exit 1; }
+sed -i 's/^            if stream\.Completed && not (streamHasPendingPublication stream) then$/            if stream.Completed then/' "$walker_ctx"
+kill_differential_mutant completed-history 'completed stream history survives until its queued suffix is remasked'
+cp "$scratch/walker-ctx.clean" "$walker_ctx"
+
 # Reassembly follows stream identity across globally interleaved queue entries.
 # Dropping that identity reduces the late pass to isolated physical lines.
 target='                                      RedactedStream = redactedStream }'
@@ -460,4 +470,4 @@ sed -i 's/^                          OnRedactedLine = None$/                    
 sed -i 's/^                          CreateRedactedAdmission = Some runCtx\.CreateRedactedAdmission$/                          CreateRedactedAdmission = None/' "$walker_step"
 kill_differential_mutant idempotence 'canonical-token pipeline refused outside execution'
 
-echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, inactive-callback, executor-stream-provenance, executor-buffer-provenance, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, timestamp-prefix, timestamp-boundary, timestamp-boundary-provenance, terminal-timestamp-boundary, open-stream-barrier, pending-publication, pending-leak-screen, transformed-token-provenance, committed-history, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'
+echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, inactive-callback, executor-stream-provenance, executor-buffer-provenance, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, timestamp-prefix, timestamp-boundary, timestamp-boundary-provenance, terminal-timestamp-boundary, open-stream-barrier, pending-publication, pending-leak-screen, transformed-token-provenance, committed-history, completed-history, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'

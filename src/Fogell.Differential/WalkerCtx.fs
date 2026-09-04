@@ -228,6 +228,18 @@ module WalkerCtx =
         let mutable publicationActive = false
         let mutable publicationFailure: OutputPublicationException option = None
 
+        let streamHasPendingPublication (stream: PublicationStream) =
+            let belongsToStream (item: PendingPublication) =
+                item.RedactedStream
+                |> Option.exists (fun candidate -> obj.ReferenceEquals(candidate, stream))
+
+            publications |> Seq.exists belongsToStream
+            || deferredPublications |> Seq.exists belongsToStream
+
+        let discardCompletedHistoryIfSettled (stream: PublicationStream) =
+            if stream.Completed && not (streamHasPendingPublication stream) then
+                streamHistory.Remove stream |> ignore
+
         let drainPublications publish =
             let mutable draining = true
 
@@ -244,6 +256,8 @@ module WalkerCtx =
                             // flight. A later credential may use this item as
                             // left-context, but must never publish it again.
                             committedPublicationOrders.Add item.Order |> ignore
+                            item.RedactedStream
+                            |> Option.iter discardCompletedHistoryIfSettled
                             Some item)
 
                 match next with
@@ -491,7 +505,7 @@ module WalkerCtx =
                             streamHistory
                             |> Seq.choose (fun pair -> if pair.Key.Completed then Some pair.Key else None)
                             |> Seq.toArray
-                            |> Array.iter (fun completed -> streamHistory.Remove completed |> ignore)
+                            |> Array.iter discardCompletedHistoryIfSettled
 
                         match publicationFailure with
                         | Some _ -> false
