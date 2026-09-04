@@ -90,7 +90,15 @@ export FOGELL_JENKINS_ENV_CMD FOGELL_JENKINS_GIT_VERSION_CMD
 # One lane per user on this host: a second lane's exit trap would remove this
 # lane's Jenkins fence (measured, fixed). The lock lives in the user's runtime
 # dir; the oracle's busy check below is the only cross-user, cross-host guard.
-lock_dir=${XDG_RUNTIME_DIR:-/tmp}; [ -d "$lock_dir" ] && [ -w "$lock_dir" ] || lock_dir=/tmp
+# The lock lives in the user's runtime dir, or in a per-user 0700 directory
+# under /tmp — never loose in world-writable /tmp (Copilot on PR #399).
+lock_dir=${XDG_RUNTIME_DIR:-}
+if [ -z "$lock_dir" ] || [ ! -d "$lock_dir" ] || [ ! -w "$lock_dir" ]; then
+  lock_dir="/tmp/fogell-corpus-lane-$(id -u)"
+  [ -d "$lock_dir" ] || mkdir -m 0700 "$lock_dir" 2>/dev/null || true
+  [ -d "$lock_dir" ] && [ -O "$lock_dir" ] && [ ! -L "$lock_dir" ] || die "lane lock directory $lock_dir is not a directory owned by this user"
+  chmod 0700 "$lock_dir" 2>/dev/null || true
+fi
 [ -d "$lock_dir" ] && [ -w "$lock_dir" ] || die "no writable directory for the lane lock ($lock_dir)"
 exec 9>"$lock_dir/fogell-corpus-lane.lock" || die "could not open the lane lock in $lock_dir"
 flock -n 9 || die "another corpus lane of this user holds $lock_dir/fogell-corpus-lane.lock"
@@ -226,19 +234,29 @@ if [ "$ended_at" != "$started_at" ] || ! ./scripts/no-egress-fence.sh jenkins pr
 elif [ "$rc" = 0 ]; then
   completed=1
   mkdir -p "$FOGELL_RECEIPT_DIR"
-  # Only receipts for the stems this run was asked for are promoted, and a
-  # copy failure is reported rather than aborting mid-promotion (verifier).
+  # A BATCH is promoted whole or not at all (Codex on PR #399): first every
+  # requested receipt must exist, then every copy is staged beside its
+  # destination, and only then is each renamed into place — so a missing
+  # receipt or a failed copy leaves the receipt directory exactly as it was.
+  staged=(); dests=(); batch_ok=1
   for r in "${files[@]}"; do
     p="$run_receipts/$(basename "$r" .Jenkinsfile).receipt.txt"
-    if [ -f "$p" ]; then
-      # Atomic: copy beside the destination, then rename, so an interrupted or
-      # failed copy never truncates an existing receipt (Codex on PR #398).
-      tmp="$FOGELL_RECEIPT_DIR/.$(basename "$p").tmp.$$"
-      if cp -- "$p" "$tmp" && mv -f -- "$tmp" "$FOGELL_RECEIPT_DIR/$(basename "$p")"; then echo "corpus lane: promoted $(basename "$p") into $FOGELL_RECEIPT_DIR"; else rm -f -- "$tmp"; echo "corpus lane: could NOT promote $(basename "$p")" >&2; rc=2; fi
-    else
-      echo "corpus lane: no receipt was produced for $(basename "$r")" >&2; rc=2
-    fi
+    [ -f "$p" ] || { echo "corpus lane: no receipt was produced for $(basename "$r") — nothing from this batch is promoted" >&2; batch_ok=; }
   done
+  if [ -n "$batch_ok" ]; then
+    for r in "${files[@]}"; do
+      name="$(basename "$r" .Jenkinsfile).receipt.txt"; p="$run_receipts/$name"; tmp="$FOGELL_RECEIPT_DIR/.$name.tmp.$$"
+      if cp -- "$p" "$tmp"; then staged+=("$tmp"); dests+=("$FOGELL_RECEIPT_DIR/$name"); else echo "corpus lane: could NOT stage $name — nothing from this batch is promoted" >&2; batch_ok=; break; fi
+    done
+  fi
+  if [ -n "$batch_ok" ]; then
+    for i in "${!staged[@]}"; do
+      mv -f -- "${staged[$i]}" "${dests[$i]}" && echo "corpus lane: promoted $(basename "${dests[$i]}") into $FOGELL_RECEIPT_DIR"
+    done
+  else
+    for tmp in "${staged[@]}"; do rm -f -- "$tmp"; done
+    rc=2
+  fi
 else
   echo "corpus lane: the differential exited $rc — its receipts are not promoted" >&2
 fi
