@@ -347,43 +347,15 @@ module WalkerCtx =
 
             for group in streamGroups.Values do
                 let source = group.ToArray()
-                let joined = source |> Seq.map _.Value |> RedactedText.JoinLines
-                let reframed = Secrets.maskAlreadyRedacted secrets joined |> _.SplitLines()
-                let originalCount = source.Length
-                let mutable equalPrefix = 0
+                let reframed =
+                    source
+                    |> Array.map _.Value
+                    |> Secrets.maskAlreadyRedactedLines secrets
 
-                while (
-                    equalPrefix < originalCount
-                    && equalPrefix < reframed.Length
-                    && source[equalPrefix].Value.Text = reframed[equalPrefix].Text) do
-                    equalPrefix <- equalPrefix + 1
-
-                let mutable equalSuffix = 0
-
-                while (
-                    equalSuffix < originalCount - equalPrefix
-                    && equalSuffix < reframed.Length - equalPrefix
-                    && source[originalCount - 1 - equalSuffix].Value.Text = reframed[reframed.Length - 1 - equalSuffix].Text) do
-                    equalSuffix <- equalSuffix + 1
-
-                for lineIndex = 0 to reframed.Length - 1 do
-                    // Cross-line matches can collapse several pending physical
-                    // lines into one canonical token. The last contributing line
-                    // owns the order/timestamp: that is when the match completed.
-                    let sourceIndex =
-                        if lineIndex < equalPrefix then
-                            lineIndex
-                        elif lineIndex >= reframed.Length - equalSuffix then
-                            originalCount - (reframed.Length - lineIndex)
-                        else
-                            let changedOutputIndex = lineIndex - equalPrefix
-                            let changedOutputCount = reframed.Length - equalPrefix - equalSuffix
-                            let changedInputEnd = originalCount - equalSuffix
-                            changedInputEnd - changedOutputCount + changedOutputIndex
-
+                for sourceIndex, value in reframed do
                     remasked.Add
                         { source[sourceIndex] with
-                            Value = reframed[lineIndex] }
+                            Value = value }
 
             remasked
             |> Seq.sortBy _.Order

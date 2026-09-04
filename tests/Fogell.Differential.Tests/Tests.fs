@@ -220,6 +220,58 @@ let progressiveOutputPublication =
                   "pending interleaved lines from one shell stream retain adjacency"
           }
 
+          test "FG-236 each collapsed match keeps its final contributing timestamp" {
+              use timestampEntered = new Threading.ManualResetEventSlim(false)
+              use releaseTimestamp = new Threading.ManualResetEventSlim(false)
+              let timestampPublished = ResizeArray<string>()
+
+              let timestampCtx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          timestampPublished.Add line
+
+                          if line = "blocker" then
+                              timestampEntered.Set()
+                              releaseTimestamp.Wait()))
+
+              let timestampBlocker = Threading.Tasks.Task.Run(fun () -> timestampCtx.Emit "blocker")
+
+              try
+                  Expect.isTrue (timestampEntered.Wait 2_000) "the timestamp control is genuinely stalled"
+                  timestampCtx.EnableTimestamps()
+                  let stream = timestampCtx.CreateRedactedAdmission()
+                  stream.Admit (RedactedText.Raw "Se")
+                  Threading.Thread.Sleep 10
+                  stream.Admit (RedactedText.Raw "cret")
+                  Threading.Thread.Sleep 10
+                  stream.Admit (RedactedText.Raw "middle")
+                  Threading.Thread.Sleep 10
+                  stream.Admit (RedactedText.Raw "To")
+                  Threading.Thread.Sleep 10
+                  stream.Admit (RedactedText.Raw "ken")
+                  timestampCtx.BindSecrets
+                      [ Secrets.inMemoryTextBinding "FIRST" "Secret"
+                        Secrets.inMemoryTextBinding "SECOND" "Token" ]
+                  stream.Complete()
+              finally
+                  releaseTimestamp.Set()
+
+              timestampBlocker.GetAwaiter().GetResult()
+              timestampCtx.FlushOutput()
+              let admitted = timestampCtx.Output()
+              let prefix (source: string) (literal: string) = source.Substring(0, source.Length - literal.Length)
+
+              Expect.equal
+                  (List.ofSeq timestampPublished)
+                  [ "blocker"
+                    prefix admitted[2] "cret" + "****"
+                    admitted[3]
+                    prefix admitted[5] "ken" + "****" ]
+                  "each token is stamped by the physical line which completed that match"
+          }
+
           test "FG-236 pending stream survives a binding between physical fragments" {
               use betweenEntered = new Threading.ManualResetEventSlim(false)
               use releaseBetween = new Threading.ManualResetEventSlim(false)

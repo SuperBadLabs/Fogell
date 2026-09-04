@@ -417,14 +417,25 @@ module Secrets =
     let maskAlreadyRedacted (bindings: SecretBinding list) (value: RedactedText) =
         let forms = maskingForms bindings |> List.toArray
 
-        let apply raw =
+        let apply (raw: RedactedText) =
             if Array.isEmpty forms then
-                RedactedTextOps.raw raw
+                raw
             else
                 let matcher = SeparatorTolerantMasker(fun () -> forms)
-                RedactedTextOps.append (matcher.PushRedacted raw) (matcher.CompleteRedacted())
+                RedactedTextOps.append (matcher.PushValue raw) (matcher.CompleteRedacted())
 
         RedactedTextOps.mapRawFragments apply value
+
+    /// Recheck a sequence of framed lines as one stream and return each output
+    /// line with the index of the last input line whose bytes contributed to it.
+    /// A cross-line token therefore inherits the timestamp/order of its final
+    /// credential fragment, even when several matches collapse independently.
+    let maskAlreadyRedactedLines (bindings: SecretBinding list) (values: RedactedText array) =
+        values
+        |> Array.mapi (fun source value -> source, value)
+        |> RedactedText.JoinSourcedLines
+        |> maskAlreadyRedacted bindings
+        |> _.SplitLinesWithSources()
 
     /// FG-071. After masking, look for forms the mask does not cover. A hit means
     /// a secret reached the log in a shape masking cannot catch — reported, never

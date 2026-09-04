@@ -304,7 +304,7 @@ a live-inventory mask; a caller supplying only the provenance-aware raw callback
 gets an explicit no-op generated sink rather than the ProcessGroup compatibility
 fallback. The combined masking-form inventory is deduplicated once before
 descending-length ordering.
-`scripts/prove-fg236-stream-masking.sh` kills twenty-six semantic mutants covering
+`scripts/prove-fg236-stream-masking.sh` kills twenty-seven semantic mutants covering
 EOF, grammar, progressive delivery, wiring, control framing, bounded-reader
 callback enforcement, bounded capture,
 generated-warning and generated-termination provenance, missing warning sinks,
@@ -314,7 +314,8 @@ pending-transport races, interleaved-stream continuity, stream identity,
 publication EOF, failed-reader draining, admission-factory wiring, independent
 raw-pipe lifecycles, returned-buffer races,
 exact token provenance versus raw four-star inference, adjacent-token
-cardinality, canonical-token boundaries, and publication idempotence.
+cardinality, per-match source provenance, canonical-token boundaries, and
+publication idempotence.
 
 File-credential byte-derived forms are immutable strings prepared lazily on the
 first requested binding from an owned byte snapshot and shared by its repeated

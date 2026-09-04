@@ -9,11 +9,13 @@ open System.Collections.Generic
 /// same bytes; callers can read [Text] but only the masking pipeline can mint
 /// protected spans.
 [<Sealed>]
-type RedactedText internal (text: string, tokenCharacters: bool array) =
+type RedactedText internal (text: string, tokenCharacters: bool array, sourceCharacters: int array) =
     do
         if isNull text then nullArg (nameof text)
         if isNull tokenCharacters then nullArg (nameof tokenCharacters)
+        if isNull sourceCharacters then nullArg (nameof sourceCharacters)
         if text.Length <> tokenCharacters.Length then invalidArg (nameof tokenCharacters) "redaction provenance length differs from text"
+        if text.Length <> sourceCharacters.Length then invalidArg (nameof sourceCharacters) "source provenance length differs from text"
 
         tokenCharacters
         |> Array.iteri (fun index isToken ->
@@ -22,26 +24,45 @@ type RedactedText internal (text: string, tokenCharacters: bool array) =
 
     member _.Text = text
     member internal _.TokenCharacters = tokenCharacters
+    member internal _.SourceCharacters = sourceCharacters
     override _.ToString() = text
 
     /// Mint ordinary raw text. This can never create protected token spans.
     static member Raw(value: string) =
         let value = if isNull value then "" else value
-        RedactedText(value, Array.create value.Length false)
+        RedactedText(value, Array.create value.Length false, Array.create value.Length -1)
 
     /// Reconstruct the raw line separators removed by callback framing while
     /// preserving every existing token bit. The appended separators are raw.
     static member JoinLines(values: seq<RedactedText>) =
         let joinedText = StringBuilder()
         let joinedTokens = ResizeArray<bool>()
+        let joinedSources = ResizeArray<int>()
 
         for value in values do
             joinedText.Append value.Text |> ignore
             joinedText.Append '\n' |> ignore
             joinedTokens.AddRange value.TokenCharacters
+            joinedSources.AddRange value.SourceCharacters
             joinedTokens.Add false
+            joinedSources.Add(if value.SourceCharacters.Length = 0 then -1 else value.SourceCharacters[value.SourceCharacters.Length - 1])
 
-        RedactedText(joinedText.ToString(), joinedTokens.ToArray())
+        RedactedText(joinedText.ToString(), joinedTokens.ToArray(), joinedSources.ToArray())
+
+    static member internal JoinSourcedLines(values: seq<int * RedactedText>) =
+        let joinedText = StringBuilder()
+        let joinedTokens = ResizeArray<bool>()
+        let joinedSources = ResizeArray<int>()
+
+        for source, value in values do
+            joinedText.Append value.Text |> ignore
+            joinedText.Append '\n' |> ignore
+            joinedTokens.AddRange value.TokenCharacters
+            joinedSources.AddRange(Array.create value.Text.Length source)
+            joinedTokens.Add false
+            joinedSources.Add source
+
+        RedactedText(joinedText.ToString(), joinedTokens.ToArray(), joinedSources.ToArray())
 
     /// Incremental-reader line semantics over a provenance-bearing value.
     /// CR, LF, and CRLF frame lines; empty lines are retained exactly as the
@@ -59,7 +80,8 @@ type RedactedText internal (text: string, tokenCharacters: bool array) =
             lines.Add(
                 RedactedText(
                     this.Text.Substring(start, finish - start),
-                    tokens))
+                    tokens,
+                    (if finish = start then Array.empty else this.SourceCharacters[start .. finish - 1])))
 
         while index < this.Text.Length do
             match this.Text[index] with
@@ -77,31 +99,99 @@ type RedactedText internal (text: string, tokenCharacters: bool array) =
         if start < this.Text.Length then addLine this.Text.Length
         lines.ToArray()
 
+    member internal this.SplitLinesWithSources() =
+        let lines = ResizeArray<int * RedactedText>()
+        let mutable start = 0
+        let mutable index = 0
+
+        let addLine finish separatorFinish =
+            let value =
+                RedactedText(
+                    this.Text.Substring(start, finish - start),
+                    (if finish = start then Array.empty else this.TokenCharacters[start .. finish - 1]),
+                    (if finish = start then Array.empty else this.SourceCharacters[start .. finish - 1]))
+
+            let sourceStart, sourceFinish =
+                if finish > start then start, finish
+                else finish, separatorFinish
+
+            let source =
+                if sourceFinish <= sourceStart then -1
+                else this.SourceCharacters[sourceStart .. sourceFinish - 1] |> Array.max
+
+            lines.Add(source, value)
+
+        while index < this.Text.Length do
+            match this.Text[index] with
+            | '\r' ->
+                let finish = index
+                index <- index + 1
+                if index < this.Text.Length && this.Text[index] = '\n' then index <- index + 1
+                addLine finish index
+                start <- index
+            | '\n' ->
+                let finish = index
+                index <- index + 1
+                addLine finish index
+                start <- index
+            | _ -> index <- index + 1
+
+        if start < this.Text.Length then addLine this.Text.Length this.Text.Length
+        lines.ToArray()
+
 type internal RedactedTextBuilder() =
     let text = StringBuilder()
     let tokenCharacters = ResizeArray<bool>()
+    let sourceCharacters = ResizeArray<int>()
 
     member _.AppendRaw(value: string) =
         if not (String.IsNullOrEmpty value) then
             text.Append value |> ignore
             for _ = 1 to value.Length do tokenCharacters.Add false
+            for _ = 1 to value.Length do sourceCharacters.Add -1
+
+    member _.AppendRawSourced(value: string, source: int) =
+        if not (String.IsNullOrEmpty value) then
+            text.Append value |> ignore
+            for _ = 1 to value.Length do tokenCharacters.Add false
+            for _ = 1 to value.Length do sourceCharacters.Add source
 
     member _.AppendRaw(value: char) =
         text.Append value |> ignore
         tokenCharacters.Add false
+        sourceCharacters.Add -1
+
+    member _.AppendRawSourced(value: char, source: int) =
+        text.Append value |> ignore
+        tokenCharacters.Add false
+        sourceCharacters.Add source
 
     member _.AppendProtected(value: string) =
         if not (String.IsNullOrEmpty value) then
             text.Append value |> ignore
             for _ = 1 to value.Length do tokenCharacters.Add true
+            for _ = 1 to value.Length do sourceCharacters.Add -1
+
+    member _.AppendProtectedSourced(value: string, source: int) =
+        if not (String.IsNullOrEmpty value) then
+            text.Append value |> ignore
+            for _ = 1 to value.Length do tokenCharacters.Add true
+            for _ = 1 to value.Length do sourceCharacters.Add source
 
     member _.AppendToken() =
         text.Append "****" |> ignore
         for _ = 1 to 4 do tokenCharacters.Add true
+        for _ = 1 to 4 do sourceCharacters.Add -1
+
+    member _.AppendTokenSourced(source: int) =
+        text.Append "****" |> ignore
+        for _ = 1 to 4 do tokenCharacters.Add true
+        for _ = 1 to 4 do sourceCharacters.Add source
 
     member _.Append(value: RedactedText) =
         text.Append value.Text |> ignore
         tokenCharacters.AddRange value.TokenCharacters
+        sourceCharacters.AddRange value.SourceCharacters
 
     member this.AppendLine(value: RedactedText) =
         this.Append value
@@ -110,8 +200,10 @@ type internal RedactedTextBuilder() =
     member _.Clear() =
         text.Clear() |> ignore
         tokenCharacters.Clear()
+        sourceCharacters.Clear()
 
-    member _.ToRedactedText() = RedactedText(text.ToString(), tokenCharacters.ToArray())
+    member _.Length = text.Length
+    member _.ToRedactedText() = RedactedText(text.ToString(), tokenCharacters.ToArray(), sourceCharacters.ToArray())
 
 module internal RedactedTextOps =
     let raw text =
@@ -126,15 +218,15 @@ module internal RedactedTextOps =
     /// Apply a transform only to characters which were not produced as a mask
     /// token. Raw `****` stays raw and can therefore match a credential learned
     /// before publication; genuine matcher tokens remain opaque boundaries.
-    let mapRawFragments (transform: string -> RedactedText) (value: RedactedText) =
+    let mapRawFragments (transform: RedactedText -> RedactedText) (value: RedactedText) =
         let output = RedactedTextBuilder()
-        let raw = StringBuilder()
+        let raw = RedactedTextBuilder()
         let protectedAt index = value.TokenCharacters[index]
 
         let flushRaw () =
             if raw.Length > 0 then
-                output.Append(transform (raw.ToString()))
-                raw.Clear() |> ignore
+                output.Append(transform (raw.ToRedactedText()))
+                raw.Clear()
 
         let mutable index = 0
 
@@ -146,9 +238,10 @@ module internal RedactedTextOps =
                 while index < value.Text.Length && protectedAt index do
                     index <- index + 1
 
-                output.AppendProtected(value.Text.Substring(start, index - start))
+                for protectedIndex = start to index - 1 do
+                    output.AppendProtectedSourced(string value.Text[protectedIndex], value.SourceCharacters[protectedIndex])
             else
-                raw.Append value.Text[index] |> ignore
+                raw.AppendRawSourced(value.Text[index], value.SourceCharacters[index])
                 index <- index + 1
 
         flushRaw ()
@@ -162,7 +255,8 @@ type private MaskPatternState =
 type private PendingLogicalCharacter =
     { Index: int64
       Character: char
-      TrailingSeparator: StringBuilder }
+      Origin: int
+      TrailingSeparator: RedactedTextBuilder }
 
 /// FG-236. Stateful raw-output redaction. A single CR, LF, or CRLF sequence may
 /// occur between adjacent characters of a registered form. Two consecutive line
@@ -199,6 +293,7 @@ type internal SeparatorTolerantMasker(maskForms: unit -> string array) =
     let mutable logicalIndex = -1L
     let mutable separatorCount = 0
     let mutable pendingCr = false
+    let mutable pendingCrOrigin = -1
     let mutable pendingRawCharacters = 0
 
     let recordMatchAt endIndex length =
@@ -253,24 +348,26 @@ type internal SeparatorTolerantMasker(maskForms: unit -> string array) =
 
         match matchesByStart.TryGetValue start with
         | true, length ->
-            output.AppendToken()
-            let mutable trailingSeparator = ""
+            let mutable tokenOrigin = -1
+            let mutable trailingSeparator = RedactedText.Raw ""
 
             for _ = 1 to length do
                 let item = pending.Dequeue()
                 pendingRawCharacters <- pendingRawCharacters - 1 - item.TrailingSeparator.Length
-                trailingSeparator <- item.TrailingSeparator.ToString()
+                tokenOrigin <- max tokenOrigin item.Origin
+                trailingSeparator <- item.TrailingSeparator.ToRedactedText()
                 removeMatchStart item.Index
 
             // A separator after the last matched character is outside the
             // credential. Separators between matched characters disappear.
-            output.AppendRaw trailingSeparator
+            output.AppendTokenSourced tokenOrigin
+            output.Append trailingSeparator
         | _ ->
             let item = pending.Dequeue()
             pendingRawCharacters <- pendingRawCharacters - 1 - item.TrailingSeparator.Length
             removeMatchStart item.Index
-            output.AppendRaw item.Character
-            output.AppendRaw(item.TrailingSeparator.ToString())
+            output.AppendRawSourced(item.Character, item.Origin)
+            output.Append(item.TrailingSeparator.ToRedactedText())
 
         if pending.Count = 0 then
             lastPending <- None
@@ -306,14 +403,14 @@ type internal SeparatorTolerantMasker(maskForms: unit -> string array) =
         if count > maximumPendingCharacters then
             invalidOp "raw-output redaction exceeded its grammar-derived pending bound"
 
-    let addSeparator (output: RedactedTextBuilder) (text: string) =
+    let addSeparator (output: RedactedTextBuilder) (text: string) origin =
         separatorCount <- separatorCount + 1
 
         match lastPending with
         | Some item ->
-            item.TrailingSeparator.Append text |> ignore
+            item.TrailingSeparator.AppendRawSourced(text, origin)
             pendingRawCharacters <- pendingRawCharacters + text.Length
-        | None -> output.AppendRaw text
+        | None -> output.AppendRawSourced(text, origin)
 
         if separatorCount >= 2 then
             // A second physical ending is a hard grammar barrier. Everything
@@ -323,7 +420,7 @@ type internal SeparatorTolerantMasker(maskForms: unit -> string array) =
 
         assertBound ()
 
-    let addLogical (output: RedactedTextBuilder) (c: char) =
+    let addLogical (output: RedactedTextBuilder) (c: char) origin =
         if separatorCount >= 2 then
             resetPatterns ()
 
@@ -333,7 +430,8 @@ type internal SeparatorTolerantMasker(maskForms: unit -> string array) =
         let item =
             { Index = logicalIndex
               Character = c
-              TrailingSeparator = StringBuilder() }
+              Origin = origin
+              TrailingSeparator = RedactedTextBuilder() }
 
         pending.Enqueue item
         lastPending <- Some item
@@ -345,37 +443,40 @@ type internal SeparatorTolerantMasker(maskForms: unit -> string array) =
         finalizeReady output
         assertBound ()
 
-    let rec addRawCharacter (output: RedactedTextBuilder) (c: char) =
+    let rec addRawCharacter (output: RedactedTextBuilder) (c: char) origin =
         if pendingCr then
             pendingCr <- false
 
             if c = '\n' then
-                addSeparator output "\r\n"
+                addSeparator output "\r\n" (max pendingCrOrigin origin)
             else
-                addSeparator output "\r"
-                addRawCharacter output c
+                addSeparator output "\r" pendingCrOrigin
+                addRawCharacter output c origin
         else
             match c with
             | '\r' ->
                 pendingCr <- true
+                pendingCrOrigin <- origin
                 assertBound ()
-            | '\n' -> addSeparator output "\n"
-            | _ -> addLogical output c
+            | '\n' -> addSeparator output "\n" origin
+            | _ -> addLogical output c origin
 
-    let pushText (output: RedactedTextBuilder) (text: string) =
-        for c in text do
-            addRawCharacter output c
+    let pushValue (output: RedactedTextBuilder) (value: RedactedText) =
+        for index = 0 to value.Text.Length - 1 do
+            addRawCharacter output value.Text[index] value.SourceCharacters[index]
 
-    member _.PushRedacted(text: string) =
+    member _.PushValue(value: RedactedText) =
         refreshPatterns ()
 
-        if patterns.Count = 0 || String.IsNullOrEmpty text then
-            RedactedTextOps.raw text
+        if patterns.Count = 0 || String.IsNullOrEmpty value.Text then
+            value
         else
             let output = RedactedTextBuilder()
             finalizeReady output
-            pushText output text
+            pushValue output value
             output.ToRedactedText()
+
+    member this.PushRedacted(text: string) = this.PushValue(RedactedText.Raw text)
 
     member this.Push(text: string) = (this.PushRedacted text).Text
 
@@ -389,7 +490,7 @@ type internal SeparatorTolerantMasker(maskForms: unit -> string array) =
 
             if pendingCr then
                 pendingCr <- false
-                addSeparator output "\r"
+                addSeparator output "\r" pendingCrOrigin
 
             finalizeAll output
             resetPatterns ()
@@ -451,12 +552,12 @@ type OutputRedactionPolicy internal (maskForms: unit -> string list, synchroniza
         this.Synchronize(fun () ->
             let forms = currentForms ()
 
-            let apply raw =
+            let apply (raw: RedactedText) =
                 if Array.isEmpty forms then
-                    RedactedTextOps.raw raw
+                    raw
                 else
                     let matcher = SeparatorTolerantMasker(fun () -> forms)
-                    RedactedTextOps.append (matcher.PushRedacted raw) (matcher.CompleteRedacted())
+                    RedactedTextOps.append (matcher.PushValue raw) (matcher.CompleteRedacted())
 
             RedactedTextOps.mapRawFragments apply value)
 

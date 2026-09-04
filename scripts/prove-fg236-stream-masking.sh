@@ -312,11 +312,21 @@ cp "$scratch/redaction.clean" "$redaction"
 # one token loses the cardinality of adjacent matches (eight stars are two
 # tokens), even though remasking must remain idempotent.
 cp "$scratch/redaction.clean" "$redaction"
-target='                output.AppendProtected(value.Text.Substring(start, index - start))'
+target='                for protectedIndex = start to index - 1 do'
 [[ $(rg -F -c "$target" "$redaction") == 1 ]] \
   || { echo 'FG-236 proof: adjacent-token mutation target is not unique' >&2; exit 1; }
-sed -i 's/^                output\.AppendProtected(value\.Text\.Substring(start, index - start))$/                output.AppendProtected "****"/' "$redaction"
+sed -i 's/^                for protectedIndex = start to index - 1 do$/                for protectedIndex = start to min start (index - 1) do/' "$redaction"
 kill_differential_mutant adjacent-token 'two adjacent raw-matcher tokens retain their separate cardinality'
+cp "$scratch/redaction.clean" "$redaction"
+
+# Every collapsed match inherits the last physical line that contributed to
+# that match, not the tail of the whole changed region. Flattening character
+# sources shifts timestamps when two independent matches collapse at once.
+target='                else this.SourceCharacters[sourceStart .. sourceFinish - 1] |> Array.max'
+[[ $(rg -F -c "$target" "$redaction") == 1 ]] \
+  || { echo 'FG-236 proof: token-source mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                else this\.SourceCharacters\[sourceStart \.\. sourceFinish - 1\] |> Array\.max$/                else this.SourceCharacters |> Array.max/' "$redaction"
+kill_differential_mutant token-source 'each token is stamped by the physical line which completed that match'
 cp "$scratch/redaction.clean" "$redaction"
 
 # Executor has already canonicalized a registered raw form. Sending that line
@@ -333,4 +343,4 @@ sed -i 's/^                          OnRedactedLine = None$/                    
 sed -i 's/^                          CreateRedactedAdmission = Some runCtx\.CreateRedactedAdmission$/                          CreateRedactedAdmission = None/' "$walker_step"
 kill_differential_mutant idempotence 'canonical-token pipeline refused outside execution'
 
-echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, capture-cutoff, generated-warning, missing-warning-sink, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, pending-publication, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, and idempotence mutants compiled and were killed'
+echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, capture-cutoff, generated-warning, missing-warning-sink, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, pending-publication, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'
