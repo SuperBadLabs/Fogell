@@ -308,10 +308,10 @@ cp "$scratch/walker-ctx.clean" "$walker_ctx"
 # A slow earlier callback leaves later provenance-bearing lines pending. A
 # newly bound credential must recheck that queue as one separator-aware stream,
 # not merely recheck each already-framed fragment in isolation.
-target='                    if not (List.isEmpty bindings) then'
+target='                    if Secrets.maskingForms active <> previousMaskingForms then'
 [[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
   || { echo 'FG-236 proof: pending-publication mutation target is not unique' >&2; exit 1; }
-sed -i 's/^                    if not (List\.isEmpty bindings) then$/                    if false then/' "$walker_ctx"
+sed -i 's/^                    if Secrets\.maskingForms active <> previousMaskingForms then$/                    if false then/' "$walker_ctx"
 kill_differential_mutant pending-publication 'a stalled non-stream line is rechecked before external publication'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 
