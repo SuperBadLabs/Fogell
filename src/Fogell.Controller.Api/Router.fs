@@ -13,7 +13,7 @@ open Fogell.Store
 
 /// FG-060. The public API.
 ///
-/// Six endpoints, all tenant-scoped in the path. Authorization is checked before
+/// Seven endpoints, all tenant-scoped in the path. Authorization is checked before
 /// anything else on every route — including before the path parameters are parsed
 /// — so an unauthenticated caller cannot learn whether an organization or build
 /// exists by comparing 404 against 400.
@@ -656,6 +656,41 @@ module Router =
         }
         :> Threading.Tasks.Task
 
+    /// FG-026b. GET …/effects/uncertain — which external effects of this
+    /// organization did the controller lose track of? Read-only and tenant
+    /// scoped by the route: the Store selects one organization and the
+    /// database's forced RLS refuses every other.
+    let private uncertainEffects (state: ApiState) (ctx: HttpContext) =
+        task {
+            if not (authorized state ctx) then
+                return! fail ctx 401 "unauthorized" "a valid bearer token is required" None
+            else
+                match guid (string ctx.Request.RouteValues["organizationId"]) with
+                | None -> return! fail ctx 400 "malformed_identifier" "organization must be a UUID" None
+                | Some org ->
+                    let effects =
+                        state.Store.ListUncertainEffects(OrganizationId org)
+                        |> List.map (fun checkpoint ->
+                            { AttemptId = checkpoint.AttemptId.Value.ToString()
+                              EffectKey = checkpoint.EffectKey
+                              Fence = checkpoint.Fence.Value
+                              AuthorityOwner = checkpoint.AuthorityOwner
+                              RestoreEpoch = checkpoint.RestoreEpoch.Value
+                              PayloadSha256 = checkpoint.PayloadSha256
+                              UncertainFrom =
+                                match checkpoint.UncertainOrigin with
+                                | Some UncertainAfterPrepare -> "prepared"
+                                | Some UncertainAfterApply -> "applied"
+                                | None -> "unknown" })
+
+                    let payload: UncertainEffectsResponse =
+                        { OrganizationId = org.ToString()
+                          Effects = effects }
+
+                    return! json ctx 200 payload
+        }
+        :> Threading.Tasks.Task
+
     let private orgPath = "/api/v1/organizations/{organizationId}"
 
     let map (state: ApiState) (endpoints: IEndpointRouteBuilder) =
@@ -668,4 +703,5 @@ module Router =
         |> ignore
         endpoints.MapPost($"{orgPath}/projects/{{projectId}}/builds/{{buildId}}/cancel", RequestDelegate(cancel state)) |> ignore
         endpoints.MapGet($"{orgPath}/scheduler/explain", RequestDelegate(explain state)) |> ignore
+        endpoints.MapGet($"{orgPath}/effects/uncertain", RequestDelegate(uncertainEffects state)) |> ignore
         endpoints

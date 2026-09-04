@@ -36,6 +36,24 @@ type ExplainResponse =
       [<JsonPropertyName "capabilities">] Capabilities: string list
       [<JsonPropertyName "explanation">] Explanation: string }
 
+/// FG-026b. One external effect whose outcome the controller cannot know.
+/// Read-only: the API lists uncertainty for an operator, it never replays,
+/// resolves, or dismisses it.
+type UncertainEffect =
+    { [<JsonPropertyName "attempt_id">] AttemptId: string
+      [<JsonPropertyName "effect_key">] EffectKey: string
+      [<JsonPropertyName "fence">] Fence: int64
+      [<JsonPropertyName "authority_owner">] AuthorityOwner: string
+      [<JsonPropertyName "restore_epoch">] RestoreEpoch: int64
+      [<JsonPropertyName "payload_sha256">] PayloadSha256: string
+      /// "prepared" when the invocation may never have happened, "applied"
+      /// when it did but its confirmation was lost.
+      [<JsonPropertyName "uncertain_from">] UncertainFrom: string }
+
+type UncertainEffectsResponse =
+    { [<JsonPropertyName "organization_id">] OrganizationId: string
+      [<JsonPropertyName "effects">] Effects: UncertainEffect list }
+
 /// Errors carry a stable code as well as a message, so a client can branch on
 /// the code and show the message. ADR 0001 forbids an unnamed rejection.
 type ErrorResponse =
