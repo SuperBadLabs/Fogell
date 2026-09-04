@@ -1,0 +1,9 @@
+# Executed-surface allowlist for the corpus lane (FG-244). The lane refuses any corpus file whose
+# sha256 AND stem are not on a line here: membership in the pinned corpus is not permission to
+# execute. Each surface was read by hand before the file ran; the reading is the control, the
+# fence is defence in depth. Columns: sha256 <TAB> stem <TAB> executed surface, as read.
+4c7a5ac0431ca337c635678d5320fc987e232ed5336f0c9cee956ec08b3f7fe1	cvitter_jenkins-pipeline-examples	one echo of a single-quoted literal (FG-200)
+19358b0c5e5866970a2d9b0826ffc01ec7e0ddb56ffe341d4146eeb6851ba625	hamitmizrak_Devops_Jenkinsfile	three echo of single-quoted literals (FG-242)
+7bf47940d691f7f0e8514f72f92dc2935e38adc229a22d77124a46f305a28400	allcloud-io_jenkins-pipeline-tutorial	environment block of five literal assignments, none read, then one echo of a single-quoted literal (FG-242)
+666ac2275ea75730e27cf7b565d757691b094c508355adc0199d745278a23100	cinqict_jenkinsdev	sh 'echo "Hello World"' — a shell running echo, no redirection (FG-244)
+38d8798a5d4d068f5b12ffde42cbc35b6c51621b9eb2ba042f31de76ff013f95	devops-ws_learn-pipeline-java	echo literal; echo env.CHANGE_ID (null); sh 'echo test > log.txt'; archiveArtifacts log.txt; sh 'echo test > three.txt'; archiveArtifacts three.txt — shells running echo with a redirection into the workspace (FG-244)
