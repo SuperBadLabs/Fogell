@@ -2184,6 +2184,503 @@ let endpoints =
           }
         ]
 
+/// FG-026b. The closed-world registry, the single dispatch path, the
+/// file-drop destination simulator and the four crash windows, driven against
+/// real attempts on live PostgreSQL. The trigger arms run the production worker
+/// scan and never call a Store reconciliation member themselves.
+let effectDispatch =
+    let dropRoot =
+        IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg026b-drop-{Guid.NewGuid():N}")
+
+    do IO.Directory.CreateDirectory dropRoot |> ignore
+
+    let abortSentinel = "fg026b-window-abort"
+    let abort () = raise (InvalidOperationException abortSentinel)
+
+    let admitClaimWith (beginExecution: bool) (org: OrganizationId) (project: ProjectId) (key: string) (owner: string) =
+        let admitted =
+            match
+                store.AdmitBuild
+                    { OrganizationId = org
+                      ProjectId = project
+                      IdempotencyKey = key
+                      PipelineSource = Text.Encoding.UTF8.GetBytes $"pipeline:{key}"
+                      StageNames = [ "effect" ]
+                      RequiredTrustPool = "trusted-linux"
+                      RequiredCapabilities = [ "linux" ] }
+            with
+            | Ok admitted -> admitted
+            | Error error -> failtestf "admission failed: %s" error
+
+        let claim =
+            match store.ClaimNextExecution(org, owner, "trusted-linux", [ "linux" ], 60) with
+            | Ok(Some claim) when claim.AttemptId = admitted.AttemptId -> claim
+            | other -> failtestf "execution claim did not return the admitted attempt: %A" other
+
+        if beginExecution then
+            match store.BeginExecution(org, claim.AttemptId, claim.Fence, owner, 60) with
+            | Ok ExecutionStarted -> ()
+            | other -> failtestf "execution start failed: %A" other
+
+        claim
+
+    let admitClaim org project key owner = admitClaimWith true org project key owner
+
+    let runningClaim key owner =
+        let org, project = freshProject ()
+        org, admitClaim org project key owner
+
+    /// Offered but not yet started: the state in which a fence can still move.
+    let offeredClaim key owner =
+        let org, project = freshProject ()
+        org, admitClaimWith false org project key owner
+
+    let ledgerRow (org: OrganizationId) (attempt: AttemptId) (key: string) =
+        use conn = new Npgsql.NpgsqlConnection(connectionString)
+        conn.Open()
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <-
+            "SELECT state, uncertain_from FROM effect_checkpoints
+             WHERE organization_id = @o AND attempt_id = @a AND effect_key = @k"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        cmd.Parameters.AddWithValue("k", key) |> ignore
+        use reader = cmd.ExecuteReader()
+
+        if reader.Read() then
+            Some(reader.GetString 0, (if reader.IsDBNull 1 then None else Some(reader.GetString 1)))
+        else
+            None
+
+    let ledgerRows (org: OrganizationId) (attempt: AttemptId) =
+        use conn = new Npgsql.NpgsqlConnection(connectionString)
+        conn.Open()
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <-
+            "SELECT count(*) FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = @a"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        cmd.ExecuteScalar() :?> int64
+
+    let expireLease (org: OrganizationId) (attempt: AttemptId) =
+        use conn = new Npgsql.NpgsqlConnection(connectionString)
+        conn.Open()
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <-
+            "UPDATE attempts SET lease_expires_at = clock_timestamp() - interval '1 second'
+             WHERE organization_id = @o AND id = @a"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        Expect.equal (cmd.ExecuteNonQuery()) 1 "the attempt's lease was aged"
+
+    let receiptCount (org: OrganizationId) =
+        let directory = IO.Path.Combine(dropRoot, org.Value.ToString "N")
+
+        if IO.Directory.Exists directory then
+            IO.Directory.GetFiles(directory, "*.receipt").Length
+        else
+            0
+
+    /// The real file-drop connector with its invocation counted. The counter
+    /// is the number of times the destination was driven; the receipt count is
+    /// what the destination holds.
+    let counted (claim: ExecutionClaim) (terminal: BuildStatus) =
+        let invocations = ref 0
+        let real = FileDropReceipt.invocation dropRoot claim terminal
+
+        invocations,
+        { real with
+            Invoke =
+                fun () ->
+                    invocations.Value <- invocations.Value + 1
+                    real.Invoke() }
+
+    let effectKey (claim: ExecutionClaim) =
+        EffectProducer.effectKey EffectProducer.FileDropReceipt (FileDropReceipt.identity claim)
+
+    let withHook (window: EffectKillWindow) =
+        match window with
+        | EffectKillWindow.AfterPrepare -> { EffectDispatch.noHooks with AfterPrepare = abort }
+        | EffectKillWindow.AfterInvoke -> { EffectDispatch.noHooks with AfterInvoke = abort }
+        | EffectKillWindow.AfterApply -> { EffectDispatch.noHooks with AfterApply = abort }
+        | EffectKillWindow.AfterConfirm -> { EffectDispatch.noHooks with AfterConfirm = abort }
+
+    let abortedRun (store: Store) authority hooks invocation =
+        try
+            EffectDispatch.run store authority hooks invocation |> ignore
+            failtest "the window hook did not abort the dispatch"
+        with :? InvalidOperationException as ex when ex.Message = abortSentinel ->
+            ()
+
+    let withEffectEnvironment (root: string option) (kill: string option) f =
+        let names = [ "FOGELL_EFFECT_FILE_DROP_ROOT"; "FOGELL_EFFECT_KILL_AT" ]
+        let previous = names |> List.map (fun name -> name, Environment.GetEnvironmentVariable name)
+        Environment.SetEnvironmentVariable("FOGELL_EFFECT_FILE_DROP_ROOT", Option.toObj root)
+        Environment.SetEnvironmentVariable("FOGELL_EFFECT_KILL_AT", Option.toObj kill)
+
+        try
+            f ()
+        finally
+            previous |> List.iter (fun (name, value) -> Environment.SetEnvironmentVariable(name, value))
+
+    testList
+        "FG-026b effect dispatch"
+        [ test "the registry is closed: every EffectProducer case is registered exactly once with a unique name" {
+              let cases =
+                  Microsoft.FSharp.Reflection.FSharpType.GetUnionCases(typeof<EffectProducer>)
+                  |> Array.map (fun case ->
+                      Microsoft.FSharp.Reflection.FSharpValue.MakeUnion(case, [||]) :?> EffectProducer)
+                  |> List.ofArray
+
+              Expect.equal (List.sort EffectProducer.all) (List.sort cases) "EffectProducer.all lists every declared case"
+              Expect.equal (List.distinct EffectProducer.all) EffectProducer.all "no producer is registered twice"
+
+              let names = EffectProducer.all |> List.map EffectProducer.name
+              Expect.equal (List.distinct names) names "producer names are unique"
+
+              for name in names do
+                  Expect.isTrue
+                      (name |> Seq.forall (fun c -> Char.IsLower c || Char.IsDigit c || c = '-'))
+                      $"producer name '{name}' is a stable lowercase code"
+
+              Expect.equal
+                  (EffectProducer.effectKey EffectProducer.FileDropReceipt "abc")
+                  "file-drop-receipt:abc"
+                  "the ledger key is the producer name and the attempt-scoped identity"
+          }
+
+          test "effect producer configuration refuses a kill hook without a destination and a destination that is relative, missing, or inside the state root" {
+              let stateRoot = IO.Path.Combine(dropRoot, "state")
+              IO.Directory.CreateDirectory stateRoot |> ignore
+              let nested = IO.Path.Combine(stateRoot, "nested")
+              IO.Directory.CreateDirectory nested |> ignore
+              let destination = IO.Path.Combine(dropRoot, "destination")
+              IO.Directory.CreateDirectory destination |> ignore
+
+              withEffectEnvironment None None (fun () ->
+                  Expect.equal
+                      (EffectProducerConfig.loadFromEnvironment stateRoot)
+                      (Ok EffectProducerConfig.disabled)
+                      "both variables absent is the production default: no producer enabled")
+
+              withEffectEnvironment None (Some "invoke") (fun () ->
+                  match EffectProducerConfig.loadFromEnvironment stateRoot with
+                  | Error error -> Expect.stringContains error "requires FOGELL_EFFECT_FILE_DROP_ROOT" "a kill hook needs a simulator"
+                  | Ok config -> failtestf "kill hook without a destination was accepted: %A" config)
+
+              withEffectEnvironment (Some "relative/drop") None (fun () ->
+                  Expect.equal
+                      (EffectProducerConfig.loadFromEnvironment stateRoot)
+                      (Error "FOGELL_EFFECT_FILE_DROP_ROOT must be absolute")
+                      "relative destinations are refused")
+
+              withEffectEnvironment (Some(IO.Path.Combine(dropRoot, "missing"))) None (fun () ->
+                  Expect.equal
+                      (EffectProducerConfig.loadFromEnvironment stateRoot)
+                      (Error "FOGELL_EFFECT_FILE_DROP_ROOT must name an existing directory")
+                      "a missing destination is never created by the controller")
+
+              withEffectEnvironment (Some nested) None (fun () ->
+                  Expect.equal
+                      (EffectProducerConfig.loadFromEnvironment stateRoot)
+                      (Error "FOGELL_EFFECT_FILE_DROP_ROOT must be disjoint from FOGELL_STATE_ROOT")
+                      "a destination inside the state root is controller state, not an external effect")
+
+              withEffectEnvironment (Some dropRoot) None (fun () ->
+                  Expect.equal
+                      (EffectProducerConfig.loadFromEnvironment stateRoot)
+                      (Error "FOGELL_EFFECT_FILE_DROP_ROOT must be disjoint from FOGELL_STATE_ROOT")
+                      "a destination that contains the state root is refused as well")
+
+              withEffectEnvironment (Some destination) (Some "teardown") (fun () ->
+                  Expect.equal
+                      (EffectProducerConfig.loadFromEnvironment stateRoot)
+                      (Error "FOGELL_EFFECT_KILL_AT must be one of prepare, invoke, apply, confirm")
+                      "an unknown window is refused")
+
+              withEffectEnvironment (Some destination) (Some "apply") (fun () ->
+                  Expect.equal
+                      (EffectProducerConfig.loadFromEnvironment stateRoot)
+                      (Ok
+                          { FileDropRoot = Some(IO.Path.GetFullPath destination)
+                            KillAt = Some EffectKillWindow.AfterApply })
+                      "a valid destination with a named window enables the simulator and arms the hook")
+
+              Expect.equal
+                  (EffectProducerConfig.killWindowNames |> List.map fst)
+                  [ "prepare"; "invoke"; "apply"; "confirm" ]
+                  "the four windows are the four ledger transitions"
+          }
+
+          test "with no producer enabled the terminal path makes no Store call" {
+              let unreachable = Store("Host=127.0.0.1;Port=9;Username=nobody;Database=nowhere;Timeout=1")
+              let org, claim = runningClaim "fg026b-disabled" "fg026b-disabled-owner"
+              let authority = EffectAuthority.ofClaim "fg026b-disabled-owner" claim
+
+              Expect.equal
+                  (EffectDispatch.runRegistered unreachable authority EffectDispatch.noHooks EffectProducerConfig.disabled claim Success)
+                  []
+                  "no producer, no dispatch, no database round trip"
+
+              Expect.equal (ledgerRows org claim.AttemptId) 0L "the ledger holds nothing for the attempt"
+              Expect.equal (receiptCount org) 0 "the destination holds nothing"
+          }
+
+          test "a registered file-drop receipt runs prepare, invoke, apply and confirm once, and an exact same-attempt replay is a no-op" {
+              let owner = "fg026b-once-owner"
+              let org, claim = runningClaim "fg026b-once" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let invocations, invocation = counted claim Success
+
+              Expect.equal
+                  (EffectDispatch.run store authority EffectDispatch.noHooks invocation)
+                  (DispatchOutcome.Confirmed false)
+                  "first dispatch confirms"
+              Expect.equal invocations.Value 1 "the destination was driven once"
+              Expect.equal (receiptCount org) 1 "one receipt"
+              Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("confirmed", None)) "ledger confirmed"
+              Expect.sequenceEqual
+                  (IO.File.ReadAllBytes(FileDropReceipt.receiptPath dropRoot claim))
+                  invocation.Payload
+                  "the receipt is the exact canonical payload"
+              Expect.equal
+                  (Text.Encoding.UTF8.GetString invocation.Payload)
+                  $"{{\"build\":\"{claim.BuildId.Value}\",\"attempt\":\"{claim.AttemptId.Value}\",\"fence\":{claim.Fence.Value},\"pipeline_sha256\":\"{claim.PipelineSha256}\",\"journal_terminal\":\"Success\"}}"
+                  "the receipt names the build, attempt, fence, pipeline digest and journal terminal"
+
+              for replay in 1..2 do
+                  Expect.equal
+                      (EffectDispatch.run store authority EffectDispatch.noHooks invocation)
+                      (DispatchOutcome.Confirmed true)
+                      $"replay {replay} is recognised as already confirmed"
+
+              Expect.equal invocations.Value 1 "no replay drives the destination again"
+              Expect.equal (receiptCount org) 1 "still one receipt"
+
+              let registered =
+                  EffectDispatch.runRegistered
+                      store
+                      authority
+                      EffectDispatch.noHooks
+                      { FileDropRoot = Some dropRoot; KillAt = None }
+                      claim
+                      Success
+              Expect.equal
+                  registered
+                  [ EffectProducer.FileDropReceipt, DispatchOutcome.Confirmed true ]
+                  "the registered path reaches the same row through the same key and payload"
+          }
+
+          test "payload substitution on the same attempt-scoped key is refused before any invocation" {
+              let owner = "fg026b-subst-owner"
+              let org, claim = runningClaim "fg026b-subst" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let invocations, invocation = counted claim Success
+
+              // A prepared row with no invocation yet: a different payload under
+              // the same key is refused and still nothing is invoked.
+              abortedRun store authority (withHook EffectKillWindow.AfterPrepare) invocation
+              Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("prepared", None)) "prepared, nothing invoked"
+              let substitutedInvocations, substituted = counted claim Failure
+              match EffectDispatch.run store authority EffectDispatch.noHooks substituted with
+              | DispatchOutcome.Refused reason -> Expect.stringContains reason "payload bytes" "the refusal names the digest mismatch"
+              | other -> failtestf "substituted payload was not refused: %A" other
+              Expect.equal (invocations.Value, substitutedInvocations.Value) (0, 0) "neither invocation ran"
+              Expect.equal (receiptCount org) 0 "no receipt"
+
+              // The original payload resumes under the same live authority and
+              // confirms; the substitute is still refused afterwards.
+              Expect.equal
+                  (EffectDispatch.run store authority EffectDispatch.noHooks invocation)
+                  (DispatchOutcome.Confirmed false)
+                  "the exact payload completes"
+              match EffectDispatch.run store authority EffectDispatch.noHooks substituted with
+              | DispatchOutcome.Refused _ -> ()
+              | other -> failtestf "substituted payload after confirmation was not refused: %A" other
+              Expect.equal (invocations.Value, substitutedInvocations.Value) (1, 0) "only the exact payload ever drove the destination"
+              Expect.sequenceEqual
+                  (IO.File.ReadAllBytes(FileDropReceipt.receiptPath dropRoot claim))
+                  invocation.Payload
+                  "the receipt bytes are the confirmed payload"
+
+              // A flipped byte in the destination is not evidence: a replay sees
+              // the ledger confirmed and never re-invokes, while a fresh confirm
+              // read would have refused it.
+              let path = FileDropReceipt.receiptPath dropRoot claim
+              let tampered = IO.File.ReadAllBytes path
+              tampered.[0] <- tampered.[0] ^^^ 1uy
+              IO.File.WriteAllBytes(path, tampered)
+              Expect.equal (invocation.Confirm()) (Ok false) "the connector's evidence read refuses flipped bytes"
+              Expect.equal
+                  (EffectDispatch.run store authority EffectDispatch.noHooks invocation)
+                  (DispatchOutcome.Confirmed true)
+                  "a confirmed row replays without touching the destination"
+              Expect.equal invocations.Value 1 "tampering after confirmation never triggers a re-invocation"
+          }
+
+          test "stale fence, wrong owner, expired lease and pre-restore epoch are each refused before any invocation" {
+              let refused label (org: OrganizationId) (claim: ExecutionClaim) authority =
+                  let invocations, invocation = counted claim Success
+
+                  match EffectDispatch.run store authority EffectDispatch.noHooks invocation with
+                  | DispatchOutcome.Refused reason ->
+                      Expect.stringContains reason "stale fence, wrong owner, expired lease, pre-restore epoch" $"{label} names the authority refusal"
+                  | other -> failtestf "%s was not refused: %A" label other
+
+                  Expect.equal invocations.Value 0 $"{label}: nothing invoked"
+                  Expect.equal (ledgerRows org claim.AttemptId) 0L $"{label}: no ledger row"
+                  Expect.equal (receiptCount org) 0 $"{label}: no receipt"
+
+              let fenceOrg, fenceClaim = offeredClaim "fg026b-stale-fence" "fg026b-fence-owner"
+              let newerFence =
+                  match store.OfferAttempt(fenceOrg, fenceClaim.AttemptId, "fg026b-fence-owner", 60) with
+                  | Ok fence -> fence
+                  | Error error -> failtestf "re-offer failed: %s" error
+              Expect.isGreaterThan newerFence.Value fenceClaim.Fence.Value "the fence advanced"
+              refused "stale fence" fenceOrg fenceClaim (EffectAuthority.ofClaim "fg026b-fence-owner" fenceClaim)
+
+              let ownerOrg, ownerClaim = runningClaim "fg026b-wrong-owner" "fg026b-owner-a"
+              refused "wrong owner" ownerOrg ownerClaim (EffectAuthority.ofClaim "fg026b-owner-b" ownerClaim)
+
+              let leaseOrg, leaseClaim = runningClaim "fg026b-expired-lease" "fg026b-lease-owner"
+              expireLease leaseOrg leaseClaim.AttemptId
+              refused "expired lease" leaseOrg leaseClaim (EffectAuthority.ofClaim "fg026b-lease-owner" leaseClaim)
+
+              let epochOrg, epochClaim = runningClaim "fg026b-pre-restore" "fg026b-epoch-owner"
+              store.ActivateRestore() |> ignore
+              refused "pre-restore epoch" epochOrg epochClaim (EffectAuthority.ofClaim "fg026b-epoch-owner" epochClaim)
+          }
+
+          test "an abort in each of the four windows leaves the ledger in that window's state and the destination with that window's receipt" {
+              let expectations =
+                  [ EffectKillWindow.AfterPrepare, ("prepared", 0)
+                    EffectKillWindow.AfterInvoke, ("prepared", 1)
+                    EffectKillWindow.AfterApply, ("applied", 1)
+                    EffectKillWindow.AfterConfirm, ("confirmed", 1) ]
+
+              for window, (state, receipts) in expectations do
+                  let owner = $"fg026b-window-owner-%A{window}"
+                  let org, claim = runningClaim $"fg026b-window-%A{window}" owner
+                  let authority = EffectAuthority.ofClaim owner claim
+                  let invocations, invocation = counted claim Success
+
+                  abortedRun store authority (withHook window) invocation
+                  Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some(state, None)) $"%A{window}: ledger state"
+                  Expect.equal (receiptCount org) receipts $"%A{window}: receipt count"
+                  Expect.equal invocations.Value receipts $"%A{window}: invocation count"
+
+                  // Resume under the same live authority: prepared work is driven
+                  // through the idempotent connector, applied work only re-reads
+                  // evidence, confirmed work replays as a no-op. The destination
+                  // never holds more than one receipt.
+                  let resumed = EffectDispatch.run store authority EffectDispatch.noHooks invocation
+                  let expectedResume, expectedInvocations =
+                      match window with
+                      | EffectKillWindow.AfterPrepare -> DispatchOutcome.Confirmed false, 1
+                      | EffectKillWindow.AfterInvoke -> DispatchOutcome.Confirmed false, 2
+                      | EffectKillWindow.AfterApply -> DispatchOutcome.Confirmed false, 1
+                      | EffectKillWindow.AfterConfirm -> DispatchOutcome.Confirmed true, 1
+                  Expect.equal resumed expectedResume $"%A{window}: resume outcome"
+                  Expect.equal invocations.Value expectedInvocations $"%A{window}: invocations after resume"
+                  Expect.equal (receiptCount org) 1 $"%A{window}: exactly one receipt after resume"
+                  Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("confirmed", None)) $"%A{window}: confirmed after resume"
+          }
+
+          test "an invocation failure or absent destination evidence is reported uncertain, leaves the row for reconciliation, and is never re-driven from applied" {
+              let owner = "fg026b-uncertain-owner"
+              let org, claim = runningClaim "fg026b-uncertain" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let _, real = counted claim Success
+
+              let failing = { real with Invoke = fun () -> Error "destination refused the connection" }
+              match EffectDispatch.run store authority EffectDispatch.noHooks failing with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "invocation failed after preparation" "names the window"
+              | other -> failtestf "failed invocation was not uncertain: %A" other
+              Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("prepared", None)) "the row stays prepared"
+
+              let throwing = { real with Invoke = fun () -> failwith "connector threw" }
+              match EffectDispatch.run store authority EffectDispatch.noHooks throwing with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "connector threw" "an exception is data, not a crash"
+              | other -> failtestf "throwing invocation was not uncertain: %A" other
+
+              let blind = ref 0
+              let invokedBlind =
+                  { real with
+                      Invoke =
+                          fun () ->
+                              blind.Value <- blind.Value + 1
+                              real.Invoke()
+                      Confirm = fun () -> Ok false }
+              match EffectDispatch.run store authority EffectDispatch.noHooks invokedBlind with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "evidence absent" "names the missing evidence"
+              | other -> failtestf "absent evidence was not uncertain: %A" other
+              Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("applied", None)) "the row is applied and awaits reconciliation"
+              Expect.equal blind.Value 1 "driven once"
+
+              match EffectDispatch.run store authority EffectDispatch.noHooks invokedBlind with
+              | DispatchOutcome.Uncertain _ -> ()
+              | other -> failtestf "applied row without evidence was not uncertain: %A" other
+              Expect.equal blind.Value 1 "an applied row is never re-driven; only its evidence is re-read"
+
+              let unreadable = { real with Confirm = fun () -> Error "destination unreadable" }
+              match EffectDispatch.run store authority EffectDispatch.noHooks unreadable with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "unreadable" "names the evidence failure"
+              | other -> failtestf "unreadable evidence was not uncertain: %A" other
+
+              // The real evidence is present, so the honest read confirms.
+              Expect.equal (EffectDispatch.run store authority EffectDispatch.noHooks real) (DispatchOutcome.Confirmed false) "evidence present confirms"
+              Expect.equal (receiptCount org) 1 "one receipt throughout"
+          }
+
+          test "a retry child has a fresh attempt-scoped ledger identity and the parent's confirmed row is untouched" {
+              let owner = "fg026b-retry-owner"
+              let org, parent = runningClaim "fg026b-retry" owner
+              let parentAuthority = EffectAuthority.ofClaim owner parent
+              let parentInvocations, parentInvocation = counted parent Failure
+              Expect.equal
+                  (EffectDispatch.run store parentAuthority EffectDispatch.noHooks parentInvocation)
+                  (DispatchOutcome.Confirmed false)
+                  "parent confirms"
+              match store.PublishTerminal(org, parent.AttemptId, parent.Fence, owner, Failure) with
+              | Ok() -> ()
+              | Error error -> failtestf "parent publication failed: %s" error
+
+              let childId = AttemptId(Guid.NewGuid())
+              match store.DecideRetry(org, parent.AttemptId, 2, childId) with
+              | Ok _ -> ()
+              | Error error -> failtestf "retry decision failed: %A" error
+              let child =
+                  match store.ClaimNextExecution(org, owner, "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some claim) when claim.AttemptId = childId -> claim
+                  | other -> failtestf "the retry child was not claimed: %A" other
+              Expect.equal child.RetryOf (Some parent.AttemptId) "the child carries its parent"
+              match store.BeginExecution(org, child.AttemptId, child.Fence, owner, 60) with
+              | Ok ExecutionStarted -> ()
+              | other -> failtestf "child execution start failed: %A" other
+
+              let childInvocations, childInvocation = counted child Success
+              Expect.notEqual (effectKey child) (effectKey parent) "the child's key is a new attempt-scoped identity"
+              Expect.equal
+                  (EffectDispatch.run store (EffectAuthority.ofClaim owner child) EffectDispatch.noHooks childInvocation)
+                  (DispatchOutcome.Confirmed false)
+                  "the child prepares and confirms afresh"
+              Expect.equal (childInvocations.Value, parentInvocations.Value) (1, 1) "each attempt drove its own destination once"
+              Expect.equal (ledgerRow org parent.AttemptId (effectKey parent)) (Some("confirmed", None)) "the parent row is untouched"
+              Expect.equal (ledgerRow org child.AttemptId (effectKey child)) (Some("confirmed", None)) "the child row is confirmed"
+              Expect.equal (receiptCount org) 2 "two attempts, two receipts: cross-attempt idempotency is the connector's contract, not the ledger's"
+
+              // The parent is terminal: its authority is gone, and its confirmed
+              // row can neither be replayed nor re-prepared by anyone.
+              match EffectDispatch.run store parentAuthority EffectDispatch.noHooks parentInvocation with
+              | DispatchOutcome.Refused _ -> ()
+              | other -> failtestf "a terminal parent's authority was accepted: %A" other
+              Expect.equal parentInvocations.Value 1 "nothing drove the parent's destination again"
+          }
+
+          test "effect dispatch teardown" {
+              if IO.Directory.Exists dropRoot then IO.Directory.Delete(dropRoot, true)
+          } ]
+
 [<EntryPoint>]
 let main argv =
     if not available then
@@ -2207,4 +2704,5 @@ let main argv =
                           executionLauncherValidation
                           tokenFileIntegrity
                           authorization
+                          effectDispatch
                           endpoints ]))

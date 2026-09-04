@@ -4,12 +4,14 @@
     <RootNamespace>Fogell.Controller.Host</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="EffectRegistry.fs" />
     <Compile Include="Config.fs" />
     <Compile Include="EventStream.fs" />
     <Compile Include="ProcessGroup.fs" />
     <Compile Include="WorkerScheduling.fs" />
     <Compile Include="WorkerPaths.fs" />
     <Compile Include="WorkerLaunch.fs" />
+    <Compile Include="EffectDispatch.fs" />
     <Compile Include="Worker.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
