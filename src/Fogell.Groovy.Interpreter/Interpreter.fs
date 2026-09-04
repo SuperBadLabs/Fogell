@@ -2471,10 +2471,14 @@ module Interpreter =
             Some(StepStatusHalt(stepName, haltKind, diagnosticText))
 
     /// FG-186. Run a retry attempt's body, converting the CATCHABLE fault
-    /// classes — a throw, a missing property, a failed shell step — into a
-    /// returned fault the loop treats as attempt failure. A refusal or an
-    /// exhausted budget re-raises untouched: catching Fogell's own modelling
-    /// gaps would diverge silently from an engine that has no such gap.
+    /// classes — every fault a Groovy `catch` can intercept: a throw, a missing
+    /// property, a null-receiver or list/string index fault, a rejected index
+    /// operation, a cyclic value, a range mutation, an invalid regex pattern
+    /// (FG-241), a failed or binding-refused step — into a returned fault the
+    /// loop treats as attempt failure; the list below is the authority. A
+    /// refusal or an exhausted budget re-raises untouched: catching Fogell's
+    /// own modelling gaps would diverge silently from an engine that has no
+    /// such gap.
     [<System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)>]
     let catchRetryable (body: unit -> unit) : Fault option =
         try
