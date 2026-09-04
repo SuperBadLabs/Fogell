@@ -15,8 +15,13 @@ type private PublicationStream() =
 
 type private PendingPublication =
     { Order: int64
+      OutputIndex: int
       Prefix: string
       Value: RedactedText
+      /// False means admission already found an unregistered transformation.
+      /// Keep its terminal evidence, and never let an EOF reframe make it
+      /// eligible for external publication.
+      Publishable: bool
       /// Stable identity for one raw stdout or stderr stream. Lines sharing
       /// this identity may be reassembled for a late-binding separator-aware
       /// recheck even when unrelated global output is interleaved.
@@ -302,6 +307,7 @@ module WalkerCtx =
         let boundSecrets = ResizeArray<SecretBinding * int>()
         let redactedOutputIndexes = System.Collections.Generic.HashSet<int>()
         let outputPrefixes = ResizeArray<string>()
+        let suppressedOutputIndexes = System.Collections.Generic.HashSet<int>()
 
         let engineNotes = ResizeArray<string>()
         let durableIds = ResizeArray<string>()
@@ -348,19 +354,31 @@ module WalkerCtx =
 
             for group in streamGroups.Values do
                 let source = group.ToArray()
-                let reframed =
-                    source
-                    |> Array.map _.Value
-                    |> Secrets.maskAlreadyRedactedLines secrets
+                // An already unsafe fragment is terminal refusal evidence.
+                // Preserve it verbatim instead of allowing line collapse to
+                // erase that evidence; the whole stream remains unpublished.
+                if source |> Array.forall _.Publishable then
+                    let reframed =
+                        source
+                        |> Array.map _.Value
+                        |> Secrets.maskAlreadyRedactedLines secrets
 
-                for sourceIndex, value in reframed do
-                    remasked.Add
-                        { source[sourceIndex] with
-                            Value = value }
+                    for item in source do
+                        suppressedOutputIndexes.Add item.OutputIndex |> ignore
 
-            remasked
-            |> Seq.sortBy _.Order
-            |> Seq.iter publications.Enqueue
+                    for sourceIndex, value in reframed do
+                        let item = source[sourceIndex]
+                        output[item.OutputIndex] <- item.Prefix + value.Text
+                        suppressedOutputIndexes.Remove item.OutputIndex |> ignore
+
+                        remasked.Add
+                            { item with
+                                Value = value }
+
+            if Option.isSome onOutput then
+                remasked
+                |> Seq.sortBy _.Order
+                |> Seq.iter publications.Enqueue
 
         let remaskPendingPublications secrets =
             lock publicationLock (fun () ->
@@ -458,7 +476,7 @@ module WalkerCtx =
                     // Enqueue under the trace lock, after masking/leak screening,
                     // so the assigned monotonic order is exactly Output() order.
                     // The single callback consumer runs below, outside this lock.
-                    if safeToPublish && Option.isSome onOutput then
+                    if Option.isSome redactedStream || (safeToPublish && Option.isSome onOutput) then
                         lock publicationLock (fun () ->
                             match publicationFailure with
                             | Some _ when deferExternalDrain -> false
@@ -468,8 +486,10 @@ module WalkerCtx =
                                 nextPublicationOrder <- nextPublicationOrder + 1L
                                 let item =
                                     { Order = order
+                                      OutputIndex = outputIndex
                                       Prefix = prefix
                                       Value = safeValue
+                                      Publishable = safeToPublish
                                       RedactedStream = redactedStream }
 
                                 if barrierStreams.Count > 0 then
@@ -519,6 +539,9 @@ module WalkerCtx =
             fun () ->
                 let stream = PublicationStream()
 
+                lock outputLock (fun () ->
+                    lock publicationLock (fun () -> barrierStreams.Add stream |> ignore))
+
                 { Admit =
                     fun (line: RedactedText) ->
                         emitCore true true (Some stream) (fun secrets ->
@@ -543,20 +566,32 @@ module WalkerCtx =
             fun () ->
                 lock outputLock (fun () -> boundSecrets |> Seq.map fst |> List.ofSeq)
           MaskingSecretsLock = outputLock
-          Output = fun () -> lock outputLock (fun () -> List.ofSeq output)
+          Output =
+            fun () ->
+                lock outputLock (fun () ->
+                    output
+                    |> Seq.mapi (fun index value -> index, value)
+                    |> Seq.choose (fun (index, value) ->
+                        if suppressedOutputIndexes.Contains index then None else Some value)
+                    |> List.ofSeq)
           FlushOutput = flushPublications
           OutputWithActiveSecrets =
             fun () ->
                 lock outputLock (fun () ->
                     output
                     |> Seq.mapi (fun i l ->
-                        l,
-                        (boundSecrets
-                         |> Seq.filter (fun (_, from) -> from <= i)
-                         |> Seq.map fst
-                         |> List.ofSeq),
-                        redactedOutputIndexes.Contains i,
-                        outputPrefixes[i])
+                        if suppressedOutputIndexes.Contains i then
+                            None
+                        else
+                            Some(
+                                l,
+                                (boundSecrets
+                                 |> Seq.filter (fun (_, from) -> from <= i)
+                                 |> Seq.map fst
+                                 |> List.ofSeq),
+                                redactedOutputIndexes.Contains i,
+                                outputPrefixes[i]))
+                    |> Seq.choose id
                     |> List.ofSeq)
           Bump = fun s -> lock statusLock (fun () -> status <- BuildStatus.worstOf status s)
           Status = fun () -> lock statusLock (fun () -> status)

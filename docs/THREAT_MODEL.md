@@ -266,12 +266,13 @@ suffix; bytes already published are not recalled. The raw matcher shares the
 walker's credential lock from inventory sampling through separator-aware
 matching, framing, and synchronous trace admission; a registration therefore
 cannot land inside that interval. External callback transport drains
-independently outside that lock. If an earlier callback is stalled, a later
-binding groups still-pending provenance-bearing lines by raw stream even across
-interleaved global output. An affected open stream keeps that publication epoch
-behind a barrier until true EOF, so registration between two physical fragments
-cannot publish either fragment; remapped results merge back by monotonic
-completion order. ProcessGroup mints distinct stdout/stderr admission
+independently outside that lock. Every raw stream enters a publication barrier
+when its lifecycle is created, since a future binding can complete a credential
+begun in its first fragment. At true EOF, a separator-aware pass remasks both
+the callback queue and the stored terminal trace. Provenance-bearing lines are
+grouped by raw stream even across interleaved global output; registration
+between two physical fragments therefore cannot publish either fragment, and
+remapped results merge back by monotonic completion order. ProcessGroup mints distinct stdout/stderr admission
 lifecycles, so separate pipes and parallel shells cannot compose a credential.
 A missing EOF fails closed at terminal flush. A sticky external publisher
 failure no longer stops raw reader admission and is surfaced by terminal
@@ -304,14 +305,14 @@ a live-inventory mask; a caller supplying only the provenance-aware raw callback
 gets an explicit no-op generated sink rather than the ProcessGroup compatibility
 fallback. The combined masking-form inventory is deduplicated once before
 descending-length ordering.
-`scripts/prove-fg236-stream-masking.sh` kills twenty-nine semantic mutants covering
+`scripts/prove-fg236-stream-masking.sh` kills thirty semantic mutants covering
 EOF, grammar, progressive delivery, wiring, control framing, bounded-reader
 callback enforcement, bounded capture,
 generated-warning and generated-termination provenance, missing warning sinks,
 buffered-warning masking,
 the historical direct generated callback, live run-wide enrollment, shared
 registration/matcher synchronization, registration/trace-admission,
-timestamp-prefix screening, and pending-transport races,
+timestamp-prefix screening, open-stream publication, and pending-transport races,
 interleaved-stream continuity, stream identity,
 publication EOF, failed-reader draining, admission-factory wiring, independent
 raw-pipe lifecycles, returned-buffer races,

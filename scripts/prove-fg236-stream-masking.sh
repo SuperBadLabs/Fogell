@@ -237,6 +237,16 @@ sed -i 's/^                        || (List\.isEmpty leaks && List\.isEmpty (Sec
 kill_differential_mutant timestamp-prefix 'a credential-shaped timestamp cannot cross progressive publication'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 
+# A future sibling binding can complete a credential begun in any fragment of
+# a still-open stream. Publishing that fragment before true EOF makes the leak
+# irreversible even if later queued fragments are remasked correctly.
+target='                    lock publicationLock (fun () -> barrierStreams.Add stream |> ignore))'
+[[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
+  || { echo 'FG-236 proof: open-stream-barrier mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                    lock publicationLock (fun () -> barrierStreams\.Add stream |> ignore))$/                    lock publicationLock (fun () -> ()))/' "$walker_ctx"
+kill_differential_mutant open-stream-barrier 'an open stream cannot publish a fragment before future bindings are known'
+cp "$scratch/walker-ctx.clean" "$walker_ctx"
+
 # A slow earlier callback leaves later provenance-bearing lines pending. A
 # newly bound credential must recheck that queue as one separator-aware stream,
 # not merely recheck each already-framed fragment in isolation.
@@ -244,7 +254,7 @@ target='                    if not (List.isEmpty bindings) then'
 [[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
   || { echo 'FG-236 proof: pending-publication mutation target is not unique' >&2; exit 1; }
 sed -i 's/^                    if not (List\.isEmpty bindings) then$/                    if false then/' "$walker_ctx"
-kill_differential_mutant pending-publication 'pending external lines are rechecked together before actual publication'
+kill_differential_mutant pending-publication 'a stalled non-stream line is rechecked before external publication'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 
 # Reassembly follows stream identity across globally interleaved queue entries.
@@ -277,7 +287,7 @@ target='                  Complete = fun () -> completePublicationStream stream 
 [[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
   || { echo 'FG-236 proof: publication-EOF mutation target is not unique' >&2; exit 1; }
 sed -i 's/^                  Complete = fun () -> completePublicationStream stream }$/                  Complete = ignore }/' "$walker_ctx"
-kill_differential_mutant publication-eof 'FG-236 pending stream survives a binding between physical fragments'
+kill_differential_mutant publication-eof 'progressive output stream did not reach EOF'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 
 # A failed external transport is sticky, but synchronous raw admission must
@@ -346,7 +356,7 @@ target='                else this.SourceCharacters[sourceStart .. sourceFinish -
 [[ $(rg -F -c "$target" "$redaction") == 1 ]] \
   || { echo 'FG-236 proof: token-source mutation target is not unique' >&2; exit 1; }
 sed -i 's/^                else this\.SourceCharacters\[sourceStart \.\. sourceFinish - 1\] |> Array\.max$/                else this.SourceCharacters |> Array.max/' "$redaction"
-kill_differential_mutant token-source 'each token is stamped by the physical line which completed that match'
+kill_differential_mutant token-source 'independent collapsed matches retain their output cardinality and source slots'
 cp "$scratch/redaction.clean" "$redaction"
 
 # Executor has already canonicalized a registered raw form. Sending that line
@@ -363,4 +373,4 @@ sed -i 's/^                          OnRedactedLine = None$/                    
 sed -i 's/^                          CreateRedactedAdmission = Some runCtx\.CreateRedactedAdmission$/                          CreateRedactedAdmission = None/' "$walker_step"
 kill_differential_mutant idempotence 'canonical-token pipeline refused outside execution'
 
-echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, timestamp-prefix, pending-publication, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'
+echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, timestamp-prefix, open-stream-barrier, pending-publication, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'

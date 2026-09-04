@@ -71,6 +71,19 @@ let progressiveOutputPublication =
                   [ "eulav-t3rc3s" ]
                   "the terminal leak guard still receives the evidence"
               Expect.isEmpty published "unsafe transformed bytes never cross the progressive boundary"
+
+              let rawPublished = ResizeArray<string>()
+              let rawCtx = WalkerCtx.create 0L false (Some rawPublished.Add)
+              rawCtx.BindSecrets [ binding ]
+              let stream = rawCtx.CreateRedactedAdmission()
+              stream.Admit (RedactedText.Raw "eulav-t3rc3s")
+              stream.Complete()
+              rawCtx.FlushOutput()
+              Expect.isEmpty rawPublished "EOF cannot promote an already unsafe raw fragment"
+              Expect.equal
+                  (rawCtx.Output())
+                  [ "eulav-t3rc3s" ]
+                  "EOF reframing preserves terminal refusal evidence"
           }
 
           test "FG-236 redacted publication rechecks credentials bound after the raw snapshot" {
@@ -101,6 +114,39 @@ let progressiveOutputPublication =
                   "literal four-star runs are not mistaken for matcher-produced tokens"
           }
 
+          test "FG-236 a late binding remasks a stalled non-stream publication" {
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let published = ResizeArray<string>()
+
+              let ctx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          published.Add line
+
+                          if line = "blocker" then
+                              callbackEntered.Set()
+                              releaseCallback.Wait()))
+
+              let blocker = Threading.Tasks.Task.Run(fun () -> ctx.Emit "blocker")
+
+              try
+                  Expect.isTrue (callbackEntered.Wait 2_000) "the non-stream control is genuinely stalled"
+                  ctx.EmitRedacted (RedactedText.Raw "late-bound-secret")
+                  ctx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "late-bound-secret" ]
+              finally
+                  releaseCallback.Set()
+
+              blocker.GetAwaiter().GetResult()
+              ctx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq published)
+                  [ "blocker"; "****" ]
+                  "a stalled non-stream line is rechecked before external publication"
+          }
+
           test "FG-236 a late binding remasks a stalled external publication queue across lines" {
               use callbackEntered = new Threading.ManualResetEventSlim(false)
               use releaseCallback = new Threading.ManualResetEventSlim(false)
@@ -118,10 +164,10 @@ let progressiveOutputPublication =
                               releaseCallback.Wait()))
 
               let blocker = Threading.Tasks.Task.Run(fun () -> ctx.Emit "blocker")
-              let admit = ctx.CreateRedactedAdmission()
 
               try
                   Expect.isTrue (callbackEntered.Wait 2_000) "the external publisher is genuinely stalled"
+                  let admit = ctx.CreateRedactedAdmission()
                   admit.Admit (RedactedText.Raw "Sec")
                   admit.Admit (RedactedText.Raw "ret")
                   let binding = Secrets.inMemoryTextBinding "LATE" "Secret"
@@ -130,8 +176,8 @@ let progressiveOutputPublication =
 
                   Expect.equal
                       (ctx.Output())
-                      [ "blocker"; "Sec"; "ret" ]
-                      "trace admission precedes the later credential registration"
+                      [ "blocker"; "****" ]
+                      "the terminal trace is remasked with the same stream-aware pass"
               finally
                   releaseCallback.Set()
 
@@ -264,12 +310,25 @@ let progressiveOutputPublication =
               let prefix (source: string) (literal: string) = source.Substring(0, source.Length - literal.Length)
 
               Expect.equal
+                  admitted.Length
+                  4
+                  "independent collapsed matches retain their output cardinality and source slots"
+
+              Expect.equal
                   (List.ofSeq timestampPublished)
                   [ "blocker"
-                    prefix admitted[2] "cret" + "****"
-                    admitted[3]
-                    prefix admitted[5] "ken" + "****" ]
+                    admitted[1]
+                    admitted[2]
+                    admitted[3] ]
                   "each token is stamped by the physical line which completed that match"
+
+              Expect.stringEnds admitted[1] "****" "the first collapsed match remains masked"
+              Expect.stringEnds admitted[2] "middle" "the unrelated line remains in place"
+              Expect.stringEnds admitted[3] "****" "the second collapsed match remains masked"
+              Expect.notEqual
+                  (prefix admitted[1] "****")
+                  (prefix admitted[3] "****")
+                  "separately completed matches retain distinct physical timestamps"
           }
 
           test "FG-236 timestamp prefixes retain ordinary literal leak screening" {
@@ -331,6 +390,46 @@ let progressiveOutputPublication =
                   (List.ofSeq betweenPublished)
                   [ "blocker"; "****" ]
                   "true stream EOF resolves a credential whose binding landed between fragments"
+          }
+
+          test "FG-236 an open stream withholds fragments until true EOF" {
+              use fragmentPublished = new Threading.ManualResetEventSlim(false)
+              let published = ResizeArray<string>()
+
+              let ctx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          published.Add line
+                          fragmentPublished.Set()))
+
+              let stream = ctx.CreateRedactedAdmission()
+
+              stream.Admit (RedactedText.Raw "Sec")
+              Expect.isFalse
+                  (fragmentPublished.Wait 2_000)
+                  "an open stream cannot publish a fragment before future bindings are known"
+
+              ctx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+              stream.Admit (RedactedText.Raw "ret")
+              Expect.isEmpty published "the second fragment remains behind the same EOF barrier"
+
+              stream.Complete()
+              ctx.FlushOutput()
+              Expect.equal (List.ofSeq published) [ "****" ] "EOF publishes only the remasked form"
+              Expect.equal (ctx.Output()) [ "****" ] "the stored trace cannot retain raw fragments"
+
+              let terminalOnly = WalkerCtx.create 0L false None
+              let terminalStream = terminalOnly.CreateRedactedAdmission()
+              terminalStream.Admit (RedactedText.Raw "Sec")
+              terminalOnly.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+              terminalStream.Admit (RedactedText.Raw "ret")
+              terminalStream.Complete()
+              Expect.equal
+                  (terminalOnly.Output())
+                  [ "****" ]
+                  "terminal remasking does not depend on an external callback"
           }
 
           test "FG-236 an incomplete publication lifecycle fails closed at flush" {
