@@ -272,6 +272,31 @@ let progressiveOutputPublication =
                   "each token is stamped by the physical line which completed that match"
           }
 
+          test "FG-236 timestamp prefixes retain ordinary literal leak screening" {
+              let published = ResizeArray<string>()
+              let timestampCtx = WalkerCtx.create 0L false (Some published.Add)
+              let year = DateTime.UtcNow.Year.ToString(Globalization.CultureInfo.InvariantCulture)
+              timestampCtx.BindSecrets [ Secrets.inMemoryTextBinding "YEAR" year ]
+              timestampCtx.EnableTimestamps()
+              let stream = timestampCtx.CreateRedactedAdmission()
+              stream.Admit (RedactedText.Raw "ok")
+              stream.Complete()
+              timestampCtx.FlushOutput()
+
+              Expect.isEmpty published "a credential-shaped timestamp cannot cross progressive publication"
+
+              let leakedVariables =
+                  timestampCtx.OutputWithActiveSecrets()
+                  |> List.collect (fun (line, active, alreadyRedacted, prefix) ->
+                      if alreadyRedacted then
+                          Secrets.detectUnregisteredLeaks active line @ Secrets.detectLeaks active prefix
+                      else
+                          Secrets.detectLeaks active line)
+                  |> List.map _.Variable
+
+              Expect.contains leakedVariables "YEAR" "terminal screening still refuses the synthesized prefix"
+          }
+
           test "FG-236 pending stream survives a binding between physical fragments" {
               use betweenEntered = new Threading.ManualResetEventSlim(false)
               use releaseBetween = new Threading.ManualResetEventSlim(false)

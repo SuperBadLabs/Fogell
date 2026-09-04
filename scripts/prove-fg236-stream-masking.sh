@@ -227,6 +227,16 @@ sed -i '/let emitRedacted/,/let admit line/ s/^                    if List\.isEm
 kill_differential_mutant publication-race 'the terminal trace masks the late-bound credential'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 
+# Timestamp text is synthesized after raw matching. Losing its ordinary
+# literal scan can publish an active credential such as the current year even
+# though the shell portion of the line retains exact redaction provenance.
+target='                        || (List.isEmpty leaks && List.isEmpty (Secrets.detectLeaks secrets prefix))'
+[[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
+  || { echo 'FG-236 proof: timestamp-prefix mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                        || (List\.isEmpty leaks && List\.isEmpty (Secrets\.detectLeaks secrets prefix))$/                        || List.isEmpty leaks/' "$walker_ctx"
+kill_differential_mutant timestamp-prefix 'a credential-shaped timestamp cannot cross progressive publication'
+cp "$scratch/walker-ctx.clean" "$walker_ctx"
+
 # A slow earlier callback leaves later provenance-bearing lines pending. A
 # newly bound credential must recheck that queue as one separator-aware stream,
 # not merely recheck each already-framed fragment in isolation.
@@ -353,4 +363,4 @@ sed -i 's/^                          OnRedactedLine = None$/                    
 sed -i 's/^                          CreateRedactedAdmission = Some runCtx\.CreateRedactedAdmission$/                          CreateRedactedAdmission = None/' "$walker_step"
 kill_differential_mutant idempotence 'canonical-token pipeline refused outside execution'
 
-echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, pending-publication, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'
+echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, timestamp-prefix, pending-publication, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'

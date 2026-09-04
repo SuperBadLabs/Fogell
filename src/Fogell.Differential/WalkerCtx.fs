@@ -102,7 +102,7 @@ type WalkerCtx =
       FlushOutput: unit -> unit
       /// Locked snapshot pairing each line with the secrets that were already
       /// bound when it was emitted — the leak scan's exact input.
-      OutputWithActiveSecrets: unit -> (string * SecretBinding list * bool) list
+      OutputWithActiveSecrets: unit -> (string * SecretBinding list * bool * string) list
       /// Worst-of accumulator for the build status. Monotone: a later Bump can
       /// only worsen the result, never walk it back (retry uses a throwaway
       /// sink for exactly that reason — see BranchCtx.Sink).
@@ -301,6 +301,7 @@ module WalkerCtx =
         /// not have caught it.
         let boundSecrets = ResizeArray<SecretBinding * int>()
         let redactedOutputIndexes = System.Collections.Generic.HashSet<int>()
+        let outputPrefixes = ResizeArray<string>()
 
         let engineNotes = ResizeArray<string>()
         let durableIds = ResizeArray<string>()
@@ -417,18 +418,9 @@ module WalkerCtx =
                     let (safeValue: RedactedText), leaks = safeAndLeaks secrets
                     let safe = safeValue.Text
 
-                    // A transformed secret can survive the ordinary masker.
-                    // The terminal trace refuses those lines later, but a
-                    // progressive callback happens NOW and must not publish the
-                    // bytes first. Executor emits the safe warning separately;
-                    // retain the line for the terminal leak guard and suppress
-                    // only its external publication.
-                    let safeToPublish =
-                        List.isEmpty secrets || List.isEmpty leaks
-
-                    // AFTER masking, deliberately. The prefix carries no secret,
-                    // and masking a line whose start has already moved would let
-                    // an offset-based masker act on the wrong span.
+                    // AFTER masking, deliberately. Keep the engine-authored
+                    // prefix separate so its literal screening cannot make an
+                    // offset-based masker act on a line whose start has moved.
                     let prefix =
                         if timestamps then
                             // INVARIANT CULTURE. `ToString(format)` uses the
@@ -446,10 +438,20 @@ module WalkerCtx =
                         else
                             ""
 
+                    // A transformed secret can survive the ordinary masker,
+                    // and an engine-authored timestamp can itself equal a
+                    // registered literal. The terminal trace refuses both
+                    // later, but the progressive callback happens NOW and must
+                    // not publish either first.
+                    let safeToPublish =
+                        List.isEmpty secrets
+                        || (List.isEmpty leaks && List.isEmpty (Secrets.detectLeaks secrets prefix))
+
                     let stamped = prefix + safe
 
                     let outputIndex = output.Count
                     output.Add stamped
+                    outputPrefixes.Add prefix
 
                     if alreadyRedacted then
                         redactedOutputIndexes.Add outputIndex |> ignore
@@ -553,7 +555,8 @@ module WalkerCtx =
                          |> Seq.filter (fun (_, from) -> from <= i)
                          |> Seq.map fst
                          |> List.ofSeq),
-                        redactedOutputIndexes.Contains i)
+                        redactedOutputIndexes.Contains i,
+                        outputPrefixes[i])
                     |> List.ofSeq)
           Bump = fun s -> lock statusLock (fun () -> status <- BuildStatus.worstOf status s)
           Status = fun () -> lock statusLock (fun () -> status)
