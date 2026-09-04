@@ -161,7 +161,7 @@ let private rejectSentinel (c: char) : P<char> =
     else
         preturn c
 
-let private numericEscape: P<char> =
+let private numericEscapeRaw: P<char> =
   attempt (
     // ONE OR MORE `u`: Java's UnicodeEscape is `\ u+ HexDigit{4}`, so `\uu0041`
     // is also `A`. Accepting exactly one passed `uu0041` through as text while
@@ -182,40 +182,45 @@ let private numericEscape: P<char> =
             .>>. manyMinMaxSatisfy 2 2 (fun c -> c >= '0' && c <= '7')
             |>> fun (hi, lo) -> char (System.Convert.ToInt32(hi + lo, 8)))
     <|> (manyMinMaxSatisfy 1 2 (fun c -> c >= '0' && c <= '7')
-         |>> fun digits -> char (System.Convert.ToInt32(digits, 8)))
-    >>= rejectSentinel)
+         |>> fun digits -> char (System.Convert.ToInt32(digits, 8))))
 
-let private simpleEscape (c: char) =
-    match c with
-    | 'n' -> '\n'
-    | 't' -> '\t'
-    | 'r' -> '\r'
-    | 'b' -> '\b'
-    // '\f', not '\012': in F# that trigraph is DECIMAL, so it reads as octal 12
-    // to anyone carrying Java's escapes in their head — which is everyone
-    // touching this function. Raised by Copilot on PR #36.
-    | 'f' -> '\f'
-    | c -> c
+let private numericEscape: P<char> = attempt (numericEscapeRaw >>= rejectSentinel)
 
-/// FG-126a. Jenkins 2.568.1 refuses `\8` while compiling a quoted Groovy
-/// literal; the former catch-all dropped the backslash and ran the resulting
-/// command. This is deliberately the ONE measured spelling, not a claim that
-/// every invalid Groovy escape is classified here. In particular, `\9`,
-/// arbitrary letters, provenance sentinels, dollar-slashy text and opaque raw
-/// expressions remain outside this tranche.
+/// FG-248, generalising FG-126a. Jenkins refuses every backslash sequence a
+/// quoted Groovy literal does not define while compiling the script; the
+/// former catch-all dropped the backslash and ran the resulting command, so a
+/// Jenkinsfile Jenkins cannot compile ran here. The accepted set and the
+/// wording live in `Fogell.Admission.GroovyEscapes`, shared with the scripted
+/// parser.
+///
+/// A numeric escape that decodes to a parser provenance sentinel (NUL or SOH:
+/// `\0`, `\00`, `\000`, `\1`, `\01`, `\001`, `\u0000`, `\u0001`) is declined by
+/// [numericEscape] through [rejectSentinel]; before this change it fell through
+/// to the catch-all and silently produced the WRONG value (`\000X` became
+/// `000X`). Re-reading the digits without the sentinel check tells that case
+/// apart from a genuinely invalid spelling, so the refusal names FG-127 — loud
+/// where that was silent; the valid escape stays unsupported until provenance
+/// moves out of band.
 ///
 /// `refuse`, rather than an ordinary parser failure, is load-bearing. A whole
 /// literal is attempted before the raw-argument fallback, so a plain `fail`
 /// would rewind and let that fallback silently admit the original source.
-let private measuredInvalidEight: P<char> =
-    lookAhead (skipChar '8')
-    >>. refuse "invalid Groovy escape `\\8`: `8` is not an octal digit"
+let private invalidEscape: P<char> =
+    (lookAhead numericEscapeRaw |>> Some <|> preturn None) .>>. lookAhead anyChar
+    >>= fun (numeric, c) ->
+            match numeric with
+            | Some code when code = '\u0000' || code = '\u0001' ->
+                refuse
+                    "unsupported Groovy numeric escape: it decodes to NUL or SOH, code points this engine reserves as parser provenance markers (FG-127)"
+            | _ -> refuse (GroovyEscapes.invalidMessage c)
 
 /// The one post-backslash operation for both ordinary strings and GStrings.
-/// Keeping the refusal between numeric decoding and the historical catch-all
-/// makes valid octal escapes win while preventing the fallback from eating 8.
+/// Numeric decoding wins first, then the measured letter set, then the
+/// refusal — so no spelling can reach a catch-all that eats its backslash.
 let private decodedEscape: P<char> =
-    numericEscape <|> measuredInvalidEight <|> (anyChar |>> simpleEscape)
+    numericEscape
+    <|> (satisfy GroovyEscapes.simpleLetters.Contains |>> GroovyEscapes.simpleEscape)
+    <|> invalidEscape
 
 let private escapedChar: P<char> =
     skipChar '\\' >>. decodedEscape

@@ -3756,6 +3756,91 @@ let fg015ClosureAudit =
           }
           ]
 
+/// FG-248. The escape grammar of a quoted scripted-Groovy literal, measured on
+/// Jenkins 2.568.1 one transient job per (form, spelling): exactly nine simple
+/// letters, unicode and octal decode; every other spelling is a compile
+/// refusal there and a positioned admission refusal here. FG-124a already
+/// pinned the numeric grammar; this list pins the letters and the refusal.
+let fg248EscapeGrammar =
+    let quotedForms (body: string) =
+        [ "single", "'" + body + "'"
+          "triple-single", "'''" + body + "'''"
+          "double", "\"" + body + "\""
+          "triple-double", "\"\"\"" + body + "\"\"\"" ]
+
+    let expectRefusal (label: string) (spelling: char) (source: string) =
+        let assertError route result =
+            match result with
+            | Ok _ -> failtestf "%s/%s admitted an invalid escape" label route
+            | Error(e: AdmissionError) ->
+                Expect.equal e.Code MalformedSyntax $"{label}/{route}: named admission code"
+                Expect.equal e.Message (GroovyEscapes.invalidMessage spelling) $"{label}/{route}: the shared diagnostic"
+                Expect.isGreaterThan e.Position.Line 0L $"{label}/{route}: positive line"
+                Expect.isGreaterThan e.Position.Column 0L $"{label}/{route}: positive column"
+
+        assertError "parse" (Fogell.Groovy.Parser.Parser.parse source)
+
+        assertError
+            "parseWithLimits"
+            (Fogell.Groovy.Parser.Parser.parseWithLimits { Limits.defaults with MaxSourceBytes = 100_000 } source)
+
+    testList
+        "FG-248 quoted escape letters and the refusal of every other spelling"
+        [ test "the nine measured letters decode identically in all four quoted forms" {
+              let body = "[\\b\\f\\n\\t\\r\\\\\\'\\\"\\$]"
+              let expected = "[\b\f\n\t\r\\'\"$]"
+
+              for label, literal in quotedForms body do
+                  match parseOk ("def v = " + literal + "\n") with
+                  | [ SDef("v", Some(EStr value)) ] -> Expect.equal value expected label
+                  | other -> failtestf "%s did not stay a plain string: %A" label other
+
+              match parseOk "f(\"[\\b\\f\\n\\t\\r\\\\\\'\\\"\\$]\": 1)\n" with
+              | [ SExpr(ECall(FreeCall "f", [ ANamed(name, EInt 1L) ], None)) ] ->
+                  Expect.equal name expected "constant named-argument key"
+              | other -> failtestf "wrong constant-name AST: %A" other
+          }
+
+          test "every measured-invalid spelling is refused by name in all four quoted forms" {
+              for spelling in [ '/'; 's'; 'a'; 'e'; 'v'; 'x'; 'q'; 'z'; '8'; '9'; ' '; '{'; '('; '%' ] do
+                  for label, literal in quotedForms ("[\\" + string spelling + "41]") do
+                      expectRefusal (label + "/" + string spelling) spelling ("def v = " + literal + "\n")
+          }
+
+          test "a unicode escape without four hex digits is refused as backslash-u" {
+              for label, literal in quotedForms "[\\uZZZZ]" @ quotedForms "[\\u]" @ quotedForms "[\\uu12]" do
+                  expectRefusal label 'u' ("def v = " + literal + "\n")
+          }
+
+          test "the refusal names the offending character's position" {
+              match Fogell.Groovy.Parser.Parser.parse "def ok = 'fine'\ndef v = '[\\q]'\n" with
+              | Error e ->
+                  Expect.equal e.Position.Line 2L "second statement"
+                  Expect.equal e.Position.Column 12L "the character after the backslash"
+              | Ok _ -> failtest "admitted"
+          }
+
+          test "constant named-argument keys, interpolated GStrings and closure bodies refuse the same spellings" {
+              expectRefusal "constant name" 'q' "f(\"[\\q]\": 1)\n"
+              expectRefusal "gstring tail" 's' "def v = \"${x} [\\s]\"\n"
+              expectRefusal "gstring head" '/' "def v = \"[\\/] ${x}\"\n"
+              expectRefusal "inside a closure" 'q' "node {\n    sh 'ok'\n    sh '[\\q]'\n}\n"
+          }
+
+          test "a constant named-argument key still fails closed on a backslash-newline without an escape diagnostic" {
+              match Fogell.Groovy.Parser.Parser.parse "f(\"a\\\nb\": 1)\n" with
+              | Error e ->
+                  Expect.equal e.Code MalformedSyntax "refused"
+                  Expect.isFalse (e.Message.StartsWith "invalid Groovy escape") "not misreported as an invalid letter"
+              | Ok _ -> failtest "admitted a physical break in a constant name"
+          }
+
+          test "slashy strings keep every spelling literally except the delimiter escape" {
+              match parseOk "def pattern = /[\\q\\s\\a\\8\\/]/\n" with
+              | [ SDef("pattern", Some(EStr value)) ] -> Expect.equal value "[\\q\\s\\a\\8/]" "slashy"
+              | other -> failtestf "wrong slashy AST: %A" other
+          } ]
+
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg190192TriviaState; fg015ClosureAudit; fg015bSortAndRangeReview; fg205SortFallback; fg241RegexPatternFault; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; scmMapValues; junitSummaryValues; callableResolution; mapIdentity; cyclicValues ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg190192TriviaState; fg015ClosureAudit; fg015bSortAndRangeReview; fg205SortFallback; fg241RegexPatternFault; fg180Grammar; fg248EscapeGrammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; scmMapValues; junitSummaryValues; callableResolution; mapIdentity; cyclicValues ])

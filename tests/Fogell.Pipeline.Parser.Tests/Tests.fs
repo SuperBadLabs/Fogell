@@ -4248,6 +4248,117 @@ let invalidEightEscape =
 /// needs source PRESENCE, including trivia-only bodies Jenkins still sees as a
 /// closure. Keep that fact in the IR rather than trying to reconstruct it from
 /// raw arguments or braces that may be ordinary string content.
+/// FG-248. FG-126a's one measured spelling becomes the whole grammar: the
+/// Declarative lexer decodes exactly the nine letters Jenkins 2.568.1 accepts
+/// (`b f n t r \ ' " $`) plus unicode and octal, and refuses every other
+/// backslash spelling at its position through every decoded quote consumer
+/// and every fallback. Numeric escapes decoding to the FG-127 provenance markers
+/// (`\0`, `\1`, `\u0000`, `\u0001`) refuse by name instead of silently decoding to
+/// the wrong text.
+let invalidEscapeGrammar =
+    let directStep literal =
+        mk $"    stage('S') {{ steps {{ sh {literal} }} }}"
+
+    let expectRefusal (label: string) (diagnostic: string) source =
+        let assertError route result =
+            match result with
+            | Ok _ -> failtestf "%s/%s admitted an invalid escape" label route
+            | Error e ->
+                Expect.equal e.Code MalformedSyntax $"{label}/{route}: named admission code"
+                Expect.equal e.Message diagnostic $"{label}/{route}: exact diagnostic"
+                Expect.isGreaterThan e.Position.Line 0L $"{label}/{route}: positive line"
+                Expect.isGreaterThan e.Position.Column 0L $"{label}/{route}: positive column"
+
+        assertError "parse" (Parser.parse source)
+
+        assertError
+            "parseWithLimits"
+            (Parser.parseWithLimits { Limits.defaults with MaxSourceBytes = 100_000 } source)
+
+    let onlyPositional source =
+        let pipeline = ok source
+
+        match pipeline.Stages with
+        | [ stage ] ->
+            match stage.Steps with
+            | [ step ] -> step.Positional
+            | other -> failtestf "expected one step, got %A" other
+        | other -> failtestf "expected one stage, got %A" other
+
+    let quotedForms (body: string) =
+        [ "single", "'" + body + "'"
+          "triple-single", "'''" + body + "'''"
+          "double", "\"" + body + "\""
+          "triple-double", "\"\"\"" + body + "\"\"\"" ]
+
+    let markerDiagnostic =
+        "unsupported Groovy numeric escape: it decodes to NUL or SOH, code points this engine reserves as parser provenance markers (FG-127)"
+
+    testList
+        "FG-248 quoted escape grammar"
+        [ test "the nine measured letters decode identically in all four quoted forms" {
+              let body = "[\\b\\f\\n\\t\\r\\\\\\'\\\"\\$]"
+              let expected = "[\b\f\n\t\r\\'\"$]"
+
+              for label, literal in quotedForms body do
+                  match onlyPositional (directStep literal) with
+                  | [ value ] -> Expect.equal value expected label
+                  | other -> failtestf "%s: expected one positional, got %A" label other
+          }
+
+          test "every measured-invalid spelling refuses through all four decoded quote consumers" {
+              for spelling in [ '/'; 's'; 'a'; 'e'; 'v'; 'x'; 'q'; 'z'; '9'; ' '; '{'; '('; '%' ] do
+                  for label, literal in quotedForms ("prefix\\" + string spelling + "41suffix") do
+                      expectRefusal
+                          (label + "/" + string spelling)
+                          (GroovyEscapes.invalidMessage spelling)
+                          (directStep literal)
+          }
+
+          test "a unicode escape without four hex digits is refused as backslash-u" {
+              for label, literal in quotedForms "prefix\\uZZZZsuffix" @ quotedForms "prefix\\usuffix" do
+                  expectRefusal label (GroovyEscapes.invalidMessage 'u') (directStep literal)
+          }
+
+          test "positional, named, environment and script-block fallbacks cannot swallow the refusal" {
+              let diagnostic = GroovyEscapes.invalidMessage 'q'
+              expectRefusal "positional" diagnostic (directStep "'prefix\\qsuffix'")
+              expectRefusal "named" diagnostic (mk "    stage('S') { steps { sh(script: 'prefix\\qsuffix') } }")
+
+              expectRefusal
+                  "environment"
+                  diagnostic
+                  "pipeline { agent any environment { BAD = 'prefix\\qsuffix' } stages { stage('S') { steps { sh 'true' } } } }"
+
+              // The scripted parser owns `script { }` and `when { expression { } }`
+              // bodies; its refusal is carried through the nested-syntax route.
+              for label, source in
+                  [ "script block", mk "    stage('S') { steps { script { sh '[\\q]' } } }"
+                    "when expression",
+                    mk "    stage('S') { when { expression { return '[\\q]' == 'x' } } steps { sh 'true' } }" ] do
+                  let e = err source
+                  Expect.equal e.Code MalformedSyntax $"{label}: named admission code"
+                  Expect.stringContains e.Message diagnostic $"{label}: carries the scripted parser's diagnostic"
+          }
+
+          test "an escape that would decode to a provenance marker is refused by name, never silently retyped" {
+              for literal in
+                  [ "'a\\0b'"; "'a\\1b'"; "\"a\\000b\""; "\"a\\001b\""; "'a\\u0000b'"; "\"a\\uu0001b\"" ] do
+                  expectRefusal ("marker " + literal) markerDiagnostic (directStep literal)
+
+              expectRefusal "malformed unicode is still `\\u`" (GroovyEscapes.invalidMessage 'u') (directStep "'a\\u00zb'")
+
+              match onlyPositional (directStep "'a\\012b'") with
+              | [ value ] -> Expect.equal value "a\nb" "an octal escape that is not a marker still decodes"
+              | other -> failtestf "expected one positional, got %A" other
+          }
+
+          test "slashy strings keep every spelling literally except the delimiter escape" {
+              match onlyPositional (directStep "(/[\\q\\s\\8\\/]/)") with
+              | [ value ] -> Expect.equal value "[\\q\\s\\8/]" "slashy"
+              | other -> failtestf "expected one positional, got %A" other
+          } ]
+
 let stepBlockPresence =
     let pipeline optionBody =
         $"pipeline {{ agent any options {{ {optionBody} }} stages {{ stage('S') {{ steps {{ sh 'true' }} }} }} }}"
@@ -4375,5 +4486,6 @@ let main argv =
               declarativeDetection
               structure
               invalidEightEscape
+              invalidEscapeGrammar
               stepBlockPresence
               slashyPosition ])
