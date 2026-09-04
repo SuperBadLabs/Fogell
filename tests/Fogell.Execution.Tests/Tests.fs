@@ -6070,6 +6070,34 @@ let maskingOnOutputPath =
 
               prove "admission" (fun streamed request ->
                   { request with OnRedactedAdmission = Some streamed.Enqueue })
+
+              let noPolicyRoot = tempRoot ()
+              let noPolicyPidFile = Path.Combine(noPolicyRoot, "fg236-unused-redacted-callback.pid")
+              let ignored = Collections.Concurrent.ConcurrentQueue<RedactedText>()
+
+              try
+                  let noPolicy =
+                      try
+                          ProcessGroup.run
+                              { RunRequest.create (
+                                    $"setsid /bin/sh -c 'echo $$ > {noPolicyPidFile}; sleep 30' 2>/dev/null & i=0; while [ ! -s {noPolicyPidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; sleep 0.01; done; printf 'ordinary-line\\n'",
+                                    noPolicyRoot) with
+                                  ReapGroup = false
+                                  OnRedactedLine = Some ignored.Enqueue }
+                      with :? TimeoutException ->
+                          failtest "an inactive provenance callback does not impose a false EOF contract"
+
+                  Expect.equal
+                      noPolicy.Outcome
+                      (Completed 0)
+                      "an inactive provenance callback does not impose a false EOF contract"
+                  Expect.isEmpty ignored "the callback remains inactive without a redaction policy"
+              finally
+                  match waitForPidFile noPolicyPidFile with
+                  | Some pid ->
+                      Native.signalGroup pid Native.SIGKILL |> ignore
+                      Expect.isTrue (waitForReap pid) "the unused-callback fixture is cleaned up"
+                  | None -> failtest "the unused-callback fixture never established its precondition"
           }
 
           test "FG-236 raw admission factory separates stdout and stderr through true EOF" {
@@ -6110,6 +6138,26 @@ let maskingOnOutputPath =
 
               Expect.equal r.Status Success "the one-character credential is admitted"
               Expect.equal r.Stdout "****\n" "one redaction remains the canonical four-character token"
+              Expect.isFalse
+                  (r.Stderr.Contains "WARNING:")
+                  "buffered transformed-form detection cannot mistake a protected token for raw stars"
+
+              let protectedStream = System.Collections.Generic.List<string>()
+              let fourStars = Secrets.bind root "FOUR_STARS" "****"
+              let protectedResult =
+                  Executor.runStep
+                      { request root "#!/bin/sh\nprintf '****'" with
+                          Secrets = [ fourStars ]
+                          OnLine = Some protectedStream.Add }
+
+              Expect.equal protectedResult.Status Success "the four-star credential is admitted"
+              Expect.isFalse
+                  (protectedResult.Stderr.Contains "WARNING:")
+                  "buffered leak detection preserves raw-matcher token provenance"
+              Expect.equal
+                  (List.ofSeq protectedStream)
+                  [ "****" ]
+                  "streamed leak detection preserves raw-matcher token provenance"
 
               let short = Secrets.bind root "SHORT" "x"
               let spanning = Secrets.bind root "SPANNING" "a****"

@@ -237,7 +237,7 @@ module Executor =
                         // Detection runs on the MASKED text: anything still
                         // recognisable is an encoding masking cannot cover, and
                         // naming it is the whole point of FG-071.
-                        for leak in Secrets.detectUnregisteredLeaks (secretsForOutput ()) masked do
+                        for leak in Secrets.detectUnregisteredLeaksRedacted (secretsForOutput ()) line do
                             let note = $"WARNING: {leak.Variable} appears in output {leak.Encoding}-encoded; masking cannot cover this form"
 
                             if not (leakReports.Contains note) then
@@ -311,18 +311,19 @@ module Executor =
                 | Some value -> value
                 | None -> invalidOp $"{stream} crossed raw redaction without token provenance"
 
-            let maskedStdout =
+            let maskedStdoutValue =
                 match outputRedaction with
                 | Some policy when request.CaptureStdout && runResult.StdoutReachedEof ->
-                    (policy.MaskRedacted runResult.Stdout).Text
+                    policy.MaskRedacted runResult.Stdout
                 | Some policy when request.CaptureStdout ->
-                    (policy.MaskAvailablePrefixRedacted runResult.Stdout).Text
+                    policy.MaskAvailablePrefixRedacted runResult.Stdout
                 | Some _ ->
                     runResult.StdoutRedacted
                     |> requireProvenance "stdout"
                     |> recheckAlreadyRedacted
-                    |> fun value -> value.Text
-                | _ -> runResult.Stdout
+                | _ -> RedactedText.Raw runResult.Stdout
+
+            let maskedStdout = maskedStdoutValue.Text
 
             // Stderr and non-capture stdout crossed the raw matcher, but its
             // live inventory is sampled before each chunk. A sibling can bind
@@ -330,20 +331,21 @@ module Executor =
             // Recheck the returned buffers against the final inventory just as
             // WalkerCtx does at its publication boundary. Capture stdout is the
             // sole intentionally raw sink and is handled by the policy above.
-            let maskedStderr =
+            let maskedStderrValue =
                 match outputRedaction with
                 | Some _ ->
                     runResult.StderrRedacted
                     |> requireProvenance "stderr"
                     |> recheckAlreadyRedacted
-                    |> fun value -> value.Text
-                | None -> runResult.Stderr
+                | None -> RedactedText.Raw runResult.Stderr
+
+            let maskedStderr = maskedStderrValue.Text
 
             let bufferedSecrets = secretsForOutput ()
 
             let bufferedLeaks =
-                [ maskedStdout; maskedStderr ]
-                |> List.collect (Secrets.detectUnregisteredLeaks bufferedSecrets)
+                [ maskedStdoutValue; maskedStderrValue ]
+                |> List.collect (Secrets.detectUnregisteredLeaksRedacted bufferedSecrets)
                 |> List.map (fun l ->
                     $"WARNING: {l.Variable} appears in output {l.Encoding}-encoded; masking cannot cover this form")
                 |> List.distinct

@@ -1766,9 +1766,10 @@ module ProcessGroup =
 
             let processOutputCallbackPresent =
                 Option.isSome request.OnLine
-                || Option.isSome request.OnRedactedLine
-                || Option.isSome request.OnRedactedAdmission
-                || Option.isSome request.CreateRedactedAdmission
+                || (Option.isSome request.OutputRedaction
+                    && (Option.isSome request.OnRedactedLine
+                        || Option.isSome request.OnRedactedAdmission
+                        || Option.isSome request.CreateRedactedAdmission))
 
             if processOutputCallbackPresent && not callbackReadersReachedEof then
                 Some(

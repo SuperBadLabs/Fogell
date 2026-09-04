@@ -217,6 +217,33 @@ let progressiveOutputPublication =
               Expect.isEmpty
                   (committedCtx.PublicationLeaks())
                   "committed pre-binding provenance is context, not new refusal evidence"
+              Expect.equal
+                  (committedCtx.Output())
+                  [ "terceS" ]
+                  "a future transformed binding cannot rewrite the committed terminal audit line"
+
+              use literalCommitted = new Threading.ManualResetEventSlim(false)
+              let literalPublished = ResizeArray<string>()
+              let literalCtx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          literalPublished.Add line
+                          if line = "prior-line" then literalCommitted.Set()))
+              let literalStream = literalCtx.CreateRedactedAdmission()
+              literalStream.Admit (RedactedText.Raw "prior-line")
+              Expect.isTrue
+                  (literalCommitted.Wait 2_000)
+                  "the literal audit line is committed before its future binding"
+              literalCtx.BindSecrets [ Secrets.inMemoryTextBinding "LATE_LITERAL" "prior-line" ]
+              literalStream.Admit (RedactedText.Raw "tail")
+              literalStream.Complete()
+              literalCtx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq literalPublished, literalCtx.Output())
+                  ([ "prior-line"; "tail" ], [ "prior-line"; "tail" ])
+                  "a future binding preserves committed publication and terminal audit history"
           }
 
           test "FG-236 a late binding remasks a stalled external publication queue across lines" {
@@ -530,7 +557,10 @@ let progressiveOutputPublication =
                   (List.ofSeq published)
                   [ "Sec"; "****" ]
                   "EOF publishes a mask without replaying the committed left-context"
-              Expect.equal (ctx.Output()) [ "****" ] "the stored trace cannot retain raw fragments"
+              Expect.equal
+                  (ctx.Output())
+                  [ "Sec"; "****" ]
+                  "the stored trace retains committed context and masks the completing suffix"
 
               let terminalOnly = WalkerCtx.create 0L false None
               let terminalStream = terminalOnly.CreateRedactedAdmission()

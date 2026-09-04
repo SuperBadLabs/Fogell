@@ -402,6 +402,13 @@ module WalkerCtx =
                 // Preserve it verbatim instead of allowing line collapse to
                 // erase that evidence; the whole stream remains unpublished.
                 if source |> Array.forall _.Publishable then
+                    // Dequeue commits a publication to external transport.
+                    // Those bytes remain matching left-context, but a secret
+                    // learned later cannot retrospectively censor their audit
+                    // record; only output pending at the binding may change.
+                    let mutableAfterBinding item =
+                        not (committedPublicationOrders.Contains item.Order)
+
                     let reframed =
                         source
                         |> Array.map _.Value
@@ -428,14 +435,16 @@ module WalkerCtx =
 
                     if List.isEmpty streamLeaks then
                         for item in source do
-                            suppressedOutputIndexes.Add item.OutputIndex |> ignore
+                            if mutableAfterBinding item then
+                                suppressedOutputIndexes.Add item.OutputIndex |> ignore
 
                         for item, _ in rechecked do
-                            output[item.OutputIndex] <- item.Prefix + item.Value.Text
-                            outputValues[item.OutputIndex] <- item.Value
-                            suppressedOutputIndexes.Remove item.OutputIndex |> ignore
+                            if mutableAfterBinding item then
+                                output[item.OutputIndex] <- item.Prefix + item.Value.Text
+                                outputValues[item.OutputIndex] <- item.Value
+                                suppressedOutputIndexes.Remove item.OutputIndex |> ignore
 
-                            remasked.Add item
+                                remasked.Add item
                     else
                         retainPublicationLeaks streamLeaks
 

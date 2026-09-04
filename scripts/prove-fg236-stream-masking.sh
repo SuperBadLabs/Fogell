@@ -29,9 +29,9 @@ bash -ic "dotnet restore '$differential_project' --locked-mode --ignore-failed-s
 bash -ic "dotnet build '$project' -c Release --no-restore -m:1"
 bash -ic "dotnet build '$differential_project' -c Release --no-restore -m:1"
 dotnet run --project "$project" -c Release --no-build -- \
-  --filter-test-case "$filter" --sequenced >/dev/null
+  --filter-test-case "$filter" --sequenced
 dotnet run --project "$differential_project" -c Release --no-build -- \
-  --filter-test-case "$filter" --sequenced >/dev/null
+  --filter-test-case "$filter" --sequenced
 
 kill_mutant() {
   local label=$1 expected=$2
@@ -124,17 +124,45 @@ cp "$scratch/process-group.clean" "$process_group"
 # A provenance-bearing process callback is still a public output callback. If
 # its reader does not reach EOF inside the bounded drain window, returning
 # success would bless a truncated stream merely because it bypassed OnLine.
-target='                || Option.isSome request.OnRedactedAdmission'
+target='                        || Option.isSome request.OnRedactedAdmission'
 [[ $(rg -F -c "$target" "$process_group") == 1 ]] \
   || { echo 'FG-236 proof: reader-enforcement mutation target is not unique' >&2; exit 1; }
-sed -i 's/^                || Option\.isSome request\.OnRedactedAdmission$/                || false/' "$process_group"
+sed -i 's/^                        || Option\.isSome request\.OnRedactedAdmission$/                        || false/' "$process_group"
 kill_mutant reader-enforcement 'a provenance callback cannot turn bounded reader truncation into success'
 cp "$scratch/process-group.clean" "$process_group"
+
+# A provenance callback is inactive without a raw redaction policy. Treating
+# its mere presence as a transport contract falsely turns a bounded raw pipe
+# snapshot into an EOF timeout even though no provenance callback can run.
+target='                || (Option.isSome request.OutputRedaction'
+[[ $(rg -F -c "$target" "$process_group") == 1 ]] \
+  || { echo 'FG-236 proof: inactive-callback mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                || (Option\.isSome request\.OutputRedaction$/                || (true/' "$process_group"
+kill_mutant inactive-callback 'an inactive provenance callback does not impose a false EOF contract'
+cp "$scratch/process-group.clean" "$process_group"
+
+# Executor receives protected matcher tokens, so both its progressive warning
+# scan and final-buffer warning scan must retain that provenance. Flattening
+# either path manufactures a transformed-form warning for a `****` credential.
+cp "$scratch/executor.clean" "$executor"
+target='                        for leak in Secrets.detectUnregisteredLeaksRedacted (secretsForOutput ()) line do'
+[[ $(rg -F -c "$target" "$executor") == 1 ]] \
+  || { echo 'FG-236 proof: executor-stream-provenance mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                        for leak in Secrets\.detectUnregisteredLeaksRedacted (secretsForOutput ()) line do$/                        for leak in Secrets.detectUnregisteredLeaks (secretsForOutput ()) masked do/' "$executor"
+kill_mutant executor-stream-provenance 'streamed leak detection preserves raw-matcher token provenance'
+
+cp "$scratch/executor.clean" "$executor"
+target='                |> List.collect (Secrets.detectUnregisteredLeaksRedacted bufferedSecrets)'
+[[ $(rg -F -c "$target" "$executor") == 1 ]] \
+  || { echo 'FG-236 proof: executor-buffer-provenance mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                |> List\.collect (Secrets\.detectUnregisteredLeaksRedacted bufferedSecrets)$/                |> List.collect (fun value -> Secrets.detectUnregisteredLeaks bufferedSecrets value.Text)/' "$executor"
+kill_mutant executor-buffer-provenance 'buffered leak detection preserves raw-matcher token provenance'
 
 # A bounded capture snapshot is not EOF. Completing its matcher publishes an
 # attacker-selected secret prefix that the escaped pipe holder may later finish.
 cp "$scratch/process-group.clean" "$process_group"
-target='                    (policy.MaskAvailablePrefixRedacted runResult.Stdout).Text'
+cp "$scratch/executor.clean" "$executor"
+target='                    policy.MaskAvailablePrefixRedacted runResult.Stdout'
 [[ $(rg -F -c "$target" "$executor") == 1 ]] \
   || { echo 'FG-236 proof: capture-cutoff mutation target is not unique' >&2; exit 1; }
 sed -i 's/policy\.MaskAvailablePrefixRedacted runResult\.Stdout/policy.MaskRedacted runResult.Stdout/' "$executor"
@@ -306,6 +334,16 @@ sed -i 's/^                    raw <- not value\.TokenCharacters\[index\]$/     
 kill_differential_mutant transformed-token-provenance 'a transformed form cannot be manufactured wholly from a protected token'
 cp "$scratch/secrets.clean" "$secrets"
 
+# A secret learned after external transport may use committed bytes as left
+# context for a match which finishes later, but must not rewrite a complete
+# audit line that was already irrevocably published.
+target='                        not (committedPublicationOrders.Contains item.Order)'
+[[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
+  || { echo 'FG-236 proof: committed-history mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                        not (committedPublicationOrders\.Contains item\.Order)$/                        true/' "$walker_ctx"
+kill_differential_mutant committed-history 'a future binding preserves committed publication and terminal audit history'
+cp "$scratch/walker-ctx.clean" "$walker_ctx"
+
 # Reassembly follows stream identity across globally interleaved queue entries.
 # Dropping that identity reduces the late pass to isolated physical lines.
 target='                                      RedactedStream = redactedStream }'
@@ -422,4 +460,4 @@ sed -i 's/^                          OnRedactedLine = None$/                    
 sed -i 's/^                          CreateRedactedAdmission = Some runCtx\.CreateRedactedAdmission$/                          CreateRedactedAdmission = None/' "$walker_step"
 kill_differential_mutant idempotence 'canonical-token pipeline refused outside execution'
 
-echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, timestamp-prefix, timestamp-boundary, timestamp-boundary-provenance, terminal-timestamp-boundary, open-stream-barrier, pending-publication, pending-leak-screen, transformed-token-provenance, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'
+echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, inactive-callback, executor-stream-provenance, executor-buffer-provenance, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, timestamp-prefix, timestamp-boundary, timestamp-boundary-provenance, terminal-timestamp-boundary, open-stream-barrier, pending-publication, pending-leak-screen, transformed-token-provenance, committed-history, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'
