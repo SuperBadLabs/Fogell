@@ -147,6 +147,66 @@ let progressiveOutputPublication =
                   "a stalled non-stream line is rechecked before external publication"
           }
 
+          test "FG-236 a late binding re-screens transformed queued output" {
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let published = ResizeArray<string>()
+
+              let ctx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          published.Add line
+
+                          if line = "blocker" then
+                              callbackEntered.Set()
+                              releaseCallback.Wait()))
+
+              let blocker = Threading.Tasks.Task.Run(fun () -> ctx.Emit "blocker")
+
+              try
+                  Expect.isTrue (callbackEntered.Wait 2_000) "the transformed-output control is genuinely stalled"
+                  ctx.EmitRedacted (RedactedText.Raw "terceS")
+                  ctx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+              finally
+                  releaseCallback.Set()
+
+              blocker.GetAwaiter().GetResult()
+              ctx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq published)
+                  [ "blocker" ]
+                  "a newly recognized transformed form never leaves the queued boundary"
+              Expect.equal
+                  (ctx.PublicationLeaks() |> List.map _.Variable)
+                  [ "LATE" ]
+                  "the retained transformed evidence makes terminal construction fail closed"
+
+              use committed = new Threading.ManualResetEventSlim(false)
+              let committedPublished = ResizeArray<string>()
+              let committedCtx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          committedPublished.Add line
+                          committed.Set()))
+              let committedStream = committedCtx.CreateRedactedAdmission()
+              committedStream.Admit (RedactedText.Raw "terceS")
+              Expect.isTrue (committed.Wait 2_000) "the control fragment crossed before the future binding"
+              committedCtx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+              committedStream.Complete()
+              committedCtx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq committedPublished)
+                  [ "terceS" ]
+                  "a transformed coincidence committed before binding is not judged retroactively"
+              Expect.isEmpty
+                  (committedCtx.PublicationLeaks())
+                  "committed pre-binding provenance is context, not new refusal evidence"
+          }
+
           test "FG-236 a late binding remasks a stalled external publication queue across lines" {
               use callbackEntered = new Threading.ManualResetEventSlim(false)
               use releaseCallback = new Threading.ManualResetEventSlim(false)
@@ -354,6 +414,25 @@ let progressiveOutputPublication =
                   |> List.map _.Variable
 
               Expect.contains leakedVariables "YEAR" "terminal screening still refuses the synthesized prefix"
+
+              let boundaryPublished = ResizeArray<string>()
+              let boundaryCtx = WalkerCtx.create 0L false (Some boundaryPublished.Add)
+              let boundary = Secrets.inMemoryTextBinding "BOUNDARY" "] ok"
+              boundaryCtx.BindSecrets [ boundary ]
+              boundaryCtx.EnableTimestamps()
+              let boundaryStream = boundaryCtx.CreateRedactedAdmission()
+              boundaryStream.Admit (RedactedText.Raw "ok")
+              boundaryStream.Complete()
+              boundaryCtx.FlushOutput()
+
+              Expect.isEmpty
+                  boundaryPublished
+                  "a credential composed only across the timestamp/output boundary cannot publish"
+              let boundaryLine = boundaryCtx.Output() |> List.exactlyOne
+              let boundaryPrefix = boundaryLine.Substring(0, boundaryLine.Length - 2)
+              Expect.isNonEmpty
+                  (Secrets.detectBoundaryLeaks [ boundary ] boundaryPrefix "ok")
+                  "terminal screening sees the same composed-boundary credential"
           }
 
           test "FG-236 pending stream survives a binding between physical fragments" {
@@ -9740,6 +9819,28 @@ let credentialEchoMasking =
                       Expect.isFalse
                           (trace.Output |> List.exists (fun line -> line.Contains "load-bearing-secret"))
                           "the raw secret is absent from every compared line"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "FG-236 terminal screening covers the timestamp-output boundary" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg236-timestamp-boundary-" + Guid.NewGuid().ToString("N"))
+
+              let credentials = Map.ofList [ "boundary", SecretText "] + echo" ]
+              let source =
+                  "pipeline { agent any options { timestamps() } stages { stage('mask') { steps { "
+                  + "withCredentials([string(credentialsId: 'boundary', variable: 'TOKEN')]) { sh 'echo ok' } "
+                  + "} } } }"
+
+              try
+                  match FogellSide.runWithCredentials credentials [] root "job" source with
+                  | Ok _ -> failtest "the composed timestamp/output credential escaped terminal refusal"
+                  | Error why ->
+                      Expect.stringContains
+                          why
+                          "SECRET LEAKED to build output (variable(s): TOKEN)"
+                          "terminal construction refuses the same boundary the progressive callback screens"
               finally
                   if IO.Directory.Exists root then IO.Directory.Delete(root, true)
           }

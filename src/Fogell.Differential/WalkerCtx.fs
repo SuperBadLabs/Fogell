@@ -108,6 +108,10 @@ type WalkerCtx =
       /// Locked snapshot pairing each line with the secrets that were already
       /// bound when it was emitted — the leak scan's exact input.
       OutputWithActiveSecrets: unit -> (string * SecretBinding list * bool * string) list
+      /// Transformed evidence discovered while rechecking output which was
+      /// queued before a later credential binding. Such output is never
+      /// published, but must still make terminal trace construction fail closed.
+      PublicationLeaks: unit -> Leak list
       /// Worst-of accumulator for the build status. Monotone: a later Bump can
       /// only worsen the result, never walk it back (retry uses a throwaway
       /// sink for exactly that reason — see BranchCtx.Sink).
@@ -314,6 +318,7 @@ module WalkerCtx =
         /// never touches a shell — so masking the shell and echo paths could
         /// not have caught it.
         let boundSecrets = ResizeArray<SecretBinding * int>()
+        let publicationLeaks = ResizeArray<Leak>()
         let redactedOutputIndexes = System.Collections.Generic.HashSet<int>()
         let outputPrefixes = ResizeArray<string>()
         let suppressedOutputIndexes = System.Collections.Generic.HashSet<int>()
@@ -342,6 +347,16 @@ module WalkerCtx =
                     ())
             |> ignore
 
+        let publicationItemLeaks secrets (item: PendingPublication) (value: RedactedText) =
+            Secrets.detectUnregisteredLeaks secrets value.Text
+            @ Secrets.detectLeaks secrets item.Prefix
+            @ Secrets.detectBoundaryLeaks secrets item.Prefix value.Text
+
+        let retainPublicationLeaks leaks =
+            for leak in leaks do
+                if not (publicationLeaks.Contains leak) then
+                    publicationLeaks.Add leak
+
         let remaskIntoPublicationQueue secrets (pending: PendingPublication array) =
             let remasked = ResizeArray<PendingPublication>()
             let streamGroups =
@@ -350,9 +365,19 @@ module WalkerCtx =
             for item in pending do
                 match item.RedactedStream with
                 | None ->
-                    remasked.Add
+                    let value = Secrets.maskAlreadyRedacted secrets item.Value
+                    let leaks = publicationItemLeaks secrets item value
+                    let rechecked =
                         { item with
-                            Value = Secrets.maskAlreadyRedacted secrets item.Value }
+                            Value = value
+                            Publishable = item.Publishable && List.isEmpty leaks }
+
+                    if rechecked.Publishable then
+                        output[item.OutputIndex] <- item.Prefix + value.Text
+                        redactedOutputIndexes.Add item.OutputIndex |> ignore
+                        remasked.Add rechecked
+                    else
+                        retainPublicationLeaks leaks
                 | Some stream ->
                     match streamGroups.TryGetValue stream with
                     | true, group -> group.Add item
@@ -379,16 +404,36 @@ module WalkerCtx =
                         |> Array.map _.Value
                         |> Secrets.maskAlreadyRedactedLines secrets
 
-                    for item in source do
-                        suppressedOutputIndexes.Add item.OutputIndex |> ignore
+                    let rechecked =
+                        reframed
+                        |> Array.map (fun (sourceIndex, value) ->
+                            let item = source[sourceIndex]
+                            let leaks =
+                                if committedPublicationOrders.Contains item.Order then
+                                    []
+                                else
+                                    publicationItemLeaks secrets item value
+                            { item with
+                                Value = value
+                                Publishable = item.Publishable && List.isEmpty leaks },
+                            leaks)
 
-                    for sourceIndex, value in reframed do
-                        let item = source[sourceIndex]
-                        output[item.OutputIndex] <- item.Prefix + value.Text
-                        suppressedOutputIndexes.Remove item.OutputIndex |> ignore
+                    let streamLeaks =
+                        rechecked
+                        |> Array.collect (snd >> List.toArray)
+                        |> Array.toList
 
-                        remasked.Add
-                            { item with Value = value }
+                    if List.isEmpty streamLeaks then
+                        for item in source do
+                            suppressedOutputIndexes.Add item.OutputIndex |> ignore
+
+                        for item, _ in rechecked do
+                            output[item.OutputIndex] <- item.Prefix + item.Value.Text
+                            suppressedOutputIndexes.Remove item.OutputIndex |> ignore
+
+                            remasked.Add item
+                    else
+                        retainPublicationLeaks streamLeaks
 
             if Option.isSome onOutput then
                 remasked
@@ -480,7 +525,9 @@ module WalkerCtx =
                     // not publish either first.
                     let safeToPublish =
                         List.isEmpty secrets
-                        || (List.isEmpty leaks && List.isEmpty (Secrets.detectLeaks secrets prefix))
+                        || (List.isEmpty leaks
+                            && List.isEmpty (Secrets.detectLeaks secrets prefix)
+                            && List.isEmpty (Secrets.detectBoundaryLeaks secrets prefix safe))
 
                     let stamped = prefix + safe
 
@@ -623,6 +670,7 @@ module WalkerCtx =
                                 outputPrefixes[i]))
                     |> Seq.choose id
                     |> List.ofSeq)
+          PublicationLeaks = fun () -> lock outputLock (fun () -> publicationLeaks |> List.ofSeq)
           Bump = fun s -> lock statusLock (fun () -> status <- BuildStatus.worstOf status s)
           Status = fun () -> lock statusLock (fun () -> status)
           RunClock = Diagnostics.Stopwatch.StartNew()

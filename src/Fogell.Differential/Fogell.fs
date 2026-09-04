@@ -1491,14 +1491,18 @@ module FogellSide =
             // green while the log leaks is worse than no receipt, so the run itself
             // refuses to produce a trace instead.
             let leakedVars =
-                runCtx.OutputWithActiveSecrets()
-                |> List.collect (fun (l, active, alreadyRedacted, prefix) ->
-                    if List.isEmpty active then
-                        []
-                    elif alreadyRedacted then
-                        Secrets.detectUnregisteredLeaks active l @ Secrets.detectLeaks active prefix
-                    else
-                        Secrets.detectLeaks active l)
+                (runCtx.PublicationLeaks()
+                 @ (runCtx.OutputWithActiveSecrets()
+                    |> List.collect (fun (l, active, alreadyRedacted, prefix) ->
+                        if List.isEmpty active then
+                            []
+                        elif alreadyRedacted then
+                            let value = l.Substring(prefix.Length)
+                            Secrets.detectUnregisteredLeaks active l
+                            @ Secrets.detectLeaks active prefix
+                            @ Secrets.detectBoundaryLeaks active prefix value
+                        else
+                            Secrets.detectLeaks active l)))
                 |> List.map (fun leak -> leak.Variable)
                 |> List.distinct
 

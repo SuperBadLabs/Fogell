@@ -21,6 +21,7 @@ process_group="$scratch/src/Fogell.Execution/ProcessGroup.fs"
 secrets="$scratch/src/Fogell.Execution/Secrets.fs"
 walker_step="$scratch/src/Fogell.Differential/WalkerStep.fs"
 walker_ctx="$scratch/src/Fogell.Differential/WalkerCtx.fs"
+fogell="$scratch/src/Fogell.Differential/Fogell.fs"
 filter='FG-236'
 
 bash -ic "dotnet restore '$project' --locked-mode --ignore-failed-sources -m:1"
@@ -70,6 +71,7 @@ cp "$redaction" "$scratch/redaction.clean"
 cp "$secrets" "$scratch/secrets.clean"
 cp "$walker_step" "$scratch/walker-step.clean"
 cp "$walker_ctx" "$scratch/walker-ctx.clean"
+cp "$fogell" "$scratch/fogell.clean"
 
 # An incomplete whole-buffer prefix can still end in another complete form.
 # Publishing pending characters wholesale at EOF recreates that credential leak.
@@ -230,12 +232,31 @@ cp "$scratch/walker-ctx.clean" "$walker_ctx"
 # Timestamp text is synthesized after raw matching. Losing its ordinary
 # literal scan can publish an active credential such as the current year even
 # though the shell portion of the line retains exact redaction provenance.
-target='                        || (List.isEmpty leaks && List.isEmpty (Secrets.detectLeaks secrets prefix))'
+target='                            && List.isEmpty (Secrets.detectLeaks secrets prefix)'
 [[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
   || { echo 'FG-236 proof: timestamp-prefix mutation target is not unique' >&2; exit 1; }
-sed -i 's/^                        || (List\.isEmpty leaks && List\.isEmpty (Secrets\.detectLeaks secrets prefix))$/                        || List.isEmpty leaks/' "$walker_ctx"
+sed -i 's/^                            && List\.isEmpty (Secrets\.detectLeaks secrets prefix)$/                            \&\& true/' "$walker_ctx"
 kill_differential_mutant timestamp-prefix 'a credential-shaped timestamp cannot cross progressive publication'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
+
+# Prefix and value are individually safe but their composition can complete a
+# credential. This check is separate from the prefix-only scan so canonical
+# redaction-token provenance remains opaque.
+target='                            && List.isEmpty (Secrets.detectBoundaryLeaks secrets prefix safe))'
+[[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
+  || { echo 'FG-236 proof: timestamp-boundary mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                            && List\.isEmpty (Secrets\.detectBoundaryLeaks secrets prefix safe))$/                            \&\& true)/' "$walker_ctx"
+kill_differential_mutant timestamp-boundary 'a credential composed only across the timestamp/output boundary cannot publish'
+cp "$scratch/walker-ctx.clean" "$walker_ctx"
+
+# The terminal trace uses the same composed-boundary rule. Publication refusal
+# alone is insufficient because callback-free runs must also fail closed.
+target='                            @ Secrets.detectBoundaryLeaks active prefix value'
+[[ $(rg -F -c "$target" "$fogell") == 1 ]] \
+  || { echo 'FG-236 proof: terminal-timestamp-boundary mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                            @ Secrets\.detectBoundaryLeaks active prefix value$//' "$fogell"
+kill_differential_mutant terminal-timestamp-boundary 'the composed timestamp/output credential escaped terminal refusal'
+cp "$scratch/fogell.clean" "$fogell"
 
 # A future sibling binding can complete a credential begun in an already
 # committed fragment. The binding must atomically bar every open stream so the
@@ -255,6 +276,15 @@ target='                    if not (List.isEmpty bindings) then'
   || { echo 'FG-236 proof: pending-publication mutation target is not unique' >&2; exit 1; }
 sed -i 's/^                    if not (List\.isEmpty bindings) then$/                    if false then/' "$walker_ctx"
 kill_differential_mutant pending-publication 'a stalled non-stream line is rechecked before external publication'
+cp "$scratch/walker-ctx.clean" "$walker_ctx"
+
+# Literal remasking alone is insufficient when a later binding teaches the
+# detector a transformed form. Recompute eligibility before requeueing it.
+target='                            Publishable = item.Publishable && List.isEmpty leaks }'
+[[ $(rg -F -x -c "$target" "$walker_ctx") == 1 ]] \
+  || { echo 'FG-236 proof: pending-leak-screen mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                            Publishable = item\.Publishable && List\.isEmpty leaks }$/                            Publishable = item.Publishable }/' "$walker_ctx"
+kill_differential_mutant pending-leak-screen 'a newly recognized transformed form never leaves the queued boundary'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 
 # Reassembly follows stream identity across globally interleaved queue entries.
@@ -373,4 +403,4 @@ sed -i 's/^                          OnRedactedLine = None$/                    
 sed -i 's/^                          CreateRedactedAdmission = Some runCtx\.CreateRedactedAdmission$/                          CreateRedactedAdmission = None/' "$walker_step"
 kill_differential_mutant idempotence 'canonical-token pipeline refused outside execution'
 
-echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, timestamp-prefix, open-stream-barrier, pending-publication, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'
+echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, timestamp-prefix, timestamp-boundary, terminal-timestamp-boundary, open-stream-barrier, pending-publication, pending-leak-screen, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'

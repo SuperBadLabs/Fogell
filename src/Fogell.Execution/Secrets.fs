@@ -464,6 +464,40 @@ module Secrets =
                   if maskedText.Contains form then
                       { Variable = b.ValueVariable; Encoding = name } ]
 
+    /// Detect a registered or transformed form which exists only after an
+    /// engine-authored prefix and a provenance-bearing value are composed.
+    /// Scanning the two halves independently misses this case, while scanning
+    /// the whole value as ordinary text would mistake canonical `****` masker
+    /// tokens for a literal `*` credential.
+    let detectBoundaryLeaks (bindings: SecretBinding list) (prefix: string) (value: string) : Leak list =
+        let crossesBoundary (form: string) =
+            if prefix = "" || value = "" || form = "" then
+                false
+            else
+                let composed = prefix + value
+                let boundary = prefix.Length
+                let mutable at = composed.IndexOf(form, StringComparison.Ordinal)
+                let mutable found = false
+
+                while not found && at >= 0 do
+                    found <- at < boundary && at + form.Length > boundary
+                    at <- composed.IndexOf(form, at + 1, StringComparison.Ordinal)
+
+                found
+
+        [ for b in bindings do
+              let pathForms =
+                  if b.ValueVariableCarriesPath && b.FilePath <> "" then [ b.FilePath ] else []
+
+              for form in b.Forms.MaskForms @ pathForms do
+                  if crossesBoundary form then
+                      { Variable = b.ValueVariable; Encoding = "registered-boundary" }
+
+              for name, form in b.Forms.LeakForms do
+                  if crossesBoundary form then
+                      { Variable = b.ValueVariable; Encoding = name + "-boundary" } ]
+        |> List.distinct
+
     /// Remove secret files. Called even on failure, because a leftover secret
     /// file outlives the reason it existed.
     let revoke (bindings: SecretBinding list) =

@@ -1773,7 +1773,7 @@ module ProcessGroup =
             if processOutputCallbackPresent && not callbackReadersReachedEof then
                 Some(
                     TimeoutException(
-                        $"OnLine reader did not reach EOF within the shared {budgetMs}ms output-drain budget"))
+                        $"progressive output reader did not reach EOF within the shared {budgetMs}ms output-drain budget"))
             elif waitForTaskWithin clock budgetMs tail then
                 try
                     tail.GetAwaiter().GetResult()
