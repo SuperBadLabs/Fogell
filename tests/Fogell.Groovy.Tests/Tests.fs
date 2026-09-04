@@ -2963,6 +2963,66 @@ let fg205SortFallback =
               Expect.equal alias.Returned (Some(VInt 2L)) "both entries remain"
           } ]
 
+/// FG-241. `=~`/`==~` with a pattern that does not compile. MEASURED on the
+/// pinned lab (receipt `fg241-regex-pattern-fault`): Jenkins raises
+/// java.util.regex.PatternSyntaxException, which `catch (Exception)`,
+/// `catch (IllegalArgumentException)` and the class itself intercept and
+/// `catch (ArithmeticException)` lets escape; uncaught, it fails the build.
+/// Before this ticket every construction failure — and the 100 ms matching
+/// budget — read as `false`.
+let fg241RegexPatternFault =
+    let runS src =
+        Interpreter.runStrictVars Budget.defaults steps Env.empty (parseOk src)
+
+    testList
+        "FG-241 invalid regex patterns fault instead of answering false"
+        [ test "an invalid pattern is a typed fault, for both operators" {
+              for op in [ "==~"; "=~" ] do
+                  let o = runS $"return 'ab' {op} /a)b|ab/"
+
+                  match o.Fault with
+                  | Some(RegexPatternInvalid(pattern, detail)) ->
+                      Expect.equal pattern "a)b|ab" $"{op}: the pattern is carried"
+                      Expect.isNotEmpty detail $"{op}: the host diagnosis is carried"
+                  | other -> failtestf "%s answered instead of faulting: %A" op other
+          }
+
+          test "the measured catch boundary: Exception, IllegalArgumentException and the class catch it; ArithmeticException does not" {
+              for clause in [ "Exception e"; "IllegalArgumentException e"; "PatternSyntaxException e"; "e" ] do
+                  let o =
+                      runS $"try {{ return 'ab' ==~ /a)b|ab/ }} catch ({clause}) {{ return 'caught' }}"
+
+                  Expect.isNone o.Fault $"catch ({clause}) intercepts"
+                  Expect.equal o.Returned (Some(VStr "caught")) $"catch ({clause}) runs its handler"
+
+              let escaped =
+                  runS "try { return 'ab' ==~ /a)b|ab/ } catch (ArithmeticException e) { return 'wrong' }"
+
+              match escaped.Fault with
+              | Some(RegexPatternInvalid _) -> ()
+              | other -> failtestf "ArithmeticException intercepted a PatternSyntaxException: %A" other
+          }
+
+          test "the caught value renders class-then-message, and valid patterns are unchanged" {
+              let bound = runS "try { return 'ab' ==~ /[z-a]/ } catch (Exception e) { return \"${e}\" }"
+
+              match bound.Returned with
+              | Some(VStr text) ->
+                  Expect.stringStarts text "java.util.regex.PatternSyntaxException: " "Jenkins' `${e}` shape, class then message"
+              | other -> failtestf "no bound exception value: %A" other
+
+              let valid = runS "return ['ab' ==~ /a.|zz/, 'ab' =~ /zz/, 'a}b' ==~ /a}b/]"
+              Expect.equal valid.Returned (Some(VList(ref [ VBool true; VBool false; VBool true ]))) "valid patterns still answer"
+          }
+
+          test "an exhausted matching budget refuses by name instead of answering false" {
+              let o = runS "return 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!' =~ /(a+)+$/"
+
+              match o.Fault with
+              | Some(Unsupported why) -> Expect.stringStarts why "unsupported_regex_budget:" "named refusal"
+              | other -> failtestf "catastrophic backtracking answered or faulted differently: %A" other
+          } ]
+
 /// FG-180. Command-form calls in EXPRESSION position, and the constructs the
 /// same corpus sweep recovered. The first test pins the defect that made this
 /// P1: the positional form ADMITTED with a wrong AST — two statements, the
@@ -3698,4 +3758,4 @@ let fg015ClosureAudit =
 
 [<EntryPoint>]
 let main argv =
-    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg190192TriviaState; fg015ClosureAudit; fg015bSortAndRangeReview; fg205SortFallback; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; scmMapValues; junitSummaryValues; callableResolution; mapIdentity; cyclicValues ])
+    runTestsWithCLIArgs [] argv (testList "Fogell.Groovy" [ grammar; fg190192TriviaState; fg015ClosureAudit; fg015bSortAndRangeReview; fg205SortFallback; fg241RegexPatternFault; fg180Grammar; sandbox; budgets; semantics; predicateValues; stepValueUse; hostedSteps; scmMapValues; junitSummaryValues; callableResolution; mapIdentity; cyclicValues ])
