@@ -19,7 +19,14 @@ type private TriviaState =
       TriviaEndIndex: int64
       GroupDepth: int
       MaxScalarBytes: int
-      ScalarRefusal: AdmissionError option }
+      ScalarRefusal: AdmissionError option
+      /// FG-248. A semantic refusal recorded where the grammar committed to a
+      /// quoted literal. A ref cell, not a field of the immutable record: an
+      /// enclosing `attempt` rewinds the record, and a statement that fails on
+      /// an invalid escape is re-attempted by every statement alternative, so
+      /// the first positioned refusal must survive every rewind and be read
+      /// before any fallback result is admitted.
+      Refusal: AdmissionError option ref }
 
 type private P<'a> = Parser<'a, TriviaState>
 
@@ -28,7 +35,19 @@ let private initialState (limits: Limits) =
       TriviaEndIndex = -1L
       GroupDepth = 0
       MaxScalarBytes = limits.MaxScalarBytes
-      ScalarRefusal = None }
+      ScalarRefusal = None
+      Refusal = ref None }
+
+/// Record a semantic refusal at the current position before failing the
+/// current branch. Mirrors the Declarative lexer's `refuse`: the parse may
+/// still fail elsewhere, but admission reads this cell first.
+let private refuse (message: string) : P<'a> =
+    getPosition .>>. getUserState
+    >>= fun (position, state) ->
+            if state.Refusal.Value.IsNone then
+                state.Refusal.Value <- Some(AdmissionError.at MalformedSyntax position.Line position.Column message)
+
+            fail message
 
 let private keepFirstScalarRefusal state refusal =
     if state.ScalarRefusal.IsNone then
@@ -162,14 +181,16 @@ let private plainIdent: P<string> =
 
 // --- literals --------------------------------------------------------------
 
-let private decodeEscape =
-    function
-    | 'n' -> '\n'
-    | 't' -> '\t'
-    | 'r' -> '\r'
-    | 'b' -> '\b'
-    | 'f' -> '\f'
-    | c -> c
+/// FG-248. The letter set and its decoding are `Fogell.Admission.GroovyEscapes`,
+/// shared with the Declarative lexer; a spelling outside it is refused by name
+/// at its position instead of dropping the backslash. `\/` is in that class:
+/// Jenkins refuses it in every quoted form, and only a slashy string escapes
+/// its delimiter.
+let private invalidEscape: P<string> =
+    lookAhead anyChar >>= fun c -> refuse (GroovyEscapes.invalidMessage c)
+
+let private simpleLetterEscape: P<string> =
+    satisfy GroovyEscapes.simpleLetters.Contains |>> (GroovyEscapes.simpleEscape >> string)
 
 /// FG-124. Scripted Groovy uses Java's numeric escape grammar: a Unicode
 /// escape has one-or-more `u` characters and exactly four hex digits; an octal
@@ -198,7 +219,8 @@ let private escaped: P<string> =
             [ (skipChar '\r' >>. opt (skipChar '\n')) >>% ""
               skipChar '\n' >>% ""
               numericEscape |>> string
-              anyChar |>> (decodeEscape >> string) ]
+              simpleLetterEscape
+              invalidEscape ]
 
 /// The narrow named-key form does not claim Groovy's physical line-continuation
 /// escapes. Keep the ordinary escape decoder shared, but fail closed rather
@@ -206,7 +228,8 @@ let private escaped: P<string> =
 let private escapedWithoutPhysicalBreak: P<string> =
     skipChar '\\'
     >>. ((numericEscape |>> string)
-         <|> (satisfy (fun c -> c <> '\n' && c <> '\r') |>> (decodeEscape >> string)))
+         <|> simpleLetterEscape
+         <|> (notFollowedBy (anyOf "\r\n") >>. invalidEscape))
 
 let private singleQuoted: P<Expr> =
     between
@@ -864,9 +887,17 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Script, Admission
         match runParserOnString program (initialState limits) "script" source with
         | ParserResult.Success(_, state, _) when state.ScalarRefusal.IsSome ->
             Result.Error state.ScalarRefusal.Value
+        // A guard, not a measured path: every refusing literal today also fails
+        // the parse, so this arm is unreached (the verifier's mutant deleting it
+        // left every test green). It stays so a grammar that later admits a
+        // fallback over the same bytes cannot skip the recorded refusal.
+        | ParserResult.Success(_, state, _) when state.Refusal.Value.IsSome ->
+            Result.Error state.Refusal.Value.Value
         | ParserResult.Success(s, _, _) -> Result.Ok s
         | ParserResult.Failure(_, _, state) when state.ScalarRefusal.IsSome ->
             Result.Error state.ScalarRefusal.Value
+        | ParserResult.Failure(_, _, state) when state.Refusal.Value.IsSome ->
+            Result.Error state.Refusal.Value.Value
         | ParserResult.Failure(msg, err, _) ->
             match Limits.firstOverlongClassifiedSlashy limits source slashySpans with
             | Some scalar -> Result.Error scalar

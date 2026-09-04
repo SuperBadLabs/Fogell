@@ -91,14 +91,52 @@ let private rawArgValue (allowCommandHead: bool) (stops: char list) : P<string> 
                                 $"string literal exceeds {stream.UserState.Limits.MaxScalarBytes} UTF-8 bytes"
                         )
 
+        /// FG-248 (Codex on PR #410). A quoted literal inside a raw argument —
+        /// `sh 'ok ' + '[\q]'` — never reaches the decoders above, so an invalid
+        /// escape used to be admitted and fail only when the step ran, after
+        /// earlier steps had produced effects Jenkins never produces (it refuses
+        /// the whole file at compile time). The scan is a skip, not a decode, so
+        /// it classifies the spelling with the shared grammar and records the
+        /// refusal at the character after the backslash, exactly as the decoders
+        /// do; the skip itself is unchanged so a `\"` still cannot close its
+        /// literal. Provenance-marker spellings are left to the decoders.
         let skipEscapedCharacter () =
             stream.Skip()
 
             if not stream.IsEndOfStream then
-                if stream.Peek() = '\r' then
+                let e = stream.Peek()
+
+                let refuseEscape (message: string) =
+                    if stream.UserState.Refusal.Value.IsNone then
+                        let position = stream.Position
+
+                        stream.UserState.Refusal.Value <-
+                            Some(
+                                message,
+                                { Line = position.Line
+                                  Column = position.Column }
+                            )
+
+                let isHex (h: char) =
+                    (h >= '0' && h <= '9') || (h >= 'a' && h <= 'f') || (h >= 'A' && h <= 'F')
+
+                if e = '\r' then
                     stream.Skip()
                     if not stream.IsEndOfStream && stream.Peek() = '\n' then stream.Skip()
+                elif e = '\n' then
+                    stream.Skip()
                 else
+                    if e = 'u' then
+                        let mutable k = 0
+
+                        while stream.Peek(k) = 'u' do
+                            k <- k + 1
+
+                        if not (List.forall (fun i -> isHex (stream.Peek(k + i))) [ 0; 1; 2; 3 ]) then
+                            refuseEscape (GroovyEscapes.invalidMessage 'u')
+                    elif not ((e >= '0' && e <= '7') || GroovyEscapes.simpleLetters.Contains e) then
+                        refuseEscape (GroovyEscapes.invalidMessage e)
+
                     stream.Skip()
 
         while not finished && not failed && not stream.IsEndOfStream do
