@@ -71,6 +71,7 @@ let private request root script =
       OnRedactedLine = None
       OnRedactedOutput = None
       OnRedactedAdmission = None
+      CreateRedactedAdmission = None
       Named = []
       Artifacts = None
       BuildKey = "test" }
@@ -4044,6 +4045,7 @@ let externalInterrupt =
                         OnRedactedLine = None
                         OnRedactedOutput = None
                         OnRedactedAdmission = None
+                        CreateRedactedAdmission = None
                         Named = [ "testResults", "report.xml" ]
                         Artifacts = None
                         BuildKey = "k" }
@@ -4083,6 +4085,7 @@ let externalInterrupt =
                         OnRedactedLine = None
                         OnRedactedOutput = None
                         OnRedactedAdmission = None
+                        CreateRedactedAdmission = None
                         Named = [ "testResults", "nothing-matches-*.xml" ]
                         Artifacts = None
                         BuildKey = "k" }
@@ -6067,6 +6070,37 @@ let maskingOnOutputPath =
 
               prove "admission" (fun streamed request ->
                   { request with OnRedactedAdmission = Some streamed.Enqueue })
+          }
+
+          test "FG-236 raw admission factory separates stdout and stderr through true EOF" {
+              let root = tempRoot ()
+              let events = Collections.Concurrent.ConcurrentQueue<int * string>()
+              let mutable nextStream = 0
+
+              let createAdmission () =
+                  let stream = Threading.Interlocked.Increment(&nextStream)
+
+                  { Admit = fun line -> events.Enqueue(stream, "line:" + line.Text)
+                    Complete = fun () -> events.Enqueue(stream, "eof") }
+
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create ("printf 'stdout-line\\n'; printf 'stderr-line\\n' >&2", root) with
+                          OutputRedaction = Some(OutputRedactionPolicy [ "credential" ])
+                          CreateRedactedAdmission = Some createAdmission }
+
+              Expect.equal result.Outcome (Completed 0) "the two-pipe fixture completes"
+              Expect.equal nextStream 2 "stdout and stderr each mint an independent admission lifecycle"
+
+              let grouped =
+                  events
+                  |> Seq.groupBy fst
+                  |> Seq.map (fun (stream, values) -> stream, values |> Seq.map snd |> List.ofSeq)
+                  |> Map.ofSeq
+
+              for stream in 1 .. 2 do
+                  Expect.equal (List.last grouped[stream]) "eof" "each EOF follows every line from its stream"
+                  Expect.equal (grouped[stream] |> List.filter ((=) "eof") |> List.length) 1 "each stream closes exactly once"
           }
 
           test "FG-236 does not remask output that already became the canonical token" {

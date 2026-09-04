@@ -59,6 +59,10 @@ type StepRequest =
       /// Synchronous trace admission used only when the caller can defer its
       /// external transport. It runs under the registration/matcher lock.
       OnRedactedAdmission: (RedactedText -> unit) option
+      /// Factory form of synchronous admission. ProcessGroup invokes it once
+      /// for stdout and once for stderr so late publication remasking retains
+      /// the same independent-stream identity as the raw matchers.
+      CreateRedactedAdmission: (unit -> RedactedAdmission) option
       /// Named arguments as written (`artifacts:`, `testResults:`, `pattern:`).
       Named: (string * string) list
       /// Where publishing steps write. None disables them by failing closed.
@@ -220,10 +224,8 @@ module Executor =
                     |> Option.map (fun emit ->
                         fun line -> emit (Secrets.mask (secretsForOutput ()) line))
 
-            let taggedRedactedLine = request.OnRedactedAdmission |> Option.orElse request.OnRedactedOutput
-
-            let onLine =
-                match taggedRedactedLine, decodedRedactedLine with
+            let deliverRedacted tagged decoded =
+                match tagged, decoded with
                 | None, None -> None
                 | tagged, decoded ->
                     Some(fun (line: RedactedText) ->
@@ -246,6 +248,22 @@ module Executor =
                         | None, Some publish -> publish masked
                         | None, None -> ())
 
+            let taggedRedactedLine = request.OnRedactedAdmission |> Option.orElse request.OnRedactedOutput
+            let onLine = deliverRedacted taggedRedactedLine decodedRedactedLine
+
+            let createRedactedAdmission =
+                request.CreateRedactedAdmission
+                |> Option.map (fun create ->
+                    fun () ->
+                        let stream = create ()
+                        let admit = deliverRedacted (Some stream.Admit) decodedRedactedLine |> Option.defaultValue ignore
+                        { Admit = admit
+                          Complete = stream.Complete })
+
+            let synchronousAdmission =
+                Option.isSome request.OnRedactedAdmission
+                || Option.isSome createRedactedAdmission
+
             let runResult =
                 ProcessGroup.run
                     { RunRequest.create (script, request.Workspace) with
@@ -262,17 +280,18 @@ module Executor =
                         // raw-only caller has no ordinary sink, so generated
                         // narration must not fall back to the raw callback.
                         OnGeneratedLine =
-                            if Option.isSome request.OnRedactedAdmission then None
+                            if synchronousAdmission then None
                             else Some(defaultArg generatedLine ignore)
                         OnGeneratedAdmission =
-                            if Option.isSome request.OnRedactedAdmission then
+                            if synchronousAdmission then
                                 Some(defaultArg generatedLine ignore)
                             else
                                 None
                         OnRedactedLine =
-                            if Option.isSome request.OnRedactedAdmission then None else onLine
+                            if synchronousAdmission then None else onLine
                         OnRedactedAdmission =
                             if Option.isSome request.OnRedactedAdmission then onLine else None
+                        CreateRedactedAdmission = createRedactedAdmission
                         OutputRedaction = outputRedaction
                         SuppressStdoutEcho = request.CaptureStdout }
 

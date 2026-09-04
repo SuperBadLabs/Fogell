@@ -210,6 +210,10 @@ type RunResult =
       /// materialised — the caller canonicalises exactly this id, never a shape.
       DurableId: string option }
 
+type RedactedAdmission =
+    { Admit: RedactedText -> unit
+      Complete: unit -> unit }
+
 type RunRequest =
     { Command: string
       WorkingDirectory: string
@@ -238,6 +242,12 @@ type RunRequest =
       /// This closes the matcher-to-trace registration window without running
       /// a potentially slow external publisher under that lock.
       OnRedactedAdmission: (RedactedText -> unit) option
+      /// Mint independent synchronous admission lifecycles for stdout and
+      /// stderr. Completion lets a late-binding publication layer retain an
+      /// ambiguous per-stream suffix until real EOF without conflating the two
+      /// process pipes. The historical single callback above remains for direct
+      /// callers which do not need provenance identity.
+      CreateRedactedAdmission: (unit -> RedactedAdmission) option
       /// FG-236. Opaque raw-output policy. Stdout and stderr each create an
       /// independent matcher before CR/LF framing.
       OutputRedaction: OutputRedactionPolicy option
@@ -287,6 +297,7 @@ type RunRequest =
           OnGeneratedAdmission = None
           OnRedactedLine = None
           OnRedactedAdmission = None
+          CreateRedactedAdmission = None
           OutputRedaction = None
           SuppressStdoutEcho = false
           ReapGroup = true
@@ -1267,11 +1278,12 @@ module ProcessGroup =
 
         let publishLine line = enqueueLine request.OnLine line
 
-        let publishRedactedLine line =
-            match request.OnRedactedAdmission, request.OnRedactedLine with
-            | Some admit, _ -> admit line
-            | None, Some publish -> enqueueAction (Some(fun () -> publish line))
-            | None, None -> enqueueLine request.OnLine line.Text
+        let publishRedactedLine admission line =
+            match admission, request.OnRedactedAdmission, request.OnRedactedLine with
+            | Some stream, _, _ -> stream.Admit line
+            | None, Some admit, _ -> admit line
+            | None, None, Some publish -> enqueueAction (Some(fun () -> publish line))
+            | None, None, None -> enqueueLine request.OnLine line.Text
 
         let publishGeneratedLine line =
             match request.OnGeneratedAdmission with
@@ -1291,12 +1303,12 @@ module ProcessGroup =
                 lock sink (fun () -> sink.AppendLine line |> ignore)
                 publishLine line
 
-        let emitRedacted (sink: Text.StringBuilder) (taggedSink: RedactedTextBuilder) (line: RedactedText) =
+        let emitRedacted admission (sink: Text.StringBuilder) (taggedSink: RedactedTextBuilder) (line: RedactedText) =
             lock sink (fun () ->
                 sink.AppendLine line.Text |> ignore
                 taggedSink.AppendLine line)
 
-            publishRedactedLine line
+            publishRedactedLine admission line
 
         // CAPTURED STDOUT IS READ AS ONE STREAM, NOT REASSEMBLED FROM LINES.
         //
@@ -1344,11 +1356,16 @@ module ProcessGroup =
             else
                 emit stderr line
 
+        let stderrAdmission =
+            match request.OutputRedaction with
+            | Some _ -> request.CreateRedactedAdmission |> Option.map (fun create -> create ())
+            | None -> None
+
         let handleRedactedStderrLine (line: RedactedText) =
             if line.Text.StartsWith(pgidMarker, StringComparison.Ordinal) then
                 handleStderrLine line.Text
             else
-                emitRedacted stderr stderrRedacted line
+                emitRedacted stderrAdmission stderr stderrRedacted line
 
         proc.ErrorDataReceived.Add(fun e ->
             lock stderrCallbackGate (fun () ->
@@ -1390,6 +1407,7 @@ module ProcessGroup =
             callbackGate
             (closed: Tasks.TaskCompletionSource<unit>)
             publish
+            completePublication
             stripInitialControlFrame
             =
             let policy = request.OutputRedaction.Value
@@ -1456,7 +1474,8 @@ module ProcessGroup =
                                 controlPrefix.Clear() |> ignore
 
                             framer.Push(masker.CompleteRedacted())
-                            framer.Complete()))
+                            framer.Complete()
+                            completePublication |> Option.iter (fun complete -> complete ())))
                 finally
                     // On an exceptional/cut-off read, never flush an ambiguous
                     // pending prefix. A real EOF is the sole authority to do so.
@@ -1470,19 +1489,28 @@ module ProcessGroup =
         let redactingStdoutReader =
             match request.OutputRedaction, request.SuppressStdoutEcho with
             | Some _, false ->
+                let stdoutAdmission = request.CreateRedactedAdmission |> Option.map (fun create -> create ())
                 Some(
                     startRedactingReader
                         proc.StandardOutput
                         stdoutCallbackGate
                         stdoutClosed
-                        (emitRedacted stdout stdoutRedacted)
+                        (emitRedacted stdoutAdmission stdout stdoutRedacted)
+                        (stdoutAdmission |> Option.map _.Complete)
                         false)
             | _ -> None
 
         let redactingStderrReader =
             match request.OutputRedaction with
             | Some _ ->
-                Some(startRedactingReader proc.StandardError stderrCallbackGate stderrClosed handleRedactedStderrLine true)
+                Some(
+                    startRedactingReader
+                        proc.StandardError
+                        stderrCallbackGate
+                        stderrClosed
+                        handleRedactedStderrLine
+                        (stderrAdmission |> Option.map _.Complete)
+                        true)
             | None -> None
 
         let capturedStdout =
@@ -1740,6 +1768,7 @@ module ProcessGroup =
                 Option.isSome request.OnLine
                 || Option.isSome request.OnRedactedLine
                 || Option.isSome request.OnRedactedAdmission
+                || Option.isSome request.CreateRedactedAdmission
 
             if processOutputCallbackPresent && not callbackReadersReachedEof then
                 Some(

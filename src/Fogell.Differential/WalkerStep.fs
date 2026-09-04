@@ -269,8 +269,6 @@ module WalkerStep =
                 match materializeDurableWorkspace () with
                 | Result.Error why -> Executor.refusedBeforeRunning why
                 | Result.Ok() ->
-                    let redactedAdmission = runCtx.CreateRedactedAdmission()
-
                     Executor.runStep
                         { Name = step.Name
                           Script = script
@@ -303,7 +301,8 @@ module WalkerStep =
                           // Only shell bytes carry exact raw-matcher provenance.
                           // Admission is synchronous under the matcher lock;
                           // external publication drains independently.
-                          OnRedactedAdmission = Some redactedAdmission
+                          OnRedactedAdmission = None
+                          CreateRedactedAdmission = Some runCtx.CreateRedactedAdmission
                           // External cancellation only — a failFast sibling. The
                           // deadline reaches the shell runner through TimeoutMs and
                           // self-working steps through DeadlineExpired, so an expired

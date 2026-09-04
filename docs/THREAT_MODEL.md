@@ -267,9 +267,15 @@ walker's credential lock from inventory sampling through separator-aware
 matching, framing, and synchronous trace admission; a registration therefore
 cannot land inside that interval. External callback transport drains
 independently outside that lock. If an earlier callback is stalled, a later
-binding rechecks still-pending provenance-bearing lines as a separator-aware
-block before transport. Reassembly is scoped to one Executor invocation, so
-parallel shells cannot compose a credential across streams. The walker also
+binding groups still-pending provenance-bearing lines by raw stream even across
+interleaved global output. An affected open stream keeps that publication epoch
+behind a barrier until true EOF, so registration between two physical fragments
+cannot publish either fragment; remapped results merge back by monotonic
+completion order. ProcessGroup mints distinct stdout/stderr admission
+lifecycles, so separate pipes and parallel shells cannot compose a credential.
+A missing EOF fails closed at terminal flush. A sticky external publisher
+failure no longer stops raw reader admission and is surfaced by terminal
+`FlushOutput`. The walker also
 rechecks already-redacted lines under the same lock at ordinary publication,
 and a separator-aware final-inventory pass covers public `StepResult` buffers.
 Per-character provenance marks only canonical tokens actually emitted by the
@@ -298,13 +304,15 @@ a live-inventory mask; a caller supplying only the provenance-aware raw callback
 gets an explicit no-op generated sink rather than the ProcessGroup compatibility
 fallback. The combined masking-form inventory is deduplicated once before
 descending-length ordering.
-`scripts/prove-fg236-stream-masking.sh` kills twenty-one semantic mutants covering
+`scripts/prove-fg236-stream-masking.sh` kills twenty-six semantic mutants covering
 EOF, grammar, progressive delivery, wiring, control framing, bounded-reader
 callback enforcement, bounded capture,
 generated-warning and generated-termination provenance, missing warning sinks,
 the historical direct generated callback, live run-wide enrollment, shared
 registration/matcher synchronization, registration/trace-admission and
-pending-transport races, per-Executor stream identity, returned-buffer races,
+pending-transport races, interleaved-stream continuity, stream identity,
+publication EOF, failed-reader draining, admission-factory wiring, independent
+raw-pipe lifecycles, returned-buffer races,
 exact token provenance versus raw four-star inference, adjacent-token
 cardinality, canonical-token boundaries, and publication idempotence.
 

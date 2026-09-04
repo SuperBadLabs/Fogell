@@ -112,10 +112,10 @@ kill_mutant wiring 'masks wrapped base64 in progressive and buffered shell outpu
 # the marker erase the process-group identity and disable containment.
 cp "$scratch/executor.clean" "$executor"
 cp "$process_group" "$scratch/process-group.clean"
-target='                Some(startRedactingReader proc.StandardError stderrCallbackGate stderrClosed handleRedactedStderrLine true)'
+target='                        true)'
 [[ $(rg -F -c "$target" "$process_group") == 1 ]] \
   || { echo 'FG-236 proof: control-frame mutation target is not unique' >&2; exit 1; }
-sed -i "s/handleRedactedStderrLine true)/handleRedactedStderrLine false)/" "$process_group"
+sed -i 's/^                        true)$/                        false)/' "$process_group"
 kill_mutant control-frame 'parses the private process-group frame before overlapping credential redaction'
 cp "$scratch/process-group.clean" "$process_group"
 
@@ -227,14 +227,66 @@ sed -i 's/^                    if not (List\.isEmpty bindings) then$/           
 kill_differential_mutant pending-publication 'pending external lines are rechecked together before actual publication'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 
-# Reassembly is scoped to one Executor invocation. Treating every pending raw
-# line as one stream lets parallel shells compose unrelated fragments and
-# falsely redact ordinary output.
-target='                                | Some candidate -> obj.ReferenceEquals(stream, candidate)'
+# Reassembly follows stream identity across globally interleaved queue entries.
+# Dropping that identity reduces the late pass to isolated physical lines.
+target='                                      RedactedStream = redactedStream }'
 [[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
-  || { echo 'FG-236 proof: stream-identity mutation target is not unique' >&2; exit 1; }
-sed -i 's/^                                | Some candidate -> obj\.ReferenceEquals(stream, candidate)$/                                | Some _ -> true/' "$walker_ctx"
+  || { echo 'FG-236 proof: stream-continuity mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                                      RedactedStream = redactedStream }$/                                      RedactedStream = None }/' "$walker_ctx"
+kill_differential_mutant stream-continuity 'pending interleaved lines from one shell stream retain adjacency'
+cp "$scratch/walker-ctx.clean" "$walker_ctx"
+
+# Conversely, collapsing every admission lifecycle onto one identity lets
+# separate process streams compose an invented credential. Reuse the actual
+# lifecycle object so the mutant does not manufacture an unrelated EOF fault.
+declaration='        let barrierStreams = System.Collections.Generic.HashSet<PublicationStream>(HashIdentity.Reference)'
+[[ $(rg -F -c "$declaration" "$walker_ctx") == 1 ]] \
+  || { echo 'FG-236 proof: stream-identity declaration target is not unique' >&2; exit 1; }
+sed -i "/^        let barrierStreams =/a\\        let collapsedPublicationStream = PublicationStream()" "$walker_ctx"
+target='                let stream = PublicationStream()'
+[[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
+  || { echo 'FG-236 proof: stream-identity factory target is not unique' >&2; exit 1; }
+sed -i 's/^                let stream = PublicationStream()$/                let stream = collapsedPublicationStream/' "$walker_ctx"
 kill_differential_mutant stream-identity 'pending lines from separate shell streams never compose one credential'
+cp "$scratch/walker-ctx.clean" "$walker_ctx"
+
+# A registration-time snapshot is not EOF. Losing the lifecycle completion
+# keeps the first physical fragment stranded instead of resolving it together
+# with bytes admitted after the binding.
+target='                  Complete = fun () -> completePublicationStream stream }'
+[[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
+  || { echo 'FG-236 proof: publication-EOF mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                  Complete = fun () -> completePublicationStream stream }$/                  Complete = ignore }/' "$walker_ctx"
+kill_differential_mutant publication-eof 'FG-236 pending stream survives a binding between physical fragments'
+cp "$scratch/walker-ctx.clean" "$walker_ctx"
+
+# A failed external transport is sticky, but synchronous raw admission must
+# keep draining the child pipe until FlushOutput surfaces that failure.
+target='                            | Some _ when deferExternalDrain -> false'
+[[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
+  || { echo 'FG-236 proof: failed-reader-drain mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                            | Some _ when deferExternalDrain -> false$/                            | Some failure when deferExternalDrain -> raise failure/' "$walker_ctx"
+kill_differential_mutant failed-reader-drain 'FG-236 publisher failure is typed and cannot stop synchronous reader admission'
+cp "$scratch/walker-ctx.clean" "$walker_ctx"
+
+# Walker must hand the lifecycle factory through Executor. Falling back to the
+# historical decoded callback discards the pending stream state at the real
+# production seam.
+target='                          CreateRedactedAdmission = Some runCtx.CreateRedactedAdmission'
+[[ $(rg -F -c "$target" "$walker_step") == 1 ]] \
+  || { echo 'FG-236 proof: admission-factory mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                          CreateRedactedAdmission = Some runCtx\.CreateRedactedAdmission$/                          CreateRedactedAdmission = None/' "$walker_step"
+kill_differential_mutant admission-factory 'the sibling registers the credential between the two physical fragments'
+cp "$scratch/walker-step.clean" "$walker_step"
+
+# ProcessGroup owns two raw matchers and therefore must mint two publication
+# lifecycles. Reusing stderr's lifecycle for stdout recreates coarse provenance.
+target='                let stdoutAdmission = request.CreateRedactedAdmission |> Option.map (fun create -> create ())'
+[[ $(rg -F -c "$target" "$process_group") == 1 ]] \
+  || { echo 'FG-236 proof: raw-pipe-identity mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                let stdoutAdmission = request\.CreateRedactedAdmission |> Option\.map (fun create -> create ())$/                let stdoutAdmission = stderrAdmission/' "$process_group"
+kill_mutant raw-pipe-identity 'stdout and stderr each mint an independent admission lifecycle'
+cp "$scratch/process-group.clean" "$process_group"
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 
 # Literal stars are not evidence of prior masking. Reintroducing textual token
@@ -272,13 +324,13 @@ cp "$scratch/redaction.clean" "$redaction"
 # the canonical token and destroys the stable publication contract.
 cp "$scratch/walker-step.clean" "$walker_step"
 decoded_target='                          OnRedactedLine = None'
-admission_target='                          OnRedactedAdmission = Some redactedAdmission'
+factory_target='                          CreateRedactedAdmission = Some runCtx.CreateRedactedAdmission'
 [[ $(rg -F -c "$decoded_target" "$walker_step") == 1 ]] \
   || { echo 'FG-236 proof: idempotence decoded target is not unique' >&2; exit 1; }
-[[ $(rg -F -c "$admission_target" "$walker_step") == 1 ]] \
-  || { echo 'FG-236 proof: idempotence admission target is not unique' >&2; exit 1; }
+[[ $(rg -F -c "$factory_target" "$walker_step") == 1 ]] \
+  || { echo 'FG-236 proof: idempotence factory target is not unique' >&2; exit 1; }
 sed -i 's/^                          OnRedactedLine = None$/                          OnRedactedLine = Some runCtx.Emit/' "$walker_step"
-sed -i 's/^                          OnRedactedAdmission = Some redactedAdmission$/                          OnRedactedAdmission = None/' "$walker_step"
+sed -i 's/^                          CreateRedactedAdmission = Some runCtx\.CreateRedactedAdmission$/                          CreateRedactedAdmission = None/' "$walker_step"
 kill_differential_mutant idempotence 'canonical-token pipeline refused outside execution'
 
-echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, capture-cutoff, generated-warning, missing-warning-sink, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, pending-publication, stream-identity, raw-token-inference, token-provenance-loss, adjacent-token, and idempotence mutants compiled and were killed'
+echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, capture-cutoff, generated-warning, missing-warning-sink, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, pending-publication, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, and idempotence mutants compiled and were killed'

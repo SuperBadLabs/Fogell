@@ -122,10 +122,11 @@ let progressiveOutputPublication =
 
               try
                   Expect.isTrue (callbackEntered.Wait 2_000) "the external publisher is genuinely stalled"
-                  admit (RedactedText.Raw "Sec")
-                  admit (RedactedText.Raw "ret")
+                  admit.Admit (RedactedText.Raw "Sec")
+                  admit.Admit (RedactedText.Raw "ret")
                   let binding = Secrets.inMemoryTextBinding "LATE" "Secret"
                   ctx.BindSecrets [ binding ]
+                  admit.Complete()
 
                   Expect.equal
                       (ctx.Output())
@@ -140,7 +141,9 @@ let progressiveOutputPublication =
                   (List.ofSeq published)
                   [ "blocker"; "****" ]
                   "pending external lines are rechecked together before actual publication"
+          }
 
+          test "FG-236 pending publications never compose separate stream identities" {
               use separateEntered = new Threading.ManualResetEventSlim(false)
               use releaseSeparate = new Threading.ManualResetEventSlim(false)
               let separatelyPublished = ResizeArray<string>()
@@ -162,9 +165,11 @@ let progressiveOutputPublication =
                   Expect.isTrue (separateEntered.Wait 2_000) "the separate-stream control is genuinely stalled"
                   let firstStream = separateCtx.CreateRedactedAdmission()
                   let secondStream = separateCtx.CreateRedactedAdmission()
-                  firstStream (RedactedText.Raw "Sec")
-                  secondStream (RedactedText.Raw "ret")
+                  firstStream.Admit (RedactedText.Raw "Sec")
+                  secondStream.Admit (RedactedText.Raw "ret")
                   separateCtx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+                  firstStream.Complete()
+                  secondStream.Complete()
               finally
                   releaseSeparate.Set()
 
@@ -174,6 +179,107 @@ let progressiveOutputPublication =
                   (List.ofSeq separatelyPublished)
                   [ "blocker"; "Sec"; "ret" ]
                   "pending lines from separate shell streams never compose one credential"
+          }
+
+          test "FG-236 pending stream continuity survives global interleaving" {
+              use interleavedEntered = new Threading.ManualResetEventSlim(false)
+              use releaseInterleaved = new Threading.ManualResetEventSlim(false)
+              let interleavedPublished = ResizeArray<string>()
+
+              let interleavedCtx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          interleavedPublished.Add line
+
+                          if line = "blocker" then
+                              interleavedEntered.Set()
+                              releaseInterleaved.Wait()))
+
+              let interleavedBlocker = Threading.Tasks.Task.Run(fun () -> interleavedCtx.Emit "blocker")
+
+              try
+                  Expect.isTrue (interleavedEntered.Wait 2_000) "the interleaved-stream control is genuinely stalled"
+                  let firstStream = interleavedCtx.CreateRedactedAdmission()
+                  let secondStream = interleavedCtx.CreateRedactedAdmission()
+                  firstStream.Admit (RedactedText.Raw "Sec")
+                  secondStream.Admit (RedactedText.Raw "noise")
+                  firstStream.Admit (RedactedText.Raw "ret")
+                  interleavedCtx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+                  firstStream.Complete()
+                  secondStream.Complete()
+              finally
+                  releaseInterleaved.Set()
+
+              interleavedBlocker.GetAwaiter().GetResult()
+              interleavedCtx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq interleavedPublished)
+                  [ "blocker"; "noise"; "****" ]
+                  "pending interleaved lines from one shell stream retain adjacency"
+          }
+
+          test "FG-236 pending stream survives a binding between physical fragments" {
+              use betweenEntered = new Threading.ManualResetEventSlim(false)
+              use releaseBetween = new Threading.ManualResetEventSlim(false)
+              let betweenPublished = ResizeArray<string>()
+
+              let betweenCtx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          betweenPublished.Add line
+
+                          if line = "blocker" then
+                              betweenEntered.Set()
+                              releaseBetween.Wait()))
+
+              let betweenBlocker = Threading.Tasks.Task.Run(fun () -> betweenCtx.Emit "blocker")
+
+              try
+                  Expect.isTrue (betweenEntered.Wait 2_000) "the mid-binding control is genuinely stalled"
+                  let stream = betweenCtx.CreateRedactedAdmission()
+                  stream.Admit (RedactedText.Raw "Sec")
+                  betweenCtx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+                  stream.Admit (RedactedText.Raw "ret")
+                  stream.Complete()
+              finally
+                  releaseBetween.Set()
+
+              betweenBlocker.GetAwaiter().GetResult()
+              betweenCtx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq betweenPublished)
+                  [ "blocker"; "****" ]
+                  "true stream EOF resolves a credential whose binding landed between fragments"
+          }
+
+          test "FG-236 an incomplete publication lifecycle fails closed at flush" {
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+
+              let ctx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          if line = "blocker" then
+                              callbackEntered.Set()
+                              releaseCallback.Wait()))
+
+              let blocker = Threading.Tasks.Task.Run(fun () -> ctx.Emit "blocker")
+              Expect.isTrue (callbackEntered.Wait 2_000) "the incomplete-stream control is genuinely stalled"
+              let stream = ctx.CreateRedactedAdmission()
+              stream.Admit (RedactedText.Raw "Sec")
+              ctx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+              releaseCallback.Set()
+              blocker.GetAwaiter().GetResult()
+
+              Expect.throwsT<OutputPublicationException>
+                  (fun () -> ctx.FlushOutput())
+                  "terminal truth cannot silently omit an unresolved publication stream"
           }
 
           test "FG-236 redacted publication preserves adjacent canonical tokens" {
@@ -266,7 +372,7 @@ let progressiveOutputPublication =
               Expect.equal (List.ofSeq published) [ "outer"; "inner" ] "reentrant publication is exact"
           }
 
-          test "publisher failure is typed, sticky, and never retried as build output" {
+          test "FG-236 publisher failure is typed and cannot stop synchronous reader admission" {
               let mutable attempts = 0
 
               let ctx =
@@ -283,6 +389,11 @@ let progressiveOutputPublication =
               Expect.throwsT<OutputPublicationException>
                   (fun () -> ctx.FlushOutput())
                   "terminal publication observes the same stored failure"
+
+              let stream = ctx.CreateRedactedAdmission()
+              stream.Admit (RedactedText.Raw "reader-keeps-draining")
+              stream.Complete()
+
               Expect.throwsT<OutputPublicationException>
                   (fun () -> ctx.Emit "two")
                   "later output cannot continue beyond a broken event stream"
@@ -8526,6 +8637,75 @@ let workspaceManifestV2 =
                       (Trace.collectRemote command)
                       ("not-collected", [])
                       "the same strict collector refuses an actually missing or wrong root"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "FG-236 production admission retains a pending stream across mid-fragment binding" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg236-publication-eof-" + Guid.NewGuid().ToString("N"))
+
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let published = Collections.Concurrent.ConcurrentQueue<string>()
+              let credentials = Map.ofList [ "live-text", SecretText "Secret" ]
+
+              let hooks =
+                  { OnOutput =
+                      fun line ->
+                          published.Enqueue line
+
+                          if line = "publication-blocker" then
+                              callbackEntered.Set()
+                              releaseCallback.Wait()
+                    IsRestartedRun = false
+                    ShouldExecute = fun _ _ -> true
+                    StageWasCommitted = fun _ -> false
+                    SkippedStatus = fun _ _ -> None
+                    SkippedStageWarning = fun _ _ -> None
+                    OnStepStarted = fun _ _ _ -> ()
+                    OnStepStageWarning = fun _ _ _ -> ()
+                    OnStepFinished = fun _ _ _ _ -> ()
+                    OnStageCommitted = fun _ -> ()
+                    OnRetryAttempt = fun _ _ -> ()
+                    RetryAttemptsSoFar = fun _ -> 1
+                    PollInputAnswer = None
+                    OnInputClosed = fun _ _ _ -> ()
+                    OnInputAnswerVoided = fun _ _ _ -> () }
+
+              let source =
+                  "pipeline { agent any stages { "
+                  + "stage('block') { steps { sh 'set +x; printf \"publication-blocker\\n\"' } } "
+                  + "stage('fanout') { parallel { "
+                  + "stage('emitter') { steps { sh 'set +x; printf \"Sec\\n\"; touch fragment-ready; "
+                  + "while [ ! -f bound-ready ]; do sleep 0.01; done; printf \"ret\\n\"' } } "
+                  + "stage('binder') { steps { sh 'set +x; while [ ! -f fragment-ready ]; do sleep 0.01; done'; "
+                  + "withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN')]) { "
+                  + "sh 'set +x; touch bound-ready' } } } "
+                  + "} } } }"
+
+              let run =
+                  Threading.Tasks.Task.Run(fun () ->
+                      FogellSide.runWithCredentialsAndPersistence credentials root "job" hooks source)
+
+              try
+                  Expect.isTrue (callbackEntered.Wait 2_000) "the host publication callback is genuinely stalled"
+                  let boundReady = IO.Path.Combine(root, "job", "bound-ready")
+                  Expect.isTrue
+                      (Threading.SpinWait.SpinUntil((fun () -> IO.File.Exists boundReady), 15_000))
+                      "the sibling registers the credential between the two physical fragments"
+              finally
+                  releaseCallback.Set()
+
+              try
+                  match run.GetAwaiter().GetResult() with
+                  | Error why -> failtestf "mid-fragment publication pipeline refused outside execution: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the synchronized production pipeline completes"
+                      Expect.contains (published |> Seq.toList) "****" "the external stream receives one canonical token"
+                      Expect.isFalse
+                          (published |> Seq.exists (fun line -> line = "Sec" || line = "ret"))
+                          "neither physical credential fragment crosses the host publication boundary"
               finally
                   if IO.Directory.Exists root then IO.Directory.Delete(root, true)
           } ]

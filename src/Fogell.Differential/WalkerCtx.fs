@@ -10,14 +10,17 @@ open Fogell.Execution
 type OutputPublicationException(message: string, inner: exn) =
     inherit Exception(message, inner)
 
+type private PublicationStream() =
+    member val Completed = false with get, set
+
 type private PendingPublication =
     { Order: int64
       Prefix: string
       Value: RedactedText
-      /// Stable identity for one Executor invocation. Only adjacent physical
-      /// lines from the same raw stream may be reassembled for a late-binding
-      /// separator-aware recheck; parallel shells must remain independent.
-      RedactedStream: obj option }
+      /// Stable identity for one raw stdout or stderr stream. Lines sharing
+      /// this identity may be reassembled for a late-binding separator-aware
+      /// recheck even when unrelated global output is interleaved.
+      RedactedStream: PublicationStream option }
 
 /// FG-105. The walker's run-scoped mutable state — one value constructed per
 /// build, passed explicitly where the 2,000-line closure used to capture it.
@@ -59,10 +62,10 @@ type WalkerCtx =
       /// Atomically admit ordinary output while letting the external publisher
       /// drain independently. ProcessGroup uses this inside its masking lock.
       Admit: string -> unit
-      /// Mint one provenance-bearing admission sink per shell invocation.
-      /// Its stable identity prevents pending lines from parallel shells from
-      /// being combined during a late-binding separator-aware recheck.
-      CreateRedactedAdmission: unit -> (RedactedText -> unit)
+      /// Mint one provenance-bearing admission lifecycle per raw stdout or
+      /// stderr stream. EOF releases any suffix retained because a credential
+      /// was registered after that stream's earlier line was admitted.
+      CreateRedactedAdmission: unit -> RedactedAdmission
       /// FG-053. Turn on `options { timestamps() }` for the rest of the build.
       ///
       /// A SETTER rather than a `create` parameter because the pipeline's
@@ -205,6 +208,8 @@ module WalkerCtx =
         // enqueue and return; the outer drain publishes it next.
         let publicationLock = obj ()
         let publications = System.Collections.Generic.Queue<PendingPublication>()
+        let deferredPublications = ResizeArray<PendingPublication>()
+        let barrierStreams = System.Collections.Generic.HashSet<PublicationStream>(HashIdentity.Reference)
         let mutable nextPublicationOrder = 0L
         let mutable publicationActive = false
         let mutable publicationFailure: OutputPublicationException option = None
@@ -237,6 +242,8 @@ module WalkerCtx =
                         lock publicationLock (fun () ->
                             publicationFailure <- Some failure
                             publications.Clear()
+                            deferredPublications.Clear()
+                            barrierStreams.Clear()
                             publicationActive <- false
                             System.Threading.Monitor.PulseAll publicationLock)
                         raise failure
@@ -258,6 +265,16 @@ module WalkerCtx =
                             | None when publicationActive ->
                                 System.Threading.Monitor.Wait publicationLock |> ignore
                                 false
+                            | None when barrierStreams.Count > 0 ->
+                                let failure =
+                                    OutputPublicationException(
+                                        "progressive output stream did not reach EOF",
+                                        InvalidOperationException("redacted publication lifecycle remained incomplete"))
+
+                                publicationFailure <- Some failure
+                                deferredPublications.Clear()
+                                barrierStreams.Clear()
+                                raise failure
                             | None ->
                                 complete <- true
                                 false)
@@ -309,75 +326,117 @@ module WalkerCtx =
                     ())
             |> ignore
 
+        let remaskIntoPublicationQueue secrets (pending: PendingPublication array) =
+            let remasked = ResizeArray<PendingPublication>()
+            let streamGroups =
+                System.Collections.Generic.Dictionary<PublicationStream, ResizeArray<PendingPublication>>(HashIdentity.Reference)
+
+            for item in pending do
+                match item.RedactedStream with
+                | None ->
+                    remasked.Add
+                        { item with
+                            Value = Secrets.maskAlreadyRedacted secrets item.Value }
+                | Some stream ->
+                    match streamGroups.TryGetValue stream with
+                    | true, group -> group.Add item
+                    | false, _ ->
+                        let group = ResizeArray<PendingPublication>()
+                        group.Add item
+                        streamGroups.Add(stream, group)
+
+            for group in streamGroups.Values do
+                let source = group.ToArray()
+                let joined = source |> Seq.map _.Value |> RedactedText.JoinLines
+                let reframed = Secrets.maskAlreadyRedacted secrets joined |> _.SplitLines()
+                let originalCount = source.Length
+                let mutable equalPrefix = 0
+
+                while (
+                    equalPrefix < originalCount
+                    && equalPrefix < reframed.Length
+                    && source[equalPrefix].Value.Text = reframed[equalPrefix].Text) do
+                    equalPrefix <- equalPrefix + 1
+
+                let mutable equalSuffix = 0
+
+                while (
+                    equalSuffix < originalCount - equalPrefix
+                    && equalSuffix < reframed.Length - equalPrefix
+                    && source[originalCount - 1 - equalSuffix].Value.Text = reframed[reframed.Length - 1 - equalSuffix].Text) do
+                    equalSuffix <- equalSuffix + 1
+
+                for lineIndex = 0 to reframed.Length - 1 do
+                    // Cross-line matches can collapse several pending physical
+                    // lines into one canonical token. The last contributing line
+                    // owns the order/timestamp: that is when the match completed.
+                    let sourceIndex =
+                        if lineIndex < equalPrefix then
+                            lineIndex
+                        elif lineIndex >= reframed.Length - equalSuffix then
+                            originalCount - (reframed.Length - lineIndex)
+                        else
+                            let changedOutputIndex = lineIndex - equalPrefix
+                            let changedOutputCount = reframed.Length - equalPrefix - equalSuffix
+                            let changedInputEnd = originalCount - equalSuffix
+                            changedInputEnd - changedOutputCount + changedOutputIndex
+
+                    remasked.Add
+                        { source[sourceIndex] with
+                            Value = reframed[lineIndex] }
+
+            remasked
+            |> Seq.sortBy _.Order
+            |> Seq.iter publications.Enqueue
+
         let remaskPendingPublications secrets =
             lock publicationLock (fun () ->
-                let pending = publications.ToArray()
+                let queued = publications.ToArray()
                 publications.Clear()
-                let mutable index = 0
 
-                while index < pending.Length do
-                    if Option.isNone pending[index].RedactedStream then
-                        let item = pending[index]
-                        publications.Enqueue
-                            { item with
-                                Value = Secrets.maskAlreadyRedacted secrets item.Value }
-                        index <- index + 1
+                if barrierStreams.Count > 0 then
+                    deferredPublications.AddRange queued
+
+                    for item in deferredPublications do
+                        match item.RedactedStream with
+                        | Some stream when not stream.Completed -> barrierStreams.Add stream |> ignore
+                        | _ -> ()
+                else
+                    for item in queued do
+                        match item.RedactedStream with
+                        | Some stream when not stream.Completed -> barrierStreams.Add stream |> ignore
+                        | _ -> ()
+
+                    if barrierStreams.Count = 0 then
+                        remaskIntoPublicationQueue secrets queued
                     else
-                        let start = index
-                        let stream = pending[index].RedactedStream.Value
+                        deferredPublications.AddRange queued
+            )
 
-                        while (
-                            index < pending.Length
-                            && (match pending[index].RedactedStream with
-                                | Some candidate -> obj.ReferenceEquals(stream, candidate)
-                                | None -> false)) do
-                            index <- index + 1
+        let completePublicationStream (stream: PublicationStream) =
+            let shouldDrain =
+                lock outputLock (fun () ->
+                    let secrets = boundSecrets |> Seq.map fst |> List.ofSeq
 
-                        let joined =
-                            pending[start .. index - 1]
-                            |> Seq.map _.Value
-                            |> RedactedText.JoinLines
+                    lock publicationLock (fun () ->
+                        stream.Completed <- true
+                        barrierStreams.Remove stream |> ignore
 
-                        let reframed =
-                            Secrets.maskAlreadyRedacted secrets joined
-                            |> _.SplitLines()
-                        let originalCount = index - start
-                        let mutable equalPrefix = 0
+                        if barrierStreams.Count = 0 && deferredPublications.Count > 0 then
+                            let pending = deferredPublications.ToArray()
+                            deferredPublications.Clear()
+                            remaskIntoPublicationQueue secrets pending
 
-                        while (
-                            equalPrefix < originalCount
-                            && equalPrefix < reframed.Length
-                            && pending[start + equalPrefix].Value.Text = reframed[equalPrefix].Text) do
-                            equalPrefix <- equalPrefix + 1
+                        match publicationFailure with
+                        | Some _ -> false
+                        | None when barrierStreams.Count = 0 && not publicationActive && publications.Count > 0 ->
+                            publicationActive <- true
+                            true
+                        | None -> false))
 
-                        let mutable equalSuffix = 0
-
-                        while (
-                            equalSuffix < originalCount - equalPrefix
-                            && equalSuffix < reframed.Length - equalPrefix
-                            && pending[index - 1 - equalSuffix].Value.Text = reframed[reframed.Length - 1 - equalSuffix].Text) do
-                            equalSuffix <- equalSuffix + 1
-
-                        for lineIndex = 0 to reframed.Length - 1 do
-                            // Cross-line matches can collapse several pending
-                            // physical lines into one canonical token. In that
-                            // case the last contributing line owns the timestamp,
-                            // matching the point at which the match completed.
-                            let sourceIndex =
-                                if lineIndex < equalPrefix then
-                                    start + lineIndex
-                                elif lineIndex >= reframed.Length - equalSuffix then
-                                    index - (reframed.Length - lineIndex)
-                                else
-                                    let changedOutputIndex = lineIndex - equalPrefix
-                                    let changedOutputCount = reframed.Length - equalPrefix - equalSuffix
-                                    let changedInputEnd = index - equalSuffix
-                                    changedInputEnd - changedOutputCount + changedOutputIndex
-
-                            let source = pending[sourceIndex]
-                            publications.Enqueue
-                                { source with
-                                    Value = reframed[lineIndex] })
+            match shouldDrain, onOutput with
+            | true, Some publish -> startDeferredDrain publish
+            | _ -> ()
 
         let emitCore deferExternalDrain alreadyRedacted redactedStream safeAndLeaks =
             let shouldDrain =
@@ -428,21 +487,28 @@ module WalkerCtx =
                     if safeToPublish && Option.isSome onOutput then
                         lock publicationLock (fun () ->
                             match publicationFailure with
+                            | Some _ when deferExternalDrain -> false
                             | Some failure -> raise failure
                             | None ->
                                 let order = nextPublicationOrder
                                 nextPublicationOrder <- nextPublicationOrder + 1L
-                                publications.Enqueue
+                                let item =
                                     { Order = order
                                       Prefix = prefix
                                       Value = safeValue
                                       RedactedStream = redactedStream }
 
-                                if publicationActive then
+                                if barrierStreams.Count > 0 then
+                                    deferredPublications.Add item
                                     false
                                 else
-                                    publicationActive <- true
-                                    true)
+                                    publications.Enqueue item
+
+                                    if publicationActive then
+                                        false
+                                    else
+                                        publicationActive <- true
+                                        true)
                     else
                         false)
 
@@ -477,14 +543,16 @@ module WalkerCtx =
           Admit = admit
           CreateRedactedAdmission =
             fun () ->
-                let stream = obj ()
+                let stream = PublicationStream()
 
-                fun (line: RedactedText) ->
-                    emitCore true true (Some stream) (fun secrets ->
-                        let safe =
-                            if List.isEmpty secrets then line else Secrets.maskAlreadyRedacted secrets line
+                { Admit =
+                    fun (line: RedactedText) ->
+                        emitCore true true (Some stream) (fun secrets ->
+                            let safe =
+                                if List.isEmpty secrets then line else Secrets.maskAlreadyRedacted secrets line
 
-                        safe, Secrets.detectUnregisteredLeaks secrets safe.Text)
+                            safe, Secrets.detectUnregisteredLeaks secrets safe.Text)
+                  Complete = fun () -> completePublicationStream stream }
           EnableTimestamps = fun () -> lock outputLock (fun () -> timestamps <- true)
           BindSecrets =
             fun bindings ->
