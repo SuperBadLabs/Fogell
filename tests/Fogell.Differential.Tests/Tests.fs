@@ -59,7 +59,7 @@ let progressiveOutputPublication =
                   "no emission is duplicated or lost"
           }
 
-          test "a transformed secret is retained for terminal refusal but never published" {
+          test "FG-236 a transformed secret is retained for terminal refusal but never published" {
               let published = ResizeArray<string>()
               let ctx = WalkerCtx.create 0L false (Some published.Add)
               ctx.BindSecrets [ binding ]
@@ -71,6 +71,679 @@ let progressiveOutputPublication =
                   [ "eulav-t3rc3s" ]
                   "the terminal leak guard still receives the evidence"
               Expect.isEmpty published "unsafe transformed bytes never cross the progressive boundary"
+
+              let rawPublished = ResizeArray<string>()
+              let rawCtx = WalkerCtx.create 0L false (Some rawPublished.Add)
+              rawCtx.BindSecrets [ binding ]
+              let stream = rawCtx.CreateRedactedAdmission()
+              stream.Admit (RedactedText.Raw "eulav-t3rc3s")
+              stream.Complete()
+              rawCtx.FlushOutput()
+              Expect.isEmpty rawPublished "EOF cannot promote an already unsafe raw fragment"
+              Expect.equal
+                  (rawCtx.Output())
+                  [ "eulav-t3rc3s" ]
+                  "EOF reframing preserves terminal refusal evidence"
+
+              let protectedPublished = ResizeArray<string>()
+              let protectedCtx = WalkerCtx.create 0L false (Some protectedPublished.Add)
+              protectedCtx.BindSecrets [ Secrets.inMemoryTextBinding "STARS" "****" ]
+              let protectedStream = protectedCtx.CreateRedactedAdmission()
+              protectedStream.Admit ((OutputRedactionPolicy [ "****" ]).MaskRedacted "****")
+              protectedStream.Complete()
+              protectedCtx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq protectedPublished)
+                  [ "****" ]
+                  "a transformed form cannot be manufactured wholly from a protected token"
+          }
+
+          test "FG-236 redacted publication rechecks credentials bound after the raw snapshot" {
+              let published = ResizeArray<string>()
+              let ctx = WalkerCtx.create 0L false (Some published.Add)
+              let late = Secrets.inMemoryTextBinding "LATE" "late-bound-secret"
+
+              // Models a raw matcher result produced from its earlier inventory
+              // and queued before the callback runs. Registration wins the
+              // WalkerCtx output lock, so publication must recheck the literal.
+              ctx.BindSecrets [ late ]
+              ctx.EmitRedacted (RedactedTextOps.raw "late-bound-secret")
+
+              Expect.equal (ctx.Output()) [ "****" ] "the terminal trace masks the late-bound credential"
+              Expect.equal
+                  (List.ofSeq published)
+                  [ "****" ]
+                  "the late-bound credential is masked at the atomic publication boundary"
+
+              let rawStars = WalkerCtx.create 0L false None
+              let starBearing = Secrets.inMemoryTextBinding "STARS" "a****b"
+              let queuedBeforeBinding = RedactedTextOps.raw "a****b"
+              rawStars.BindSecrets [ starBearing ]
+              rawStars.EmitRedacted queuedBeforeBinding
+              Expect.equal
+                  (rawStars.Output())
+                  [ "****" ]
+                  "literal four-star runs are not mistaken for matcher-produced tokens"
+          }
+
+          test "FG-236 a late binding remasks a stalled non-stream publication" {
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let published = ResizeArray<string>()
+
+              let ctx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          published.Add line
+
+                          if line = "blocker" then
+                              callbackEntered.Set()
+                              releaseCallback.Wait()))
+
+              let blocker = Threading.Tasks.Task.Run(fun () -> ctx.Emit "blocker")
+
+              try
+                  Expect.isTrue (callbackEntered.Wait 2_000) "the non-stream control is genuinely stalled"
+                  ctx.EmitRedacted (RedactedText.Raw "late-bound-secret")
+                  ctx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "late-bound-secret" ]
+              finally
+                  releaseCallback.Set()
+
+              blocker.GetAwaiter().GetResult()
+              ctx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq published)
+                  [ "blocker"; "****" ]
+                  "a stalled non-stream line is rechecked before external publication"
+          }
+
+          test "FG-236 a late binding re-screens transformed queued output" {
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let published = ResizeArray<string>()
+
+              let ctx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          published.Add line
+
+                          if line = "blocker" then
+                              callbackEntered.Set()
+                              releaseCallback.Wait()))
+
+              let blocker = Threading.Tasks.Task.Run(fun () -> ctx.Emit "blocker")
+
+              try
+                  Expect.isTrue (callbackEntered.Wait 2_000) "the transformed-output control is genuinely stalled"
+                  ctx.EmitRedacted (RedactedText.Raw "terceS")
+                  ctx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+              finally
+                  releaseCallback.Set()
+
+              blocker.GetAwaiter().GetResult()
+              ctx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq published)
+                  [ "blocker" ]
+                  "a newly recognized transformed form never leaves the queued boundary"
+              Expect.equal
+                  (ctx.PublicationLeaks() |> List.map _.Variable)
+                  [ "LATE" ]
+                  "the retained transformed evidence makes terminal construction fail closed"
+
+              use committed = new Threading.ManualResetEventSlim(false)
+              let committedPublished = ResizeArray<string>()
+              let committedCtx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          committedPublished.Add line
+                          committed.Set()))
+              let committedStream = committedCtx.CreateRedactedAdmission()
+              committedStream.Admit (RedactedText.Raw "terceS")
+              Expect.isTrue (committed.Wait 2_000) "the control fragment crossed before the future binding"
+              committedCtx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+              committedStream.Complete()
+              committedCtx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq committedPublished)
+                  [ "terceS" ]
+                  "a transformed coincidence committed before binding is not judged retroactively"
+              Expect.isEmpty
+                  (committedCtx.PublicationLeaks())
+                  "committed pre-binding provenance is context, not new refusal evidence"
+              Expect.equal
+                  (committedCtx.Output())
+                  [ "terceS" ]
+                  "a future transformed binding cannot rewrite the committed terminal audit line"
+
+              use literalCommitted = new Threading.ManualResetEventSlim(false)
+              let literalPublished = ResizeArray<string>()
+              let literalCtx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          literalPublished.Add line
+                          if line = "prior-line" then literalCommitted.Set()))
+              let literalStream = literalCtx.CreateRedactedAdmission()
+              literalStream.Admit (RedactedText.Raw "prior-line")
+              Expect.isTrue
+                  (literalCommitted.Wait 2_000)
+                  "the literal audit line is committed before its future binding"
+              literalCtx.BindSecrets [ Secrets.inMemoryTextBinding "LATE_LITERAL" "prior-line" ]
+              literalStream.Admit (RedactedText.Raw "tail")
+              literalStream.Complete()
+              literalCtx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq literalPublished, literalCtx.Output())
+                  ([ "prior-line"; "tail" ], [ "prior-line"; "tail" ])
+                  "a future binding preserves committed publication and terminal audit history"
+          }
+
+          test "FG-236 a late binding remasks a stalled external publication queue across lines" {
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let published = ResizeArray<string>()
+
+              let ctx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          published.Add line
+
+                          if line = "blocker" then
+                              callbackEntered.Set()
+                              releaseCallback.Wait()))
+
+              let blocker = Threading.Tasks.Task.Run(fun () -> ctx.Emit "blocker")
+
+              try
+                  Expect.isTrue (callbackEntered.Wait 2_000) "the external publisher is genuinely stalled"
+                  let admit = ctx.CreateRedactedAdmission()
+                  admit.Admit (RedactedText.Raw "Sec")
+                  admit.Admit (RedactedText.Raw "ret")
+                  let binding = Secrets.inMemoryTextBinding "LATE" "Secret"
+                  ctx.BindSecrets [ binding ]
+                  admit.Complete()
+
+                  Expect.equal
+                      (ctx.Output())
+                      [ "blocker"; "****" ]
+                      "the terminal trace is remasked with the same stream-aware pass"
+              finally
+                  releaseCallback.Set()
+
+              blocker.GetAwaiter().GetResult()
+              ctx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq published)
+                  [ "blocker"; "****" ]
+                  "pending external lines are rechecked together before actual publication"
+          }
+
+          test "FG-236 pending publications never compose separate stream identities" {
+              use separateEntered = new Threading.ManualResetEventSlim(false)
+              use releaseSeparate = new Threading.ManualResetEventSlim(false)
+              let separatelyPublished = ResizeArray<string>()
+
+              let separateCtx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          separatelyPublished.Add line
+
+                          if line = "blocker" then
+                              separateEntered.Set()
+                              releaseSeparate.Wait()))
+
+              let separateBlocker = Threading.Tasks.Task.Run(fun () -> separateCtx.Emit "blocker")
+
+              try
+                  Expect.isTrue (separateEntered.Wait 2_000) "the separate-stream control is genuinely stalled"
+                  let firstStream = separateCtx.CreateRedactedAdmission()
+                  let secondStream = separateCtx.CreateRedactedAdmission()
+                  firstStream.Admit (RedactedText.Raw "Sec")
+                  secondStream.Admit (RedactedText.Raw "ret")
+                  separateCtx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+                  firstStream.Complete()
+                  secondStream.Complete()
+              finally
+                  releaseSeparate.Set()
+
+              separateBlocker.GetAwaiter().GetResult()
+              separateCtx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq separatelyPublished)
+                  [ "blocker"; "Sec"; "ret" ]
+                  "pending lines from separate shell streams never compose one credential"
+          }
+
+          test "FG-236 pending stream continuity survives global interleaving" {
+              use interleavedEntered = new Threading.ManualResetEventSlim(false)
+              use releaseInterleaved = new Threading.ManualResetEventSlim(false)
+              let interleavedPublished = ResizeArray<string>()
+
+              let interleavedCtx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          interleavedPublished.Add line
+
+                          if line = "blocker" then
+                              interleavedEntered.Set()
+                              releaseInterleaved.Wait()))
+
+              let interleavedBlocker = Threading.Tasks.Task.Run(fun () -> interleavedCtx.Emit "blocker")
+
+              try
+                  Expect.isTrue (interleavedEntered.Wait 2_000) "the interleaved-stream control is genuinely stalled"
+                  let firstStream = interleavedCtx.CreateRedactedAdmission()
+                  let secondStream = interleavedCtx.CreateRedactedAdmission()
+                  firstStream.Admit (RedactedText.Raw "Sec")
+                  secondStream.Admit (RedactedText.Raw "noise")
+                  firstStream.Admit (RedactedText.Raw "ret")
+                  interleavedCtx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+                  firstStream.Complete()
+                  secondStream.Complete()
+              finally
+                  releaseInterleaved.Set()
+
+              interleavedBlocker.GetAwaiter().GetResult()
+              interleavedCtx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq interleavedPublished)
+                  [ "blocker"; "noise"; "****" ]
+                  "pending interleaved lines from one shell stream retain adjacency"
+          }
+
+          test "FG-236 each collapsed match keeps its final contributing timestamp" {
+              use timestampEntered = new Threading.ManualResetEventSlim(false)
+              use releaseTimestamp = new Threading.ManualResetEventSlim(false)
+              let timestampPublished = ResizeArray<string>()
+
+              let timestampCtx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          timestampPublished.Add line
+
+                          if line = "blocker" then
+                              timestampEntered.Set()
+                              releaseTimestamp.Wait()))
+
+              let timestampBlocker = Threading.Tasks.Task.Run(fun () -> timestampCtx.Emit "blocker")
+
+              try
+                  Expect.isTrue (timestampEntered.Wait 2_000) "the timestamp control is genuinely stalled"
+                  timestampCtx.EnableTimestamps()
+                  let stream = timestampCtx.CreateRedactedAdmission()
+                  stream.Admit (RedactedText.Raw "Se")
+                  Threading.Thread.Sleep 10
+                  stream.Admit (RedactedText.Raw "cret")
+                  Threading.Thread.Sleep 10
+                  stream.Admit (RedactedText.Raw "middle")
+                  Threading.Thread.Sleep 10
+                  stream.Admit (RedactedText.Raw "To")
+                  Threading.Thread.Sleep 10
+                  stream.Admit (RedactedText.Raw "ken")
+                  timestampCtx.BindSecrets
+                      [ Secrets.inMemoryTextBinding "FIRST" "Secret"
+                        Secrets.inMemoryTextBinding "SECOND" "Token" ]
+                  stream.Complete()
+              finally
+                  releaseTimestamp.Set()
+
+              timestampBlocker.GetAwaiter().GetResult()
+              timestampCtx.FlushOutput()
+              let admitted = timestampCtx.Output()
+              let prefix (source: string) (literal: string) = source.Substring(0, source.Length - literal.Length)
+
+              Expect.equal
+                  admitted.Length
+                  4
+                  "independent collapsed matches retain their output cardinality and source slots"
+
+              Expect.equal
+                  (List.ofSeq timestampPublished)
+                  [ "blocker"
+                    admitted[1]
+                    admitted[2]
+                    admitted[3] ]
+                  "each token is stamped by the physical line which completed that match"
+
+              Expect.stringEnds admitted[1] "****" "the first collapsed match remains masked"
+              Expect.stringEnds admitted[2] "middle" "the unrelated line remains in place"
+              Expect.stringEnds admitted[3] "****" "the second collapsed match remains masked"
+              Expect.notEqual
+                  (prefix admitted[1] "****")
+                  (prefix admitted[3] "****")
+                  "separately completed matches retain distinct physical timestamps"
+          }
+
+          test "FG-236 timestamp prefixes retain ordinary literal leak screening" {
+              let published = ResizeArray<string>()
+              let timestampCtx = WalkerCtx.create 0L false (Some published.Add)
+              let year = DateTime.UtcNow.Year.ToString(Globalization.CultureInfo.InvariantCulture)
+              let timestampStem = year + "-"
+              let reversedTimestampStem = String(timestampStem.ToCharArray() |> Array.rev)
+              timestampCtx.BindSecrets [ Secrets.inMemoryTextBinding "YEAR" reversedTimestampStem ]
+              timestampCtx.EnableTimestamps()
+              let stream = timestampCtx.CreateRedactedAdmission()
+              stream.Admit (RedactedText.Raw "ok")
+              stream.Complete()
+              timestampCtx.FlushOutput()
+
+              Expect.isEmpty published "a credential-shaped timestamp cannot cross progressive publication"
+
+              let leakedVariables =
+                  timestampCtx.OutputWithActiveSecrets()
+                  |> List.collect (fun (line, active, alreadyRedacted, prefix, _) ->
+                      if alreadyRedacted then
+                          Secrets.detectUnregisteredLeaks active line @ Secrets.detectLeaks active prefix
+                      else
+                          Secrets.detectLeaks active line)
+                  |> List.map _.Variable
+
+              Expect.contains leakedVariables "YEAR" "terminal screening still refuses the synthesized prefix"
+
+              let derivedPublished = ResizeArray<string>()
+              let derivedCtx = WalkerCtx.create 0L false (Some derivedPublished.Add)
+              let derived = Secrets.inMemoryTextBinding "DERIVED" "z"
+              derivedCtx.BindSecrets [ derived ]
+              derivedCtx.EnableTimestamps()
+              let derivedStream = derivedCtx.CreateRedactedAdmission()
+              derivedStream.Admit (RedactedText.Raw "ok")
+              derivedStream.Complete()
+              derivedCtx.FlushOutput()
+
+              Expect.isEmpty
+                  derivedPublished
+                  "a registered derived form in a timestamp cannot cross progressive publication"
+              let derivedOutput =
+                  derivedCtx.OutputWithActiveSecrets()
+
+              let derivedPrefix =
+                  derivedOutput |> List.exactlyOne |> fun (_, _, _, prefix, _) -> prefix
+
+              Expect.isNonEmpty
+                  (Secrets.detectRegisteredLeaks [ derived ] derivedPrefix)
+                  "terminal screening sees registered derived forms in the synthesized prefix"
+
+              Expect.isNonEmpty
+                  (FogellSide.terminalOutputLeaks derivedOutput)
+                  "the registered derived timestamp form escaped terminal refusal"
+
+              let boundaryPublished = ResizeArray<string>()
+              let boundaryCtx = WalkerCtx.create 0L false (Some boundaryPublished.Add)
+              let boundary = Secrets.inMemoryTextBinding "BOUNDARY" "] ok"
+              boundaryCtx.BindSecrets [ boundary ]
+              boundaryCtx.EnableTimestamps()
+              let boundaryStream = boundaryCtx.CreateRedactedAdmission()
+              boundaryStream.Admit (RedactedText.Raw "ok")
+              boundaryStream.Complete()
+              boundaryCtx.FlushOutput()
+
+              Expect.isEmpty
+                  boundaryPublished
+                  "a credential composed only across the timestamp/output boundary cannot publish"
+              let boundaryLine = boundaryCtx.Output() |> List.exactlyOne
+              let boundaryPrefix = boundaryLine.Substring(0, boundaryLine.Length - 2)
+              Expect.isNonEmpty
+                  (Secrets.detectBoundaryLeaks [ boundary ] boundaryPrefix (RedactedText.Raw "ok"))
+                  "terminal screening sees the same composed-boundary credential"
+
+              let protectedBoundaryPublished = ResizeArray<string>()
+              let protectedBoundaryCtx = WalkerCtx.create 0L false (Some protectedBoundaryPublished.Add)
+              protectedBoundaryCtx.BindSecrets [ Secrets.inMemoryTextBinding "BOUNDARY" "] ****" ]
+              protectedBoundaryCtx.EnableTimestamps()
+              let protectedBoundaryStream = protectedBoundaryCtx.CreateRedactedAdmission()
+              protectedBoundaryStream.Admit ((OutputRedactionPolicy [ "raw-secret" ]).MaskRedacted "raw-secret")
+              protectedBoundaryStream.Complete()
+              protectedBoundaryCtx.FlushOutput()
+              Expect.equal
+                  protectedBoundaryPublished.Count
+                  1
+                  "a boundary match cannot consume characters from a protected token"
+          }
+
+          test "FG-236 pending stream survives a binding between physical fragments" {
+              use betweenEntered = new Threading.ManualResetEventSlim(false)
+              use releaseBetween = new Threading.ManualResetEventSlim(false)
+              let betweenPublished = ResizeArray<string>()
+
+              let betweenCtx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          betweenPublished.Add line
+
+                          if line = "blocker" then
+                              betweenEntered.Set()
+                              releaseBetween.Wait()))
+
+              let betweenBlocker = Threading.Tasks.Task.Run(fun () -> betweenCtx.Emit "blocker")
+
+              try
+                  Expect.isTrue (betweenEntered.Wait 2_000) "the mid-binding control is genuinely stalled"
+                  let stream = betweenCtx.CreateRedactedAdmission()
+                  stream.Admit (RedactedText.Raw "Sec")
+                  betweenCtx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+                  stream.Admit (RedactedText.Raw "ret")
+                  stream.Complete()
+              finally
+                  releaseBetween.Set()
+
+              betweenBlocker.GetAwaiter().GetResult()
+              betweenCtx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq betweenPublished)
+                  [ "blocker"; "****" ]
+                  "true stream EOF resolves a credential whose binding landed between fragments"
+          }
+
+          test "FG-236 a binding bars an open stream until true EOF" {
+              use fragmentPublished = new Threading.ManualResetEventSlim(false)
+              use secondFragmentPublished = new Threading.ManualResetEventSlim(false)
+              let published = ResizeArray<string>()
+
+              let ctx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          published.Add line
+                          if line = "Sec" then fragmentPublished.Set()
+                          if line = "ret" then secondFragmentPublished.Set()))
+
+              let stream = ctx.CreateRedactedAdmission()
+
+              stream.Admit (RedactedText.Raw "Sec")
+              Expect.isTrue
+                  (fragmentPublished.Wait 2_000)
+                  "output remains progressive before a future credential exists"
+              Expect.equal (List.ofSeq published) [ "Sec" ] "the pre-binding fragment publishes once"
+
+              ctx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+              stream.Admit (RedactedText.Raw "ret")
+              Expect.isFalse
+                  (secondFragmentPublished.Wait 2_000)
+                  "a binding bars every open stream before a completing fragment can publish"
+
+              stream.Complete()
+              ctx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq published)
+                  [ "Sec"; "****" ]
+                  "EOF publishes a mask without replaying the committed left-context"
+              Expect.equal
+                  (ctx.Output())
+                  [ "Sec"; "****" ]
+                  "the stored trace retains committed context and masks the completing suffix"
+
+              use prefixedFragmentPublished = new Threading.ManualResetEventSlim(false)
+              let prefixedPublished = ResizeArray<string>()
+              let prefixedCtx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          prefixedPublished.Add line
+                          if line = "prefixSec" then prefixedFragmentPublished.Set()))
+              let prefixedStream = prefixedCtx.CreateRedactedAdmission()
+
+              prefixedStream.Admit (RedactedText.Raw "prefixSec")
+              Expect.isTrue
+                  (prefixedFragmentPublished.Wait 2_000)
+                  "the ordinary prefix and credential fragment are committed before binding"
+              prefixedCtx.BindSecrets [ Secrets.inMemoryTextBinding "PREFIXED_LATE" "Secret" ]
+              prefixedStream.Admit (RedactedText.Raw "ret")
+              prefixedStream.Complete()
+              prefixedCtx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq prefixedPublished, prefixedCtx.Output())
+                  ([ "prefixSec"; "****" ], [ "prefixSec"; "****" ])
+                  "committed ordinary bytes remain matcher context but are never replayed"
+
+              use eofCallbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseEofCallback = new Threading.ManualResetEventSlim(false)
+              let eofPublished = ResizeArray<string>()
+              let eofCtx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          eofPublished.Add line
+
+                          if line = "Sec" then
+                              eofCallbackEntered.Set()
+                              releaseEofCallback.Wait()))
+              let completedStream = eofCtx.CreateRedactedAdmission()
+
+              try
+                  completedStream.Admit (RedactedText.Raw "Sec")
+                  Expect.isTrue
+                      (eofCallbackEntered.Wait 2_000)
+                      "the completed-stream control has a committed prefix in flight"
+                  completedStream.Admit (RedactedText.Raw "ret")
+                  completedStream.Complete()
+                  eofCtx.BindSecrets [ Secrets.inMemoryTextBinding "AFTER_EOF" "Secret" ]
+              finally
+                  releaseEofCallback.Set()
+
+              eofCtx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq eofPublished, eofCtx.Output())
+                  ([ "Sec"; "****" ], [ "Sec"; "****" ])
+                  "completed stream history survives until its queued suffix is remasked"
+
+              let terminalOnly = WalkerCtx.create 0L false None
+              let terminalStream = terminalOnly.CreateRedactedAdmission()
+              terminalStream.Admit (RedactedText.Raw "Sec")
+              terminalOnly.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+              terminalStream.Admit (RedactedText.Raw "ret")
+              terminalStream.Complete()
+              Expect.equal
+                  (terminalOnly.Output())
+                  [ "****" ]
+                  "terminal remasking does not depend on an external callback"
+
+              let proveNonExpandingBindingRemainsProgressive label prepareBinding =
+                  use published = new Threading.ManualResetEventSlim(false)
+                  let ctx =
+                      WalkerCtx.create
+                          0L
+                          false
+                          (Some(fun line -> if line = label then published.Set()))
+
+                  prepareBinding ctx
+                  let stream = ctx.CreateRedactedAdmission()
+                  prepareBinding ctx
+                  stream.Admit (RedactedText.Raw label)
+
+                  try
+                      Expect.isTrue
+                          (published.Wait 2_000)
+                          "a non-expanding binding does not create an EOF publication barrier"
+                  finally
+                      stream.Complete()
+                      ctx.FlushOutput()
+
+              proveNonExpandingBindingRemainsProgressive
+                  "after-empty-binding"
+                  (fun ctx -> ctx.BindSecrets [ Secrets.inMemoryTextBinding "EMPTY" "" ])
+              let duplicate = Secrets.inMemoryTextBinding "DUPLICATE" "already-known-secret"
+              proveNonExpandingBindingRemainsProgressive
+                  "after-duplicate-binding"
+                  (fun ctx -> ctx.BindSecrets [ duplicate ])
+          }
+
+          test "FG-236 an incomplete publication lifecycle fails closed at flush" {
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+
+              let ctx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          if line = "blocker" then
+                              callbackEntered.Set()
+                              releaseCallback.Wait()))
+
+              let blocker = Threading.Tasks.Task.Run(fun () -> ctx.Emit "blocker")
+              Expect.isTrue (callbackEntered.Wait 2_000) "the incomplete-stream control is genuinely stalled"
+              let stream = ctx.CreateRedactedAdmission()
+              stream.Admit (RedactedText.Raw "Sec")
+              ctx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
+              releaseCallback.Set()
+              blocker.GetAwaiter().GetResult()
+
+              Expect.throwsT<OutputPublicationException>
+                  (fun () -> ctx.FlushOutput())
+                  "terminal truth cannot silently omit an unresolved publication stream"
+          }
+
+          test "FG-236 redacted publication preserves adjacent canonical tokens" {
+              let ctx = WalkerCtx.create 0L false None
+              let star = Secrets.inMemoryTextBinding "STAR" "*"
+
+              ctx.BindSecrets [ star ]
+              ctx.EmitRedacted ((OutputRedactionPolicy [ "*" ]).MaskRedacted "**")
+
+              Expect.equal
+                  (ctx.Output())
+                  [ "********" ]
+                  "two adjacent raw-matcher tokens retain their separate cardinality"
+
+              let unmatchedCtx = WalkerCtx.create 0L false None
+              let pair = Secrets.inMemoryTextBinding "PAIR" "**"
+              unmatchedCtx.BindSecrets [ pair ]
+              unmatchedCtx.EmitRedacted (RedactedTextOps.raw "*")
+              Expect.equal
+                  (unmatchedCtx.Output())
+                  [ "*" ]
+                  "a shorter unmatched all-star fragment remains ordinary output"
+
+              let boundaryCtx = WalkerCtx.create 0L false None
+              let short = Secrets.inMemoryTextBinding "SHORT" "x"
+              let spanning = Secrets.inMemoryTextBinding "SPANNING" "a****"
+              boundaryCtx.BindSecrets [ short; spanning ]
+              boundaryCtx.EmitRedacted ((OutputRedactionPolicy [ "x" ]).MaskRedacted "ax")
+              Expect.equal
+                  (boundaryCtx.Output())
+                  [ "a****" ]
+                  "non-star forms cannot span an existing canonical token boundary"
           }
 
           test "a slow callback cannot hold the output lock or block a later emitter" {
@@ -131,7 +804,7 @@ let progressiveOutputPublication =
               Expect.equal (List.ofSeq published) [ "outer"; "inner" ] "reentrant publication is exact"
           }
 
-          test "publisher failure is typed, sticky, and never retried as build output" {
+          test "FG-236 publisher failure is typed and cannot stop synchronous reader admission" {
               let mutable attempts = 0
 
               let ctx =
@@ -148,6 +821,11 @@ let progressiveOutputPublication =
               Expect.throwsT<OutputPublicationException>
                   (fun () -> ctx.FlushOutput())
                   "terminal publication observes the same stored failure"
+
+              let stream = ctx.CreateRedactedAdmission()
+              stream.Admit (RedactedText.Raw "reader-keeps-draining")
+              stream.Complete()
+
               Expect.throwsT<OutputPublicationException>
                   (fun () -> ctx.Emit "two")
                   "later output cannot continue beyond a broken event stream"
@@ -8516,6 +9194,76 @@ let workspaceManifestV2 =
                       "the same strict collector refuses an actually missing or wrong root"
               finally
                   if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+
+          }
+
+          test "FG-236 production admission retains a pending stream across mid-fragment binding" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg236-publication-eof-" + Guid.NewGuid().ToString("N"))
+
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let published = Collections.Concurrent.ConcurrentQueue<string>()
+              let credentials = Map.ofList [ "live-text", SecretText "Secret" ]
+
+              let hooks =
+                  { OnOutput =
+                      fun line ->
+                          published.Enqueue line
+
+                          if line = "publication-blocker" then
+                              callbackEntered.Set()
+                              releaseCallback.Wait()
+                    IsRestartedRun = false
+                    ShouldExecute = fun _ _ -> true
+                    StageWasCommitted = fun _ -> false
+                    SkippedStatus = fun _ _ -> None
+                    SkippedStageWarning = fun _ _ -> None
+                    OnStepStarted = fun _ _ _ -> ()
+                    OnStepStageWarning = fun _ _ _ -> ()
+                    OnStepFinished = fun _ _ _ _ -> ()
+                    OnStageCommitted = fun _ -> ()
+                    OnRetryAttempt = fun _ _ -> ()
+                    RetryAttemptsSoFar = fun _ -> 1
+                    PollInputAnswer = None
+                    OnInputClosed = fun _ _ _ -> ()
+                    OnInputAnswerVoided = fun _ _ _ -> () }
+
+              let source =
+                  "pipeline { agent any stages { "
+                  + "stage('block') { steps { sh 'set +x; printf \"publication-blocker\\n\"' } } "
+                  + "stage('fanout') { parallel { "
+                  + "stage('emitter') { steps { sh 'set +x; printf \"Sec\\n\"; touch fragment-ready; "
+                  + "while [ ! -f bound-ready ]; do sleep 0.01; done; printf \"ret\\n\"' } } "
+                  + "stage('binder') { steps { sh 'set +x; while [ ! -f fragment-ready ]; do sleep 0.01; done'; "
+                  + "withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN')]) { "
+                  + "sh 'set +x; touch bound-ready' } } } "
+                  + "} } } }"
+
+              let run =
+                  Threading.Tasks.Task.Run(fun () ->
+                      FogellSide.runWithCredentialsAndPersistence credentials root "job" hooks source)
+
+              try
+                  Expect.isTrue (callbackEntered.Wait 2_000) "the host publication callback is genuinely stalled"
+                  let boundReady = IO.Path.Combine(root, "job", "bound-ready")
+                  Expect.isTrue
+                      (Threading.SpinWait.SpinUntil((fun () -> IO.File.Exists boundReady), 15_000))
+                      "the sibling registers the credential between the two physical fragments"
+              finally
+                  releaseCallback.Set()
+
+              try
+                  match run.GetAwaiter().GetResult() with
+                  | Error why -> failtestf "mid-fragment publication pipeline refused outside execution: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the synchronized production pipeline completes"
+                      Expect.contains (published |> Seq.toList) "****" "the external stream receives one canonical token"
+                      Expect.isFalse
+                          (published |> Seq.exists (fun line -> line = "Sec" || line = "ret"))
+                          "neither physical credential fragment crosses the host publication boundary"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
           } ]
 
 let compileRefusalDisposition =
@@ -9312,6 +10060,155 @@ let credentialEchoMasking =
                           "the raw secret is absent from every compared line"
               finally
                   if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "FG-236 terminal screening covers the timestamp-output boundary" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg236-timestamp-boundary-" + Guid.NewGuid().ToString("N"))
+
+              let credentials = Map.ofList [ "boundary", SecretText "] + echo" ]
+              let source =
+                  "pipeline { agent any options { timestamps() } stages { stage('mask') { steps { "
+                  + "withCredentials([string(credentialsId: 'boundary', variable: 'TOKEN')]) { sh 'echo ok' } "
+                  + "} } } }"
+
+              try
+                  match FogellSide.runWithCredentials credentials [] root "job" source with
+                  | Ok _ -> failtest "the composed timestamp/output credential escaped terminal refusal"
+                  | Error why ->
+                      Expect.stringContains
+                          why
+                          "SECRET LEAKED to build output (variable(s): TOKEN)"
+                          "terminal construction refuses the same boundary the progressive callback screens"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "FG-236 terminal boundary screening preserves protected tokens" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg236-protected-boundary-" + Guid.NewGuid().ToString("N"))
+
+              let credentials =
+                  Map.ofList
+                      [ "raw", SecretText "raw-secret"
+                        "boundary", SecretText "] ****" ]
+              let source =
+                  "pipeline { agent any options { timestamps() } stages { stage('mask') { steps { "
+                  + "withCredentials([string(credentialsId: 'raw', variable: 'RAW'), "
+                  + "string(credentialsId: 'boundary', variable: 'BOUNDARY')]) { sh 'printf \"%s\\n\" \"$RAW\"' } "
+                  + "} } } }"
+
+              try
+                  match FogellSide.runWithCredentials credentials [] root "job" source with
+                  | Error why -> failtestf "protected token was misclassified at the timestamp boundary: %s" why
+                  | Ok trace -> Expect.contains trace.Output "****" "the real credential is masked exactly once"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "FG-236 raw masking retains credentials after their lexical scope ends" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg236-run-mask-" + Guid.NewGuid().ToString("N"))
+
+              let secret = String.replicate 10 "A1b2C3d4E"
+              let encoded = Convert.ToBase64String(Text.Encoding.UTF8.GetBytes secret)
+              let first, second = encoded.Substring(0, 76), encoded.Substring 76
+              let credentials = Map.ofList [ "live-text", SecretText secret ]
+
+              let source =
+                  "pipeline { agent any stages { stage('mask') { steps { "
+                  + "withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN')]) { sh 'true' }; "
+                  + $"sh 'printf \"{first}\\n{second}\\n\"' "
+                  + "} } } }"
+
+              try
+                  match FogellSide.runWithCredentials credentials [] root "job" source with
+                  | Error why -> failtestf "run-scoped masking pipeline refused outside execution: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the post-binding shell completes"
+                      Expect.contains trace.Output "****" "the separator-split registered form is redacted"
+                      Expect.isFalse
+                          (trace.Output |> List.exists (fun line -> line.Contains first || line.Contains second))
+                          "neither physical fragment is published after lexical credential cleanup"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "FG-236 run-wide raw masking keeps the canonical token idempotent" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg236-run-token-" + Guid.NewGuid().ToString("N"))
+
+              let credentials = Map.ofList [ "live-text", SecretText "*" ]
+              let source =
+                  "pipeline { agent any stages { stage('mask') { steps { "
+                  + "withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN')]) { sh 'true' }; "
+                  + "sh 'printf \"*\\n\"' } } } }"
+
+              try
+                  match FogellSide.runWithCredentials credentials [] root "job" source with
+                  | Error why -> failtestf "canonical-token pipeline refused outside execution: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the post-binding shell completes"
+                      Expect.contains trace.Output "****" "the one-character credential is redacted"
+                      Expect.isFalse
+                          (trace.Output |> List.exists (fun line -> line.Contains "****************"))
+                          "the walker does not remask the raw matcher's canonical token"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "FG-236 non-shell output retains run-wide masking provenance" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg236-nonshell-mask-" + Guid.NewGuid().ToString("N"))
+
+              let secret = "late-nonshell-secret"
+              let credentials = Map.ofList [ "live-text", SecretText secret ]
+              let source =
+                  "pipeline { agent any stages { stage('mask') { steps { "
+                  + "withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN')]) { sh 'true' }; "
+                  + $"echo '{secret}' }} }} }} }}"
+
+              try
+                  match FogellSide.runWithCredentials credentials [] root "job" source with
+                  | Error why -> failtestf "non-shell run-scoped masking pipeline refused outside execution: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the post-binding echo completes"
+                      Expect.contains trace.Output "****" "the non-shell callback retains the run-wide mask"
+                      Expect.isFalse
+                          (trace.Output |> List.exists (fun line -> line.Contains secret))
+                          "the post-scope credential is not published by echo"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "FG-236 a running shell enrolls a credential bound later by a sibling" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg236-live-mask-" + Guid.NewGuid().ToString("N"))
+
+              let secret = String.replicate 10 "Z9y8X7w6V"
+              let encoded = Convert.ToBase64String(Text.Encoding.UTF8.GetBytes secret)
+              let first, second = encoded.Substring(0, 76), encoded.Substring 76
+              let credentials = Map.ofList [ "live-text", SecretText secret ]
+
+              let source =
+                  "pipeline { agent any stages { stage('fanout') { parallel { "
+                  + "stage('emitter') { steps { sh 'touch shell-started; while [ ! -f bound-ready ]; do sleep 0.01; done; "
+                  + $"printf \"{first}\\n{second}\\n\"' }} }} "
+                  + "stage('binder') { steps { sh 'while [ ! -f shell-started ]; do sleep 0.01; done'; "
+                  + "withCredentials([string(credentialsId: 'live-text', variable: 'TOKEN')]) { sh 'touch bound-ready; sleep 0.2' } "
+                  + "} } } } } }"
+
+              try
+                  match FogellSide.runWithCredentials credentials [] root "job" source with
+                  | Error why -> failtestf "live run-scoped masking pipeline refused outside execution: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "both synchronized branches complete"
+                      Expect.contains trace.Output "****" "the late-registered split form is redacted"
+                      Expect.isFalse
+                          (trace.Output |> List.exists (fun line -> line.Contains first || line.Contains second))
+                          "the already-running shell publishes neither physical fragment"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
           } ]
 
 /// FG-044b(c). A suffix-shaped nested credential key is an unsupported request,
@@ -9467,10 +10364,9 @@ let credentialKeyBoundaryRefusal =
                     "the ordinary successor ran")
           } ]
 
-/// FG-235. Progressive process output is line-framed before the masker sees it,
-/// so CR/LF-bearing literal credentials must be refused before any sibling is
-/// materialized. Raw-stream masking is the separate compatibility-restoration
-/// boundary; this slice proves the current refusal is atomic and non-secret.
+/// FG-235. FG-236 protects single-line forms across output-inserted separators;
+/// selected credentials which own CR/LF remain outside that raw-matcher grammar.
+/// This slice proves the refusal is atomic and non-secret.
 let credentialLineBreakRefusal =
     let credentials =
         Map.ofList
@@ -9546,7 +10442,7 @@ let credentialLineBreakRefusal =
 
               for label, id, field, unsafe, secretFragments in cases do
                   let expected =
-                      $"ERROR: {Secrets.UnsupportedMultilineCredentialCode}: credential '{id}' {field} contains a line break that progressive masking cannot safely protect; refusing to bind credentials"
+                      $"ERROR: {Secrets.UnsupportedMultilineCredentialCode}: credential '{id}' {field} contains a line break that raw-output redaction cannot register safely; refusing to bind credentials"
 
                   Expect.equal
                       (WalkerOrchestration.credentialLineBreakRefusalErrors

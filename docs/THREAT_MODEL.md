@@ -235,8 +235,10 @@ broader than mode 0600, restore exact owner read/write through the open descript
 before writing any secret byte even under a restrictive umask, scope environment
 bindings, and attempt best-effort revocation on lexical exit including catchable
 host failures. They mask registered text literal/case-folded/base64 forms plus
-an unbroken exact base64 form of binary file credentials at least eight bytes
-long on streaming and buffered output, and warn on detectable text
+the exact base64 form of binary file credentials at least eight bytes long on
+streaming and buffered output. A registered single-line form remains one match
+when output inserts one CR, LF, or CRLF separator between its characters. They
+also warn on detectable text
 reverse/hex/char-split forms plus binary-file hex when that length floor also
 contains at least four distinct byte values
 (`src/Fogell.Execution/Secrets.fs` and
@@ -250,16 +252,74 @@ username, password, or valid-UTF-8 file credential containing CR or LF with
 `unsupported_multiline_credential`, before any sibling binding or filesystem
 effect. Unused store values and opaque invalid-UTF-8 binary files remain
 admitted. This is fail-closed confidentiality, not multiline-credential
-compatibility; restoring the latter requires raw stdout/stderr redaction before
-physical-line parsing.
+compatibility. FG-236's raw matcher deliberately accepts only single-line
+registered forms; a credential which owns CR/LF remains refused rather than
+silently widening that grammar.
 
-FG-235 does not close separator-inserting transformations of otherwise
-single-line registered forms. FG-236 records the reproduced cases: GNU
-`base64` wraps the 120-character encoding of both a long text credential and a
-binary file credential at column 76, and both physical fragments pass
-line-local masking and detection silently while `base64 -w0` masks the same
-registered form. Closing that broader class requires the same raw-stream
-boundary; until then, only unbroken exact forms carry the masking claim above.
+FG-236 closes separator-inserting transformations of otherwise single-line
+registered forms. Each decoded stdout/stderr stream owns an independent matcher
+before physical-line framing, backed by the live monotonic inventory of every
+credential registered in the run rather than only the step's lexical
+environment or a shell-start snapshot. The matcher refreshes that inventory
+before each decoded chunk and seeds newly learned forms from its unpublished
+suffix; bytes already published are not recalled. The raw matcher shares the
+walker's credential lock from inventory sampling through separator-aware
+matching, framing, and synchronous trace admission; a registration therefore
+cannot land inside that interval. External callback transport drains
+independently outside that lock, preserving progressive output before a future
+credential exists. Registration atomically bars every open stream and retains
+already committed provenance as left-context; subsequent fragments stay held
+through true EOF. A separator-aware pass then remasks both the callback queue
+and the stored terminal trace without replaying committed bytes. Provenance-bearing lines are
+grouped by raw stream even across interleaved global output; registration
+between two physical fragments therefore cannot publish either fragment, and
+remapped results merge back by monotonic completion order. ProcessGroup mints distinct stdout/stderr admission
+lifecycles, so separate pipes and parallel shells cannot compose a credential.
+A missing EOF fails closed at terminal flush. A sticky external publisher
+failure no longer stops raw reader admission and is surfaced by terminal
+`FlushOutput`. The walker also
+rechecks already-redacted lines under the same lock at ordinary publication,
+and a separator-aware final-inventory pass covers public `StepResult` buffers.
+Per-character provenance marks only canonical tokens actually emitted by the
+raw matcher as opaque boundaries. Literal `****` from a process remains raw and
+can therefore match a credential learned before publication; genuine tokens
+cannot be consumed by a later form, and adjacent-token cardinality is retained.
+One CR, LF, or CRLF may appear
+between adjacent form characters; two line endings terminate adjacency. That grammar bounds
+pending state to three times the longest registered form without masking common
+fragments independently. Proven-safe front characters publish immediately
+rather than waiting for an unrelated longest form. A true EOF flushes incomplete near-matches unchanged;
+an exceptional or bounded reader cutoff does not publish ambiguous pending
+text. Both queued and synchronous provenance callbacks require their process
+reader to reach EOF; neither can turn bounded truncation into success.
+`returnStdout` retains its raw pipeline value while its public result copy
+uses the same redaction policy. The private process-group bootstrap frame is
+parsed before stderr redaction so a credential cannot erase containment
+identity. Raw-matcher output follows an idempotent walker publication path, so
+the canonical token is not itself remasked while unregistered-transform checks
+remain active; non-shell output retains the ordinary run-wide literal mask.
+Executor-generated warnings retain that ordinary provenance as well, and stay
+buffered when no ordinary callback exists. ProcessGroup-generated timeout and
+cancellation narration also uses the ordinary path. A historical direct
+Executor caller supplying only `OnLine` receives those generated lines through
+a live-inventory mask; a caller supplying only the provenance-aware raw callback
+gets an explicit no-op generated sink rather than the ProcessGroup compatibility
+fallback. The combined masking-form inventory is deduplicated once before
+descending-length ordering.
+`scripts/prove-fg236-stream-masking.sh` kills thirty semantic mutants covering
+EOF, grammar, progressive delivery, wiring, control framing, bounded-reader
+callback enforcement, bounded capture,
+generated-warning and generated-termination provenance, missing warning sinks,
+buffered-warning masking,
+the historical direct generated callback, live run-wide enrollment, shared
+registration/matcher synchronization, registration/trace-admission,
+timestamp-prefix screening, open-stream publication, and pending-transport races,
+interleaved-stream continuity, stream identity,
+publication EOF, failed-reader draining, admission-factory wiring, independent
+raw-pipe lifecycles, returned-buffer races,
+exact token provenance versus raw four-star inference, adjacent-token
+cardinality, per-match source provenance, canonical-token boundaries, and
+publication idempotence.
 
 File-credential byte-derived forms are immutable strings prepared lazily on the
 first requested binding from an owned byte snapshot and shared by its repeated

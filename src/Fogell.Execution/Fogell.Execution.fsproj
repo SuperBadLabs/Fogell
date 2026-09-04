@@ -9,6 +9,7 @@
   <ItemGroup>
     <Compile Include="Native.fs" />
     <Compile Include="Workspace.fs" />
+    <Compile Include="OutputRedaction.fs" />
     <Compile Include="ProcessGroup.fs" />
     <Compile Include="Secrets.fs" />
     <Compile Include="Credentials.fs" />

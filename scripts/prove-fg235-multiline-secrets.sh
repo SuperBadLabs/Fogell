@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# FG-235 — prove CR/LF-bearing literal credentials cannot cross the
-# line-framed progressive-output boundary.
+# FG-235 — prove CR/LF-bearing credential values remain refused outside
+# FG-236's single-line raw-output matching grammar.
 set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)

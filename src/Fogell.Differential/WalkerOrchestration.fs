@@ -227,7 +227,7 @@ module WalkerOrchestration =
         (requests: CredentialRequest list)
         =
         let refusal id field =
-            $"ERROR: {Secrets.UnsupportedMultilineCredentialCode}: credential '{id}' {field} contains a line break that progressive masking cannot safely protect; refusing to bind credentials"
+            $"ERROR: {Secrets.UnsupportedMultilineCredentialCode}: credential '{id}' {field} contains a line break that raw-output redaction cannot register safely; refusing to bind credentials"
 
         [ for request in requests do
               match request with
