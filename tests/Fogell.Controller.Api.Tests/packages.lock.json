@@ -77,6 +77,7 @@
         "dependencies": {
           "FSharp.Core": "[10.1.301, )",
           "Fogell.Controller.Api": "[1.0.0, )",
+          "Fogell.Domain": "[1.0.0, )",
           "Fogell.Journal": "[1.0.0, )",
           "Fogell.Store": "[1.0.0, )"
         }

@@ -69,9 +69,13 @@ fences.
 ### 1. API client to controller
 
 **Implemented in this tree.** `Fogell.Controller.Host` is a runnable single-node
-host. Startup requires an API token file containing at least 32 non-padded
-UTF-16 code units; authorization then independently requires at least 32 UTF-8
-bytes. The host accepts only HTTPS or loopback HTTP. Every build route
+host. On Linux, startup opens the API token once with no-follow, nonblocking and
+close-on-exec flags; requires the opened descriptor to identify a service-owned
+regular file at exact mode `0400` or `0600`; accepts no more than 4096 bytes,
+and retains one extra byte while reading so post-validation growth is refused.
+The content must contain at least 32 non-padded UTF-16 code units; authorization
+then independently requires at least 32 UTF-8 bytes. The host accepts only HTTPS
+or loopback HTTP. Every build route
 authenticates before parsing path data, and token comparison is fixed-time
 ([`Authorization.fs`](../src/Fogell.Controller.Api/Authorization.fs),
 [`Config.fs`](../src/Fogell.Controller.Host/Config.fs); FG-060/FG-224).
@@ -443,7 +447,7 @@ recorded inputs and oracle.
 | Forge an approval by writing Run.Host inbox files | Fresh controller admission refuses unbounded `input`; the filesystem inbox is standalone trusted orchestration only. | Build an authenticated controller approval broker before exposing approvals. |
 | Replay or substitute an external-effect payload | The Store ledger rejects digest substitution and lists stale prepared/applied effects; no controller-managed producer or scheduler consumes it. Arbitrary shell effects are outside the modelled ledger. | Close FG-026b for the bounded producer registry: require connector integration, scheduled classification, and operator surfacing before claiming modelled-effect safety. |
 | Fetch a changed or compromised dependency | Changed graph/content is rejected against locks; correctly locked malicious content is still accepted. | Add trusted-feed, advisory/SBOM/signature and reproducibility controls as separate evidence. |
-| Replace or loosen the API token file | Startup reads one absolute file but does not itself reject symlinks, permissive mode, or ownership drift after read. | Deploy a service-owned regular non-symlink file at 0400/0600 and control rotation/restart. |
+| Replace or loosen the API token file | Startup binds one final-component-no-follow descriptor, requires regular type, service uid, exact 0400/0600 mode and a 4096-byte ceiling, then reads from that descriptor. A same-uid writer can still modify the opened inode in place, and ancestor links are not independently refused. | Separate controller and workload identities; protect the path's directory ancestry; control rotation/restart. |
 
 ## Deployment requirements until the gaps close
 
@@ -454,7 +458,7 @@ recorded inputs and oracle.
    operational hygiene, not that isolation boundary.
 2. Use HTTPS for non-loopback listeners. Treat the bearer as global operator
    authority and store it in a service-owned regular non-symlink file at mode
-   0400/0600; the host does not enforce those file metadata properties, and the
+   0400/0600; the host enforces those final-object metadata properties, but the
    mode protects only other UIDs—not a workload sharing the service owner.
 3. Keep runtime and maintenance database identities separate. The runtime role
    must remain `NOSUPERUSER NOBYPASSRLS`; keep the maintenance credential out of

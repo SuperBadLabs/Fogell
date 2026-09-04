@@ -40,7 +40,7 @@ query, or cleanup uncertainty refuses startup without applying migrations.
 ```text
 FOGELL_DATABASE_URL                 runtime Npgsql connection string
 FOGELL_MAINTENANCE_DATABASE_URL     distinct migration connection string
-FOGELL_API_TOKEN_FILE               absolute/readable token file, >=32 characters
+FOGELL_API_TOKEN_FILE               absolute service-owned regular file, mode 0400/0600, >=32 decoded UTF-16 code units, <=4096 bytes
 FOGELL_LISTEN_URL                   HTTPS, or loopback HTTP for local operation
 FOGELL_STATE_ROOT                   absolute durable controller-state directory, creatable/writable by the service identity
 FOGELL_RUN_HOST_PATH                built Fogell.Run.Host executable by the effective service identity
@@ -72,14 +72,18 @@ round trip. Startup rejects an unsafe pair and reports the maximum poll interval
 for the configured lease.
 
 Keep the token file and both database strings out of command arguments and logs.
-Startup requires an absolute path that names an existing token file and attempts
-to read the entire file. It removes only trailing CR/LF characters, then requires
-at least 32 remaining characters and rejects any leading or trailing whitespace.
-A read failure aborts startup but is not yet normalized into the named
-configuration refusals. Startup also does not reject a symlink or a permissive
-file mode. The operator must provide a service-owned regular, non-symlink file
-with mode `0400` or `0600`. On Linux with `python3`, check that deployment
-obligation holds under the service identity before starting:
+Startup opens the token once with no-follow and nonblocking Linux flags, then
+requires the opened object to be a regular file owned by the effective service
+identity with exact mode `0400` or `0600` and at most 4096 bytes. Metadata and
+token bytes come from that same descriptor, so replacing the pathname after it
+opens cannot substitute another file. Startup removes only trailing CR/LF
+characters, then requires at least 32 remaining characters and rejects any
+leading or trailing whitespace. Every open, metadata, size, decode, or content
+failure aborts startup with a named configuration refusal.
+
+The process enforces the same final-component metadata rules as the shell checks
+below. This deliberately narrower portable-client check remains a useful
+deployment preflight before starting:
 
 ```bash
 if [[ ! -f "$FOGELL_API_TOKEN_FILE" || -L "$FOGELL_API_TOKEN_FILE" ]]; then
@@ -105,9 +109,9 @@ import sys
 
 raw = pathlib.Path(sys.argv[1]).read_bytes()
 token = raw.rstrip(b"\r\n")
-if len(token) < 32 or any(byte < 0x21 or byte > 0x7e for byte in token):
+if len(raw) > 4096 or len(token) < 32 or any(byte < 0x21 or byte > 0x7e for byte in token):
     raise SystemExit(
-        "token must be one visible-ASCII line of at least 32 characters"
+        "token must be one visible-ASCII line of at least 32 characters in a file no larger than 4096 bytes"
     )
 PY
 ```
