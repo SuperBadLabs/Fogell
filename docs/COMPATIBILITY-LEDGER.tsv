@@ -40,7 +40,7 @@ ahmedmourshedi_Automation-Testing-of-ECommerce-WebsiteUsingSelenium.Jenkinsfile	
 aiwithqasim_Capstone-Project-Devops.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 alanmacgowan_WebApplication.Jenkinsfile	3	malformed_syntax	malformed_syntax a `input` section that does not parse is refused, never consumed opaquely @104:12
 alexguzun_jenkins-pipeline-gitflow-maven.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-allcloud-io_jenkins-pipeline-tutorial.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
+allcloud-io_jenkins-pipeline-tutorial.Jenkinsfile	1	-	receipt:allcloud-io_jenkins-pipeline-tutorial
 arun-gupta_docker-jenkins-pipeline.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 aws-samples_ecs-bg-external-controller.Jenkinsfile	3	malformed_syntax	malformed_syntax a `input` section that does not parse is refused, never consumed opaquely @201:19
 awslabs_aws-codepipeline-plugin-for-jenkins.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
@@ -80,7 +80,7 @@ gdemengin_pipeline-logparser.Jenkinsfile	3	malformed_syntax	malformed_syntax Exp
 gfkse_jenkins-shared-library.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 griddynamics-archive_mpl.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 hakdogan_jenkins-pipeline.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-hamitmizrak_Devops_Jenkinsfile.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
+hamitmizrak_Devops_Jenkinsfile.Jenkinsfile	1	-	receipt:hamitmizrak_Devops_Jenkinsfile
 holdennguyen_cicd-pipeline-java-webapp.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 hungbang_spring-boot-aws-docdb-example.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 ishrivatsa_terraform-vault-jenkins.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
