@@ -72,7 +72,8 @@ This receipt indexes the detailed
   receipts.
 - FG-026b is the sole open P0. Re-derive the board and choose deliberately.
 - Open PR #374 is currently `DIRTY` / `CONFLICTING`; its old green checks do
-  not authorize merge. Current `main` already contains FG-237 and FG-238 rows.
+  not authorize merge. Current `main` already contains FG-237 and FG-238 rows
+  (corrected 2026-09-04: it did not; see the handoff's correction note).
 - Preserve raw-stream-before-framing redaction, independent stream identities,
   one-separator adjacency, live registration inventory, bounded pending state,
   protected-token provenance, timestamp-prefix screening, and true-EOF

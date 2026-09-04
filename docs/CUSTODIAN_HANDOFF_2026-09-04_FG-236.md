@@ -234,6 +234,11 @@ FG-238. Do not merge or mechanically rebase #374: first compare its intended
 facts with current tickets and board, then close it as superseded or reconstruct
 only genuinely missing evidence on a fresh branch.
 
+> Correction (2026-09-04, QA session): at `ac3e934e` the board carried NO
+> FG-237 or FG-238 row and both ticket status lines still predated the #364
+> merge; the sentence above was wrong. #374's facts were reconstructed on a
+> fresh branch and #374 closed as superseded.
+
 Read the concurrently merged
 [`WIZARD_HANDOFF_2026-09-04.md`](WIZARD_HANDOFF_2026-09-04.md) and
 [`WIZARD_RECEIPT_2026-09-04.md`](WIZARD_RECEIPT_2026-09-04.md) for the
