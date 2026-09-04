@@ -392,8 +392,9 @@ let progressiveOutputPublication =
                   "true stream EOF resolves a credential whose binding landed between fragments"
           }
 
-          test "FG-236 an open stream withholds fragments until true EOF" {
+          test "FG-236 a binding bars an open stream until true EOF" {
               use fragmentPublished = new Threading.ManualResetEventSlim(false)
+              use secondFragmentPublished = new Threading.ManualResetEventSlim(false)
               let published = ResizeArray<string>()
 
               let ctx =
@@ -402,22 +403,29 @@ let progressiveOutputPublication =
                       false
                       (Some(fun line ->
                           published.Add line
-                          fragmentPublished.Set()))
+                          if line = "Sec" then fragmentPublished.Set()
+                          if line = "ret" then secondFragmentPublished.Set()))
 
               let stream = ctx.CreateRedactedAdmission()
 
               stream.Admit (RedactedText.Raw "Sec")
-              Expect.isFalse
+              Expect.isTrue
                   (fragmentPublished.Wait 2_000)
-                  "an open stream cannot publish a fragment before future bindings are known"
+                  "output remains progressive before a future credential exists"
+              Expect.equal (List.ofSeq published) [ "Sec" ] "the pre-binding fragment publishes once"
 
               ctx.BindSecrets [ Secrets.inMemoryTextBinding "LATE" "Secret" ]
               stream.Admit (RedactedText.Raw "ret")
-              Expect.isEmpty published "the second fragment remains behind the same EOF barrier"
+              Expect.isFalse
+                  (secondFragmentPublished.Wait 2_000)
+                  "a binding bars every open stream before a completing fragment can publish"
 
               stream.Complete()
               ctx.FlushOutput()
-              Expect.equal (List.ofSeq published) [ "****" ] "EOF publishes only the remasked form"
+              Expect.equal
+                  (List.ofSeq published)
+                  [ "Sec"; "****" ]
+                  "EOF publishes a mask without replaying the committed left-context"
               Expect.equal (ctx.Output()) [ "****" ] "the stored trace cannot retain raw fragments"
 
               let terminalOnly = WalkerCtx.create 0L false None

@@ -266,10 +266,11 @@ suffix; bytes already published are not recalled. The raw matcher shares the
 walker's credential lock from inventory sampling through separator-aware
 matching, framing, and synchronous trace admission; a registration therefore
 cannot land inside that interval. External callback transport drains
-independently outside that lock. Every raw stream enters a publication barrier
-when its lifecycle is created, since a future binding can complete a credential
-begun in its first fragment. At true EOF, a separator-aware pass remasks both
-the callback queue and the stored terminal trace. Provenance-bearing lines are
+independently outside that lock, preserving progressive output before a future
+credential exists. Registration atomically bars every open stream and retains
+already committed provenance as left-context; subsequent fragments stay held
+through true EOF. A separator-aware pass then remasks both the callback queue
+and the stored terminal trace without replaying committed bytes. Provenance-bearing lines are
 grouped by raw stream even across interleaved global output; registration
 between two physical fragments therefore cannot publish either fragment, and
 remapped results merge back by monotonic completion order. ProcessGroup mints distinct stdout/stderr admission

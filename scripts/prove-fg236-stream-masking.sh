@@ -237,14 +237,14 @@ sed -i 's/^                        || (List\.isEmpty leaks && List\.isEmpty (Sec
 kill_differential_mutant timestamp-prefix 'a credential-shaped timestamp cannot cross progressive publication'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 
-# A future sibling binding can complete a credential begun in any fragment of
-# a still-open stream. Publishing that fragment before true EOF makes the leak
-# irreversible even if later queued fragments are remasked correctly.
-target='                    lock publicationLock (fun () -> barrierStreams.Add stream |> ignore))'
+# A future sibling binding can complete a credential begun in an already
+# committed fragment. The binding must atomically bar every open stream so the
+# completing suffix cannot publish before history-aware EOF remasking.
+target='                for stream in openStreams do'
 [[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
   || { echo 'FG-236 proof: open-stream-barrier mutation target is not unique' >&2; exit 1; }
-sed -i 's/^                    lock publicationLock (fun () -> barrierStreams\.Add stream |> ignore))$/                    lock publicationLock (fun () -> ()))/' "$walker_ctx"
-kill_differential_mutant open-stream-barrier 'an open stream cannot publish a fragment before future bindings are known'
+sed -i 's/^                for stream in openStreams do$/                for stream in Seq.empty<PublicationStream> do/' "$walker_ctx"
+kill_differential_mutant open-stream-barrier 'a binding bars every open stream before a completing fragment can publish'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 
 # A slow earlier callback leaves later provenance-bearing lines pending. A
@@ -266,17 +266,17 @@ sed -i 's/^                                      RedactedStream = redactedStream
 kill_differential_mutant stream-continuity 'pending interleaved lines from one shell stream retain adjacency'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 
-# Conversely, collapsing every admission lifecycle onto one identity lets
-# separate process streams compose an invented credential. Reuse the actual
-# lifecycle object so the mutant does not manufacture an unrelated EOF fault.
+# Conversely, collapsing every admission record onto one identity lets separate
+# process streams compose an invented credential. Keep the real lifecycle
+# objects distinct so the mutant changes only reassembly identity.
 declaration='        let barrierStreams = System.Collections.Generic.HashSet<PublicationStream>(HashIdentity.Reference)'
 [[ $(rg -F -c "$declaration" "$walker_ctx") == 1 ]] \
   || { echo 'FG-236 proof: stream-identity declaration target is not unique' >&2; exit 1; }
 sed -i "/^        let barrierStreams =/a\\        let collapsedPublicationStream = PublicationStream()" "$walker_ctx"
-target='                let stream = PublicationStream()'
+target='                                      RedactedStream = redactedStream }'
 [[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
-  || { echo 'FG-236 proof: stream-identity factory target is not unique' >&2; exit 1; }
-sed -i 's/^                let stream = PublicationStream()$/                let stream = collapsedPublicationStream/' "$walker_ctx"
+  || { echo 'FG-236 proof: stream-identity record target is not unique' >&2; exit 1; }
+sed -i 's/^                                      RedactedStream = redactedStream }$/                                      RedactedStream = redactedStream |> Option.map (fun _ -> collapsedPublicationStream) }/' "$walker_ctx"
 kill_differential_mutant stream-identity 'pending lines from separate shell streams never compose one credential'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 

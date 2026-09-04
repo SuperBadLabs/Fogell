@@ -215,6 +215,10 @@ module WalkerCtx =
         let publications = System.Collections.Generic.Queue<PendingPublication>()
         let deferredPublications = ResizeArray<PendingPublication>()
         let barrierStreams = System.Collections.Generic.HashSet<PublicationStream>(HashIdentity.Reference)
+        let openStreams = System.Collections.Generic.HashSet<PublicationStream>(HashIdentity.Reference)
+        let streamHistory =
+            System.Collections.Generic.Dictionary<PublicationStream, ResizeArray<PendingPublication>>(HashIdentity.Reference)
+        let committedPublicationOrders = System.Collections.Generic.HashSet<int64>()
         let mutable nextPublicationOrder = 0L
         let mutable publicationActive = false
         let mutable publicationFailure: OutputPublicationException option = None
@@ -230,7 +234,12 @@ module WalkerCtx =
                             System.Threading.Monitor.PulseAll publicationLock
                             None
                         else
-                            Some(publications.Dequeue()))
+                            let item = publications.Dequeue()
+                            // Once dequeued, the external call is irrevocably in
+                            // flight. A later credential may use this item as
+                            // left-context, but must never publish it again.
+                            committedPublicationOrders.Add item.Order |> ignore
+                            Some item)
 
                 match next with
                 | None -> draining <- false
@@ -353,7 +362,14 @@ module WalkerCtx =
                         streamGroups.Add(stream, group)
 
             for group in streamGroups.Values do
-                let source = group.ToArray()
+                let stream = group[0].RedactedStream.Value
+                let source =
+                    match streamHistory.TryGetValue stream with
+                    | true, history -> history.ToArray()
+                    // A completed stream can still own output queued behind an
+                    // earlier blocked callback. Its pending group is complete
+                    // history for the only bytes which remain publishable.
+                    | false, _ -> group.ToArray()
                 // An already unsafe fragment is terminal refusal evidence.
                 // Preserve it verbatim instead of allowing line collapse to
                 // erase that evidence; the whole stream remains unpublished.
@@ -372,36 +388,30 @@ module WalkerCtx =
                         suppressedOutputIndexes.Remove item.OutputIndex |> ignore
 
                         remasked.Add
-                            { item with
-                                Value = value }
+                            { item with Value = value }
 
             if Option.isSome onOutput then
                 remasked
+                |> Seq.filter (fun item -> not (committedPublicationOrders.Contains item.Order))
                 |> Seq.sortBy _.Order
                 |> Seq.iter publications.Enqueue
 
         let remaskPendingPublications secrets =
             lock publicationLock (fun () ->
+                // Binding is the linearization point: bytes committed before
+                // it were not yet a credential, while every still-open stream
+                // is held from here through true EOF. Its retained history
+                // supplies left-context without replaying committed bytes.
+                for stream in openStreams do
+                    barrierStreams.Add stream |> ignore
+
                 let queued = publications.ToArray()
                 publications.Clear()
 
                 if barrierStreams.Count > 0 then
                     deferredPublications.AddRange queued
-
-                    for item in deferredPublications do
-                        match item.RedactedStream with
-                        | Some stream when not stream.Completed -> barrierStreams.Add stream |> ignore
-                        | _ -> ()
                 else
-                    for item in queued do
-                        match item.RedactedStream with
-                        | Some stream when not stream.Completed -> barrierStreams.Add stream |> ignore
-                        | _ -> ()
-
-                    if barrierStreams.Count = 0 then
-                        remaskIntoPublicationQueue secrets queued
-                    else
-                        deferredPublications.AddRange queued
+                    remaskIntoPublicationQueue secrets queued
             )
 
         let completePublicationStream (stream: PublicationStream) =
@@ -411,12 +421,19 @@ module WalkerCtx =
 
                     lock publicationLock (fun () ->
                         stream.Completed <- true
+                        openStreams.Remove stream |> ignore
                         barrierStreams.Remove stream |> ignore
 
                         if barrierStreams.Count = 0 && deferredPublications.Count > 0 then
                             let pending = deferredPublications.ToArray()
                             deferredPublications.Clear()
                             remaskIntoPublicationQueue secrets pending
+
+                        if barrierStreams.Count = 0 then
+                            streamHistory
+                            |> Seq.choose (fun pair -> if pair.Key.Completed then Some pair.Key else None)
+                            |> Seq.toArray
+                            |> Array.iter (fun completed -> streamHistory.Remove completed |> ignore)
 
                         match publicationFailure with
                         | Some _ -> false
@@ -492,17 +509,28 @@ module WalkerCtx =
                                       Publishable = safeToPublish
                                       RedactedStream = redactedStream }
 
-                                if barrierStreams.Count > 0 then
+                                redactedStream
+                                |> Option.iter (fun stream -> streamHistory[stream].Add item)
+
+                                let requiredForBarrier =
+                                    redactedStream
+                                    |> Option.exists barrierStreams.Contains
+
+                                let eligibleForTransport = safeToPublish && Option.isSome onOutput
+
+                                if barrierStreams.Count > 0 && (requiredForBarrier || eligibleForTransport) then
                                     deferredPublications.Add item
                                     false
-                                else
+                                elif eligibleForTransport then
                                     publications.Enqueue item
 
                                     if publicationActive then
                                         false
                                     else
                                         publicationActive <- true
-                                        true)
+                                        true
+                                else
+                                    false)
                     else
                         false)
 
@@ -540,7 +568,9 @@ module WalkerCtx =
                 let stream = PublicationStream()
 
                 lock outputLock (fun () ->
-                    lock publicationLock (fun () -> barrierStreams.Add stream |> ignore))
+                    lock publicationLock (fun () ->
+                        openStreams.Add stream |> ignore
+                        streamHistory.Add(stream, ResizeArray())))
 
                 { Admit =
                     fun (line: RedactedText) ->
