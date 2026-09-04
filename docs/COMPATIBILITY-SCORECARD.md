@@ -13,9 +13,9 @@ counterexample four paragraphs down.
 
 | Tier | Meaning | Count |
 |---|---|---|
-| 1 | proven compatible — a differential receipt names this file | 5 of 228 |
+| 1 | proven compatible — a differential receipt names this file | 9 of 228 |
 | 2 | ADR tier 2 (parses **and executes**) | **NOT ASSESSED** — corpus is never executed |
-| — | admitted (parses only; **not an ADR tier**) | 195 of 228 |
+| — | admitted (parses only; **not an ADR tier**) | 191 of 228 |
 | 3 | rejected — named error code and source position | 28 of 228 |
 
 **The admitted row is not ADR tier 2.** The ADR requires parsing AND executing; this scorer only parses, because corpus files are untrusted third-party CI code and are never run here. Labelling them tier 2 would assert an execution result nobody measured, so ADR tier 2 is published as NOT ASSESSED.
@@ -38,6 +38,6 @@ What verification does NOT cover: whether each case on disk still matches the di
 
 | Expected | Present | Proven |
 |---|---|---|
-| 301 | 301 | 301 of 301 |
+| 302 | 302 | 302 of 302 |
 
-**These two sections do not share a denominator.** Corpus files PROVEN by a receipt: **5** of 228. Those files appear as tier 1 in the corpus table above and are the only ones whose parity is proven. Reading the receipt count against the corpus count would produce exactly the false ratio ADR 0001 was written to prevent — the prior engine's 146 IRs against 5 proven files, which a single percentage would have reported as 64%.
+**These two sections do not share a denominator.** Corpus files PROVEN by a receipt: **9** of 228. Those files appear as tier 1 in the corpus table above and are the only ones whose parity is proven. Reading the receipt count against the corpus count would produce exactly the false ratio ADR 0001 was written to prevent — the prior engine's 146 IRs against 5 proven files, which a single percentage would have reported as 64%.

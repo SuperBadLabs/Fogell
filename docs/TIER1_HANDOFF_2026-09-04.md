@@ -207,3 +207,53 @@ FG-133 receipts landed under this session).
    `scripts/run-corpus-differential.sh <corpus file>`.
 3. Before the first push of anything that claims isolation, give the
    verifier the full-surface brief. One round, not nine.
+
+## Later the same day — the FG-245 tenure (17:00Z onward)
+
+Read with the sections above; this is the addendum, not a replacement.
+
+- **Closed: FG-245.** Four `sh`-bearing corpus files PROVEN tier-1 under the
+  fence as FAILURE receipts on an empty workspace —
+  `sixeyed_jenkins-pipeline-demos`, `llknur_jenkinsfile-pipeline-project`,
+  `linuxacademy_cicd-pipeline-train-schedule-cd` and `-dockerdeploy` (the
+  last two byte-identical). Ledger `tier1=9`, `admitted=191`, `tier3=28`;
+  302 of 302 case receipts. The ticket is
+  [`tickets/FG-245.md`](tickets/FG-245.md).
+- **The opening move above was tried and is closed off.** Both "next in
+  line" scripted files are refused by the walker at 1:1
+  (`no_pipeline_block`): every scripted `node { }` file waits on a scripted
+  walker, not on the fence or a toolchain. The pinned-toolchain move was
+  read, not built: `make`/`mvn` exist on HeMan only, `docker-compose` on
+  neither, and `mvn` prints a wall clock, so it needs a comparison rule
+  before pinning buys anything.
+- **The class that paid instead:** a file whose FIRST shell command fails on
+  the empty workspace, with the failure text emitted by a program both
+  sides already have (coreutils, javac, dash). Read the file, predict the
+  exact failing line, probe the command on both sides in the target
+  locale, allowlist, run the lane. Each receipt proves the walk, the trace,
+  the merged stream, failure propagation and stage skipping — not the
+  intended build. Say so on the allowlist row.
+- **Engine fix on the way:** durable-task 686 executes `script.sh.copy`
+  (JENKINS-70874), so `$0` ends in `.copy`; Fogell ran `script.sh` and the
+  gradlew file diverged on dash's `not found` line. `ProcessGroup.fs` now
+  writes the copy beside the original and runs it; case
+  `sh-script-identity` seals `$0` and its execute bit for a plain and a
+  shebang script, and the original's presence beside the plain one. Any file whose output names `$0`
+  (dash's `can't cd`, `not found`) depended on this.
+- **Lane mechanics learned:** promotion is all-or-nothing on the
+  differential's exit code, so never batch a file you expect to diverge
+  with files you expect to prove — run it alone and read the divergence.
+  A probe case runs through the single-case recipe against luigi without
+  the fence (it only echoes) and its receipt goes to a scratch directory
+  until the case is final: the seal binds the case digest, so a header
+  comment added afterwards means a re-run.
+- **Lab state at this handoff:** `jenkins-lab` up, no fence on either side,
+  lease free, no `fogell_fence_*` table on HeMan; scratch database
+  `fogell-fg245` on port 55446 (remove after the gate).
+- **Next candidates, read this pass:** `ljpengelen_jenkinsfile` (127 lines,
+  `cd back-end && bin/ci` first — dash's `can't cd` now names the same `$0`
+  on both sides; read the whole file before allowlisting);
+  `charlires_golang-docker-jenkins` if `make` is pinned in the container
+  (GNU make's "No rule to make target" is the same text on 4.3 and 4.4 —
+  verify); the scripted walker for `camiloribeiro_cdeasy` and
+  `tomasbjerre` is the largest single unlock but is engine work.

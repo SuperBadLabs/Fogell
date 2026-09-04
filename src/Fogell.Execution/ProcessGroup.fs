@@ -1105,13 +1105,22 @@ module ProcessGroup =
                 // location: executable where builds execute (hardened hosts mount
                 // /tmp noexec) and already excluded from the workspace hash as
                 // scaffolding, so no user-creatable basename is ever excluded.
-                // `script.sh` inside a per-step directory under `@tmp` — the same
-                // OBSERVABLE identity durable-task gives a script (`$0` basename
-                // `script.sh`), so basename-dependent scripts take the same path on
-                // both engines; the random parent keeps parallel steps apart and
-                // `@tmp` keeps it out of the workspace hash.
-                // durable-task's exact layout: <workspace>@tmp/durable-<8hex>/script.sh,
-                // rooted at the WORKSPACE even inside dir() — the full $0 is observable
+                // `script.sh` inside a per-step directory under `@tmp`, then a COPY
+                // beside it, and the COPY is what runs — the same OBSERVABLE identity
+                // durable-task gives a script: it writes `script.sh`, does
+                // `cp script.sh script.sh.copy` and executes the copy (JENKINS-70874:
+                // a writable handle to the original, inherited by a fork, raised
+                // "Text file busy"), so `$0` ends in `script.sh.copy`, the original
+                // stays beside it, and the copy carries the original's mode. MEASURED
+                // on the pinned lab (durable-task 686, 2026-09-04, receipt
+                // `sh-script-identity`); until then this ran `script.sh` itself, and
+                // the first corpus file whose output names `$0` (dash's `not found`
+                // line in `linuxacademy_cicd-pipeline-train-schedule-cd`) diverged on
+                // exactly that basename (FG-245). The random parent keeps parallel
+                // steps apart and `@tmp` keeps both files out of the workspace hash.
+                // durable-task's exact layout: <workspace>@tmp/durable-<8hex>/script.sh
+                // and script.sh.copy, rooted at the WORKSPACE even inside dir() — the
+                // full $0 is observable
                 let root =
                     let r = defaultArg request.WorkspaceRoot request.WorkingDirectory
                     // trim only REDUNDANT separators: "/" must stay the filesystem
@@ -1133,14 +1142,23 @@ module ProcessGroup =
                     else
                         IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite
 
-                try
-                    use stream = IO.File.Open(f, IO.FileStreamOptions(Mode = IO.FileMode.CreateNew, Access = IO.FileAccess.Write, UnixCreateMode = mode))
+                // Both files are created owner-only from the first byte with the
+                // same mode; the copy is written from the same text rather than
+                // `cp`'d, which is the same bytes and the same mode without a
+                // window in which the copy exists with a wider one.
+                let writeOwnerOnly (path: string) =
+                    use stream = IO.File.Open(path, IO.FileStreamOptions(Mode = IO.FileMode.CreateNew, Access = IO.FileAccess.Write, UnixCreateMode = mode))
                     use writer = new IO.StreamWriter(stream)
                     writer.Write request.Command
+
+                try
+                    writeOwnerOnly f
+                    writeOwnerOnly (f + ".copy")
                     Some f
                 with e ->
                     // a partial secret-bearing file must not outlive a failed write —
                     // the cleanup disposable is registered only after creation succeeds
+                    (try IO.File.Delete(f + ".copy") with _ -> ())
                     (try IO.File.Delete f with _ -> ())
                     raise e
             else
@@ -1153,6 +1171,7 @@ module ProcessGroup =
 
         let deleteShebang (f: string) =
             try
+                if IO.File.Exists(f + ".copy") then IO.File.Delete(f + ".copy")
                 if IO.File.Exists f then IO.File.Delete f
                 let d = IO.Path.GetDirectoryName f
                 if IO.Directory.Exists d then IO.Directory.Delete(d, false)
@@ -1168,9 +1187,10 @@ module ProcessGroup =
         // Jenkins passes such a variable through to the script untouched, and so
         // does this now.
         // EVERY script materialises to the durable path and runs as durable-task
-        // runs it: a shebang script executes itself, everything else runs under
-        // `sh -xe <path>` — so `$0` is the script path on both engines, not
-        // `/bin/sh` here and `script.sh` there. The path travels positionally.
+        // runs it: the COPY is executed — a shebang script executes itself,
+        // everything else runs under `sh -xe <path>` — so `$0` is the copy's path
+        // on both engines, not `/bin/sh` here and `script.sh.copy` there. The
+        // path travels positionally.
         // FG-174. `2>&1` IS WHY THE TRACE WAS ON STDOUT — not `sh`. This was recorded on
         // the board as "Fogell's `sh -x` writes its trace to stdout", which named the
         // symptom and made the fix sound like it changed shell invocation for every step
@@ -1201,7 +1221,7 @@ module ProcessGroup =
         // These are $1..$4 of the outer waiter, and therefore command/$0/$1/$2
         // of the inner shell launched by setsid.
         psi.ArgumentList.Add "fogell-launcher"
-        psi.ArgumentList.Add(defaultArg shebangFile request.Command)
+        psi.ArgumentList.Add(defaultArg (shebangFile |> Option.map (fun f -> f + ".copy")) request.Command)
         psi.ArgumentList.Add(defaultArg containmentDirectory "")
         // Test-only controller seams. They are read before the child environment
         // is cleared and travel positionally, so a build cannot set them through
