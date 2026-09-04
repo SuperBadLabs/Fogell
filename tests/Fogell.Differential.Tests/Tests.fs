@@ -59,7 +59,7 @@ let progressiveOutputPublication =
                   "no emission is duplicated or lost"
           }
 
-          test "a transformed secret is retained for terminal refusal but never published" {
+          test "FG-236 a transformed secret is retained for terminal refusal but never published" {
               let published = ResizeArray<string>()
               let ctx = WalkerCtx.create 0L false (Some published.Add)
               ctx.BindSecrets [ binding ]
@@ -84,6 +84,18 @@ let progressiveOutputPublication =
                   (rawCtx.Output())
                   [ "eulav-t3rc3s" ]
                   "EOF reframing preserves terminal refusal evidence"
+
+              let protectedPublished = ResizeArray<string>()
+              let protectedCtx = WalkerCtx.create 0L false (Some protectedPublished.Add)
+              protectedCtx.BindSecrets [ Secrets.inMemoryTextBinding "STARS" "****" ]
+              let protectedStream = protectedCtx.CreateRedactedAdmission()
+              protectedStream.Admit ((OutputRedactionPolicy [ "****" ]).MaskRedacted "****")
+              protectedStream.Complete()
+              protectedCtx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq protectedPublished)
+                  [ "****" ]
+                  "a transformed form cannot be manufactured wholly from a protected token"
           }
 
           test "FG-236 redacted publication rechecks credentials bound after the raw snapshot" {
@@ -406,7 +418,7 @@ let progressiveOutputPublication =
 
               let leakedVariables =
                   timestampCtx.OutputWithActiveSecrets()
-                  |> List.collect (fun (line, active, alreadyRedacted, prefix) ->
+                  |> List.collect (fun (line, active, alreadyRedacted, prefix, _) ->
                       if alreadyRedacted then
                           Secrets.detectUnregisteredLeaks active line @ Secrets.detectLeaks active prefix
                       else
@@ -431,8 +443,21 @@ let progressiveOutputPublication =
               let boundaryLine = boundaryCtx.Output() |> List.exactlyOne
               let boundaryPrefix = boundaryLine.Substring(0, boundaryLine.Length - 2)
               Expect.isNonEmpty
-                  (Secrets.detectBoundaryLeaks [ boundary ] boundaryPrefix "ok")
+                  (Secrets.detectBoundaryLeaks [ boundary ] boundaryPrefix (RedactedText.Raw "ok"))
                   "terminal screening sees the same composed-boundary credential"
+
+              let protectedBoundaryPublished = ResizeArray<string>()
+              let protectedBoundaryCtx = WalkerCtx.create 0L false (Some protectedBoundaryPublished.Add)
+              protectedBoundaryCtx.BindSecrets [ Secrets.inMemoryTextBinding "BOUNDARY" "] ****" ]
+              protectedBoundaryCtx.EnableTimestamps()
+              let protectedBoundaryStream = protectedBoundaryCtx.CreateRedactedAdmission()
+              protectedBoundaryStream.Admit ((OutputRedactionPolicy [ "raw-secret" ]).MaskRedacted "raw-secret")
+              protectedBoundaryStream.Complete()
+              protectedBoundaryCtx.FlushOutput()
+              Expect.equal
+                  protectedBoundaryPublished.Count
+                  1
+                  "a boundary match cannot consume characters from a protected token"
           }
 
           test "FG-236 pending stream survives a binding between physical fragments" {
@@ -9841,6 +9866,28 @@ let credentialEchoMasking =
                           why
                           "SECRET LEAKED to build output (variable(s): TOKEN)"
                           "terminal construction refuses the same boundary the progressive callback screens"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "FG-236 terminal boundary screening preserves protected tokens" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg236-protected-boundary-" + Guid.NewGuid().ToString("N"))
+
+              let credentials =
+                  Map.ofList
+                      [ "raw", SecretText "raw-secret"
+                        "boundary", SecretText "] ****" ]
+              let source =
+                  "pipeline { agent any options { timestamps() } stages { stage('mask') { steps { "
+                  + "withCredentials([string(credentialsId: 'raw', variable: 'RAW'), "
+                  + "string(credentialsId: 'boundary', variable: 'BOUNDARY')]) { sh 'printf \"%s\\n\" \"$RAW\"' } "
+                  + "} } } }"
+
+              try
+                  match FogellSide.runWithCredentials credentials [] root "job" source with
+                  | Error why -> failtestf "protected token was misclassified at the timestamp boundary: %s" why
+                  | Ok trace -> Expect.contains trace.Output "****" "the real credential is masked exactly once"
               finally
                   if IO.Directory.Exists root then IO.Directory.Delete(root, true)
           }

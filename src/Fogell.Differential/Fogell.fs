@@ -1493,12 +1493,11 @@ module FogellSide =
             let leakedVars =
                 (runCtx.PublicationLeaks()
                  @ (runCtx.OutputWithActiveSecrets()
-                    |> List.collect (fun (l, active, alreadyRedacted, prefix) ->
+                    |> List.collect (fun (l, active, alreadyRedacted, prefix, value) ->
                         if List.isEmpty active then
                             []
                         elif alreadyRedacted then
-                            let value = l.Substring(prefix.Length)
-                            Secrets.detectUnregisteredLeaks active l
+                            Secrets.detectUnregisteredLeaksRedacted active value
                             @ Secrets.detectLeaks active prefix
                             @ Secrets.detectBoundaryLeaks active prefix value
                         else

@@ -242,12 +242,21 @@ cp "$scratch/walker-ctx.clean" "$walker_ctx"
 # Prefix and value are individually safe but their composition can complete a
 # credential. This check is separate from the prefix-only scan so canonical
 # redaction-token provenance remains opaque.
-target='                            && List.isEmpty (Secrets.detectBoundaryLeaks secrets prefix safe))'
+target='                            && List.isEmpty (Secrets.detectBoundaryLeaks secrets prefix safeValue))'
 [[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
   || { echo 'FG-236 proof: timestamp-boundary mutation target is not unique' >&2; exit 1; }
-sed -i 's/^                            && List\.isEmpty (Secrets\.detectBoundaryLeaks secrets prefix safe))$/                            \&\& true)/' "$walker_ctx"
+sed -i 's/^                            && List\.isEmpty (Secrets\.detectBoundaryLeaks secrets prefix safeValue))$/                            \&\& true)/' "$walker_ctx"
 kill_differential_mutant timestamp-boundary 'a credential composed only across the timestamp/output boundary cannot publish'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
+
+# A rendered canonical token is not raw credential text. Flattening its
+# provenance lets a second credential consume the stars across the prefix join.
+target='                            raw <- not value.TokenCharacters[index - boundary]'
+[[ $(rg -F -c "$target" "$secrets") == 1 ]] \
+  || { echo 'FG-236 proof: timestamp-boundary-provenance mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                            raw <- not value\.TokenCharacters\[index - boundary\]$/                            raw <- true/' "$secrets"
+kill_differential_mutant timestamp-boundary-provenance 'a boundary match cannot consume characters from a protected token'
+cp "$scratch/secrets.clean" "$secrets"
 
 # The terminal trace uses the same composed-boundary rule. Publication refusal
 # alone is insufficient because callback-free runs must also fail closed.
@@ -286,6 +295,16 @@ target='                            Publishable = item.Publishable && List.isEmp
 sed -i 's/^                            Publishable = item\.Publishable && List\.isEmpty leaks }$/                            Publishable = item.Publishable }/' "$walker_ctx"
 kill_differential_mutant pending-leak-screen 'a newly recognized transformed form never leaves the queued boundary'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
+
+# Transformed-form screening must likewise treat matcher tokens as opaque.
+# String-only detection would classify a safely protected `****` credential as
+# its own reversed leak.
+target='                    raw <- not value.TokenCharacters[index]'
+[[ $(rg -F -c "$target" "$secrets") == 1 ]] \
+  || { echo 'FG-236 proof: transformed-token-provenance mutation target is not unique' >&2; exit 1; }
+sed -i 's/^                    raw <- not value\.TokenCharacters\[index\]$/                    raw <- true/' "$secrets"
+kill_differential_mutant transformed-token-provenance 'a transformed form cannot be manufactured wholly from a protected token'
+cp "$scratch/secrets.clean" "$secrets"
 
 # Reassembly follows stream identity across globally interleaved queue entries.
 # Dropping that identity reduces the late pass to isolated physical lines.
@@ -403,4 +422,4 @@ sed -i 's/^                          OnRedactedLine = None$/                    
 sed -i 's/^                          CreateRedactedAdmission = Some runCtx\.CreateRedactedAdmission$/                          CreateRedactedAdmission = None/' "$walker_step"
 kill_differential_mutant idempotence 'canonical-token pipeline refused outside execution'
 
-echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, timestamp-prefix, timestamp-boundary, terminal-timestamp-boundary, open-stream-barrier, pending-publication, pending-leak-screen, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'
+echo 'FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, timestamp-prefix, timestamp-boundary, timestamp-boundary-provenance, terminal-timestamp-boundary, open-stream-barrier, pending-publication, pending-leak-screen, transformed-token-provenance, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed'

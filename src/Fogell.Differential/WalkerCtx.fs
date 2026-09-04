@@ -106,8 +106,9 @@ type WalkerCtx =
       /// Persisted hosts call this before constructing terminal truth.
       FlushOutput: unit -> unit
       /// Locked snapshot pairing each line with the secrets that were already
-      /// bound when it was emitted — the leak scan's exact input.
-      OutputWithActiveSecrets: unit -> (string * SecretBinding list * bool * string) list
+      /// bound when it was emitted, its shell-provenance-bearing value and its
+      /// engine prefix — the leak scan's exact input.
+      OutputWithActiveSecrets: unit -> (string * SecretBinding list * bool * string * RedactedText) list
       /// Transformed evidence discovered while rechecking output which was
       /// queued before a later credential binding. Such output is never
       /// published, but must still make terminal trace construction fail closed.
@@ -321,6 +322,7 @@ module WalkerCtx =
         let publicationLeaks = ResizeArray<Leak>()
         let redactedOutputIndexes = System.Collections.Generic.HashSet<int>()
         let outputPrefixes = ResizeArray<string>()
+        let outputValues = ResizeArray<RedactedText>()
         let suppressedOutputIndexes = System.Collections.Generic.HashSet<int>()
 
         let engineNotes = ResizeArray<string>()
@@ -348,9 +350,9 @@ module WalkerCtx =
             |> ignore
 
         let publicationItemLeaks secrets (item: PendingPublication) (value: RedactedText) =
-            Secrets.detectUnregisteredLeaks secrets value.Text
+            Secrets.detectUnregisteredLeaksRedacted secrets value
             @ Secrets.detectLeaks secrets item.Prefix
-            @ Secrets.detectBoundaryLeaks secrets item.Prefix value.Text
+            @ Secrets.detectBoundaryLeaks secrets item.Prefix value
 
         let retainPublicationLeaks leaks =
             for leak in leaks do
@@ -374,6 +376,7 @@ module WalkerCtx =
 
                     if rechecked.Publishable then
                         output[item.OutputIndex] <- item.Prefix + value.Text
+                        outputValues[item.OutputIndex] <- value
                         redactedOutputIndexes.Add item.OutputIndex |> ignore
                         remasked.Add rechecked
                     else
@@ -429,6 +432,7 @@ module WalkerCtx =
 
                         for item, _ in rechecked do
                             output[item.OutputIndex] <- item.Prefix + item.Value.Text
+                            outputValues[item.OutputIndex] <- item.Value
                             suppressedOutputIndexes.Remove item.OutputIndex |> ignore
 
                             remasked.Add item
@@ -527,13 +531,14 @@ module WalkerCtx =
                         List.isEmpty secrets
                         || (List.isEmpty leaks
                             && List.isEmpty (Secrets.detectLeaks secrets prefix)
-                            && List.isEmpty (Secrets.detectBoundaryLeaks secrets prefix safe))
+                            && List.isEmpty (Secrets.detectBoundaryLeaks secrets prefix safeValue))
 
                     let stamped = prefix + safe
 
                     let outputIndex = output.Count
                     output.Add stamped
                     outputPrefixes.Add prefix
+                    outputValues.Add safeValue
 
                     if alreadyRedacted then
                         redactedOutputIndexes.Add outputIndex |> ignore
@@ -598,7 +603,7 @@ module WalkerCtx =
                 let safe =
                     if List.isEmpty secrets then line else Secrets.maskAlreadyRedacted secrets line
 
-                safe, Secrets.detectUnregisteredLeaks secrets safe.Text)
+                safe, Secrets.detectUnregisteredLeaksRedacted secrets safe)
 
         let admit line =
             emitCore true false None (fun secrets ->
@@ -625,7 +630,7 @@ module WalkerCtx =
                             let safe =
                                 if List.isEmpty secrets then line else Secrets.maskAlreadyRedacted secrets line
 
-                            safe, Secrets.detectUnregisteredLeaks secrets safe.Text)
+                            safe, Secrets.detectUnregisteredLeaksRedacted secrets safe)
                   Complete = fun () -> completePublicationStream stream }
           EnableTimestamps = fun () -> lock outputLock (fun () -> timestamps <- true)
           BindSecrets =
@@ -667,7 +672,8 @@ module WalkerCtx =
                                  |> Seq.map fst
                                  |> List.ofSeq),
                                 redactedOutputIndexes.Contains i,
-                                outputPrefixes[i]))
+                                outputPrefixes[i],
+                                outputValues[i]))
                     |> Seq.choose id
                     |> List.ofSeq)
           PublicationLeaks = fun () -> lock outputLock (fun () -> publicationLeaks |> List.ofSeq)

@@ -464,23 +464,59 @@ module Secrets =
                   if maskedText.Contains form then
                       { Variable = b.ValueVariable; Encoding = name } ]
 
+    /// The provenance-aware form of unregistered leak detection. A transformed
+    /// form may use only raw characters; canonical masker-token characters are
+    /// opaque even when their rendered `****` bytes happen to equal the form.
+    let detectUnregisteredLeaksRedacted (bindings: SecretBinding list) (value: RedactedText) : Leak list =
+        let containsRaw (form: string) =
+            let mutable at = value.Text.IndexOf(form, StringComparison.Ordinal)
+            let mutable found = false
+
+            while not found && at >= 0 do
+                let mutable raw = true
+                let mutable index = at
+
+                while raw && index < at + form.Length do
+                    raw <- not value.TokenCharacters[index]
+                    index <- index + 1
+
+                found <- raw
+                at <- value.Text.IndexOf(form, at + 1, StringComparison.Ordinal)
+
+            found
+
+        [ for b in bindings do
+              for name, form in b.Forms.LeakForms do
+                  if containsRaw form then
+                      { Variable = b.ValueVariable; Encoding = name } ]
+
     /// Detect a registered or transformed form which exists only after an
     /// engine-authored prefix and a provenance-bearing value are composed.
     /// Scanning the two halves independently misses this case, while scanning
     /// the whole value as ordinary text would mistake canonical `****` masker
     /// tokens for a literal `*` credential.
-    let detectBoundaryLeaks (bindings: SecretBinding list) (prefix: string) (value: string) : Leak list =
+    let detectBoundaryLeaks (bindings: SecretBinding list) (prefix: string) (value: RedactedText) : Leak list =
         let crossesBoundary (form: string) =
-            if prefix = "" || value = "" || form = "" then
+            if prefix = "" || value.Text = "" || form = "" then
                 false
             else
-                let composed = prefix + value
+                let composed = prefix + value.Text
                 let boundary = prefix.Length
                 let mutable at = composed.IndexOf(form, StringComparison.Ordinal)
                 let mutable found = false
 
                 while not found && at >= 0 do
-                    found <- at < boundary && at + form.Length > boundary
+                    if at < boundary && at + form.Length > boundary then
+                        let mutable raw = true
+                        let mutable index = boundary
+                        let finish = at + form.Length
+
+                        while raw && index < finish do
+                            raw <- not value.TokenCharacters[index - boundary]
+                            index <- index + 1
+
+                        found <- raw
+
                     at <- composed.IndexOf(form, at + 1, StringComparison.Ordinal)
 
                 found
