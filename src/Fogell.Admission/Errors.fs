@@ -166,3 +166,43 @@ module AdmissionError =
         { Code = code
           Message = message
           Position = { Line = line; Column = column } }
+
+/// FG-248. The escape grammar of a QUOTED Groovy string literal, shared by the
+/// Declarative lexer and the scripted parser so the two cannot drift (FG-122
+/// spent a branch deleting a second copy of the letter map). MEASURED on
+/// Jenkins 2.568.1, one transient job per (form, spelling), 2026-09-04: after a
+/// backslash the four quoted forms accept exactly `b f n t r \ ' " $`, a
+/// unicode escape (one or more `u`, four hex digits), an octal escape, and a
+/// physical line ending (the continuation, handled before this module is read);
+/// every other spelling — `/ s a e v x q z 8 9`, a space, `{`, `(`, `%`, and
+/// `u` without four hex digits — fails compilation (`unexpected char: '\'`).
+/// Receipts `script-letter-escapes`, `compile-refusal-invalid-letter`,
+/// `compile-refusal-invalid-nine` and `compile-refusal-invalid-slash` seal the
+/// letters and three of the refusals on both parsers.
+/// Slashy and dollar-slashy strings are outside this module: they keep every
+/// backslash sequence literally except the delimiter escape and unicode.
+module GroovyEscapes =
+
+    let simpleLetters = set [ 'b'; 'f'; 'n'; 't'; 'r'; '\\'; '\''; '"'; '$' ]
+
+    let simpleEscape (c: char) =
+        match c with
+        | 'n' -> '\n'
+        | 't' -> '\t'
+        | 'r' -> '\r'
+        | 'b' -> '\b'
+        // '\f', not '\012': in F# that trigraph is DECIMAL, so it reads as
+        // octal 12 to anyone carrying Java's escapes in their head — which is
+        // everyone touching this function. Raised by Copilot on PR #36.
+        | 'f' -> '\f'
+        | c -> c
+
+    /// The refusal wording for a spelling outside the grammar. `\8` and `\9`
+    /// keep FG-126a's sentence, which its receipt and tests pin.
+    let invalidMessage (c: char) =
+        match c with
+        | '8'
+        | '9' -> $"invalid Groovy escape `\\{c}`: `{c}` is not an octal digit"
+        | 'u' -> "invalid Groovy escape `\\u`: a unicode escape needs four hex digits after one or more `u`"
+        | c ->
+            $"invalid Groovy escape `\\{c}`: quoted Groovy strings accept only `\\b \\f \\n \\t \\r \\\\ \\' \\\" \\$`, unicode and octal escapes"
