@@ -256,6 +256,19 @@ if lane_active audits; then
   fi
 fi
 
+if lane_active audits; then
+  # FG-026b. The closed-world registry/dispatch audit: the effect ledger has one
+  # caller (EffectDispatch.run), the reconciliation triggers are bound to the
+  # worker scan and startup, every registered producer is routed and uniquely
+  # named, the controller's effect-bearing calls are a pinned allow-list, and
+  # the in-process trigger test makes no manual Store call. Its proof runs
+  # first: twelve planted violations must be refused by name and two clean
+  # copies accepted, in scratch copies, before the real tree is judged.
+  echo "=== effect dispatch audit + its planted-violation proof (FG-026b, blocking) ==="
+  ./scripts/prove-effect-dispatch-audit.sh || { echo "EFFECT-DISPATCH AUDIT PROOF FAILED"; exit 1; }
+  ./scripts/audit-effect-dispatch.sh || { echo "EFFECT-DISPATCH AUDIT FAILED"; exit 1; }
+fi
+
 if lane_active stale-refs; then
   # FG-104b: a comment naming a mechanism the code no longer has. Three of those
   # landed in one day and every one was caught by a reviewer rather than a check —
