@@ -174,6 +174,15 @@ type Fault =
     /// IntRange implements list reads but not replacement. Jenkins raises a
     /// catchable UnsupportedOperationException at the write phase.
     | RangeMutation
+    /// FG-241. The pattern operand of `=~`/`==~` does not compile. MEASURED
+    /// (receipt `fg241-regex-pattern-fault`): Jenkins raises
+    /// java.util.regex.PatternSyntaxException —
+    /// an IllegalArgumentException, intercepted by `catch (Exception)`,
+    /// `catch (IllegalArgumentException)` and its own class, NOT by
+    /// `catch (ArithmeticException)` — and an uncaught one fails the build.
+    /// Until this fault existed every construction failure read as `false`.
+    /// [detail] is the host regex engine's diagnosis, not Jenkins' message text.
+    | RegexPatternInvalid of pattern: string * detail: string
 
 type Outcome =
     { Effects: Effect list
@@ -733,18 +742,30 @@ module Interpreter =
         | ">", Integral x, Integral y -> VBool(x > y)
         | ">=", Integral x, Integral y -> VBool(x >= y)
         | ("=~" | "==~"), VStr s, VStr p ->
-            // regex is evaluated with a hard timeout: an untrusted pattern is a
-            // catastrophic-backtracking vector.
-            try
-                let re =
+            // FG-241. A pattern that does not compile is Jenkins' catchable
+            // PatternSyntaxException, not `false`: `when { expression { 'ab' ==~
+            // /a)b|ab/ } }` fails the Jenkins build and skipped the stage here.
+            let re =
+                try
                     System.Text.RegularExpressions.Regex(
                         p,
                         System.Text.RegularExpressions.RegexOptions.None,
                         System.TimeSpan.FromMilliseconds 100.0)
+                with :? System.ArgumentException as invalid ->
+                    raise (Stop(RegexPatternInvalid(p, invalid.Message)))
 
+            // regex is evaluated with a hard timeout: an untrusted pattern is a
+            // catastrophic-backtracking vector. Jenkins has no such bound, so an
+            // exhausted budget is a refusal by name, never a `false` answer.
+            try
                 VBool(if op = "==~" then re.IsMatch s && re.Match(s).Length = s.Length else re.IsMatch s)
-            with _ ->
-                VBool false
+            with :? System.Text.RegularExpressions.RegexMatchTimeoutException ->
+                raise (
+                    Stop(
+                        Unsupported
+                            "unsupported_regex_budget: the pattern exceeded Fogell's 100 ms matching budget; Jenkins has no such bound, so the answer is refused rather than guessed"
+                    )
+                )
         | "instanceof", _, VStr t ->
             VBool(
                 match a, t with
@@ -2185,6 +2206,23 @@ module Interpreter =
                     |> List.contains t
                 | None -> false
 
+            // FG-241. PatternSyntaxException < IllegalArgumentException <
+            // RuntimeException < Exception < Throwable; measured: `Exception`,
+            // `IllegalArgumentException` and the class itself intercept it,
+            // `ArithmeticException` lets it escape.
+            let catchesPatternSyntax =
+                match catch with
+                | Some(None, _, _) -> true
+                | Some(Some t, _, _) ->
+                    [ "Exception"
+                      "Throwable"
+                      "RuntimeException"
+                      "IllegalArgumentException"
+                      "PatternSyntaxException"
+                      "java.util.regex.PatternSyntaxException" ]
+                    |> List.contains t
+                | None -> false
+
             let afterTry =
                 try
                     try
@@ -2194,6 +2232,10 @@ module Interpreter =
                         cur
                     with
                     | Stop(Thrown v) -> handle v
+                    | Stop(RegexPatternInvalid(_, detail)) when catchesPatternSyntax ->
+                        // the bound value renders as Jenkins' `${e}` shape, class then
+                        // message, with the host engine's diagnosis as the message
+                        handle (VStr $"java.util.regex.PatternSyntaxException: {detail}")
                     | Stop(StepBindingFailed(name, exceptionClass, detail)) when catchesBindingFailure exceptionClass ->
                         handle (VStr $"{BindingExceptionClass.fullName exceptionClass}: {name}: {detail}")
                     | Stop(StepFailed(name, exceptionText, _)) when catchesStepFailure ->
@@ -2438,7 +2480,7 @@ module Interpreter =
         try
             body ()
             None
-        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | ListIndexOutOfBounds _ | NullListIndexUpdate _ | RejectedIndexOperation _ | StringIndexOutOfBounds _ | CyclicValue _ | RangeMutation | StepFailed _ | StepBindingFailed _) as f) ->
+        with Stop((Thrown _ | UnknownProperty _ | NullReceiverAssignment _ | ListIndexOutOfBounds _ | NullListIndexUpdate _ | RejectedIndexOperation _ | StringIndexOutOfBounds _ | CyclicValue _ | RangeMutation | RegexPatternInvalid _ | StepFailed _ | StepBindingFailed _) as f) ->
             Some f
 
     /// FG-186's other half: the FINAL attempt re-raises the held fault so an
