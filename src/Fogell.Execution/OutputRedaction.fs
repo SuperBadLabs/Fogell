@@ -215,6 +215,22 @@ module internal RedactedTextOps =
         combined.Append second
         combined.ToRedactedText()
 
+    /// Keep only characters whose framed-source index is selected, without
+    /// flattening the protected-token provenance carried by those characters.
+    let retainSources (selected: Set<int>) (value: RedactedText) =
+        let retained = RedactedTextBuilder()
+
+        for index = 0 to value.Text.Length - 1 do
+            let source = value.SourceCharacters[index]
+
+            if selected.Contains source then
+                if value.TokenCharacters[index] then
+                    retained.AppendProtectedSourced(string value.Text[index], source)
+                else
+                    retained.AppendRawSourced(value.Text[index], source)
+
+        retained.ToRedactedText()
+
     /// Apply a transform only to characters which were not produced as a mask
     /// token. Raw `****` stays raw and can therefore match a credential learned
     /// before publication; genuine matcher tokens remain opaque boundaries.

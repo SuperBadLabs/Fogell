@@ -562,6 +562,30 @@ let progressiveOutputPublication =
                   [ "Sec"; "****" ]
                   "the stored trace retains committed context and masks the completing suffix"
 
+              use prefixedFragmentPublished = new Threading.ManualResetEventSlim(false)
+              let prefixedPublished = ResizeArray<string>()
+              let prefixedCtx =
+                  WalkerCtx.create
+                      0L
+                      false
+                      (Some(fun line ->
+                          prefixedPublished.Add line
+                          if line = "prefixSec" then prefixedFragmentPublished.Set()))
+              let prefixedStream = prefixedCtx.CreateRedactedAdmission()
+
+              prefixedStream.Admit (RedactedText.Raw "prefixSec")
+              Expect.isTrue
+                  (prefixedFragmentPublished.Wait 2_000)
+                  "the ordinary prefix and credential fragment are committed before binding"
+              prefixedCtx.BindSecrets [ Secrets.inMemoryTextBinding "PREFIXED_LATE" "Secret" ]
+              prefixedStream.Admit (RedactedText.Raw "ret")
+              prefixedStream.Complete()
+              prefixedCtx.FlushOutput()
+              Expect.equal
+                  (List.ofSeq prefixedPublished, prefixedCtx.Output())
+                  ([ "prefixSec"; "****" ], [ "prefixSec"; "****" ])
+                  "committed ordinary bytes remain matcher context but are never replayed"
+
               use eofCallbackEntered = new Threading.ManualResetEventSlim(false)
               use releaseEofCallback = new Threading.ManualResetEventSlim(false)
               let eofPublished = ResizeArray<string>()

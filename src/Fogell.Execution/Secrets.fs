@@ -437,6 +437,19 @@ module Secrets =
         |> maskAlreadyRedacted bindings
         |> _.SplitLinesWithSources()
 
+    /// Reframe a retained stream history for late bindings while projecting
+    /// the result onto sources which are still mutable. Committed characters
+    /// participate as matcher left-context, but cannot be replayed as part of a
+    /// later pending line. A token spanning committed and pending sources is
+    /// attributed to its final (pending) source and is therefore retained.
+    let maskAlreadyRedactedPendingLines
+        (bindings: SecretBinding list)
+        (pendingSources: Set<int>)
+        (values: RedactedText array)
+        =
+        maskAlreadyRedactedLines bindings values
+        |> Array.map (fun (source, value) -> source, RedactedTextOps.retainSources pendingSources value)
+
     /// FG-071. After masking, look for forms the mask does not cover. A hit means
     /// a secret reached the log in a shape masking cannot catch — reported, never
     /// swallowed.

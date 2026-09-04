@@ -423,10 +423,17 @@ module WalkerCtx =
                     let mutableAfterBinding item =
                         not (committedPublicationOrders.Contains item.Order)
 
+                    let pendingSources =
+                        source
+                        |> Array.mapi (fun index item -> index, item)
+                        |> Array.choose (fun (index, item) ->
+                            if mutableAfterBinding item then Some index else None)
+                        |> Set.ofArray
+
                     let reframed =
                         source
                         |> Array.map _.Value
-                        |> Secrets.maskAlreadyRedactedLines secrets
+                        |> Secrets.maskAlreadyRedactedPendingLines secrets pendingSources
 
                     let rechecked =
                         reframed
