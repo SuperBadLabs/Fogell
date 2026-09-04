@@ -257,3 +257,42 @@ Read with the sections above; this is the addendum, not a replacement.
   (GNU make's "No rule to make target" is the same text on 4.3 and 4.4 —
   verify); the scripted walker for `camiloribeiro_cdeasy` and
   `tomasbjerre` is the largest single unlock but is engine work.
+
+## Later still — the FG-247 tenure (22:00Z onward)
+
+Read with the two sections above; this is the second addendum.
+
+- **Measured, PARTIAL until accounted: FG-247.** Three more failure
+  receipts on an empty workspace under the fence — the `linuxacademy`
+  `-autodeploy`, `-canary` and `-kubernetes` siblings of FG-245's pair, the
+  same `./gradlew` line, one file per lane, eleven seconds each. Ledger
+  `tier1=12`, `admitted=188`, `tier3=28`; 307 of 307 case receipts. No
+  engine change. The ticket is [`tickets/FG-247.md`](tickets/FG-247.md).
+- **The first pick above is closed off.** `ljpengelen_jenkinsfile` was read
+  to the end: its first stage runs under `agent { dockerfile { … label
+  "webapps" } }`. The lab's one node is labelled `built-in`; a hand-written
+  probe job with that agent queued on `‘Jenkins’ doesn’t have label
+  ‘webapps’` (cancelled and deleted), while `Run.Host` on the file ran the
+  stage and failed at `cd back-end`. Fogell ignores every stage agent but
+  `AgentUnmodelled`; Jenkins never starts. Not allowlisted, not run.
+- **The class is exhausted at twelve, measured.** A `dotnet fsi` script over
+  the built `Fogell.Pipeline.Parser` classified all 191 admitted files by
+  their agents, `tools`, credentials and first executed leaf step: 122 are
+  scripted (walker-refused), and of the 69 declarative files every one but
+  the three receipted carries a blocker at or before its first command; the
+  table is on the ticket. Fifteen declarative files run under a `label`,
+  `docker` or `dockerfile` agent the lab cannot allocate and Fogell does not
+  model — that is the one reading this pass adds beside FG-242's inventory.
+- **Lane mechanics unchanged.** One file per lane; probe the first command
+  on both sides as `sh -xe script.sh.copy` in an empty directory, not as a
+  bare command, so `$0` is what the receipt will carry; `generate-scorecard`
+  needs `tools/Fogell.Corpus.Score` built (`fogell-score`) as well as
+  `scripts/build-audits.sh generate-scorecard`.
+- **Lab state at this handoff:** `jenkins-lab` up (StartedAt unchanged since
+  09:54:08Z), no fence on either side, lease free, queue empty, no job of
+  this tenure on the oracle (three `probe-*` jobs there belong to another
+  session), no `fogell_fence_*` table on HeMan.
+- **Next candidates:** none in this class. The next receipt needs a
+  capability from FG-242's inventory, an execution rule for unallocatable
+  stage agents (refuse or model `label`/`docker`/`dockerfile`, which gates
+  fifteen files), or `make` pinned in the container for `charlires`.

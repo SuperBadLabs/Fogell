@@ -173,11 +173,11 @@ kitconcept_jenkins-pipeline-examples.Jenkinsfile	admitted	-	parsed; execution NO
 krasi-georgiev_cd-demo.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 ksuther_jenkins-jenkinsfile-include.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 liatrio_pipeline-library.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-linuxacademy_cicd-pipeline-train-schedule-autodeploy.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-linuxacademy_cicd-pipeline-train-schedule-canary.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
+linuxacademy_cicd-pipeline-train-schedule-autodeploy.Jenkinsfile	1	-	receipt:linuxacademy_cicd-pipeline-train-schedule-autodeploy
+linuxacademy_cicd-pipeline-train-schedule-canary.Jenkinsfile	1	-	receipt:linuxacademy_cicd-pipeline-train-schedule-canary
 linuxacademy_cicd-pipeline-train-schedule-cd.Jenkinsfile	1	-	receipt:linuxacademy_cicd-pipeline-train-schedule-cd
 linuxacademy_cicd-pipeline-train-schedule-dockerdeploy.Jenkinsfile	1	-	receipt:linuxacademy_cicd-pipeline-train-schedule-dockerdeploy
-linuxacademy_cicd-pipeline-train-schedule-kubernetes.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
+linuxacademy_cicd-pipeline-train-schedule-kubernetes.Jenkinsfile	1	-	receipt:linuxacademy_cicd-pipeline-train-schedule-kubernetes
 ljpengelen_jenkinsfile.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 llknur_jenkinsfile-pipeline-project.Jenkinsfile	1	-	receipt:llknur_jenkinsfile-pipeline-project
 maajor_Blender-Geometry-CI.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
