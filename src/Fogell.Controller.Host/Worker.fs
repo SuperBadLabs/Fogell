@@ -175,6 +175,22 @@ module internal WorkerControl =
             let _ = cancelled
             NaturalExitFinalAction.PublishTerminal
 
+    [<RequireQualifiedAccess>]
+    type EffectDispatchDisposition =
+        | PublishAllowed
+        | ReconcileRequired of reason: string
+
+    /// FG-026b. Terminal publication is allowed only when every registered
+    /// producer confirmed (an empty registry confirms vacuously). Any refused
+    /// or uncertain outcome fails closed into reconciliation while the lease is
+    /// still live, so the bounded trigger classifies the ledger row rather than
+    /// a published terminal status hiding an ambiguous external effect.
+    let effectDispatchDisposition (outcomes: (EffectProducer * DispatchOutcome) list) =
+        if outcomes |> List.forall (snd >> DispatchOutcome.isConfirmed) then
+            EffectDispatchDisposition.PublishAllowed
+        else
+            EffectDispatchDisposition.ReconcileRequired "effect_dispatch_unconfirmed"
+
 type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWorker>) =
     inherit BackgroundService()
 
@@ -869,18 +885,45 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                                     claim.AttemptId.Value,
                                                     error))
                                     | Ok _ ->
-                                        match store.PublishTerminal(claim.OrganizationId, claim.AttemptId, claim.Fence, owner, status) with
-                                        | Ok _ ->
-                                            dispositionRecorded <- true
-                                            terminalPublished <- true
-                                        | Error _ ->
+                                        // FG-026b. Registered external effects run
+                                        // while this attempt's lease is live and
+                                        // before the terminal status is published:
+                                        // after publication the attempt is terminal
+                                        // and the ledger refuses preparation.
+                                        let effectOutcomes =
+                                            EffectDispatch.runRegistered
+                                                store
+                                                (EffectAuthority.ofClaim owner claim)
+                                                (EffectDispatch.killHooks config.EffectProducers.KillAt)
+                                                config.EffectProducers
+                                                claim
+                                                status
+
+                                        match WorkerControl.effectDispatchDisposition effectOutcomes with
+                                        | WorkerControl.EffectDispatchDisposition.ReconcileRequired reason ->
                                             WorkerControl.reconcileBeforeDiagnostic
-                                                "terminal_publication_refused"
+                                                reason
                                                 requireReconciliation
                                                 (fun () ->
-                                                    logger.LogError(
-                                                        "FG-224 terminal publication was refused for {AttemptId}",
-                                                        claim.AttemptId.Value))
+                                                    for producer, outcome in effectOutcomes do
+                                                        logger.LogError(
+                                                            "FG-026b effect producer {Producer} for {AttemptId} ended {Outcome}; reconciliation is required",
+                                                            EffectProducer.name producer,
+                                                            claim.AttemptId.Value,
+                                                            DispatchOutcome.describe outcome))
+                                        | WorkerControl.EffectDispatchDisposition.PublishAllowed ->
+                                            match store.PublishTerminal(claim.OrganizationId, claim.AttemptId, claim.Fence, owner, status) with
+                                            | Ok _ ->
+                                                dispositionRecorded <- true
+                                                terminalPublished <- true
+                                            | Error _ ->
+                                                WorkerControl.reconcileBeforeDiagnostic
+                                                    "terminal_publication_refused"
+                                                    requireReconciliation
+                                                    (fun () ->
+                                                        logger.LogError(
+                                                            "FG-224 terminal publication was refused for {AttemptId}",
+                                                            claim.AttemptId.Value))
                                 | None ->
                                     requireReconciliation "terminal_journal_missing"
                     finally
@@ -946,6 +989,49 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                 do! runReadyClaim claim stoppingToken
         }
 
+    /// One organization's share of a worker scan: expire lost local leases,
+    /// classify any effect ledger row those (or earlier) losses stranded, then
+    /// claim and run the next attempt. Returns whether a claim was run.
+    let scanOrganization (org: OrganizationId) (stoppingToken: CancellationToken) =
+        task {
+            store.RequeueExpiredLocalAttempts org |> ignore
+
+            // FG-026b. The periodic lease-expiry trigger. Bounded by the scan,
+            // tenant-scoped, and never re-invoking: it only moves stale
+            // prepared/applied rows to uncertain and publishes their surface.
+            match store.ReconcileStaleEffects(org, "lease_expired") with
+            | Ok [] -> ()
+            | Ok classified ->
+                for checkpoint in classified do
+                    logger.LogWarning(
+                        "FG-026b effect {EffectKey} for {AttemptId} is uncertain after lease expiry; operator reconciliation is required",
+                        checkpoint.EffectKey,
+                        checkpoint.AttemptId.Value)
+            | Error error -> logger.LogError("FG-026b effect reconciliation failed: {Reason}", error)
+
+            match
+                store.ClaimNextExecution(
+                    org,
+                    owner,
+                    config.TrustPool,
+                    [ "linux" ],
+                    config.LeaseSeconds)
+            with
+            | Error error ->
+                logger.LogError("FG-224 claim refused: {Reason}", error)
+                return false
+            | Ok None -> return false
+            | Ok(Some claim) ->
+                lastClaimedOrganization <- Some org
+                do! runClaim claim stoppingToken
+                return true
+        }
+
+    /// The in-process crash-window tests drive the production scan for one
+    /// organization through this seam; it is the same code ExecuteAsync runs.
+    member internal _.ScanOrganization(org: OrganizationId, stoppingToken: CancellationToken) =
+        scanOrganization org stoppingToken
+
     override _.ExecuteAsync(stoppingToken: CancellationToken) =
         task {
             while not stoppingToken.IsCancellationRequested do
@@ -963,22 +1049,8 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             store.OrganizationIds()
                             |> WorkerScheduling.organizationsAfter lastClaimedOrganization do
                             if not claimed && not stoppingToken.IsCancellationRequested then
-                                store.RequeueExpiredLocalAttempts org |> ignore
-
-                                match
-                                    store.ClaimNextExecution(
-                                        org,
-                                        owner,
-                                        config.TrustPool,
-                                        [ "linux" ],
-                                        config.LeaseSeconds)
-                                with
-                                | Error error -> logger.LogError("FG-224 claim refused: {Reason}", error)
-                                | Ok None -> ()
-                                | Ok(Some claim) ->
-                                    claimed <- true
-                                    lastClaimedOrganization <- Some org
-                                    do! runClaim claim stoppingToken
+                                let! ran = scanOrganization org stoppingToken
+                                claimed <- ran
                 with ex ->
                     logger.LogError(ex, "FG-224 worker iteration failed")
 

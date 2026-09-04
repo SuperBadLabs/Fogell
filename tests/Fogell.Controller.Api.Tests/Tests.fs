@@ -2677,6 +2677,227 @@ let effectDispatch =
               Expect.equal parentInvocations.Value 1 "nothing drove the parent's destination again"
           }
 
+          test "terminal publication is allowed only when every registered producer confirmed" {
+              let producer = EffectProducer.FileDropReceipt
+
+              Expect.equal
+                  (WorkerControl.effectDispatchDisposition [])
+                  WorkerControl.EffectDispatchDisposition.PublishAllowed
+                  "an empty registry confirms vacuously: the terminal path without a producer is unchanged"
+              Expect.equal
+                  (WorkerControl.effectDispatchDisposition [ producer, DispatchOutcome.Confirmed false ])
+                  WorkerControl.EffectDispatchDisposition.PublishAllowed
+                  "a fresh confirmation allows publication"
+              Expect.equal
+                  (WorkerControl.effectDispatchDisposition [ producer, DispatchOutcome.Confirmed true ])
+                  WorkerControl.EffectDispatchDisposition.PublishAllowed
+                  "a replayed confirmation allows publication"
+
+              for outcome in [ DispatchOutcome.Refused "stale"; DispatchOutcome.Uncertain "evidence absent" ] do
+                  Expect.equal
+                      (WorkerControl.effectDispatchDisposition [ producer, DispatchOutcome.Confirmed false; producer, outcome ])
+                      (WorkerControl.EffectDispatchDisposition.ReconcileRequired "effect_dispatch_unconfirmed")
+                      $"%A{outcome} fails closed into reconciliation with a stable reason"
+          }
+
+          test "the startup pass classifies every organization once and turns a throwing pass into a reported error" {
+              let first = OrganizationId(Guid.NewGuid())
+              let second = OrganizationId(Guid.NewGuid())
+              let reports = Collections.Generic.List<OrganizationId * Result<EffectCheckpoint list, string>>()
+
+              Program.reconcileEffectsAtStartup
+                  (fun () -> [ first; second ])
+                  (fun org -> if org = first then Ok [] else failwith "database unavailable")
+                  (fun org outcome -> reports.Add((org, outcome)))
+
+              Expect.equal
+                  (List.ofSeq reports)
+                  [ first, Ok []; second, Error "database unavailable" ]
+                  "each organization is reported exactly once and a throw does not stop the pass"
+
+              let failedListing = Collections.Generic.List<OrganizationId * Result<EffectCheckpoint list, string>>()
+              Program.reconcileEffectsAtStartup
+                  (fun () -> failwith "no organizations")
+                  (fun _ -> failtest "no organization may be reconciled when the listing failed")
+                  (fun org outcome -> failedListing.Add((org, outcome)))
+              Expect.equal
+                  (List.ofSeq failedListing)
+                  [ OrganizationId Guid.Empty, Error "no organizations" ]
+                  "a failed listing is reported once and refuses nothing"
+          }
+
+          test "ControllerConfig carries the effect producer configuration and refuses a kill hook without a destination at startup" {
+              let root = IO.Path.Combine(dropRoot, $"config-{Guid.NewGuid():N}")
+              let destination = IO.Path.Combine(root, "drop")
+              IO.Directory.CreateDirectory destination |> ignore
+              let tokenFile = IO.Path.Combine(root, "token")
+              let runHost = IO.Path.Combine(root, "run-host")
+              IO.File.WriteAllText(tokenFile, String.replicate 32 "t")
+              // FG-251: the token file must be a service-owned regular file at 0400/0600.
+              IO.File.SetUnixFileMode(tokenFile, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite)
+              IO.File.WriteAllText(runHost, "#!/bin/sh\nexit 0\n")
+              IO.File.SetUnixFileMode(runHost, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserExecute)
+
+              let required =
+                  [ "FOGELL_DATABASE_URL", "Host=runtime;Database=fogell"
+                    "FOGELL_MAINTENANCE_DATABASE_URL", "Host=maintenance;Database=fogell"
+                    "FOGELL_API_TOKEN_FILE", tokenFile
+                    "FOGELL_LISTEN_URL", "http://127.0.0.1:18083"
+                    "FOGELL_STATE_ROOT", IO.Path.Combine(root, "state")
+                    "FOGELL_RUN_HOST_PATH", runHost
+                    "FOGELL_LOCAL_TRUST_POOL", "trusted-linux"
+                    "FOGELL_MAX_PIPELINE_BYTES", "1024"
+                    "FOGELL_MAX_LOG_CHUNKS", "100"
+                    "FOGELL_WORKER_POLL_MS", "50"
+                    "FOGELL_WORKER_LEASE_SECONDS", "60" ]
+              let previous = required |> List.map (fun (name, _) -> name, Environment.GetEnvironmentVariable name)
+
+              try
+                  for name, value in required do
+                      Environment.SetEnvironmentVariable(name, value)
+
+                  withEffectEnvironment None None (fun () ->
+                      match ControllerConfig.loadWithSetsidLauncher ControllerConfig.trustedSetsidLauncher with
+                      | Ok config -> Expect.equal config.EffectProducers EffectProducerConfig.disabled "no producer without the variables"
+                      | Error error -> failtestf "configuration refused: %s" error)
+
+                  withEffectEnvironment (Some destination) (Some "confirm") (fun () ->
+                      match ControllerConfig.loadWithSetsidLauncher ControllerConfig.trustedSetsidLauncher with
+                      | Ok config ->
+                          Expect.equal
+                              config.EffectProducers
+                              { FileDropRoot = Some(IO.Path.GetFullPath destination)
+                                KillAt = Some EffectKillWindow.AfterConfirm }
+                              "the simulator destination and armed window reach the worker configuration"
+                      | Error error -> failtestf "configuration refused: %s" error)
+
+                  withEffectEnvironment None (Some "prepare") (fun () ->
+                      match ControllerConfig.loadWithSetsidLauncher ControllerConfig.trustedSetsidLauncher with
+                      | Ok _ -> failtest "a kill hook without a destination reached a configured controller"
+                      | Error error -> Expect.stringContains error "requires FOGELL_EFFECT_FILE_DROP_ROOT" "startup names the refusal")
+
+                  withEffectEnvironment (Some(IO.Path.Combine(root, "state"))) None (fun () ->
+                      match ControllerConfig.loadWithSetsidLauncher ControllerConfig.trustedSetsidLauncher with
+                      | Ok _ -> failtest "the state root itself was accepted as an external destination"
+                      | Error error -> Expect.stringContains error "disjoint from FOGELL_STATE_ROOT" "startup names the containment refusal")
+              finally
+                  previous |> List.iter (fun (name, value) -> Environment.SetEnvironmentVariable(name, value))
+          }
+
+          test "the production lease-expiry trigger classifies an abort in the prepare, invoke and apply windows as tenant-scoped uncertainty with an operator surface and never re-invokes; a confirmed row survives lease loss unlisted" {
+              let stateRoot = IO.Path.Combine(dropRoot, "trigger-state")
+              IO.Directory.CreateDirectory stateRoot |> ignore
+
+              let workerConfig: ControllerConfig =
+                  { RuntimeDatabaseUrl = connectionString
+                    MaintenanceDatabaseUrl = connectionString + ";Application Name=fg026b-maintenance"
+                    ApiToken = token
+                    ListenUrl = "http://127.0.0.1:0"
+                    StateRoot = stateRoot
+                    RunHostPath = "/bin/true"
+                    SetsidPath = ControllerConfig.trustedSetsidLauncher
+                    TrustPool = "trusted-linux"
+                    MaxPipelineBytes = 1024
+                    MaxLogChunks = 100
+                    PollMilliseconds = 50
+                    LeaseSeconds = 60
+                    EffectProducers = { FileDropRoot = Some dropRoot; KillAt = None } }
+
+              let worker =
+                  new LocalWorker(
+                      workerConfig,
+                      store,
+                      Microsoft.Extensions.Logging.Abstractions.NullLogger<LocalWorker>.Instance)
+
+              let surface (org: OrganizationId) (attempt: AttemptId) =
+                  use conn = new Npgsql.NpgsqlConnection(connectionString)
+                  conn.Open()
+                  use cmd = conn.CreateCommand()
+                  cmd.CommandText <-
+                      "SELECT (SELECT count(*) FROM events e
+                                WHERE e.organization_id = @o AND e.attempt_id = @a AND e.kind = 'effect.uncertain'),
+                              (SELECT count(*) FROM outbox o
+                                WHERE o.organization_id = @o AND o.topic = 'effect.uncertain'
+                                  AND o.body->>'attempt' = @a::text),
+                              (SELECT string_agg(e.payload->>'reason' || '/' || (e.payload->>'uncertain_from'), ',')
+                                 FROM events e
+                                WHERE e.organization_id = @o AND e.attempt_id = @a AND e.kind = 'effect.uncertain'),
+                              (SELECT state FROM attempts WHERE organization_id = @o AND id = @a)"
+                  cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                  cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+                  use reader = cmd.ExecuteReader()
+                  Expect.isTrue (reader.Read()) "surface row"
+                  let events = reader.GetInt64 0
+                  let outbox = reader.GetInt64 1
+                  let reasons = if reader.IsDBNull 2 then "" else reader.GetString 2
+                  let attemptState = reader.GetString 3
+                  reader.Close()
+                  events, outbox, reasons, attemptState
+
+              let windows =
+                  [ EffectKillWindow.AfterPrepare, Some("prepared", 0)
+                    EffectKillWindow.AfterInvoke, Some("prepared", 1)
+                    EffectKillWindow.AfterApply, Some("applied", 1)
+                    EffectKillWindow.AfterConfirm, None ]
+
+              // FG026B_NO_MANUAL_STORE_BEGIN
+              // Only the real dispatch, an aged lease, and the production
+              // worker scan appear below; the source audit refuses a manual
+              // reconciliation call inside this fence.
+              for window, classification in windows do
+                  // The production owner shape: the periodic requeue only reaps
+                  // leases held by a local controller identity.
+                  let owner = $"local:fg026b-trigger:%A{window}"
+                  let org, claim = runningClaim $"fg026b-trigger-%A{window}" owner
+                  let authority = EffectAuthority.ofClaim owner claim
+                  let invocations, invocation = counted claim Success
+                  let key = effectKey claim
+
+                  abortedRun store authority (withHook window) invocation
+                  let invocationsAtAbort = invocations.Value
+                  let receiptsAtAbort = receiptCount org
+                  expireLease org claim.AttemptId
+
+                  let ran = worker.ScanOrganization(org, Threading.CancellationToken.None).Result
+                  Expect.isFalse ran $"%A{window}: the scan claimed nothing in this organization"
+
+                  let events, outbox, reasons, attemptState = surface org claim.AttemptId
+                  Expect.equal attemptState "reconciliation_required" $"%A{window}: the attempt lost its lease to the production requeue"
+
+                  match classification with
+                  | Some(origin, receipts) ->
+                      Expect.equal (ledgerRow org claim.AttemptId key) (Some("uncertain", Some origin)) $"%A{window}: classified uncertain with its origin"
+                      Expect.equal (events, outbox) (1L, 1L) $"%A{window}: exactly one effect.uncertain event and outbox row"
+                      Expect.equal reasons $"lease_expired/{origin}" $"%A{window}: the surface names the trigger and the origin"
+                      Expect.equal (receiptCount org) receipts $"%A{window}: the destination is untouched by classification"
+                      Expect.contains
+                          (store.ListUncertainEffects org |> List.map (fun c -> c.EffectKey))
+                          key
+                          $"%A{window}: the tenant listing carries the row"
+                  | None ->
+                      Expect.equal (ledgerRow org claim.AttemptId key) (Some("confirmed", None)) $"%A{window}: a confirmed row is final across lease loss"
+                      Expect.equal (events, outbox) (0L, 0L) $"%A{window}: nothing to surface"
+                      Expect.equal (receiptCount org) 1 $"%A{window}: one receipt"
+                      Expect.isEmpty (store.ListUncertainEffects org) $"%A{window}: not listed"
+
+                  Expect.equal invocations.Value invocationsAtAbort $"%A{window}: the trigger invoked nothing"
+                  Expect.equal (receiptCount org) receiptsAtAbort $"%A{window}: the trigger wrote nothing"
+
+                  // The old authority is gone: neither a resume nor a second scan
+                  // drives the destination, and the surface is not duplicated.
+                  match EffectDispatch.run store authority EffectDispatch.noHooks invocation with
+                  | DispatchOutcome.Refused _ -> ()
+                  | other -> failtestf "%A: resume under lost authority was not refused: %A" window other
+                  worker.ScanOrganization(org, Threading.CancellationToken.None).Result |> ignore
+                  let eventsAgain, outboxAgain, _, _ = surface org claim.AttemptId
+                  Expect.equal (eventsAgain, outboxAgain) (events, outbox) $"%A{window}: a second scan publishes nothing more"
+                  Expect.equal invocations.Value invocationsAtAbort $"%A{window}: still nothing re-invoked"
+                  Expect.equal (receiptCount org) receiptsAtAbort $"%A{window}: still nothing written"
+              // FG026B_NO_MANUAL_STORE_END
+
+              worker.Dispose()
+          }
+
           test "effect dispatch teardown" {
               if IO.Directory.Exists dropRoot then IO.Directory.Delete(dropRoot, true)
           } ]

@@ -76,6 +76,35 @@ let internal reloadConfigOnChangeSwitch = "--hostBuilder:reloadConfigOnChange=fa
 let internal hostOptions () =
     WebApplicationOptions(ContentRootPath = contentRootPath, Args = [| reloadConfigOnChangeSwitch |])
 
+/// FG-026b. The startup trigger: one bounded classification pass per
+/// organization before the worker claims anything. A failure is reported and
+/// does not refuse startup, because the periodic lease-expiry pass repeats the
+/// same classification on every scan; rows still under an unexpired lease of a
+/// dead controller are classified once that lease expires, bounded by
+/// FOGELL_WORKER_LEASE_SECONDS.
+let internal reconcileEffectsAtStartup
+    (organizations: unit -> Fogell.Domain.OrganizationId list)
+    (reconcile: Fogell.Domain.OrganizationId -> Result<EffectCheckpoint list, string>)
+    (report: Fogell.Domain.OrganizationId -> Result<EffectCheckpoint list, string> -> unit)
+    =
+    let listed =
+        try
+            Ok(organizations ())
+        with ex ->
+            Error ex.Message
+
+    match listed with
+    | Error error -> report (Fogell.Domain.OrganizationId System.Guid.Empty) (Error error)
+    | Ok organizations ->
+        for org in organizations do
+            let outcome =
+                try
+                    reconcile org
+                with ex ->
+                    Error ex.Message
+
+            report org outcome
+
 [<EntryPoint>]
 let main _ =
     match ControllerConfig.load () with
@@ -164,6 +193,22 @@ let main _ =
                           MaxLogChunks = config.MaxLogChunks }
                         app
                     |> ignore
+
+                    reconcileEffectsAtStartup
+                        runtimeStore.OrganizationIds
+                        (fun org -> runtimeStore.ReconcileStaleEffects(org, "controller_startup"))
+                        (fun org outcome ->
+                            match outcome with
+                            | Ok [] -> ()
+                            | Ok classified ->
+                                for checkpoint in classified do
+                                    eprintfn
+                                        "FG-026b startup reconciliation: effect %s for attempt %O in organization %O is uncertain; operator reconciliation is required"
+                                        checkpoint.EffectKey
+                                        checkpoint.AttemptId.Value
+                                        org.Value
+                            | Error error ->
+                                eprintfn "FG-026b startup reconciliation failed for organization %O: %s" org.Value error)
 
                     app.Run()
                     0
