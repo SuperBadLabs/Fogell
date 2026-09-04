@@ -128,12 +128,15 @@ jobs:
     needs: plan
     runs-on: ubuntu-latest
     # Lanes measured 254-402 s on run 33595804856 (longest: stale-refs 402 s,
-    # audits 395 s, both before the fflat cap and tool-subset changes); 30
-    # leaves headroom for a slow runner while still bounding a hang. Without a
+    # audits 395 s, both before the fflat cap and tool-subset changes). The
+    # build lane has since accumulated blocking proofs: exact-head run
+    # 33888066282 was still passing FG-072 after 30 minutes when GitHub
+    # cancelled it at this job boundary. Forty-five minutes restores measured
+    # headroom for a slow runner while still bounding a hang. Without a
     # bound, GitHub's default is 360 minutes: on 2026-09-01 the PID-1 step hung
     # for ~39 and ~77 minutes (runs 33567964629 and 33564807004, attempt 1 of
     # each) and stopped only because a re-run cancelled them.
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       # Every lane reports, even when a sibling has already failed: a run that
       # stops at the first red hides the second defect until the next push.
