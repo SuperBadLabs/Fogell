@@ -434,6 +434,25 @@ jobs:
           FOGELL_BUILD_CONFIGURATION: Release
         run: ./scripts/prove-fg232-controller-inotify.sh
 
+      - name: effect ledger crash windows under the real controller (FG-026b)
+        # The runtime adoption of the FG-026 ledger. For each of the four
+        # windows (prepare, invoke, apply, confirm) the real controller is
+        # started with the file-drop receipt simulator and its kill hook armed
+        # at that window, a build is submitted, and the controller must die by
+        # its own SIGKILL with the ledger row and the destination in exactly
+        # that window's state. Relaunched without the hook, the startup and
+        # lease-expiry triggers must classify the stranded work as tenant-scoped
+        # uncertain with one event/outbox pair and list it on
+        # GET .../effects/uncertain, never re-invoking; confirmed work must
+        # survive lease loss unlisted. Its judges are refused on planted
+        # false-green inputs first. Runs on the 10-second lease it configures,
+        # so four windows take a few minutes; every wait is bounded (FG-231).
+        # Lives here because it runs the real controller like the steps above.
+        timeout-minutes: 10
+        env:
+          FOGELL_BUILD_CONFIGURATION: Release
+        run: ./scripts/prove-fg026b-effect-dispatch.sh
+
       - name: stop PostgreSQL
         if: always() && env.FOGELL_PG_CONTAINER != ''
         run: ./scripts/ci-postgres.sh stop
