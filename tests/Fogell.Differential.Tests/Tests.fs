@@ -1677,6 +1677,7 @@ let controllerStateRoot =
         try
             IO.Directory.CreateDirectory fixtureRoot |> ignore
             IO.File.WriteAllText(tokenPath, String('t', 32))
+            IO.File.SetUnixFileMode(tokenPath, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite)
             IO.File.WriteAllText(runHostPath, "test host placeholder")
             IO.File.SetUnixFileMode(
                 runHostPath,

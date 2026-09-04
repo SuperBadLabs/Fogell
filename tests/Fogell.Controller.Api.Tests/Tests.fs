@@ -20,6 +20,12 @@ open Fogell.Execution
 [<DllImport("libc")>]
 extern uint32 private geteuid()
 
+[<DllImport("libc", SetLastError = true)>]
+extern int private mkfifo(string path, uint32 mode)
+
+[<DllImport("libc", SetLastError = true)>]
+extern int private fcntl(int descriptor, int command)
+
 let private effectiveIdentityIsRoot () = geteuid() = 0u
 
 let private connectionString =
@@ -492,46 +498,48 @@ let private hostFootprint =
                   IO.Directory.Delete(ambientRoot, true)
           } ]
 
+let private controllerConfigurationVariables =
+    [ "FOGELL_DATABASE_URL"; "FOGELL_MAINTENANCE_DATABASE_URL"
+      "FOGELL_API_TOKEN_FILE"; "FOGELL_LISTEN_URL"; "FOGELL_STATE_ROOT"
+      "FOGELL_RUN_HOST_PATH"; "FOGELL_LOCAL_TRUST_POOL"
+      "FOGELL_MAX_PIPELINE_BYTES"; "FOGELL_MAX_LOG_CHUNKS"
+      "FOGELL_WORKER_POLL_MS"; "FOGELL_WORKER_LEASE_SECONDS" ]
+
+let private withControllerConfiguration f =
+    let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-setsid-validation-" + Guid.NewGuid().ToString("N"))
+    IO.Directory.CreateDirectory root |> ignore
+    let tokenFile = IO.Path.Combine(root, "token")
+    let runHost = IO.Path.Combine(root, "run-host")
+    IO.File.WriteAllText(tokenFile, String.replicate 32 "t")
+    IO.File.SetUnixFileMode(tokenFile, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite)
+    IO.File.WriteAllText(runHost, "#!/bin/sh\nexit 0\n")
+    IO.File.SetUnixFileMode(runHost, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserExecute)
+    let previous = controllerConfigurationVariables |> List.map (fun name -> name, Environment.GetEnvironmentVariable name)
+    let set name value = Environment.SetEnvironmentVariable(name, value)
+
+    set "FOGELL_DATABASE_URL" "Host=runtime;Database=fogell"
+    set "FOGELL_MAINTENANCE_DATABASE_URL" "Host=maintenance;Database=fogell"
+    set "FOGELL_API_TOKEN_FILE" tokenFile
+    set "FOGELL_LISTEN_URL" "http://127.0.0.1:18083"
+    set "FOGELL_STATE_ROOT" (IO.Path.Combine(root, "state"))
+    set "FOGELL_RUN_HOST_PATH" runHost
+    set "FOGELL_LOCAL_TRUST_POOL" "trusted-linux"
+    set "FOGELL_MAX_PIPELINE_BYTES" "1024"
+    set "FOGELL_MAX_LOG_CHUNKS" "100"
+    set "FOGELL_WORKER_POLL_MS" "50"
+    set "FOGELL_WORKER_LEASE_SECONDS" "60"
+
+    try f root tokenFile runHost
+    finally
+        previous |> List.iter (fun (name, value) -> Environment.SetEnvironmentVariable(name, value))
+        IO.Directory.Delete(root, true)
+
 let private executionLauncherValidation =
-    let variables =
-        [ "FOGELL_DATABASE_URL"; "FOGELL_MAINTENANCE_DATABASE_URL"
-          "FOGELL_API_TOKEN_FILE"; "FOGELL_LISTEN_URL"; "FOGELL_STATE_ROOT"
-          "FOGELL_RUN_HOST_PATH"; "FOGELL_LOCAL_TRUST_POOL"
-          "FOGELL_MAX_PIPELINE_BYTES"; "FOGELL_MAX_LOG_CHUNKS"
-          "FOGELL_WORKER_POLL_MS"; "FOGELL_WORKER_LEASE_SECONDS" ]
-
-    let withConfiguration f =
-        let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-setsid-validation-" + Guid.NewGuid().ToString("N"))
-        IO.Directory.CreateDirectory root |> ignore
-        let tokenFile = IO.Path.Combine(root, "token")
-        let runHost = IO.Path.Combine(root, "run-host")
-        IO.File.WriteAllText(tokenFile, String.replicate 32 "t")
-        IO.File.WriteAllText(runHost, "#!/bin/sh\nexit 0\n")
-        IO.File.SetUnixFileMode(runHost, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserExecute)
-        let previous = variables |> List.map (fun name -> name, Environment.GetEnvironmentVariable name)
-        let set name value = Environment.SetEnvironmentVariable(name, value)
-
-        set "FOGELL_DATABASE_URL" "Host=runtime;Database=fogell"
-        set "FOGELL_MAINTENANCE_DATABASE_URL" "Host=maintenance;Database=fogell"
-        set "FOGELL_API_TOKEN_FILE" tokenFile
-        set "FOGELL_LISTEN_URL" "http://127.0.0.1:18083"
-        set "FOGELL_STATE_ROOT" (IO.Path.Combine(root, "state"))
-        set "FOGELL_RUN_HOST_PATH" runHost
-        set "FOGELL_LOCAL_TRUST_POOL" "trusted-linux"
-        set "FOGELL_MAX_PIPELINE_BYTES" "1024"
-        set "FOGELL_MAX_LOG_CHUNKS" "100"
-        set "FOGELL_WORKER_POLL_MS" "50"
-        set "FOGELL_WORKER_LEASE_SECONDS" "60"
-
-        try f root runHost
-        finally
-            previous |> List.iter (fun (name, value) -> Environment.SetEnvironmentVariable(name, value))
-            IO.Directory.Delete(root, true)
 
     testList
         "FG-224 trusted setsid launcher"
         [ test "the exact trusted launcher is shared into worker configuration" {
-              withConfiguration (fun _ _ ->
+              withControllerConfiguration (fun _ _ _ ->
                   match ControllerConfig.loadWithSetsidLauncher ControllerConfig.trustedSetsidLauncher with
                   | Error error -> failtestf "trusted host launcher was refused: %s" error
                   | Ok config ->
@@ -540,7 +548,7 @@ let private executionLauncherValidation =
           }
 
           test "a whitespace-only local trust pool refuses startup" {
-              withConfiguration (fun _ _ ->
+              withControllerConfiguration (fun _ _ _ ->
                   Environment.SetEnvironmentVariable("FOGELL_LOCAL_TRUST_POOL", " \t ")
 
                   Expect.equal
@@ -550,7 +558,7 @@ let private executionLauncherValidation =
           }
 
           test "a missing trusted launcher refuses startup" {
-              withConfiguration (fun root runHost ->
+              withControllerConfiguration (fun root _ runHost ->
                   let missing = IO.Path.Combine(root, "missing-setsid")
                   Expect.isFalse
                       (ControllerConfig.executionLaunchersReadyAt runHost missing)
@@ -588,7 +596,7 @@ let private executionLauncherValidation =
           }
 
           test "a non-executable trusted launcher refuses startup" {
-              withConfiguration (fun root runHost ->
+              withControllerConfiguration (fun root _ runHost ->
                   let nonExecutable = IO.Path.Combine(root, "non-executable-setsid")
                   IO.File.WriteAllText(nonExecutable, "not executable")
                   IO.File.SetUnixFileMode(nonExecutable, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite)
@@ -628,6 +636,247 @@ let private executionLauncherValidation =
                   WorkerLaunch.Launched
                   "a successful Process.Start result is explicit"
           } ]
+
+let private tokenFileIntegrity =
+    let withRoot f =
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg251-token-{Guid.NewGuid():N}")
+        IO.Directory.CreateDirectory root |> ignore
+
+        try f root
+        finally IO.Directory.Delete(root, true)
+
+    let writeToken (root: string) (name: string) (mode: IO.UnixFileMode) (content: string) =
+        let path = IO.Path.Combine(root, name)
+        IO.File.WriteAllText(path, content)
+        IO.File.SetUnixFileMode(path, mode)
+        path
+
+    let userRead = IO.UnixFileMode.UserRead
+    let userWrite = IO.UnixFileMode.UserWrite
+
+    testList
+        "FG-251 descriptor-bound API token file"
+        [ testCase "0400 and 0600 service-owned regular files are accepted" <| fun _ ->
+              withRoot (fun root ->
+                  for name, mode in [ "read-only", userRead; "owner-writable", userRead ||| userWrite ] do
+                      let expected = String.replicate 32 name
+                      let path = writeToken root name mode expected
+                      Expect.equal
+                          (ControllerConfig.readTokenFileSecurely path)
+                          (Ok expected)
+                          $"{name} is a secure deployment mode")
+
+          testCase "the production configuration path enforces metadata and consumes descriptor bytes" <| fun _ ->
+              withControllerConfiguration (fun _ tokenFile _ ->
+                  IO.File.SetUnixFileMode(tokenFile, userRead ||| userWrite ||| IO.UnixFileMode.OtherRead)
+
+                  Expect.equal
+                      (ControllerConfig.loadWithSetsidLauncher ControllerConfig.trustedSetsidLauncher)
+                      (Error "FOGELL_API_TOKEN_FILE mode must be 0400 or 0600")
+                      "production startup selects the descriptor-bound reader")
+
+              withControllerConfiguration (fun root tokenFile _ ->
+                  let original = String.replicate 32 "o"
+                  let replacement = String.replicate 32 "r"
+                  IO.File.WriteAllText(tokenFile, original)
+                  IO.File.SetUnixFileMode(tokenFile, userRead ||| userWrite)
+                  let moved = IO.Path.Combine(root, "loader-opened-inode")
+
+                  let swappingReader path =
+                      ControllerConfig.readTokenFileSecurelyWith
+                          (fun _ ->
+                              IO.File.Move(path, moved)
+                              writeToken root "token" (userRead ||| userWrite) replacement |> ignore)
+                          ignore
+                          path
+
+                  match
+                      ControllerConfig.loadWithSetsidLauncherAndTokenReader
+                          swappingReader
+                          ControllerConfig.trustedSetsidLauncher
+                  with
+                  | Error error -> failtestf "loader refused descriptor-bound bytes: %s" error
+                  | Ok config ->
+                      Expect.equal config.ApiToken original "the loader consumes its reader result without reopening the path")
+
+          testCase "permissive modes are refused" <| fun _ ->
+              withRoot (fun root ->
+                  for name, forbiddenBit in
+                      [ "user-executable", IO.UnixFileMode.UserExecute
+                        "group-readable", IO.UnixFileMode.GroupRead
+                        "group-writable", IO.UnixFileMode.GroupWrite
+                        "group-executable", IO.UnixFileMode.GroupExecute
+                        "world-readable", IO.UnixFileMode.OtherRead
+                        "world-writable", IO.UnixFileMode.OtherWrite
+                        "world-executable", IO.UnixFileMode.OtherExecute
+                        "set-user-id", IO.UnixFileMode.SetUser
+                        "set-group-id", IO.UnixFileMode.SetGroup
+                        "sticky", IO.UnixFileMode.StickyBit ] do
+                      let mode = userRead ||| userWrite ||| forbiddenBit
+                      let path = writeToken root name mode (String.replicate 32 "p")
+                      Expect.equal
+                          (ControllerConfig.readTokenFileSecurely path)
+                          (Error "FOGELL_API_TOKEN_FILE mode must be 0400 or 0600")
+                          $"{name} cannot carry the global operator bearer")
+
+          testCase "symlinks, directories, FIFOs, and oversized files refuse promptly" <| fun _ ->
+              withRoot (fun root ->
+                  let target = writeToken root "target" (userRead ||| userWrite) (String.replicate 32 "t")
+                  let link = IO.Path.Combine(root, "link")
+                  IO.File.CreateSymbolicLink(link, target) |> ignore
+                  Expect.equal
+                      (ControllerConfig.readTokenFileSecurely link)
+                      (Error "FOGELL_API_TOKEN_FILE must name a readable regular non-symlink file")
+                      "O_NOFOLLOW rejects the final link"
+
+                  Expect.equal
+                      (ControllerConfig.readTokenFileSecurely root)
+                      (Error "FOGELL_API_TOKEN_FILE must name a regular non-symlink file")
+                      "a directory is not token material"
+
+                  let fifo = IO.Path.Combine(root, "fifo")
+                  Expect.equal (mkfifo(fifo, 0x180u)) 0 "the FIFO fixture is created"
+                  let fifoRead = System.Threading.Tasks.Task.Run(fun () -> ControllerConfig.readTokenFileSecurely fifo)
+                  let completedPromptly = fifoRead.Wait(TimeSpan.FromSeconds 2.0)
+
+                  if not completedPromptly then
+                      // Reap a mutant that blocks in open(2): a writer releases
+                      // its read-side open so no thread-pool worker is stranded.
+                      use writer = new IO.FileStream(fifo, IO.FileMode.Open, IO.FileAccess.Write, IO.FileShare.ReadWrite)
+                      Expect.isTrue (fifoRead.Wait(TimeSpan.FromSeconds 2.0)) "the blocked FIFO mutant is reaped"
+
+                  Expect.isTrue
+                      completedPromptly
+                      "O_NONBLOCK prevents an attacker-controlled FIFO from holding startup"
+                  Expect.equal
+                      fifoRead.Result
+                      (Error "FOGELL_API_TOKEN_FILE must name a regular non-symlink file")
+                      "the promptly opened FIFO is classified as non-regular"
+
+                  let oversized =
+                      writeToken
+                          root
+                          "oversized"
+                          (userRead ||| userWrite)
+                          (String.replicate (ControllerConfig.maxApiTokenFileBytes + 1) "x")
+                  Expect.equal
+                      (ControllerConfig.readTokenFileSecurely oversized)
+                      (Error $"FOGELL_API_TOKEN_FILE must be at most {ControllerConfig.maxApiTokenFileBytes} bytes")
+                      "startup reads no unbounded token file")
+
+          testCase "malformed and non-UTF-8 token encodings are refused" <| fun _ ->
+              withRoot (fun root ->
+                  let invalidPath = IO.Path.Combine(root, "invalid-utf8")
+                  IO.File.WriteAllBytes(invalidPath, Array.append (Array.create 32 0x61uy) [| 0xFFuy |])
+                  IO.File.SetUnixFileMode(invalidPath, userRead ||| userWrite)
+                  Expect.equal
+                      (ControllerConfig.readTokenFileSecurely invalidPath)
+                      (Error "FOGELL_API_TOKEN_FILE could not be decoded")
+                      "replacement fallback cannot normalize malformed credential bytes"
+
+                  let utf16Path = IO.Path.Combine(root, "utf16")
+                  let utf16 =
+                      Array.append
+                          (Encoding.Unicode.GetPreamble())
+                          (Encoding.Unicode.GetBytes(String.replicate 32 "u"))
+                  IO.File.WriteAllBytes(utf16Path, utf16)
+                  IO.File.SetUnixFileMode(utf16Path, userRead ||| userWrite)
+                  Expect.equal
+                      (ControllerConfig.readTokenFileSecurely utf16Path)
+                      (Error "FOGELL_API_TOKEN_FILE could not be decoded")
+                      "BOM detection cannot silently admit a different token encoding")
+
+          testCase "flag tables and statx metadata fail closed independent of ambient privileges" <| fun _ ->
+              Expect.equal
+                  (ControllerConfig.tokenFileOpenFlags LinuxOpenFlags.asmGeneric)
+                  (0x800 ||| 0x80000 ||| LinuxOpenFlags.asmGeneric.NoFollow)
+                  "the generic ABI contributes its own no-follow bit"
+              Expect.equal
+                  (ControllerConfig.tokenFileOpenFlags LinuxOpenFlags.armLineage)
+                  (0x800 ||| 0x80000 ||| LinuxOpenFlags.armLineage.NoFollow)
+                  "the arm lineage contributes its distinct no-follow bit"
+
+              let mutable status = Unchecked.defaultof<ControllerConfig.LinuxStatx>
+              status.Mask <- 0x20Bu
+              status.Mode <- 0x8180us
+              status.UserId <- geteuid () + 1u
+              status.GroupId <- geteuid () + 2u
+              status.Size <- 32UL
+              Expect.equal
+                  (ControllerConfig.tokenFileMetadataFromStatx status)
+                  (Ok
+                      { Mode = 0x8180us
+                        Owner = geteuid () + 1u
+                        Size = 32UL })
+                  "the ABI record maps stx_uid, not the commonly-equal stx_gid"
+
+              status.Mask <- 0x203u
+              Expect.equal
+                  (ControllerConfig.tokenFileMetadataFromStatx status)
+                  (Error "FOGELL_API_TOKEN_FILE metadata could not be read from the opened file")
+                  "a kernel record that omits stx_uid is refused"
+
+              let metadata: ControllerConfig.TokenFileMetadata =
+                  { Mode = 0x8180us
+                    Owner = geteuid () + 1u
+                    Size = 32UL }
+              Expect.equal
+                  (ControllerConfig.validateTokenFileMetadata (geteuid ()) metadata)
+                  (Error "FOGELL_API_TOKEN_FILE must be owned by the service identity")
+                  "a correctly-shaped file owned by another identity is refused"
+
+              let specialMode =
+                  { metadata with
+                      Mode = 0x8980us
+                      Owner = geteuid () }
+              Expect.equal
+                  (ControllerConfig.validateTokenFileMetadata (geteuid ()) specialMode)
+                  (Error "FOGELL_API_TOKEN_FILE mode must be 0400 or 0600")
+                  "set-id and sticky bits are not hidden by a 0777-only mask"
+
+          testCase "a pathname replacement after open cannot substitute token bytes" <| fun _ ->
+              withRoot (fun root ->
+                  let original = String.replicate 32 "o"
+                  let replacement = String.replicate 32 "r"
+                  let path = writeToken root "token" (userRead ||| userWrite) original
+                  let moved = IO.Path.Combine(root, "opened-inode")
+                  let mutable descriptorFlags = -1
+
+                  let result =
+                      ControllerConfig.readTokenFileSecurelyWith
+                          (fun descriptor ->
+                              descriptorFlags <- fcntl(descriptor, 1)
+                              IO.File.Move(path, moved)
+                              writeToken
+                                  root
+                                  "token"
+                                  (userRead ||| userWrite ||| IO.UnixFileMode.OtherRead)
+                                  replacement
+                              |> ignore)
+                          ignore
+                          path
+
+                  Expect.equal result (Ok original) "validation and reading stay on the opened inode"
+                  Expect.equal (descriptorFlags &&& 1) 1 "O_CLOEXEC marks the token descriptor close-on-exec"
+                  Expect.equal (IO.File.ReadAllText path) replacement "the pathname now names different insecure bytes")
+
+          testCase "growth after metadata validation is still bounded" <| fun _ ->
+              withRoot (fun root ->
+                  let path = writeToken root "growing" (userRead ||| userWrite) (String.replicate 32 "g")
+
+                  let result =
+                      ControllerConfig.readTokenFileSecurelyWith
+                          ignore
+                          (fun () ->
+                              use append =
+                                  new IO.FileStream(path, IO.FileMode.Append, IO.FileAccess.Write, IO.FileShare.ReadWrite)
+                              append.Write(Array.create<byte> ControllerConfig.maxApiTokenFileBytes 0x78uy))
+                          path
+
+                  Expect.equal
+                      result
+                      (Error $"FOGELL_API_TOKEN_FILE must be at most {ControllerConfig.maxApiTokenFileBytes} bytes")
+                      "the descriptor reader retains one extra byte and rejects in-place growth") ]
 
 /// FG-060. Authorization is proven BEFORE anything else, because every other
 /// test would otherwise be running against an open endpoint.
@@ -1956,5 +2205,6 @@ let main argv =
                           databaseStartupBoundary
                           hostFootprint
                           executionLauncherValidation
+                          tokenFileIntegrity
                           authorization
                           endpoints ]))

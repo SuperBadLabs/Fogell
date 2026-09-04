@@ -148,6 +148,14 @@ if lane_active build; then
   ./scripts/run-project-tests.sh \
     || { echo "TESTS FAILED"; exit 1; }
 
+  # FG-251. The global operator bearer is accepted only from one bounded,
+  # metadata-validated descriptor. Compile hostile candidates that hardcode an
+  # x86 flag, trust incomplete/wrong statx fields, reopen either loader path,
+  # drop nonblocking/close-on-exec, or weaken exact-mode/decode/size handling.
+  echo "=== descriptor-bound API token-file mutation proof (FG-251, blocking) ==="
+  ./scripts/prove-fg251-token-file.sh \
+    || { echo "DESCRIPTOR-BOUND API TOKEN-FILE PROOF FAILED"; exit 1; }
+
   # FG-235. Process callbacks have already lost CR/LF terminators, so a
   # multiline literal credential cannot be protected by the registered whole
   # form on progressive output. Prove selected text/UTF-8 file credentials
