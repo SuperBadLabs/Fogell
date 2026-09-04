@@ -801,13 +801,65 @@ module FogellSide =
             // are CORRECT — the wording was what lied, in the commit that split them
             // to stop exactly that.
             //
-            // Both now say UNSUPPORTED, which is true of every case either list can
-            // hold. Telling unknown from known-but-unimplemented from wrong-scope
-            // needs the Jenkins-known set per scope, which is FG-133; claiming the
-            // distinction without making it is how this went wrong twice.
+            // Both say UNSUPPORTED, which is true of every case either list can
+            // hold; FG-133 then adds WHY per name from the two measured Jenkins
+            // sets below — unknown, known-but-unimplemented, or wrong scope —
+            // without touching which names are refused. Claiming the distinction
+            // without making it is how this went wrong twice.
             let unknownOptionNames = refusedPipelineOptions |> List.distinct
 
             let stageScopeRefusals = refusedStageOptions |> List.distinct
+
+            // FG-133. WHY each name is refused, decided against the two sets
+            // Jenkins 2.568.1 enumerates in its own refusal — MEASURED on the
+            // pinned lab (receipts `compile-refusal-option-unknown-pipeline`,
+            // `compile-refusal-option-unknown-stage` and
+            // `compile-refusal-option-pipeline-only-at-stage`): `Invalid option
+            // type "<name>". Valid option types: [...]`, 39 names at pipeline
+            // scope and 24 at stage scope, the stage list a strict subset. Three
+            // cases, each sending the reader somewhere different:
+            //   * unknown to Jenkins at either scope — a typo or a plugin this lab
+            //     does not have; Jenkins refuses it too;
+            //   * known to Jenkins at this scope, not implemented here — Jenkins
+            //     runs it; this engine's gap, refused by name (FG-103);
+            //   * a pipeline-only name inside a stage block — Jenkins refuses it
+            //     there too, with the stage list.
+            // The two lists are Jenkins' KNOWN set, not what this engine honours;
+            // conflating the two is the FG-053 defect the descriptor table exists
+            // to prevent, so they are consulted only to word the refusal.
+            let jenkinsPipelineOptionNames =
+                set
+                    [ "ansiColor"; "buildDiscarder"; "catchError"; "checkoutToSubdirectory"
+                      "copyArtifactPermission"; "disableConcurrentBuilds"; "disableRestartFromStage"
+                      "disableResume"; "dockerNode"; "durabilityHint"; "githubProjectProperty"; "lock"
+                      "newContainerPerStage"; "overrideIndexTriggers"; "parallelsAlwaysFailFast"
+                      "podTemplate"; "preserveStashes"; "quietPeriod"; "rateLimitBuilds"; "retry"
+                      "script"; "skipDefaultCheckout"; "skipStagesAfterUnstable"; "throttle"
+                      "throttleJobProperty"; "timeout"; "timestamps"; "waitUntil"; "warnError"
+                      "withAWS"; "withBuildUser"; "withChecks"; "withContext"; "withCredentials"
+                      "withEnv"; "withKubeConfig"; "withKubeCredentials"; "wrap"; "ws" ]
+
+            let jenkinsStageOptionNames =
+                set
+                    [ "ansiColor"; "catchError"; "checkoutToSubdirectory"; "dockerNode"; "lock"
+                      "podTemplate"; "retry"; "script"; "skipDefaultCheckout"; "throttle"; "timeout"
+                      "timestamps"; "waitUntil"; "warnError"; "withAWS"; "withBuildUser"; "withChecks"
+                      "withContext"; "withCredentials"; "withEnv"; "withKubeConfig"
+                      "withKubeCredentials"; "wrap"; "ws" ]
+
+            let describePipelineOptionRefusal name =
+                if jenkinsPipelineOptionNames.Contains name then
+                    $"{name} (known to Jenkins at pipeline scope; not implemented by this engine)"
+                else
+                    $"{name} (unknown to Jenkins at either scope; Jenkins refuses it too)"
+
+            let describeStageOptionRefusal name =
+                if jenkinsStageOptionNames.Contains name then
+                    $"{name} (known to Jenkins at stage scope; not implemented by this engine at stage scope)"
+                elif jenkinsPipelineOptionNames.Contains name then
+                    $"{name} (a pipeline-only option; Jenkins refuses it at stage scope too)"
+                else
+                    $"{name} (unknown to Jenkins at either scope; Jenkins refuses it too)"
 
             // FG-053(b). Pipeline-level only (Jenkins does not accept it at stage
             // scope). ZERO-ARGUMENT: reading it by mere presence meant
@@ -1058,7 +1110,10 @@ module FogellSide =
             let mutable compileRejected = false
 
             if not (List.isEmpty unknownOptionNames) then
-                emit ("ERROR: pipeline declares option(s) this engine does not support: " + String.concat ", " unknownOptionNames)
+                emit (
+                    "ERROR: pipeline declares option(s) this engine does not support: "
+                    + String.concat ", " (unknownOptionNames |> List.map describePipelineOptionRefusal)
+                )
                 root.Failed.Value <- true
                 compileRejected <- true
                 bump BuildStatus.Failure
@@ -1066,7 +1121,7 @@ module FogellSide =
             if not (List.isEmpty stageScopeRefusals) then
                 emit (
                     "ERROR: stage declares option(s) this engine does not support at stage scope: "
-                    + String.concat ", " stageScopeRefusals
+                    + String.concat ", " (stageScopeRefusals |> List.map describeStageOptionRefusal)
                     + " — refusing rather than running them with the wrong semantics"
                 )
 
