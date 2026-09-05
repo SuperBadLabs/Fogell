@@ -4,7 +4,7 @@
 #
 # The compile-time half of the closed world is the exhaustive match over
 # EffectProducer in EffectRegistry.fs and EffectDispatch.fs (FS0025 is an error
-# in Directory.Build.props). This is the source half, and it asks five questions
+# in Directory.Build.props). This is the source half, and it asks six questions
 # the compiler cannot:
 #
 #   1. Is EffectDispatch.run the ONLY caller of the ledger under src/? A direct
@@ -24,12 +24,21 @@
 #   5. Does the in-process trigger test stay inside its FG026B_NO_MANUAL_STORE
 #      fence — no manual reconciliation call standing in for the production
 #      trigger?
+#   6. Are a producer's Invoke/Confirm closures and the connector's invocation
+#      builder reached only from EffectDispatch.fs? A `.Invoke()` elsewhere
+#      drives the destination with no ledger row at all.
 #
 # Comment lines are excluded from every scan (a comment naming Process.Start is
 # prose, not a call). scripts/prove-effect-dispatch-audit.sh plants one
 # violation per question in a scratch copy and requires the named refusal, and
 # runs the accept arm on a clean copy. Exit 0 is a pass; every refusal names
 # its question and its file.
+#
+# LIMITS, so nobody mistakes a pass for a proof: this is a name-based source
+# tripwire over src/ (and one fenced test region). A helper defined outside a
+# scanned pattern and called inside it, a reflection call, or a spelling this
+# pattern does not know is not caught. "Closed world" is this tripwire plus the
+# compile-time exhaustive match and the registry test, not a formal proof.
 set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 2
@@ -75,9 +84,11 @@ while IFS= read -r file; do
     || refuse "question 1: ledger call outside EffectDispatch in $file:"$'\n'"$offending"
 done < <(rg -l -e "$ledger_pattern" src --glob '*.fs' | sort)
 
-dispatch_ledger_calls=$(hits 'store\.(PrepareEffect|AdvanceEffect)\(' "$dispatch_fs" | wc -l | tr -d ' ')
-[ "$dispatch_ledger_calls" = 2 ] \
-  || refuse "question 1: EffectDispatch.fs must hold exactly one PrepareEffect and one AdvanceEffect call, observed $dispatch_ledger_calls"
+# Every non-comment token, not only the `store.` spelling: a second path
+# through a differently named Store binding is still a second path.
+dispatch_ledger_tokens=$(hits '\b(PrepareEffect|AdvanceEffect)\b' "$dispatch_fs" | rg -o -e '\b(PrepareEffect|AdvanceEffect)\b' | wc -l | tr -d ' ')
+[ "$dispatch_ledger_tokens" = 2 ] \
+  || refuse "question 1: EffectDispatch.fs must hold exactly one PrepareEffect and one AdvanceEffect call, observed $dispatch_ledger_tokens ledger token(s)"
 
 # ---- 2. the triggers have bound sites ----------------------------------------
 trigger_pattern='MarkStaleEffectsUncertain|ReconcileStaleEffects|ActivateRestore'
@@ -134,7 +145,7 @@ for case_name in $cases; do
 done
 
 # ---- 4. effect-bearing calls are exactly the allow-list ----------------------
-effect_pattern='HttpClient|SmtpClient|Socket|WebRequest|Process\.Start|File\.Move|File\.WriteAll[A-Za-z]*|\.Kill\(\)'
+effect_pattern='HttpClient|SmtpClient|Socket|TcpClient|WebRequest|Process\.Start|new Process\b|Environment\.Exit|File\.Move|File\.Copy|File\.Create|File\.Open|File\.WriteAll[A-Za-z]*|FileStream|Directory\.Move|\.Kill\(\)'
 # Per-file token counts, one line per (file, token), so an added call of an
 # already-allowed kind is refused as well as a new kind.
 observed=$(
@@ -143,14 +154,27 @@ observed=$(
       | while IFS=$'\t' read -r matched_file text; do
           printf '%s\n' "$text" | rg -o -e "$effect_pattern" | sed "s|^|$matched_file |"
         done
-  done | sort | uniq -c | sed 's/^ *//'
+  done | LC_ALL=C sort | uniq -c | sed 's/^ *//' | LC_ALL=C sort
 )
+# The allow-list, per file and token: the simulator's write/rename/kill, the
+# worker's atomic definition write, child launch and event-stream reader, the
+# readiness probes in Config.fs and EffectRegistry.fs, the FG-251 secure
+# token-file reader in Config.fs, the artifact reader in Router.fs, and the
+# staging -> snapshot move in ArtifactSnapshots.fs.
 expected=$(printf '%s\n' \
   "1 $dispatch_fs .Kill()" \
   "1 $dispatch_fs File.Move" \
   "1 $dispatch_fs File.WriteAllBytes" \
   "1 $worker_fs File.Move" \
-  "1 $worker_fs File.WriteAllBytes" | sort)
+  "1 $worker_fs File.WriteAllBytes" \
+  "1 $worker_fs FileStream" \
+  "1 $worker_fs new Process" \
+  "2 $host_dir/Config.fs File.Open" \
+  "3 $host_dir/Config.fs FileStream" \
+  "1 $registry_fs File.Open" \
+  "1 $registry_fs FileStream" \
+  "3 $api_dir/Router.fs FileStream" \
+  "1 $api_dir/ArtifactSnapshots.fs Directory.Move" | LC_ALL=C sort)
 if [ "$observed" != "$expected" ]; then
   refuse "question 4: effect-bearing calls under the controller are not the pinned allow-list"$'\n'"expected:"$'\n'"$expected"$'\n'"observed:"$'\n'"${observed:-<none>}"
 fi
@@ -176,10 +200,23 @@ else
   fi
 fi
 
+# ---- 6. the invocation closures are reachable only through dispatch ---------
+# A producer's Invoke/Confirm closures and the connector's invocation builder
+# are public F# values; nothing stops another file in the host from calling
+# `(FileDropReceipt.invocation ...).Invoke()` and driving the destination with
+# no ledger row at all. Pin every spelling of that reach to EffectDispatch.fs.
+invocation_pattern='\.Invoke\(|Invoke =|FileDropReceipt\.invocation|EffectInvocation'
+while IFS= read -r file; do
+  [ "$file" = "$dispatch_fs" ] && continue
+  offending=$(hits "$invocation_pattern" "$file")
+  [ -z "$offending" ] \
+    || refuse "question 6: effect invocation reached outside EffectDispatch in $file:"$'\n'"$offending"
+done < <(rg -l -e "$invocation_pattern" src --glob '*.fs' | sort)
+
 if [ "$problems" -ne 0 ]; then
   echo "FG-026b DISPATCH AUDIT FAILED: $problems problem(s)" >&2
   exit 1
 fi
 
 case_count=$(printf '%s\n' "$cases" | rg -c . || true)
-echo "FG-026b DISPATCH AUDIT: ledger called only from EffectDispatch; triggers bound to the worker scan and startup; $case_count registered producer(s) each routed and uniquely named; effect-bearing calls are the pinned allow-list; the trigger test makes no manual Store call"
+echo "FG-026b DISPATCH AUDIT: ledger called only from EffectDispatch; triggers bound to the worker scan and startup; $case_count registered producer(s) each routed and uniquely named; effect-bearing calls are the pinned allow-list; the trigger test makes no manual Store call; invocation closures are reached only through dispatch"

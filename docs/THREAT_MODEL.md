@@ -145,9 +145,15 @@ receipt destination simulator, because the inventory found no controller-managed
 external-effect producer in the runnable worker. Stale prepared/applied work is
 classified tenant-scoped uncertain by the lease-expiry scan, the startup pass and
 `ActivateRestore`, each publishing one `effect.uncertain` event and outbox row,
-and listed read-only on `GET .../effects/uncertain`; nothing re-invokes it.
-Arbitrary shell/process side effects remain governed by the execution and egress
-boundaries, not this ledger.
+and listed read-only on `GET .../effects/uncertain`; nothing re-invokes it. The
+audit is a name-based source tripwire plus the compile-time exhaustive match,
+not a formal proof. The simulator's destination is byte-checked, not
+authenticated: the root is not symlink-resolved or checked for group
+writability, so a same-UID pipeline can pre-write an attempt's receipt — with
+the exact bytes the result is byte-identical (attribution, not truth), with any
+other bytes its own build fails closed into Uncertain. Arbitrary shell/process
+side effects remain governed by the execution and egress boundaries, not this
+ledger.
 
 **Boundary.** Transaction-local RLS context is selected by trusted controller
 code; PostgreSQL custom settings are not an identity provider. Code already
