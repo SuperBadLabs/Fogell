@@ -1,0 +1,16 @@
+=== round 1 (order: fogell jenkins) ===
+  fogell    124037 ms  SUCCESS
+  jenkins   138567 ms  SUCCESS  (jenkins self-reported 138391 ms)
+=== round 2 (order: jenkins fogell) ===
+  jenkins   136102 ms  SUCCESS  (jenkins self-reported 135433 ms)
+  fogell    134055 ms  SUCCESS
+=== round 3 (order: fogell jenkins) ===
+  fogell    133726 ms  SUCCESS
+  jenkins   131968 ms  SUCCESS  (jenkins self-reported 131888 ms)
+
+=== medians (wall clock, trigger -> terminal) ===
+  fogell   n=3  median 133726 ms   raw [124037, 134055, 133726]
+  jenkins  n=3  median 136102 ms   raw [138567, 136102, 131968]
+
+  Jenkins overhead vs Fogell on this build: 2376 ms (1.02x total wall clock)
+EXIT=0

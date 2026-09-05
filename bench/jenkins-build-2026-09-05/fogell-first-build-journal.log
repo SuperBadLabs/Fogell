@@ -1,0 +1,13 @@
+build-identity	8e43670df98e4aeb989f5116e4f373b3
+script-digest	13bf9a8ee428475ed7649f7f4fe307b42d5b5b1f6e6985e95201dc37f7e953da
+workspace-identity	56:/home/srikanth/fogell-build-jenkins/ws-jbuild-1788603816|56:/home/srikanth/fogell-build-jenkins/ws-jbuild-1788603816|74:/home/srikanth/fogell-build-jenkins/ws-jbuild-1788603816/jbuild-1788603816|67:/home/srikanth/fogell-build-jenkins/ws-jbuild-1788603816/_artifacts	jbuild-1788603816
+step-started	Toolchain	0	sh
+step-finished	Toolchain	0	success
+stage-committed	Toolchain
+step-started	Build core	0	sh
+step-finished	Build core	0	success
+stage-committed	Build core
+step-started	Verify artifact	0	sh
+step-finished	Verify artifact	0	success
+stage-committed	Verify artifact
+build-finished	success
