@@ -1027,12 +1027,50 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                 return true
         }
 
-    /// The in-process crash-window tests drive the production scan for one
-    /// organization through this seam; it is the same code ExecuteAsync runs.
-    member internal _.ScanOrganization(org: OrganizationId, stoppingToken: CancellationToken) =
-        scanOrganization org stoppingToken
+    /// FG-026b. One classification pass over every organization. Sequential,
+    /// so at most one pass is in flight per organization from this loop; the
+    /// scan loop's own pass is idempotent against it.
+    let reconcileEveryOrganization () =
+        for org in store.OrganizationIds() do
+            match store.ReconcileStaleEffects(org, "lease_expired") with
+            | Ok [] -> ()
+            | Ok classified ->
+                for checkpoint in classified do
+                    logger.LogWarning(
+                        "FG-026b effect {EffectKey} for {AttemptId} is uncertain after lease expiry; operator reconciliation is required",
+                        checkpoint.EffectKey,
+                        checkpoint.AttemptId.Value)
+            | Error error -> logger.LogError("FG-026b periodic effect reconciliation failed: {Reason}", error)
 
-    override _.ExecuteAsync(stoppingToken: CancellationToken) =
+    /// FG-026b. The bounded reconciliation cadence, independent of claim
+    /// execution. The scan loop runs one claim to completion, so its pass
+    /// alone would leave a stale row unclassified for the length of an
+    /// unrelated build; this loop ticks every lease period whatever the scan
+    /// loop is doing, and stops with the worker.
+    let reconciliationLoop (stoppingToken: CancellationToken) =
+        task {
+            use timer = new PeriodicTimer(TimeSpan.FromSeconds(float config.LeaseSeconds))
+            let mutable running = true
+
+            while running && not stoppingToken.IsCancellationRequested do
+                let mutable ticked = false
+
+                try
+                    let! tick = timer.WaitForNextTickAsync(stoppingToken)
+                    ticked <- tick
+                with :? OperationCanceledException when stoppingToken.IsCancellationRequested ->
+                    ticked <- false
+
+                if ticked then
+                    try
+                        reconcileEveryOrganization ()
+                    with ex ->
+                        logger.LogError(ex, "FG-026b periodic effect reconciliation pass failed")
+                else
+                    running <- false
+        }
+
+    let scanLoop (stoppingToken: CancellationToken) =
         task {
             while not stoppingToken.IsCancellationRequested do
                 let mutable claimed = false
@@ -1057,3 +1095,19 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                 if not claimed && not stoppingToken.IsCancellationRequested then
                     do! Task.Delay(config.PollMilliseconds, stoppingToken)
         }
+
+    /// The in-process crash-window tests drive the production scan for one
+    /// organization through this seam; it is the same code ExecuteAsync runs.
+    member internal _.ScanOrganization(org: OrganizationId, stoppingToken: CancellationToken) =
+        scanOrganization org stoppingToken
+
+    /// The in-process trigger test runs only this loop, with the scan loop
+    /// deliberately never started, to prove classification does not wait on
+    /// claim execution.
+    member internal _.ReconciliationLoop(stoppingToken: CancellationToken) =
+        reconciliationLoop stoppingToken
+
+    override _.ExecuteAsync(stoppingToken: CancellationToken) =
+        // Two independent loops on one cancellation token: the claim scan and
+        // the reconciliation cadence. Neither waits on the other.
+        Task.WhenAll(scanLoop stoppingToken, reconciliationLoop stoppingToken)

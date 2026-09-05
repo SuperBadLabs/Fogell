@@ -3887,6 +3887,62 @@ let effectReconciliation =
               let events, outbox, _, _ = uncertaintySurface org attempt.AttemptId
               Expect.equal (events, outbox) (0L, 0L) "MarkStaleEffectsUncertain is the surface-free primitive FG-026 closed"
               Expect.equal (reconcileOk org "lease_expired") [] "a trigger pass after the primitive has nothing left and stays silent"
+          }
+
+          test "the uncertain listing pages by keyset in listing order, refuses another organization's cursor, and bounds the limit" {
+              let org, project = freshProject ()
+              let payload = [| 7uy |]
+              let attempts =
+                  [ for index in 1..3 do
+                        let attempt, fence = runningAttempt org project $"fg026b-page-{index}" "agent-page" 60
+                        prepareEffectOk org attempt.AttemptId fence "agent-page" $"file-drop-receipt:{index}" payload |> ignore
+                        // Distinct prepared_at values so the order under test is the
+                        // listing's first key, not a tie-break.
+                        System.Threading.Thread.Sleep 5
+                        attempt.AttemptId ]
+              expireLeases org attempts
+              Expect.equal (reconcileOk org "lease_expired").Length 3 "three stale rows classified"
+
+              let page limit cursor =
+                  match store.ListUncertainEffectsPage(org, cursor, limit) with
+                  | Ok page -> page
+                  | Error error -> failtestf "page failed: %s" error
+
+              let expectedOrder = store.ListUncertainEffects org |> List.map (fun c -> c.EffectKey)
+              Expect.equal expectedOrder [ "file-drop-receipt:1"; "file-drop-receipt:2"; "file-drop-receipt:3" ] "the unbounded listing is in preparation order"
+
+              let first = page 2 None
+              Expect.equal (first.Effects |> List.map (fun c -> c.EffectKey)) [ "file-drop-receipt:1"; "file-drop-receipt:2" ] "the first page holds the first two in order"
+              Expect.isSome first.NextCursor "a full page with a row behind it carries a cursor"
+
+              let second = page 2 first.NextCursor
+              Expect.equal (second.Effects |> List.map (fun c -> c.EffectKey)) [ "file-drop-receipt:3" ] "the cursor continues without skipping or repeating"
+              Expect.isNone second.NextCursor "the last page carries no cursor"
+
+              let exact = page 3 None
+              Expect.equal exact.Effects.Length 3 "a page that exactly fits holds every row"
+              Expect.isNone exact.NextCursor "and carries no cursor when nothing is behind it"
+
+              let single = page 1 None
+              Expect.equal (single.Effects |> List.map (fun c -> c.EffectKey)) [ "file-drop-receipt:1" ] "limit 1"
+              let singleNext = page 1 single.NextCursor
+              Expect.equal (singleNext.Effects |> List.map (fun c -> c.EffectKey)) [ "file-drop-receipt:2" ] "limit 1, page 2"
+
+              let foreignOrg, _ = freshProject ()
+              match store.ListUncertainEffectsPage(foreignOrg, first.NextCursor, 10) with
+              | Error error -> Expect.stringContains error "another organization" "a cursor is bound to the organization it was issued for"
+              | Ok page -> failtestf "another organization accepted this tenant's cursor: %A" page
+
+              match store.ListUncertainEffectsPage(org, Some "not-a-cursor", 10) with
+              | Error error -> Expect.stringContains error "malformed" "garbage is refused"
+              | Ok page -> failtestf "garbage cursor accepted: %A" page
+
+              for badLimit in [ 0; -1; 1001 ] do
+                  match store.ListUncertainEffectsPage(org, None, badLimit) with
+                  | Error error -> Expect.stringContains error "1 through 1000" $"limit {badLimit} is refused"
+                  | Ok page -> failtestf "limit %d accepted: %A" badLimit page
+
+              Expect.equal (page 1000 None).Effects.Length 3 "the maximum limit is accepted"
           } ]
 
 /// FG-027b Store foundation. This proves durable retry arbitration and replay;

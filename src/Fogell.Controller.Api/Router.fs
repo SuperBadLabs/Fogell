@@ -668,26 +668,50 @@ module Router =
                 match guid (string ctx.Request.RouteValues["organizationId"]) with
                 | None -> return! fail ctx 400 "malformed_identifier" "organization must be a UUID" None
                 | Some org ->
-                    let effects =
-                        state.Store.ListUncertainEffects(OrganizationId org)
-                        |> List.map (fun checkpoint ->
-                            { AttemptId = checkpoint.AttemptId.Value.ToString()
-                              EffectKey = checkpoint.EffectKey
-                              Fence = checkpoint.Fence.Value
-                              AuthorityOwner = checkpoint.AuthorityOwner
-                              RestoreEpoch = checkpoint.RestoreEpoch.Value
-                              PayloadSha256 = checkpoint.PayloadSha256
-                              UncertainFrom =
-                                match checkpoint.UncertainOrigin with
-                                | Some UncertainAfterPrepare -> "prepared"
-                                | Some UncertainAfterApply -> "applied"
-                                | None -> "unknown" })
+                    // Bounded: ?limit= defaults to 200 and is refused above 1000;
+                    // ?cursor= continues from the previous page's next_cursor.
+                    let limit =
+                        match ctx.Request.Query.TryGetValue "limit" with
+                        | true, values when values.Count > 0 && not (String.IsNullOrWhiteSpace values.[0]) ->
+                            match Int32.TryParse values.[0] with
+                            | true, value when value >= 1 && value <= 1000 -> Ok value
+                            | _ -> Error()
+                        | _ -> Ok 200
 
-                    let payload: UncertainEffectsResponse =
-                        { OrganizationId = org.ToString()
-                          Effects = effects }
+                    let cursor =
+                        match ctx.Request.Query.TryGetValue "cursor" with
+                        | true, values when values.Count > 0 && not (String.IsNullOrWhiteSpace values.[0]) ->
+                            Some values.[0]
+                        | _ -> None
 
-                    return! json ctx 200 payload
+                    match limit with
+                    | Error() ->
+                        return! fail ctx 400 "invalid_limit" "limit must be an integer from 1 through 1000" None
+                    | Ok limit ->
+                        match state.Store.ListUncertainEffectsPage(OrganizationId org, cursor, limit) with
+                        | Error error -> return! fail ctx 400 "invalid_cursor" error None
+                        | Ok page ->
+                            let effects =
+                                page.Effects
+                                |> List.map (fun checkpoint ->
+                                    { AttemptId = checkpoint.AttemptId.Value.ToString()
+                                      EffectKey = checkpoint.EffectKey
+                                      Fence = checkpoint.Fence.Value
+                                      AuthorityOwner = checkpoint.AuthorityOwner
+                                      RestoreEpoch = checkpoint.RestoreEpoch.Value
+                                      PayloadSha256 = checkpoint.PayloadSha256
+                                      UncertainFrom =
+                                        match checkpoint.UncertainOrigin with
+                                        | Some UncertainAfterPrepare -> "prepared"
+                                        | Some UncertainAfterApply -> "applied"
+                                        | None -> "unknown" })
+
+                            let payload: UncertainEffectsResponse =
+                                { OrganizationId = org.ToString()
+                                  Effects = effects
+                                  NextCursor = page.NextCursor }
+
+                            return! json ctx 200 payload
         }
         :> Threading.Tasks.Task
 

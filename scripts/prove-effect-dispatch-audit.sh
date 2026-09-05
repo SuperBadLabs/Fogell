@@ -153,6 +153,16 @@ expect reject "a producer driven through its Invoke closure with no ledger row" 
   append_line src/Fogell.Controller.Host/Worker.fs \
   '    let plantedBypass root claim status = (FileDropReceipt.invocation root claim status).Invoke()'
 
+expect reject "a producer driven through a spaced Invoke call on a record pattern" \
+  "question 6: effect invocation reached outside EffectDispatch" \
+  append_line src/Fogell.Controller.Host/Worker.fs \
+  '    let bypass ({ Identity = _ } as invocation) = invocation.Invoke ()'
+
+expect reject "a record built with spaced Invoke = outside dispatch" \
+  "question 6: effect invocation reached outside EffectDispatch" \
+  append_line src/Fogell.Controller.Host/Program.fs \
+  '    let planted template = { template with Invoke   =   fun () -> Ok() }'
+
 expect reject "an EffectInvocation assembled outside dispatch" \
   "question 6: effect invocation reached outside EffectDispatch" \
   append_line src/Fogell.Controller.Api/Router.fs \
@@ -183,4 +193,4 @@ if [ "$fails" -ne 0 ]; then
   echo "EFFECT-DISPATCH AUDIT PROOF FAILED: $fails arm(s)" >&2
   exit 1
 fi
-echo "EFFECT-DISPATCH AUDIT PROOF: 16 planted violations rejected by name, 2 clean copies accepted"
+echo "EFFECT-DISPATCH AUDIT PROOF: 18 planted violations rejected by name, 2 clean copies accepted"

@@ -325,6 +325,8 @@ for window in prepare invoke apply confirm; do
   drop_root="$scratch/drop-$window"
   host_log="$scratch/controller-$window.log"
   mkdir -p "$state_root" "$drop_root"
+  # The operator-created marker that pins the destination (FG-026b review fold).
+  : >"$drop_root/.fogell-drop-root"
   : >"$host_log"
 
   admin postgres -c "CREATE DATABASE $database" >/dev/null
