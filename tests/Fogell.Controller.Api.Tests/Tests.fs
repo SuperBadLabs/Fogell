@@ -3276,6 +3276,56 @@ let effectDispatch =
               Expect.equal (EffectProducerConfig.validateFileDropRoot stateRoot sibling) (Ok(IO.Path.GetFullPath sibling)) "a disjoint sibling is accepted"
           }
 
+          test "a write that fails mid-stream leaves no temp file behind, reports Uncertain with the cause, and the row is never confirmed" {
+              // Codex round 8 (P2): a Write or Flush(true) that throws (ENOSPC,
+              // EIO) used to leave the process-owned .tmp behind; repeated
+              // terminal attempts during an outage accumulated them.
+              let owner = "fg026b-enospc-owner"
+              let org, claim = runningClaim "fg026b-enospc" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let organizationDirectory = IO.Path.Combine(dropRoot, org.Value.ToString "N")
+              let temps () =
+                  if IO.Directory.Exists organizationDirectory then
+                      IO.Directory.GetFiles(organizationDirectory, "*.tmp") |> Array.length
+                  else
+                      0
+              let steps = Collections.Generic.List<string>()
+
+              // The injected writer writes one byte and then fails the way a full
+              // destination does; the temp file exists at that moment.
+              let failing (stream: IO.Stream) (bytes: byte array) =
+                  stream.Write(bytes, 0, 1)
+                  Expect.equal (temps ()) 1 "the temp file exists while the write is in flight"
+                  raise (IO.IOException "No space left on device (simulated)")
+
+              let invocation = FileDropReceipt.invocationWithWriter ignore steps.Add failing dropRoot claim Success
+
+              for attempt in 1..3 do
+                  match EffectDispatch.run store authority EffectDispatch.noHooks invocation with
+                  | DispatchOutcome.Uncertain reason ->
+                      Expect.stringContains reason "No space left on device" $"attempt {attempt}: the exception is the reason, not a crash"
+                  | other -> failtestf "attempt %d: a failed write produced %A" attempt other
+                  Expect.equal (temps ()) 0 $"attempt {attempt}: no temp file is left behind"
+                  Expect.isFalse (IO.File.Exists(FileDropReceipt.receiptPath dropRoot claim)) $"attempt {attempt}: no receipt was published"
+                  Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("prepared", None)) $"attempt {attempt}: the row is prepared, never applied or confirmed"
+
+              Expect.equal
+                  (List.ofSeq steps |> List.filter (fun step -> step = "temp-unlinked"))
+                  [ "temp-unlinked"; "temp-unlinked"; "temp-unlinked" ]
+                  "every failed attempt unlinked its own temp name"
+              Expect.isFalse (steps.Contains "renamed") "nothing was renamed"
+              Expect.isFalse (steps.Contains "organization-fsynced") "the organization directory was not fsynced after a failed write"
+
+              // A worker survives it: the same authority completes with a healthy
+              // writer, leaving exactly one receipt and no temp file.
+              Expect.equal
+                  (EffectDispatch.run store authority EffectDispatch.noHooks (FileDropReceipt.invocation dropRoot claim Success))
+                  (DispatchOutcome.Confirmed false)
+                  "a healthy write after the outage confirms"
+              Expect.equal (temps ()) 0 "still no temp file"
+              Expect.equal (IO.Directory.GetFiles(organizationDirectory, "*.receipt").Length) 1 "one receipt"
+          }
+
           test "GET effects/uncertain lists one organization's uncertain effects read-only, denies other organizations their view of it, and refuses a malformed organization" {
               let app, baseUrl = startServer 1000
 
