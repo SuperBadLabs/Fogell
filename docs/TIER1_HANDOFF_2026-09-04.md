@@ -282,7 +282,7 @@ Read with the two sections above; this is the second addendum.
   their agents, `tools`, credentials and first executed leaf step: 122 are
   scripted (walker-refused), and of the 69 declarative files every one but
   the three receipted carries a blocker at or before its first command; the
-  table is on the ticket. Fifteen declarative files run under a `label`,
+  table is on the ticket. Thirteen declarative files run under a `label`,
   `docker` or `dockerfile` agent the lab cannot allocate and Fogell does not
   model — that is the one reading this pass adds beside FG-242's inventory.
 - **Lane mechanics unchanged.** One file per lane; probe the first command
