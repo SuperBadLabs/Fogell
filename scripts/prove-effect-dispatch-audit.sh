@@ -106,6 +106,11 @@ expect reject "a second ledger path through a differently named Store binding in
   append_line src/Fogell.Controller.Host/EffectDispatch.fs \
   '    let plantedSecondPath (s: Store) org attempt fence = s.AdvanceEffect(org, attempt, fence, "owner", "k", [| 1uy |], RecordConfirmed)'
 
+expect reject "a second trigger call in the worker through another binding" \
+  "question 2: Worker.fs must hold exactly one lease-expiry ReconcileStaleEffects site" \
+  append_line src/Fogell.Controller.Host/Worker.fs \
+  '    let plantedThroughAnotherBinding (runtimeStore: Store) org = runtimeStore.ReconcileStaleEffects(org, "planted")'
+
 expect reject "a reconciliation trigger outside its bound sites" \
   "question 2: reconciliation trigger call outside its bound sites" \
   append_line src/Fogell.Controller.Api/Router.fs \
@@ -194,4 +199,4 @@ if [ "$fails" -ne 0 ]; then
   echo "EFFECT-DISPATCH AUDIT PROOF FAILED: $fails arm(s)" >&2
   exit 1
 fi
-echo "EFFECT-DISPATCH AUDIT PROOF: 18 planted violations rejected by name, 2 clean copies accepted"
+echo "EFFECT-DISPATCH AUDIT PROOF: 19 planted violations rejected by name, 2 clean copies accepted"
