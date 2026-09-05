@@ -1,0 +1,3 @@
+project: tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj
+working-directory: /tmp/fogell-evidence-source.WWzYTz/source
+EXPECTO! 243 tests run in 00:00:00.2093528 for Fogell.Groovy – 243 passed, 0 ignored, 0 failed, 0 errored. Success!

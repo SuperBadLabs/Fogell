@@ -1,0 +1,3 @@
+project: tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj
+working-directory: /tmp/fogell-evidence-source.WWzYTz/source
+EXPECTO! 96 tests run in 00:00:02.4210131 for Fogell.Store – 96 passed, 0 ignored, 0 failed, 0 errored. Success!

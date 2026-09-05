@@ -1,0 +1,80 @@
+[2026-09-04T21:27:13Z] host HeMan, user srikanth, cwd /home/srikanth/projects/fogell/.claude/worktrees/agent-a6fe56d17e6616184, base ac3e934e57841b11128379d1ce6797039093bac8
+[2026-09-04T21:27:13Z] fence script sha256 328f25a1c4a5db8d
+[2026-09-04T21:27:13Z] local lane lock taken: /run/user/1000/fogell-corpus-lane.lock
+[2026-09-04T21:27:13Z] lane lease taken on luigi (~/.fogell-corpus-lane.lock), released when pid 1279389 is gone
+[2026-09-04T21:27:13Z] --- before
+[2026-09-04T21:27:13Z] $ scripts/no-egress-fence.sh jenkins started-at
+[2026-09-04T21:27:14Z]   2026-09-04 09:54:08.628225523 +0000 UTC
+[2026-09-04T21:27:14Z] exit 0
+[2026-09-04T21:27:14Z] $ scripts/no-egress-fence.sh jenkins status
+[2026-09-04T21:27:14Z]   fence: jenkins fence ABSENT
+[2026-09-04T21:27:15Z]   egress https://example.com -> HTTP 200
+[2026-09-04T21:27:15Z] exit 0
+[2026-09-04T21:27:15Z] fence absent before apply (present rc 1)
+[2026-09-04T21:27:15Z] --- quiesce (busyExecutors must be 0 immediately before)
+[2026-09-04T21:27:15Z] oracle: {"_class":"hudson.model.ComputerSet","busyExecutors":0,"totalExecutors":8}
+[2026-09-04T21:27:15Z] $ scripts/no-egress-fence.sh jenkins quiesce
+[2026-09-04T21:27:16Z]   fence: jenkins quiesced: 0 leftover process(es) killed before the fence comes down
+[2026-09-04T21:27:16Z] exit 0
+[2026-09-04T21:27:16Z] --- apply
+[2026-09-04T21:27:16Z] $ scripts/no-egress-fence.sh jenkins apply
+[2026-09-04T21:27:17Z]   fence: jenkins fence applied in the jenkins-lab network namespace
+[2026-09-04T21:27:17Z] exit 0
+[2026-09-04T21:27:17Z] --- prove
+[2026-09-04T21:27:17Z] $ scripts/no-egress-fence.sh jenkins verify
+[2026-09-04T21:27:17Z]   fence: jenkins PASS dns refused (getent hosts example.com exit 2)
+[2026-09-04T21:27:17Z]   fence: jenkins PASS https refused (curl https://example.com exit 6)
+[2026-09-04T21:27:17Z]   fence: jenkins PASS direct-ip refused (curl http://1.1.1.1/ exit 7 in 19 ms)
+[2026-09-04T21:27:17Z]   fence: jenkins PASS refusal is fast (19 ms)
+[2026-09-04T21:27:17Z]   fence: jenkins PASS lan refused (curl http://192.168.4.1/ exit 7)
+[2026-09-04T21:27:17Z]   fence: jenkins PASS loopback open (Jenkins answers itself on 127.0.0.1:8080)
+[2026-09-04T21:27:17Z]   fence: jenkins PASS inbound open (http://luigi:18083/api/json from this host)
+[2026-09-04T21:27:18Z]   fence: jenkins PASS rules live (38 packets rejected so far)
+[2026-09-04T21:27:18Z]   fence: jenkins fence PROVEN
+[2026-09-04T21:27:18Z] exit 0
+[2026-09-04T21:27:18Z] --- fence ruleset as loaded
+[2026-09-04T21:27:18Z] $ ssh -n luigi pid=$(podman inspect --format "{{.State.Pid}}" jenkins-lab) && nsenter -t "$pid" -U --preserve-credentials -n -- nft list table inet fogell_fence
+[2026-09-04T21:27:18Z]   table inet fogell_fence {
+[2026-09-04T21:27:18Z]   	chain output {
+[2026-09-04T21:27:18Z]   		type filter hook output priority filter; policy drop;
+[2026-09-04T21:27:18Z]   		oif "lo" accept
+[2026-09-04T21:27:18Z]   		ct state established,related ct direction reply accept
+[2026-09-04T21:27:18Z]   		counter packets 38 bytes 2718 reject
+[2026-09-04T21:27:18Z]   	}
+[2026-09-04T21:27:18Z]   }
+[2026-09-04T21:27:18Z] exit 0
+[2026-09-04T21:27:18Z] $ scripts/no-egress-fence.sh jenkins status
+[2026-09-04T21:27:19Z]   table inet fogell_fence {
+[2026-09-04T21:27:19Z]   	chain output {
+[2026-09-04T21:27:19Z]   		type filter hook output priority filter; policy drop;
+[2026-09-04T21:27:19Z]   		oif "lo" accept
+[2026-09-04T21:27:19Z]   		ct state established,related ct direction reply accept
+[2026-09-04T21:27:19Z]   		counter packets 38 bytes 2718 reject
+[2026-09-04T21:27:19Z]   	}
+[2026-09-04T21:27:19Z]   }
+[2026-09-04T21:27:19Z]   fence: jenkins fence PRESENT
+[2026-09-04T21:27:19Z]   curl: (6) Could not resolve host: example.com
+[2026-09-04T21:27:19Z]   egress https://example.com -> HTTP 000
+[2026-09-04T21:27:19Z]   egress https://example.com -> refused (curl exit 6)
+[2026-09-04T21:27:19Z] exit 0
+[2026-09-04T21:27:19Z] --- teardown: quiesce, then remove the fence this script applied
+[2026-09-04T21:27:19Z] oracle: {"_class":"hudson.model.ComputerSet","busyExecutors":0,"totalExecutors":8}
+[2026-09-04T21:27:19Z] $ scripts/no-egress-fence.sh jenkins quiesce
+[2026-09-04T21:27:20Z]   fence: jenkins quiesced: 0 leftover process(es) killed before the fence comes down
+[2026-09-04T21:27:20Z] exit 0
+[2026-09-04T21:27:20Z] $ scripts/no-egress-fence.sh jenkins remove
+[2026-09-04T21:27:20Z]   fence: jenkins fence removed
+[2026-09-04T21:27:20Z] exit 0
+[2026-09-04T21:27:20Z] --- confirm: no fence remains
+[2026-09-04T21:27:20Z] $ scripts/no-egress-fence.sh jenkins present
+[2026-09-04T21:27:21Z] exit 1
+[2026-09-04T21:27:21Z] confirmed: fence ABSENT (present rc 1)
+[2026-09-04T21:27:21Z] $ scripts/no-egress-fence.sh jenkins status
+[2026-09-04T21:27:21Z]   fence: jenkins fence ABSENT
+[2026-09-04T21:27:22Z]   egress https://example.com -> HTTP 200
+[2026-09-04T21:27:22Z] exit 0
+[2026-09-04T21:27:22Z] $ scripts/no-egress-fence.sh jenkins started-at
+[2026-09-04T21:27:22Z]   2026-09-04 09:54:08.628225523 +0000 UTC
+[2026-09-04T21:27:22Z] exit 0
+[2026-09-04T21:27:22Z] lane lease released
+[2026-09-04T21:27:22Z] RESULT: OK

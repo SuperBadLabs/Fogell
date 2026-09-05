@@ -1,0 +1,3 @@
+project: tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj
+working-directory: /tmp/fogell-evidence-source.WWzYTz/source
+EXPECTO! 161 tests run in 00:00:28.5840785 for Fogell.Execution – 161 passed, 0 ignored, 0 failed, 0 errored. Success!

@@ -1,0 +1,3 @@
+project: tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj
+working-directory: /tmp/fogell-evidence-source.WWzYTz/source
+EXPECTO! 141 tests run in 00:00:00.3334070 for Fogell.Pipeline.Parser – 141 passed, 0 ignored, 0 failed, 0 errored. Success!
