@@ -693,7 +693,9 @@ module Router =
                         | Ok page ->
                             let effects =
                                 page.Effects
-                                |> List.map (fun checkpoint ->
+                                |> List.map (fun entry ->
+                                    let checkpoint = entry.Checkpoint
+
                                     { AttemptId = checkpoint.AttemptId.Value.ToString()
                                       EffectKey = checkpoint.EffectKey
                                       Fence = checkpoint.Fence.Value
@@ -704,7 +706,8 @@ module Router =
                                         match checkpoint.UncertainOrigin with
                                         | Some UncertainAfterPrepare -> "prepared"
                                         | Some UncertainAfterApply -> "applied"
-                                        | None -> "unknown" })
+                                        | None -> "unknown"
+                                      UncertainAt = entry.UncertainAt.ToUniversalTime().ToString("o") })
 
                             let payload: UncertainEffectsResponse =
                                 { OrganizationId = org.ToString()

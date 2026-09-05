@@ -106,11 +106,21 @@ type EffectAdvance =
     | RecordConfirmed
 
 /// FG-026b. One bounded page of an organization's uncertain effects in the
-/// listing order (prepared_at, attempt_id, effect_key). `NextCursor` is an
+/// listing order (uncertain_at, prepared_at, attempt_id, effect_key). `NextCursor` is an
 /// opaque keyset cursor bound to the organization; None means the page was
 /// the last.
+/// One listed row with the instant it entered the uncertain set. `uncertain_at`
+/// is the listing's first order key: it is monotone for rows entering the set,
+/// so a keyset cursor never skips a row classified behind it (Codex #424
+/// round 6); prepared_at could, because a row can become uncertain long after
+/// it was prepared. The 0003 guard makes uncertain_at NOT NULL for every
+/// uncertain row.
+type UncertainEffectEntry =
+    { Checkpoint: EffectCheckpoint
+      UncertainAt: DateTime }
+
 type UncertainEffectPage =
-    { Effects: EffectCheckpoint list
+    { Effects: UncertainEffectEntry list
       NextCursor: string option }
 
 /// FG-027b. The immutable decision snapshot read from durable storage.  The
@@ -649,7 +659,7 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             $"UPDATE effect_checkpoints e
               SET uncertain_from = e.state,
                   state = 'uncertain',
-                  uncertain_at = clock_timestamp()
+                  uncertain_at = statement_timestamp()
               WHERE e.organization_id = @o
                 AND e.state IN ('prepared', 'applied')
                 AND NOT EXISTS (
@@ -1405,7 +1415,7 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             $"SELECT {effectProjection}
               FROM effect_checkpoints
               WHERE organization_id = @o AND state = 'uncertain'
-              ORDER BY prepared_at, attempt_id, effect_key"
+              ORDER BY uncertain_at, prepared_at, attempt_id, effect_key"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
         use reader = cmd.ExecuteReader()
         let checkpoints = [ while reader.Read() do yield readCheckpoint reader ]
@@ -1415,21 +1425,26 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
 
     /// FG-026b. The bounded operator listing: at most `limit` (1..1000)
     /// uncertain effects in the same order as ListUncertainEffects, continued
-    /// through an opaque keyset cursor over (prepared_at, attempt_id,
+    /// through an opaque keyset cursor over (uncertain_at, prepared_at, attempt_id,
     /// effect_key). The cursor carries the organization it was issued for and
     /// is refused for any other, so a cursor can neither leak nor skip across
     /// tenants. No new column: the order keys already exist.
     member _.ListUncertainEffectsPage
         (org: OrganizationId, cursor: string option, limit: int)
         : Result<UncertainEffectPage, string> =
-        let cursorVersion = "fg026b-1"
+        let cursorVersion = "fg026b-2"
 
-        let encode (checkpoint: EffectCheckpoint, preparedAt: DateTime) =
+        // Same-pass rows share one uncertain_at (statement_timestamp), so
+        // prepared_at is the second key: it keeps FG-026's "stable list order"
+        // for rows classified together while uncertain_at, monotone for rows
+        // entering the set, keeps a cursor from skipping a late classification.
+        let encode (checkpoint: EffectCheckpoint, uncertainAt: DateTime, preparedAt: DateTime) =
             let text =
                 String.concat
                     "|"
                     [ cursorVersion
                       org.Value.ToString()
+                      string uncertainAt.Ticks
                       string preparedAt.Ticks
                       checkpoint.AttemptId.Value.ToString()
                       checkpoint.EffectKey ]
@@ -1447,18 +1462,28 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                 let strictUtf8 = System.Text.UTF8Encoding(false, true)
                 let text = strictUtf8.GetString(Convert.FromBase64String raw)
 
-                match text.Split('|', 5) with
-                | [| version; cursorOrg; ticks; attempt; key |] when version = cursorVersion ->
-                    match Guid.TryParse cursorOrg, Int64.TryParse ticks, Guid.TryParse attempt with
-                    | (true, cursorOrganization), (true, preparedTicks), (true, attemptId) ->
+                let validTicks (ticks: int64) =
+                    ticks >= DateTime.MinValue.Ticks && ticks <= DateTime.MaxValue.Ticks
+
+                match text.Split('|', 6) with
+                | [| version; cursorOrg; uncertainTicks; preparedTicks; attempt; key |] when version = cursorVersion ->
+                    match Guid.TryParse cursorOrg, Int64.TryParse uncertainTicks, Int64.TryParse preparedTicks, Guid.TryParse attempt with
+                    | (true, cursorOrganization), (true, uncertainTicks), (true, preparedTicks), (true, attemptId) ->
                         if cursorOrganization <> org.Value then
                             Error "cursor belongs to another organization"
-                        elif preparedTicks < DateTime.MinValue.Ticks || preparedTicks > DateTime.MaxValue.Ticks then
+                        elif not (validTicks uncertainTicks) || not (validTicks preparedTicks) then
                             Error "cursor is malformed"
                         elif key.Contains '\000' || Option.isSome (validateEffectInput key "cursor" Array.empty) then
                             Error "cursor is malformed"
                         else
-                            Ok(Some(DateTime(preparedTicks, DateTimeKind.Utc), attemptId, key))
+                            Ok(
+                                Some(
+                                    DateTime(uncertainTicks, DateTimeKind.Utc),
+                                    DateTime(preparedTicks, DateTimeKind.Utc),
+                                    attemptId,
+                                    key
+                                )
+                            )
                     | _ -> Error "cursor is malformed"
                 | _ -> Error "cursor is malformed"
             with _ ->
@@ -1478,13 +1503,13 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                 let keyset =
                     match after with
                     | None -> ""
-                    | Some _ -> " AND (prepared_at, attempt_id, effect_key) > (@ts, @a, @k)"
+                    | Some _ -> " AND (uncertain_at, prepared_at, attempt_id, effect_key) > (@ts, @pt, @a, @k)"
 
                 cmd.CommandText <-
-                    $"SELECT {effectProjection}, prepared_at
+                    $"SELECT {effectProjection}, uncertain_at, prepared_at
                       FROM effect_checkpoints
                       WHERE organization_id = @o AND state = 'uncertain'{keyset}
-                      ORDER BY prepared_at, attempt_id, effect_key
+                      ORDER BY uncertain_at, prepared_at, attempt_id, effect_key
                       LIMIT @limit"
                 cmd.Parameters.AddWithValue("o", org.Value) |> ignore
                 // One row past the page decides whether a next cursor exists.
@@ -1492,9 +1517,12 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
 
                 match after with
                 | None -> ()
-                | Some(preparedAt, attempt, key) ->
+                | Some(uncertainAt, preparedAt, attempt, key) ->
                     cmd.Parameters.Add(
-                        NpgsqlParameter("ts", NpgsqlTypes.NpgsqlDbType.TimestampTz, Value = preparedAt))
+                        NpgsqlParameter("ts", NpgsqlTypes.NpgsqlDbType.TimestampTz, Value = uncertainAt))
+                    |> ignore
+                    cmd.Parameters.Add(
+                        NpgsqlParameter("pt", NpgsqlTypes.NpgsqlDbType.TimestampTz, Value = preparedAt))
                     |> ignore
                     cmd.Parameters.AddWithValue("a", attempt) |> ignore
                     cmd.Parameters.AddWithValue("k", key) |> ignore
@@ -1503,7 +1531,7 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
 
                 let rows =
                     [ while reader.Read() do
-                          yield readCheckpoint reader, reader.GetDateTime 9 ]
+                          yield readCheckpoint reader, reader.GetDateTime 9, reader.GetDateTime 10 ]
 
                 reader.Close()
                 tx.Commit()
@@ -1516,7 +1544,12 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                     else
                         None
 
-                Ok { Effects = page |> List.map fst; NextCursor = next }
+                Ok
+                    { Effects =
+                        page
+                        |> List.map (fun (checkpoint, uncertainAt, _) ->
+                            { Checkpoint = checkpoint; UncertainAt = uncertainAt })
+                      NextCursor = next }
 
     /// Read-only idempotency probe for admission compatibility across stricter
     /// execution preflights. An exact durable result may be replayed without
