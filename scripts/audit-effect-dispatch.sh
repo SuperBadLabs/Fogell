@@ -166,8 +166,8 @@ observed=$(
 # staging -> snapshot move in ArtifactSnapshots.fs.
 expected=$(printf '%s\n' \
   "1 $dispatch_fs .Kill()" \
-  "5 $dispatch_fs DllImport" \
-  "2 $dispatch_fs FileStream" \
+  "7 $registry_fs DllImport" \
+  "1 $dispatch_fs FileStream" \
   "1 $worker_fs File.Move" \
   "1 $worker_fs File.WriteAllBytes" \
   "1 $worker_fs FileStream" \
@@ -177,7 +177,7 @@ expected=$(printf '%s\n' \
   "4 $host_dir/ProcessGroup.fs DllImport" \
   "3 $host_dir/Config.fs FileStream" \
   "1 $registry_fs File.Open" \
-  "1 $registry_fs FileStream" \
+  "2 $registry_fs FileStream" \
   "3 $api_dir/Router.fs FileStream" \
   "3 $api_dir/Router.fs DllImport" \
   "1 $api_dir/ArtifactSnapshots.fs Directory.Move" | LC_ALL=C sort)

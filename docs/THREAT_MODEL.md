@@ -153,8 +153,14 @@ with `O_DIRECTORY|O_NOFOLLOW` and pinned by an operator-created marker file seen
 through that descriptor; the organization directory, temp file, rename and
 evidence read are all relative to it, so a vanished or replaced root refuses or
 leaves the effect uncertain and nothing is created at the configured path (the
-controller never recreates the root). Evidence is a length-checked, bounded
-read, so a pre-written oversized file costs a stat, not an allocation. The pin
+controller never recreates the root). Every read-side open is non-blocking and
+followed by a regular-file, single-link check, so a planted FIFO, directory,
+device, socket or hard link can neither park the worker nor pass as a marker or
+receipt; evidence is a length-checked, bounded read, so a pre-written oversized
+file costs a stat, not an allocation; the receipt's directory entry and the
+organization directory are fsynced before the ledger may record applied or
+confirmed; startup performs the same opens, so an unreadable root or marker
+refuses startup by name. The pin
 is the marker plus the descriptor, not device identity, and group writability is
 not checked, so a same-UID pipeline can still pre-write an attempt's receipt —
 with the exact bytes the result is byte-identical (attribution, not truth), with
