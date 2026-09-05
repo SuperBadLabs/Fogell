@@ -103,10 +103,10 @@ done < <(rg -l -e "$trigger_pattern" src --glob '*.fs' | sort)
 
 # One site in the worker: the reconciliation cadence, which does not wait on
 # claim execution (the scan-loop pass was removed by verifier P2-2 on #424).
-worker_triggers=$(hits 'store\.ReconcileStaleEffects\(' "$worker_fs" | wc -l | tr -d ' ')
+worker_triggers=$(hits '\bReconcileStaleEffects\b' "$worker_fs" | rg -o -e '\bReconcileStaleEffects\b' | wc -l | tr -d ' ')
 [ "$worker_triggers" = 1 ] \
   || refuse "question 2: Worker.fs must hold exactly one lease-expiry ReconcileStaleEffects site (the periodic cadence), observed $worker_triggers"
-program_triggers=$(hits '\.ReconcileStaleEffects\(' "$program_fs" | wc -l | tr -d ' ')
+program_triggers=$(hits '\bReconcileStaleEffects\b' "$program_fs" | rg -o -e '\bReconcileStaleEffects\b' | wc -l | tr -d ' ')
 [ "$program_triggers" = 1 ] \
   || refuse "question 2: Program.fs must hold exactly one startup ReconcileStaleEffects site, observed $program_triggers"
 for forbidden in MarkStaleEffectsUncertain ActivateRestore; do
