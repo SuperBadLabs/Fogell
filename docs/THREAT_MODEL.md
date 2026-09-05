@@ -160,7 +160,12 @@ receipt; evidence is a length-checked, bounded read, so a pre-written oversized
 file costs a stat, not an allocation; the receipt's directory entry and the
 organization directory are fsynced before the ledger may record applied or
 confirmed; startup performs the same opens, so an unreadable root or marker
-refuses startup by name. The pin
+refuses startup by name. Startup also refuses a drop root that is physically
+inside (or contains) the state root by device/inode ancestry; that check is an
+operator-configuration guard, a bind-mounted alias of a state-root subdirectory
+is invisible to it and is the operator's own configuration, and since the
+destination is byte-checked and unauthenticated by design (FG-073) such an
+alias changes attribution, not truth. The pin
 is the marker plus the descriptor, not device identity, and group writability is
 not checked, so a same-UID pipeline can still pre-write an attempt's receipt —
 with the exact bytes the result is byte-identical (attribution, not truth), with

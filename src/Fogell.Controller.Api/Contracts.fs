@@ -48,7 +48,10 @@ type UncertainEffect =
       [<JsonPropertyName "payload_sha256">] PayloadSha256: string
       /// "prepared" when the invocation may never have happened, "applied"
       /// when it did but its confirmation was lost.
-      [<JsonPropertyName "uncertain_from">] UncertainFrom: string }
+      [<JsonPropertyName "uncertain_from">] UncertainFrom: string
+      /// When the row entered the uncertain set (ISO 8601, UTC): the listing's
+      /// first order key, so pages never skip a row classified behind a cursor.
+      [<JsonPropertyName "uncertain_at">] UncertainAt: string }
 
 type UncertainEffectsResponse =
     { [<JsonPropertyName "organization_id">] OrganizationId: string

@@ -3805,8 +3805,10 @@ let effectReconciliation =
               let pEventsAgain, pOutboxAgain, _, _ = uncertaintySurface org preparedAttempt.AttemptId
               Expect.equal (pEventsAgain, pOutboxAgain) (1L, 1L) "a second pass publishes nothing more"
 
-              let listed = store.ListUncertainEffects org |> List.map (fun c -> c.EffectKey)
-              Expect.equal listed [ "file-drop-receipt:p"; "file-drop-receipt:a" ] "the tenant listing carries both classified effects"
+              // Both rows entered the set in one pass, so their uncertain_at may
+              // tie; the listing is asserted as a set here, not an order.
+              let listed = store.ListUncertainEffects org |> List.map (fun c -> c.EffectKey) |> List.sort
+              Expect.equal listed [ "file-drop-receipt:a"; "file-drop-receipt:p" ] "the tenant listing carries both classified effects"
 
               match store.AdvanceEffect(org, preparedAttempt.AttemptId, preparedFence, "agent-p", "file-drop-receipt:p", payload, RecordApplied) with
               | Error _ -> ()
@@ -3892,31 +3894,37 @@ let effectReconciliation =
           test "the uncertain listing pages by keyset in listing order, refuses another organization's cursor, and bounds the limit" {
               let org, project = freshProject ()
               let payload = [| 7uy |]
+              // Prepared in order 1, 2, 3 but classified in order 3, 1, 2, one
+              // pass each: the listing follows the classification instant
+              // (uncertain_at), never the preparation instant.
               let attempts =
                   [ for index in 1..3 do
                         let attempt, fence = runningAttempt org project $"fg026b-page-{index}" "agent-page" 60
                         prepareEffectOk org attempt.AttemptId fence "agent-page" $"file-drop-receipt:{index}" payload |> ignore
-                        // Distinct prepared_at values so the order under test is the
-                        // listing's first key, not a tie-break.
                         System.Threading.Thread.Sleep 5
                         attempt.AttemptId ]
-              expireLeases org attempts
-              Expect.equal (reconcileOk org "lease_expired").Length 3 "three stale rows classified"
+              for index in [ 3; 1; 2 ] do
+                  expireLeases org [ attempts.[index - 1] ]
+                  Expect.equal (reconcileOk org "lease_expired").Length 1 $"row {index} classified alone"
+                  System.Threading.Thread.Sleep 5
 
               let page limit cursor =
                   match store.ListUncertainEffectsPage(org, cursor, limit) with
                   | Ok page -> page
                   | Error error -> failtestf "page failed: %s" error
 
+              let keys (page: UncertainEffectPage) = page.Effects |> List.map (fun entry -> entry.Checkpoint.EffectKey)
+
               let expectedOrder = store.ListUncertainEffects org |> List.map (fun c -> c.EffectKey)
-              Expect.equal expectedOrder [ "file-drop-receipt:1"; "file-drop-receipt:2"; "file-drop-receipt:3" ] "the unbounded listing is in preparation order"
+              Expect.equal expectedOrder [ "file-drop-receipt:3"; "file-drop-receipt:1"; "file-drop-receipt:2" ] "the unbounded listing is in classification order, not preparation order"
 
               let first = page 2 None
-              Expect.equal (first.Effects |> List.map (fun c -> c.EffectKey)) [ "file-drop-receipt:1"; "file-drop-receipt:2" ] "the first page holds the first two in order"
+              Expect.equal (keys first) [ "file-drop-receipt:3"; "file-drop-receipt:1" ] "the first page holds the first two classified, in order"
               Expect.isSome first.NextCursor "a full page with a row behind it carries a cursor"
+              Expect.isTrue (first.Effects.[0].UncertainAt <= first.Effects.[1].UncertainAt) "uncertain_at is non-decreasing down the page"
 
               let second = page 2 first.NextCursor
-              Expect.equal (second.Effects |> List.map (fun c -> c.EffectKey)) [ "file-drop-receipt:3" ] "the cursor continues without skipping or repeating"
+              Expect.equal (keys second) [ "file-drop-receipt:2" ] "the cursor continues without skipping or repeating"
               Expect.isNone second.NextCursor "the last page carries no cursor"
 
               let exact = page 3 None
@@ -3924,9 +3932,54 @@ let effectReconciliation =
               Expect.isNone exact.NextCursor "and carries no cursor when nothing is behind it"
 
               let single = page 1 None
-              Expect.equal (single.Effects |> List.map (fun c -> c.EffectKey)) [ "file-drop-receipt:1" ] "limit 1"
+              Expect.equal (keys single) [ "file-drop-receipt:3" ] "limit 1"
               let singleNext = page 1 single.NextCursor
-              Expect.equal (singleNext.Effects |> List.map (fun c -> c.EffectKey)) [ "file-drop-receipt:2" ] "limit 1, page 2"
+              Expect.equal (keys singleNext) [ "file-drop-receipt:1" ] "limit 1, page 2"
+
+              // Codex #424 round 6: a row that becomes uncertain behind an issued
+              // cursor must appear on the next page. Row A was prepared before
+              // row B, so a prepared_at keyset would have left A behind the
+              // cursor issued after B; uncertain_at cannot.
+              let lateOrg, lateProject = freshProject ()
+              let prepareLate name =
+                  let attempt, fence = runningAttempt lateOrg lateProject $"fg026b-late-{name}" "agent-late" 60
+                  prepareEffectOk lateOrg attempt.AttemptId fence "agent-late" $"file-drop-receipt:{name}" payload |> ignore
+                  System.Threading.Thread.Sleep 5
+                  attempt.AttemptId
+              let rowA = prepareLate "a"
+              let rowB = prepareLate "b"
+              let rowC = prepareLate "c"
+              let classify attempt =
+                  expireLeases lateOrg [ attempt ]
+                  Expect.equal (reconcileOk lateOrg "lease_expired").Length 1 "one row classified"
+                  System.Threading.Thread.Sleep 5
+              classify rowB
+              classify rowC
+              let latePage limit cursor =
+                  match store.ListUncertainEffectsPage(lateOrg, cursor, limit) with
+                  | Ok page -> page
+                  | Error error -> failtestf "late page failed: %s" error
+              let pageOne = latePage 1 None
+              Expect.equal (keys pageOne) [ "file-drop-receipt:b" ] "page 1 holds B, the first to enter the set"
+              Expect.isSome pageOne.NextCursor "with C behind it"
+              // A, prepared before B and C, enters the set only now — behind the
+              // cursor the reader already holds.
+              classify rowA
+              let rec follow cursor collected =
+                  match cursor with
+                  | None -> List.rev collected
+                  | Some _ ->
+                      let next = latePage 1 cursor
+                      follow next.NextCursor (List.rev (keys next) @ collected)
+              Expect.equal
+                  (follow pageOne.NextCursor [])
+                  [ "file-drop-receipt:c"; "file-drop-receipt:a" ]
+                  "following the cursor reaches C and then A: a prepared_at keyset would have left A behind the cursor"
+              let allLate = latePage 10 None
+              Expect.equal (keys allLate) [ "file-drop-receipt:b"; "file-drop-receipt:c"; "file-drop-receipt:a" ] "the full listing is in classification order"
+              Expect.isTrue
+                  (allLate.Effects |> List.pairwise |> List.forall (fun (x, y) -> x.UncertainAt <= y.UncertainAt))
+                  "uncertain_at is non-decreasing down the listing"
 
               let foreignOrg, _ = freshProject ()
               match store.ListUncertainEffectsPage(foreignOrg, first.NextCursor, 10) with
@@ -3949,20 +4002,20 @@ let effectReconciliation =
               // The unreachable store proves no round trip was attempted.
               let unreachable = Store("Host=127.0.0.1;Port=9;Username=nobody;Database=nowhere;Timeout=1")
               let forged (fields: string list) =
-                  Convert.ToBase64String(Text.Encoding.UTF8.GetBytes(String.concat "|" ("fg026b-1" :: org.Value.ToString() :: fields)))
+                  Convert.ToBase64String(Text.Encoding.UTF8.GetBytes(String.concat "|" ("fg026b-2" :: org.Value.ToString() :: fields)))
               let ticks = string DateTime.UtcNow.Ticks
               let attempt = Guid.NewGuid().ToString()
               let tampered =
-                  [ "a NUL in the key", forged [ ticks; attempt; "file-drop-receipt:\000x" ]
-                    "an oversized key", forged [ ticks; attempt; String.replicate 300 "k" ]
-                    "an empty key", forged [ ticks; attempt; "" ]
-                    "a whitespace key", forged [ ticks; attempt; "   " ]
-                    "a non-GUID attempt", forged [ ticks; "not-an-attempt"; "file-drop-receipt:x" ]
-                    "a garbage timestamp", forged [ "yesterday"; attempt; "file-drop-receipt:x" ]
-                    "an out-of-range timestamp", forged [ "9999999999999999999"; attempt; "file-drop-receipt:x" ]
-                    "a non-GUID organization", Convert.ToBase64String(Text.Encoding.UTF8.GetBytes $"fg026b-1|nope|{ticks}|{attempt}|k")
-                    "invalid UTF-8", Convert.ToBase64String(Array.append (Text.Encoding.UTF8.GetBytes $"fg026b-1|{org.Value}|{ticks}|{attempt}|k") [| 0xFFuy; 0xFEuy |])
-                    "a missing field", forged [ ticks; attempt ] ]
+                  [ "a NUL in the key", forged [ ticks; ticks; attempt; "file-drop-receipt:\000x" ]
+                    "an oversized key", forged [ ticks; ticks; attempt; String.replicate 300 "k" ]
+                    "an empty key", forged [ ticks; ticks; attempt; "" ]
+                    "a whitespace key", forged [ ticks; ticks; attempt; "   " ]
+                    "a non-GUID attempt", forged [ ticks; ticks; "not-an-attempt"; "file-drop-receipt:x" ]
+                    "a garbage timestamp", forged [ "yesterday"; ticks; attempt; "file-drop-receipt:x" ]
+                    "an out-of-range timestamp", forged [ "9999999999999999999"; ticks; attempt; "file-drop-receipt:x" ]
+                    "a non-GUID organization", Convert.ToBase64String(Text.Encoding.UTF8.GetBytes $"fg026b-2|nope|{ticks}|{ticks}|{attempt}|k")
+                    "invalid UTF-8", Convert.ToBase64String(Array.append (Text.Encoding.UTF8.GetBytes $"fg026b-2|{org.Value}|{ticks}|{ticks}|{attempt}|k") [| 0xFFuy; 0xFEuy |])
+                    "a missing field", forged [ ticks; ticks; attempt ] ]
 
               for label, cursor in tampered do
                   match unreachable.ListUncertainEffectsPage(org, Some cursor, 10) with

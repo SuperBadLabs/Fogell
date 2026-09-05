@@ -3321,7 +3321,9 @@ let effectDispatch =
                       (effect.GetProperty("restore_epoch").GetInt64())
                       (store.CurrentRestoreEpoch().Value)
                       "restore_epoch is the epoch the effect was prepared under"
-                  Expect.equal (effect.EnumerateObject() |> Seq.length) 7 "the wire shape has exactly the seven documented fields"
+                  let uncertainAt = DateTimeOffset.Parse(effect.GetProperty("uncertain_at").GetString(), Globalization.CultureInfo.InvariantCulture)
+                  Expect.isTrue (uncertainAt.Offset = TimeSpan.Zero && uncertainAt > DateTimeOffset.UtcNow.AddMinutes -5.0) "uncertain_at is a recent UTC instant"
+                  Expect.equal (effect.EnumerateObject() |> Seq.length) 8 "the wire shape has exactly the eight documented fields"
 
                   let otherOrg, _ = freshProject ()
                   let otherCode, otherBody = send HttpMethod.Get (url otherOrg) (Some token) None None
@@ -3357,7 +3359,7 @@ let effectDispatch =
                   use firstPage = JsonDocument.Parse firstPageBody
                   let firstEffects = firstPage.RootElement.GetProperty("effects").EnumerateArray() |> List.ofSeq
                   Expect.equal firstEffects.Length 1 "limit bounds the page"
-                  Expect.equal (firstEffects.Head.GetProperty("attempt_id").GetString()) (claim.AttemptId.Value.ToString()) "the older row comes first"
+                  Expect.equal (firstEffects.Head.GetProperty("attempt_id").GetString()) (claim.AttemptId.Value.ToString()) "the row that entered the uncertain set first comes first"
                   let nextCursor = firstPage.RootElement.GetProperty("next_cursor").GetString()
                   Expect.isNotNull nextCursor "a full page with more behind it carries a cursor"
 
@@ -3391,13 +3393,13 @@ let effectDispatch =
                   let forged (fields: string list) =
                       Uri.EscapeDataString(
                           Convert.ToBase64String(
-                              Text.Encoding.UTF8.GetBytes(String.concat "|" ("fg026b-1" :: org.Value.ToString() :: fields))))
+                              Text.Encoding.UTF8.GetBytes(String.concat "|" ("fg026b-2" :: org.Value.ToString() :: fields))))
                   let ticks = string DateTime.UtcNow.Ticks
                   for label, cursor in
-                      [ "NUL key", forged [ ticks; claim.AttemptId.Value.ToString(); "file-drop-receipt:\000" ]
-                        "oversized key", forged [ ticks; claim.AttemptId.Value.ToString(); String.replicate 300 "k" ]
-                        "non-GUID attempt", forged [ ticks; "attempt"; key ]
-                        "garbage timestamp", forged [ "now"; claim.AttemptId.Value.ToString(); key ] ] do
+                      [ "NUL key", forged [ ticks; ticks; claim.AttemptId.Value.ToString(); "file-drop-receipt:\000" ]
+                        "oversized key", forged [ ticks; ticks; claim.AttemptId.Value.ToString(); String.replicate 300 "k" ]
+                        "non-GUID attempt", forged [ ticks; ticks; "attempt"; key ]
+                        "garbage timestamp", forged [ "now"; ticks; claim.AttemptId.Value.ToString(); key ] ] do
                       let tamperedCode, tamperedBody = send HttpMethod.Get $"{url org}?cursor={cursor}" (Some token) None None
                       Expect.equal tamperedCode 400 $"a tampered cursor with {label} is refused"
                       Expect.stringContains tamperedBody "invalid_cursor" $"{label}: with the stable code, not a 500"
