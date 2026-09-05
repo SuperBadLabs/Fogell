@@ -4027,81 +4027,118 @@ let effectReconciliation =
               Expect.equal (page 2 first.NextCursor).Effects.Length 1 "a genuine cursor is still accepted after the validator"
           }
 
-          test "the production trigger never waits on a live attempt: chunked, SKIP LOCKED, a held live row is untouched and renewal succeeds during the pass" {
+          test "the production trigger never waits on a live attempt: chunked, SKIP LOCKED, a held live row is untouched, a held stale row is skipped whether it sorts first or last, and an all-held remainder terminates" {
               // Codex #424 round 10 (thread fl7EL): the pass used to lock every
               // prepared/applied checkpoint's attempt and hold the locks while
               // emitting row by row, so a slow pass blocked a live worker's
-              // RenewLease until its lease expired.
+              // RenewLease until its lease expired. Hosted run 33989057339 then
+              // caught the first chunk loop terminating on the moved count: a
+              // held row that sorted into the first chunk made it "short" and
+              // 50 stale rows were left behind. The loop now terminates on
+              // candidate exhaustion, so both orderings are asserted here.
+              let scenario (label: string) (choose: AttemptId list -> AttemptId) =
+                  let org, project = freshProject ()
+                  let payload = [| 1uy; 0uy |]
+                  let liveAttempt, liveFence = runningAttempt org project $"fg026b-live-lock-{label}" "agent-live" 60
+                  prepareEffectOk org liveAttempt.AttemptId liveFence "agent-live" "file-drop-receipt:live" payload |> ignore
+
+                  // 150 stale rows: more than one chunk of 100.
+                  let stale =
+                      [ for index in 1..150 do
+                            let attempt, fence = runningAttempt org project $"fg026b-stale-{label}-{index}" "agent-stale" 60
+                            prepareEffectOk org attempt.AttemptId fence "agent-stale" $"file-drop-receipt:s{index}" payload |> ignore
+                            attempt.AttemptId ]
+                  expireLeases org stale
+
+                  // Another connection holds the LIVE attempt's row lock for the
+                  // whole pass, and one STALE attempt's row too — chosen so that
+                  // it sorts where the caller wants it in the candidate order.
+                  let heldStale = choose stale
+                  use holder = new Npgsql.NpgsqlConnection(connectionString)
+                  holder.Open()
+                  use holderTx = holder.BeginTransaction()
+                  use hold = holder.CreateCommand()
+                  hold.Transaction <- holderTx
+                  hold.CommandText <-
+                      "SELECT id FROM attempts WHERE organization_id = @o AND id IN (@live, @stale) ORDER BY id FOR UPDATE"
+                  hold.Parameters.AddWithValue("o", org.Value) |> ignore
+                  hold.Parameters.AddWithValue("live", liveAttempt.AttemptId.Value) |> ignore
+                  hold.Parameters.AddWithValue("stale", heldStale.Value) |> ignore
+                  use heldRows = hold.ExecuteReader()
+                  let held = [ while heldRows.Read() do yield heldRows.GetGuid 0 ]
+                  heldRows.Close()
+                  Expect.equal held.Length 2 $"{label}: the test holds both row locks"
+
+                  let pass = Async.StartAsTask(async { return Store(connectionString).ReconcileStaleEffects(org, "lease_expired") })
+                  Expect.isTrue (pass.Wait(TimeSpan.FromSeconds 20.0)) $"{label}: the pass completed without waiting on the held rows"
+                  let classified =
+                      match pass.Result with
+                      | Ok checkpoints -> checkpoints
+                      | Error error -> failtestf "%s: the pass failed: %s" label error
+                  Expect.equal classified.Length 149 $"{label}: every stale row except the one whose attempt is held was classified, across two chunks"
+                  Expect.isFalse (classified |> List.exists (fun c -> c.AttemptId = liveAttempt.AttemptId)) $"{label}: the live row was never a candidate"
+                  Expect.isFalse (classified |> List.exists (fun c -> c.AttemptId = heldStale)) $"{label}: the held stale row was skipped, not waited on"
+
+                  holderTx.Commit()
+                  Expect.isTrue (store.RenewLease(org, liveAttempt.AttemptId, liveFence, "agent-live", 60)) $"{label}: the live attempt renews its lease after the pass"
+                  Expect.equal
+                      (store.AdvanceEffect(org, liveAttempt.AttemptId, liveFence, "agent-live", "file-drop-receipt:live", payload, RecordApplied) |> Result.map (fun o -> o.Checkpoint.State))
+                      (Ok EffectApplied)
+                      $"{label}: the live checkpoint is untouched and still advances"
+
+                  use conn = new Npgsql.NpgsqlConnection(connectionString)
+                  conn.Open()
+                  use surface = conn.CreateCommand()
+                  surface.CommandText <-
+                      "SELECT (SELECT count(*) FROM events WHERE organization_id = @o AND kind = 'effect.uncertain'),
+                              (SELECT count(*) FROM outbox WHERE organization_id = @o AND topic = 'effect.uncertain'),
+                              (SELECT count(DISTINCT uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND state = 'uncertain')"
+                  surface.Parameters.AddWithValue("o", org.Value) |> ignore
+                  use counts = surface.ExecuteReader()
+                  Expect.isTrue (counts.Read()) "surface row"
+                  Expect.equal (counts.GetInt64 0, counts.GetInt64 1) (149L, 149L) $"{label}: exactly one event and one outbox row per classified row"
+                  Expect.equal (counts.GetInt64 2) 2L $"{label}: two chunks, two classification instants"
+                  counts.Close()
+
+                  // The skipped stale row is picked up by the next bounded pass,
+                  // and the pass after that publishes nothing more.
+                  Expect.equal (reconcileOk org "lease_expired" |> List.map (fun c -> c.AttemptId)) [ heldStale ] $"{label}: the next pass classifies the previously held stale row"
+                  Expect.equal (reconcileOk org "lease_expired") [] $"{label}: and the pass after that finds nothing"
+
+              // Candidates are ordered by attempt_id: hold the lowest (it lands
+              // in the FIRST chunk, which is then short by one) and the highest
+              // (it lands in the second).
+              scenario "held-first" (List.minBy (fun (a: AttemptId) -> a.Value))
+              scenario "held-last" (List.maxBy (fun (a: AttemptId) -> a.Value))
+
+              // Every remaining candidate held: the pass terminates with zero
+              // moved instead of spinning, and the next pass classifies them.
               let org, project = freshProject ()
-              let payload = [| 1uy; 0uy |]
-              let liveAttempt, liveFence = runningAttempt org project "fg026b-live-lock" "agent-live" 60
-              prepareEffectOk org liveAttempt.AttemptId liveFence "agent-live" "file-drop-receipt:live" payload |> ignore
-
-              // 150 stale rows: more than one chunk of 100.
-              let stale =
-                  [ for index in 1..150 do
-                        let attempt, fence = runningAttempt org project $"fg026b-stale-{index}" "agent-stale" 60
-                        prepareEffectOk org attempt.AttemptId fence "agent-stale" $"file-drop-receipt:s{index}" payload |> ignore
+              let payload = [| 3uy |]
+              let allHeld =
+                  [ for index in 1..3 do
+                        let attempt, fence = runningAttempt org project $"fg026b-all-held-{index}" "agent-stale" 60
+                        prepareEffectOk org attempt.AttemptId fence "agent-stale" $"file-drop-receipt:h{index}" payload |> ignore
                         attempt.AttemptId ]
-              expireLeases org stale
-
-              // Another connection holds the LIVE attempt's row lock for the whole
-              // pass, and one STALE attempt's row too.
-              let heldStale = List.head stale
+              expireLeases org allHeld
               use holder = new Npgsql.NpgsqlConnection(connectionString)
               holder.Open()
               use holderTx = holder.BeginTransaction()
               use hold = holder.CreateCommand()
               hold.Transaction <- holderTx
-              hold.CommandText <-
-                  "SELECT id FROM attempts WHERE organization_id = @o AND id IN (@live, @stale) ORDER BY id FOR UPDATE"
+              hold.CommandText <- "SELECT id FROM attempts WHERE organization_id = @o AND id = ANY(@ids) ORDER BY id FOR UPDATE"
               hold.Parameters.AddWithValue("o", org.Value) |> ignore
-              hold.Parameters.AddWithValue("live", liveAttempt.AttemptId.Value) |> ignore
-              hold.Parameters.AddWithValue("stale", heldStale.Value) |> ignore
+              hold.Parameters.AddWithValue("ids", allHeld |> List.map (fun a -> a.Value) |> Array.ofList) |> ignore
               use heldRows = hold.ExecuteReader()
               let held = [ while heldRows.Read() do yield heldRows.GetGuid 0 ]
               heldRows.Close()
-              Expect.equal held.Length 2 "the test holds both row locks"
+              Expect.equal held.Length 3 "all three stale attempts are held"
 
-              let pass = Async.StartAsTask(async { return Store(connectionString).ReconcileStaleEffects(org, "lease_expired") })
-              Expect.isTrue (pass.Wait(TimeSpan.FromSeconds 20.0)) "the pass completed without waiting on the held rows"
-              let classified =
-                  match pass.Result with
-                  | Ok checkpoints -> checkpoints
-                  | Error error -> failtestf "the pass failed: %s" error
-              Expect.equal classified.Length 149 "every stale row except the one whose attempt is held was classified, across two chunks"
-              Expect.isFalse (classified |> List.exists (fun c -> c.AttemptId = liveAttempt.AttemptId)) "the live row was never a candidate"
-              Expect.isFalse (classified |> List.exists (fun c -> c.AttemptId = heldStale)) "the held stale row was skipped, not waited on"
-
-              // The live worker renews during the pass's aftermath while the
-              // holder still has its row: the pass took nothing that would block
-              // it (the holder's own lock is released first, as a real renewal
-              // would not contend with a test-held lock).
+              let watch = Diagnostics.Stopwatch.StartNew()
+              Expect.equal (reconcileOk org "lease_expired") [] "a pass whose every candidate is held moves nothing and terminates"
+              Expect.isLessThan watch.ElapsedMilliseconds 5000L "and does not spin"
               holderTx.Commit()
-              Expect.isTrue (store.RenewLease(org, liveAttempt.AttemptId, liveFence, "agent-live", 60)) "the live attempt renews its lease after the pass"
-              Expect.equal
-                  (store.AdvanceEffect(org, liveAttempt.AttemptId, liveFence, "agent-live", "file-drop-receipt:live", payload, RecordApplied) |> Result.map (fun o -> o.Checkpoint.State))
-                  (Ok EffectApplied)
-                  "the live checkpoint is untouched and still advances"
-
-              use conn = new Npgsql.NpgsqlConnection(connectionString)
-              conn.Open()
-              use surface = conn.CreateCommand()
-              surface.CommandText <-
-                  "SELECT (SELECT count(*) FROM events WHERE organization_id = @o AND kind = 'effect.uncertain'),
-                          (SELECT count(*) FROM outbox WHERE organization_id = @o AND topic = 'effect.uncertain'),
-                          (SELECT count(DISTINCT uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND state = 'uncertain')"
-              surface.Parameters.AddWithValue("o", org.Value) |> ignore
-              use counts = surface.ExecuteReader()
-              Expect.isTrue (counts.Read()) "surface row"
-              Expect.equal (counts.GetInt64 0, counts.GetInt64 1) (149L, 149L) "exactly one event and one outbox row per classified row"
-              Expect.equal (counts.GetInt64 2) 2L "two chunks, two classification instants"
-              counts.Close()
-
-              // The skipped stale row is picked up by the next bounded pass, and
-              // the pass after that publishes nothing more.
-              Expect.equal (reconcileOk org "lease_expired" |> List.map (fun c -> c.AttemptId)) [ heldStale ] "the next pass classifies the previously held stale row"
-              Expect.equal (reconcileOk org "lease_expired") [] "and the pass after that finds nothing"
+              Expect.equal (reconcileOk org "lease_expired" |> List.map (fun c -> c.AttemptId) |> List.sort) (List.sort allHeld) "the next pass classifies all three once they are released"
           } ]
 
 /// FG-027b Store foundation. This proves durable retry arbitration and replay;
