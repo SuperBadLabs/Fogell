@@ -3943,6 +3943,35 @@ let effectReconciliation =
                   | Ok page -> failtestf "limit %d accepted: %A" badLimit page
 
               Expect.equal (page 1000 None).Effects.Length 3 "the maximum limit is accepted"
+
+              // Codex #424 round 5: a well-formed cursor with a hostile payload
+              // must be a refusal before any connection, never a database error.
+              // The unreachable store proves no round trip was attempted.
+              let unreachable = Store("Host=127.0.0.1;Port=9;Username=nobody;Database=nowhere;Timeout=1")
+              let forged (fields: string list) =
+                  Convert.ToBase64String(Text.Encoding.UTF8.GetBytes(String.concat "|" ("fg026b-1" :: org.Value.ToString() :: fields)))
+              let ticks = string DateTime.UtcNow.Ticks
+              let attempt = Guid.NewGuid().ToString()
+              let tampered =
+                  [ "a NUL in the key", forged [ ticks; attempt; "file-drop-receipt:\000x" ]
+                    "an oversized key", forged [ ticks; attempt; String.replicate 300 "k" ]
+                    "an empty key", forged [ ticks; attempt; "" ]
+                    "a whitespace key", forged [ ticks; attempt; "   " ]
+                    "a non-GUID attempt", forged [ ticks; "not-an-attempt"; "file-drop-receipt:x" ]
+                    "a garbage timestamp", forged [ "yesterday"; attempt; "file-drop-receipt:x" ]
+                    "an out-of-range timestamp", forged [ "9999999999999999999"; attempt; "file-drop-receipt:x" ]
+                    "a non-GUID organization", Convert.ToBase64String(Text.Encoding.UTF8.GetBytes $"fg026b-1|nope|{ticks}|{attempt}|k")
+                    "invalid UTF-8", Convert.ToBase64String(Array.append (Text.Encoding.UTF8.GetBytes $"fg026b-1|{org.Value}|{ticks}|{attempt}|k") [| 0xFFuy; 0xFEuy |])
+                    "a missing field", forged [ ticks; attempt ] ]
+
+              for label, cursor in tampered do
+                  match unreachable.ListUncertainEffectsPage(org, Some cursor, 10) with
+                  | Error error -> Expect.stringContains error "malformed" $"{label} is refused as malformed without a database round trip"
+                  | Ok page -> failtestf "%s was accepted: %A" label page
+
+              // The genuine cursor still works, proving the validator is not
+              // simply refusing everything.
+              Expect.equal (page 2 first.NextCursor).Effects.Length 1 "a genuine cursor is still accepted after the validator"
           } ]
 
 /// FG-027b Store foundation. This proves durable retry arbitration and replay;

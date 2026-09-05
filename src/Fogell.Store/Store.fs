@@ -1436,16 +1436,30 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
 
             Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes text)
 
+        // Codex #424 round 5: a well-formed base64 cursor whose decoded key
+        // carries NUL, invalid UTF-8 or an out-of-range length would only fail
+        // inside PostgreSQL. Every field is validated here, before any
+        // connection, with the key held to the same rule PrepareEffect and the
+        // 0007 check constraint enforce, so a tampered cursor is a refusal and
+        // never a database error.
         let decode (raw: string) =
             try
-                let text = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String raw)
+                let strictUtf8 = System.Text.UTF8Encoding(false, true)
+                let text = strictUtf8.GetString(Convert.FromBase64String raw)
 
                 match text.Split('|', 5) with
                 | [| version; cursorOrg; ticks; attempt; key |] when version = cursorVersion ->
-                    if Guid.Parse cursorOrg <> org.Value then
-                        Error "cursor belongs to another organization"
-                    else
-                        Ok(Some(DateTime(Int64.Parse ticks, DateTimeKind.Utc), Guid.Parse attempt, key))
+                    match Guid.TryParse cursorOrg, Int64.TryParse ticks, Guid.TryParse attempt with
+                    | (true, cursorOrganization), (true, preparedTicks), (true, attemptId) ->
+                        if cursorOrganization <> org.Value then
+                            Error "cursor belongs to another organization"
+                        elif preparedTicks < DateTime.MinValue.Ticks || preparedTicks > DateTime.MaxValue.Ticks then
+                            Error "cursor is malformed"
+                        elif key.Contains '\000' || Option.isSome (validateEffectInput key "cursor" Array.empty) then
+                            Error "cursor is malformed"
+                        else
+                            Ok(Some(DateTime(preparedTicks, DateTimeKind.Utc), attemptId, key))
+                    | _ -> Error "cursor is malformed"
                 | _ -> Error "cursor is malformed"
             with _ ->
                 Error "cursor is malformed"

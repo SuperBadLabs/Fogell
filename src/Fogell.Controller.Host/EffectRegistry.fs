@@ -131,7 +131,24 @@ module internal DestinationDescriptor =
             val mutable Spare0: uint16
             val mutable Inode: uint64
             val mutable Size: uint64
+            val mutable Blocks: uint64
+            val mutable AttributesMask: uint64
+            val mutable AccessTimeSeconds: int64
+            val mutable AccessTimeNanosecondsAndPad: uint64
+            val mutable BirthTimeSeconds: int64
+            val mutable BirthTimeNanosecondsAndPad: uint64
+            val mutable ChangeTimeSeconds: int64
+            val mutable ChangeTimeNanosecondsAndPad: uint64
+            val mutable ModifyTimeSeconds: int64
+            val mutable ModifyTimeNanosecondsAndPad: uint64
+            val mutable RawDeviceMajor: uint32
+            val mutable RawDeviceMinor: uint32
+            val mutable DeviceMajor: uint32
+            val mutable DeviceMinor: uint32
         end
+
+    /// (device, inode): the physical identity of an open directory.
+    type DirectoryIdentity = { DeviceMajor: uint32; DeviceMinor: uint32; Inode: uint64 }
 
     [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
     extern int private openPath(string path, int flags)
@@ -208,6 +225,17 @@ module internal DestinationDescriptor =
         else
             Ok(owned fd)
 
+    /// A directory opened for identity only, following a final symlink: the
+    /// state root is whatever its configured path resolves to, and the
+    /// disjointness check must compare against that real directory.
+    let openDirectoryFollowingLinks (table: LinuxOpenFlags.Table) (path: string) =
+        let fd = openPath (path, OpenReadOnly ||| table.Directory ||| OpenCloseOnExec)
+
+        if fd < 0 then
+            Error $"cannot open {path} for reading as a directory (errno {errno ()})"
+        else
+            Ok(owned fd)
+
     /// The marker seen through the root descriptor, never through the path:
     /// opened non-blocking, required to be a regular file with one link.
     let openMarker (table: LinuxOpenFlags.Table) (rootHandle: SafeFileHandle) : Result<SafeFileHandle, string> =
@@ -258,6 +286,51 @@ module internal DestinationDescriptor =
             with
             | :? EndOfStreamException -> Error "shrank while being read"
             | :? IOException as error -> Error $"could not be read: {error.Message}"
+
+    [<Literal>]
+    let private StatxInode = 0x100u
+
+    /// The (device, inode) of an open directory through its descriptor.
+    let identity (handle: SafeFileHandle) : Result<DirectoryIdentity, string> =
+        let mutable status = Unchecked.defaultof<LinuxStatx>
+
+        if statx (descriptor handle, "", AtEmptyPath, StatxType ||| StatxInode, &status) <> 0 then
+            Error $"cannot stat the open directory (errno {errno ()})"
+        else
+            Ok { DeviceMajor = status.DeviceMajor; DeviceMinor = status.DeviceMinor; Inode = status.Inode }
+
+    /// Codex #424 round 5: disjointness is decided physically, not lexically.
+    /// Walk upward from the opened directory with openat(fd, "..") comparing
+    /// (device, inode) against `ancestor` until the filesystem root (whose
+    /// parent is itself). A symlinked ancestor in the configured path string
+    /// cannot hide the relation, because every step is a real directory entry.
+    let isWithin (start: SafeFileHandle) (ancestor: DirectoryIdentity) : Result<bool, string> =
+        let table = LinuxOpenFlags.current
+
+        match table with
+        | Error error -> Error error
+        | Ok table ->
+            let rec walk (current: SafeFileHandle) (depth: int) =
+                match identity current with
+                | Error error -> Error error
+                | Ok here when here = ancestor -> Ok true
+                | Ok here ->
+                    if depth > 4096 then
+                        Error "directory walk exceeded 4096 levels"
+                    else
+                        let parentDescriptor = openAt current ".." (directoryFlags table) 0
+
+                        if parentDescriptor < 0 then
+                            Error $"cannot open a parent directory while walking upward (errno {errno ()})"
+                        else
+                            use parent = owned parentDescriptor
+
+                            match identity parent with
+                            | Error error -> Error error
+                            | Ok above when above = here -> Ok false
+                            | Ok _ -> walk parent (depth + 1)
+
+            walk start 0
 
     let withPinnedRoot (root: string) (body: LinuxOpenFlags.Table -> SafeFileHandle -> Result<'a, string>) =
         match LinuxOpenFlags.current with
@@ -319,7 +392,37 @@ module EffectProducerConfig =
     /// dispatch performs, so a root or marker that is writable but not
     /// readable (0300, 0200), a linked or non-regular marker, or an oversized
     /// one refuses startup by name instead of failing every completed build.
-    let private validatePinnedForReading (root: string) =
+    /// Codex #424 round 5: the lexical StartsWith on GetFullPath cannot see a
+    /// symlinked ancestor (`/srv/alias -> /srv/state`, root `/srv/alias/drop`).
+    /// With both directories open, walk upward from each comparing
+    /// (device, inode): the state root may be neither an ancestor of nor equal
+    /// to the drop root, and the drop root may not contain the state root.
+    let private validatePhysicallyDisjoint
+        (table: LinuxOpenFlags.Table)
+        (stateRoot: string)
+        (rootHandle: SafeFileHandle)
+        =
+        match DestinationDescriptor.openDirectoryFollowingLinks table (Path.GetFullPath stateRoot) with
+        | Error error -> Error $"FOGELL_STATE_ROOT cannot be opened to check that the drop root is disjoint from it: {error}"
+        | Ok stateHandle ->
+            use stateHandle = stateHandle
+
+            match DestinationDescriptor.identity stateHandle, DestinationDescriptor.identity rootHandle with
+            | Error error, _
+            | _, Error error -> Error $"FOGELL_EFFECT_FILE_DROP_ROOT disjointness could not be decided: {error}"
+            | Ok stateIdentity, Ok rootIdentity ->
+                match DestinationDescriptor.isWithin rootHandle stateIdentity with
+                | Error error -> Error $"FOGELL_EFFECT_FILE_DROP_ROOT disjointness could not be decided: {error}"
+                | Ok true ->
+                    Error "FOGELL_EFFECT_FILE_DROP_ROOT is physically inside (or is) FOGELL_STATE_ROOT, whatever the configured path spells"
+                | Ok false ->
+                    match DestinationDescriptor.isWithin stateHandle rootIdentity with
+                    | Error error -> Error $"FOGELL_EFFECT_FILE_DROP_ROOT disjointness could not be decided: {error}"
+                    | Ok true ->
+                        Error "FOGELL_EFFECT_FILE_DROP_ROOT physically contains FOGELL_STATE_ROOT, whatever the configured path spells"
+                    | Ok false -> Ok()
+
+    let private validatePinnedForReading (stateRoot: string) (root: string) =
         match LinuxOpenFlags.current with
         | Error error -> Error $"FOGELL_EFFECT_FILE_DROP_ROOT cannot be pinned on this architecture: {error}"
         | Ok table ->
@@ -327,6 +430,10 @@ module EffectProducerConfig =
             | Error error -> Error $"FOGELL_EFFECT_FILE_DROP_ROOT is not readable as the pinned directory: {error}"
             | Ok rootHandle ->
                 use rootHandle = rootHandle
+
+                match validatePhysicallyDisjoint table stateRoot rootHandle with
+                | Error error -> Error error
+                | Ok() ->
 
                 match DestinationDescriptor.openMarker table rootHandle with
                 | Error error ->
@@ -361,7 +468,7 @@ module EffectProducerConfig =
                 elif not (File.Exists(Path.Combine(root, fileDropRootMarker))) then
                     Error $"FOGELL_EFFECT_FILE_DROP_ROOT must contain the operator-created {fileDropRootMarker} marker file"
                 else
-                    match validatePinnedForReading root with
+                    match validatePinnedForReading stateRoot root with
                     | Error error -> Error error
                     | Ok() ->
                         if not (probeWritable root) then
