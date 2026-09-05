@@ -526,7 +526,7 @@ let migrations =
                           (applied
                            |> List.filter (fun item -> not item.AlreadyPresent)
                            |> List.map (fun item -> item.Version))
-                          [ "0009"; "0010"; "0011" ]
+                          [ "0009"; "0010"; "0011"; "0012" ]
                           "only the forward repair and invariant guard migrations are pending"
 
                   use repaired = target.CreateCommand()
