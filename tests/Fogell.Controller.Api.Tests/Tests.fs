@@ -2883,6 +2883,9 @@ let effectDispatch =
 
                   let ran = worker.ScanOrganization(org, Threading.CancellationToken.None).Result
                   Expect.isFalse ran $"%A{window}: the scan claimed nothing in this organization"
+                  // The scan only ages and requeues; classification is the
+                  // cadence's pass (verifier P2-2 on #424 removed the scan pass).
+                  worker.ReconcileOnce()
 
                   let events, outbox, reasons, attemptState = surface org claim.AttemptId
                   Expect.equal attemptState "reconciliation_required" $"%A{window}: the attempt lost its lease to the production requeue"
@@ -2912,6 +2915,7 @@ let effectDispatch =
                   | DispatchOutcome.Refused _ -> ()
                   | other -> failtestf "%A: resume under lost authority was not refused: %A" window other
                   worker.ScanOrganization(org, Threading.CancellationToken.None).Result |> ignore
+                  worker.ReconcileOnce()
                   let eventsAgain, outboxAgain, _, _ = surface org claim.AttemptId
                   Expect.equal (eventsAgain, outboxAgain) (events, outbox) $"%A{window}: a second scan publishes nothing more"
                   Expect.equal invocations.Value invocationsAtAbort $"%A{window}: still nothing re-invoked"
@@ -3335,10 +3339,10 @@ let effectDispatch =
               let root = IO.Path.Combine(dropRoot, $"probe-root-{Guid.NewGuid():N}")
               IO.Directory.CreateDirectory root |> ignore
               IO.File.WriteAllBytes(IO.Path.Combine(root, EffectProducerConfig.fileDropRootMarker), [||])
-              let probeDirectory = IO.Path.Combine(root, DestinationDescriptor.probeDirectory)
+              let probeDirectories () = IO.Directory.GetDirectories(root, DestinationDescriptor.probeDirectoryPrefix + "*")
 
               Expect.equal (EffectProducerConfig.validateFileDropRoot stateRoot root) (Ok(IO.Path.GetFullPath root)) "a healthy root passes the full write sequence"
-              Expect.isFalse (IO.Directory.Exists probeDirectory) "the probe directory is removed after a successful probe"
+              Expect.isEmpty (probeDirectories ()) "the probe directory is removed after a successful probe"
               Expect.isEmpty (IO.Directory.GetFiles(root, "*", IO.SearchOption.AllDirectories) |> Array.filter (fun f -> not (f.EndsWith EffectProducerConfig.fileDropRootMarker))) "the probe leaves nothing but the marker"
 
               // A filesystem that refuses RENAME_NOREPLACE (EINVAL, as an old
@@ -3353,7 +3357,7 @@ let effectDispatch =
                   Expect.stringContains reason "does not support the receipt write sequence" "as a startup refusal"
               | Ok accepted -> failtestf "a root without RENAME_NOREPLACE was accepted: %s" accepted
               Expect.isEmpty (IO.Directory.GetFiles(root, "*.tmp", IO.SearchOption.AllDirectories)) "the probe's temp was unlinked on the failed rename"
-              Expect.isFalse (IO.Directory.Exists probeDirectory) "the probe directory is removed after a failed probe too"
+              Expect.isEmpty (probeDirectories ()) "the probe directory is removed after a failed probe too"
 
               // The probe's own cleanup failing is a refusal as well.
               let noUnlink =
@@ -3363,7 +3367,7 @@ let effectDispatch =
               | Error reason -> Expect.stringContains reason "unlinkat of the probe receipt failed (errno 30)" "an unlink that fails at startup is named"
               | Ok accepted -> failtestf "a root whose probe receipt cannot be unlinked was accepted: %s" accepted
               // Leave the root clean for the next arm.
-              if IO.Directory.Exists probeDirectory then IO.Directory.Delete(probeDirectory, true)
+              for stale in probeDirectories () do IO.Directory.Delete(stale, true)
 
               Expect.equal (EffectProducerConfig.validateFileDropRoot stateRoot root) (Ok(IO.Path.GetFullPath root)) "the healthy sequence still passes afterwards"
           }
@@ -3410,6 +3414,71 @@ let effectDispatch =
               Expect.equal (IO.Directory.GetFiles(organizationDirectory, "*.tmp").Length) 0 "no temp was created for an existing entry"
           }
 
+          test "the startup probe uses a per-process directory: a leftover probe directory with a stray file, and two concurrent validations, all pass" {
+              // Verifier P2-1 on #424: a fixed `.fogell-probe` name made a
+              // leftover (a prober that died between rename and unlink) or a
+              // second controller probing the same root refuse every later
+              // startup with ENOTEMPTY/ENOENT.
+              let stateRoot = IO.Path.Combine(dropRoot, $"shared-state-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory stateRoot |> ignore
+              let root = IO.Path.Combine(dropRoot, $"shared-root-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory root |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(root, EffectProducerConfig.fileDropRootMarker), [||])
+
+              // A leftover from an older prober, with a stray receipt inside.
+              let leftover = IO.Path.Combine(root, ".fogell-probe")
+              IO.Directory.CreateDirectory leftover |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(leftover, "probe-dead.receipt"), [| 1uy |])
+              // And a per-process-shaped leftover from a prober that died mid-way.
+              let deadProbe = IO.Path.Combine(root, DestinationDescriptor.probeDirectoryPrefix + "deadbeef")
+              IO.Directory.CreateDirectory deadProbe |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(deadProbe, "probe-dead.receipt"), [| 1uy |])
+
+              Expect.equal (EffectProducerConfig.validateFileDropRoot stateRoot root) (Ok(IO.Path.GetFullPath root)) "leftovers of other probers do not refuse this startup"
+              Expect.isTrue (IO.Directory.Exists leftover && IO.Directory.Exists deadProbe) "and are never touched: only this process's own probe directory is removed"
+
+              let results =
+                  [ 1..8 ]
+                  |> List.map (fun _ -> Threading.Tasks.Task.Run(fun () -> EffectProducerConfig.validateFileDropRoot stateRoot root))
+                  |> List.map (fun task -> task.Result)
+              Expect.allEqual results (Ok(IO.Path.GetFullPath root)) "eight concurrent validations of one root all pass"
+              Expect.isEmpty
+                  (IO.Directory.GetDirectories root |> Array.filter (fun d -> IO.Path.GetFileName d <> ".fogell-probe" && IO.Path.GetFileName d <> IO.Path.GetFileName deadProbe))
+                  "every prober removed its own probe directory"
+          }
+
+          test "the disjointness walk needs only search permission on ancestors: a 0311 ancestor passes, and the aliased case is still refused" {
+              // Verifier P2-3 on #424: opening each parent O_RDONLY needed read
+              // permission, so a hardened 0711/0311 ancestor refused startup
+              // with EACCES. The walk now opens parents O_PATH.
+              let area = IO.Path.Combine(dropRoot, $"hardened-{Guid.NewGuid():N}")
+              let ancestor = IO.Path.Combine(area, "ancestor")
+              let stateRoot = IO.Path.Combine(area, "state")
+              let root = IO.Path.Combine(ancestor, "drop")
+              IO.Directory.CreateDirectory stateRoot |> ignore
+              IO.Directory.CreateDirectory root |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(root, EffectProducerConfig.fileDropRootMarker), [||])
+              let restore () =
+                  IO.File.SetUnixFileMode(ancestor, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute)
+
+              try
+                  if not (effectiveIdentityIsRoot ()) then
+                      IO.File.SetUnixFileMode(ancestor, IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute)
+                      Expect.equal (EffectProducerConfig.validateFileDropRoot stateRoot root) (Ok(IO.Path.GetFullPath root)) "a 0311 ancestor is walked with search permission only"
+
+                  // The aliased case is still refused through the same walk.
+                  let inside = IO.Path.Combine(stateRoot, "drop")
+                  IO.Directory.CreateDirectory inside |> ignore
+                  IO.File.WriteAllBytes(IO.Path.Combine(inside, EffectProducerConfig.fileDropRootMarker), [||])
+                  let alias = IO.Path.Combine(area, "alias")
+                  IO.Directory.CreateSymbolicLink(alias, stateRoot) |> ignore
+                  match EffectProducerConfig.validateFileDropRoot stateRoot (IO.Path.Combine(alias, "drop")) with
+                  | Error reason -> Expect.stringContains reason "physically inside" "the O_PATH walk still finds the state root above the aliased drop root"
+                  | Ok accepted -> failtestf "a symlinked ancestor into the state root was accepted: %s" accepted
+              finally
+                  restore ()
+          }
+
           test "GET effects/uncertain lists one organization's uncertain effects read-only, denies other organizations their view of it, and refuses a malformed organization" {
               let app, baseUrl = startServer 1000
 
@@ -3433,6 +3502,7 @@ let effectDispatch =
                   abortedRun store authority (withHook EffectKillWindow.AfterInvoke) invocation
                   expireLease org claim.AttemptId
                   worker.ScanOrganization(org, Threading.CancellationToken.None).Result |> ignore
+                  worker.ReconcileOnce()
 
                   let code, body = send HttpMethod.Get (url org) (Some token) None None
                   Expect.equal code 200 "the tenant listing is served"
@@ -3487,6 +3557,7 @@ let effectDispatch =
                   abortedRun store (EffectAuthority.ofClaim owner secondClaim) (withHook EffectKillWindow.AfterInvoke) secondInvocation
                   expireLease org secondClaim.AttemptId
                   worker.ScanOrganization(org, Threading.CancellationToken.None).Result |> ignore
+                  worker.ReconcileOnce()
 
                   let firstPageCode, firstPageBody = send HttpMethod.Get $"{url org}?limit=1" (Some token) None None
                   Expect.equal firstPageCode 200 "a bounded page is served"

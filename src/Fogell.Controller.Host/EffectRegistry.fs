@@ -200,21 +200,41 @@ module internal DestinationDescriptor =
     type RegularFile = { Size: int64; Links: uint32 }
 
     /// statx through the open descriptor: the file must be a regular file.
+    /// statx through the open descriptor: the file must be a regular file, and
+    /// the type, link count and size must all have been reported (a filesystem
+    /// that omits STATX_NLINK would otherwise read as zero links and be refused
+    /// for the wrong reason — verifier P3-4 on #424).
     let regularFile (handle: SafeFileHandle) : Result<RegularFile, string> =
         let mutable status = Unchecked.defaultof<LinuxStatx>
+        let required = StatxType ||| StatxNlink ||| StatxSize
 
-        if statx (descriptor handle, "", AtEmptyPath, StatxType ||| StatxNlink ||| StatxSize, &status) <> 0 then
+        if statx (descriptor handle, "", AtEmptyPath, required, &status) <> 0 then
             Error $"cannot stat the open descriptor (errno {errno ()})"
+        elif status.Mask &&& required <> required then
+            Error "statx did not report type, link count and size for the open descriptor"
         elif status.Mode &&& FileTypeMask <> RegularFileType then
             Error "not a regular file"
         else
             Ok { Size = int64 status.Size; Links = status.LinkCount }
 
+    [<Literal>]
+    let private EINTR = 4
+
+    /// fsync, retried on EINTR the way .NET's Flush(true) loops (verifier
+    /// P3-4 on #424).
     let sync (handle: SafeFileHandle) =
-        if fsyncNative (descriptor handle) <> 0 then
-            Error $"fsync failed (errno {errno ()})"
-        else
-            Ok()
+        let rec attempt remaining =
+            if fsyncNative (descriptor handle) = 0 then
+                Ok()
+            else
+                let error = errno ()
+
+                if error = EINTR && remaining > 0 then
+                    attempt (remaining - 1)
+                else
+                    Error $"fsync failed (errno {error})"
+
+        attempt 64
 
     /// The one place the configured path string is resolved.
     let openRoot (table: LinuxOpenFlags.Table) (root: string) =
@@ -293,11 +313,22 @@ module internal DestinationDescriptor =
     /// The (device, inode) of an open directory through its descriptor.
     let identity (handle: SafeFileHandle) : Result<DirectoryIdentity, string> =
         let mutable status = Unchecked.defaultof<LinuxStatx>
+        let required = StatxType ||| StatxInode
 
-        if statx (descriptor handle, "", AtEmptyPath, StatxType ||| StatxInode, &status) <> 0 then
+        if statx (descriptor handle, "", AtEmptyPath, required, &status) <> 0 then
             Error $"cannot stat the open directory (errno {errno ()})"
+        elif status.Mask &&& required <> required then
+            Error "statx did not report type and inode for the open directory"
         else
             Ok { DeviceMajor = status.DeviceMajor; DeviceMinor = status.DeviceMinor; Inode = status.Inode }
+
+    /// O_PATH: a descriptor that names a directory without opening it for
+    /// reading, so the upward walk needs only search permission on each
+    /// ancestor (a hardened 0711/0311 parent is common — verifier P2-3 on
+    /// #424) and statx(AT_EMPTY_PATH) still answers on it. The bit is the same
+    /// on every architecture .NET runs on.
+    [<Literal>]
+    let private OpenPath = 0x200000
 
     /// Codex #424 round 5: disjointness is decided physically, not lexically.
     /// Walk upward from the opened directory with openat(fd, "..") comparing
@@ -318,7 +349,8 @@ module internal DestinationDescriptor =
                     if depth > 4096 then
                         Error "directory walk exceeded 4096 levels"
                     else
-                        let parentDescriptor = openAt current ".." (directoryFlags table) 0
+                        let parentDescriptor =
+                            openAt current ".." (OpenPath ||| table.Directory ||| table.NoFollow ||| OpenCloseOnExec) 0
 
                         if parentDescriptor < 0 then
                             Error $"cannot open a parent directory while walking upward (errno {errno ()})"
@@ -495,42 +527,52 @@ module internal DestinationDescriptor =
                         | Ok() ->
                             trace "organization-fsynced"
                             Ok()
-
     [<Literal>]
-    let probeDirectory = ".fogell-probe"
+    let probeDirectoryPrefix = ".fogell-probe-"
 
-    /// The startup probe (Codex #424 round 9): the writer's exact sequence,
-    /// through the same code, against a `.fogell-probe` directory under the
-    /// pinned root with a one-byte payload, then the probe receipt is unlinked
-    /// and the probe directory removed. Whichever step fails names its syscall
-    /// and errno; a filesystem without directory fsync or RENAME_NOREPLACE is
-    /// therefore refused at startup rather than on every completed build.
+    /// The startup probe (Codex #424 round 9, verifier P2-1): the writer's
+    /// exact sequence, through the same code, against a per-process
+    /// `.fogell-probe-<guid>` directory created here with mkdirat (EEXIST is a
+    /// real refusal, never someone else's directory) under the pinned root,
+    /// with a one-byte payload; then the probe receipt is unlinked and the
+    /// probe directory removed, on the failure path as well. A leftover from a
+    /// prober that died mid-way, or a second controller probing the same root,
+    /// therefore cannot make this startup refuse. Whichever step fails names
+    /// its syscall and errno; a filesystem without directory fsync or
+    /// RENAME_NOREPLACE is refused at startup rather than on every build.
     let probeWrite (syscalls: WriteSyscalls) (table: LinuxOpenFlags.Table) (rootHandle: SafeFileHandle) =
+        let probeDirectory = probeDirectoryPrefix + Guid.NewGuid().ToString "N"
         let fileName = $"probe-{Guid.NewGuid():N}.receipt"
 
-        let written =
-            writeReceipt syscalls ignore writeBytes table rootHandle probeDirectory fileName [| 1uy |]
+        if mkdirAt rootHandle probeDirectory OrganizationDirectoryMode < 0 then
+            Error $"mkdirat of the probe directory {probeDirectory} failed (errno {errno ()})"
+        else
+            let written =
+                writeReceipt syscalls ignore writeBytes table rootHandle probeDirectory fileName [| 1uy |]
 
-        let cleanup () =
-            let directory = openAt rootHandle probeDirectory (directoryFlags table) 0
+            let cleanup () =
+                let directory = openAt rootHandle probeDirectory (directoryFlags table) 0
 
-            if directory < 0 then
-                Error $"openat of the probe directory for cleanup failed (errno {errno ()})"
-            else
-                use directoryHandle = owned directory
-                let unlinked = syscalls.Unlink directoryHandle fileName
+                let unlinked =
+                    if directory < 0 then
+                        Error(errno ())
+                    else
+                        use directoryHandle = owned directory
+                        syscalls.Unlink directoryHandle fileName
+
                 let removed = rmdirAt rootHandle probeDirectory
+                let removeError = if removed < 0 then errno () else 0
 
                 match unlinked with
                 | Error error when error <> ENOENT -> Error $"unlinkat of the probe receipt failed (errno {error})"
-                | _ when removed < 0 -> Error $"rmdir of the probe directory failed (errno {errno ()})"
+                | _ when removed < 0 && removeError <> ENOENT -> Error $"rmdir of the probe directory {probeDirectory} failed (errno {removeError})"
                 | _ -> Ok()
 
-        match written with
-        | Error error ->
-            cleanup () |> ignore
-            Error error
-        | Ok() -> cleanup ()
+            match written with
+            | Error error ->
+                cleanup () |> ignore
+                Error error
+            | Ok() -> cleanup ()
 
     let withPinnedRoot (root: string) (body: LinuxOpenFlags.Table -> SafeFileHandle -> Result<'a, string>) =
         match LinuxOpenFlags.current with

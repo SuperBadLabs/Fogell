@@ -989,25 +989,13 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                 do! runReadyClaim claim stoppingToken
         }
 
-    /// One organization's share of a worker scan: expire lost local leases,
-    /// classify any effect ledger row those (or earlier) losses stranded, then
-    /// claim and run the next attempt. Returns whether a claim was run.
+    /// One organization's share of a worker scan: expire lost local leases, then
+    /// claim and run the next attempt. Returns whether a claim was run. Stale
+    /// effect ledger rows are classified by the reconciliation cadence, never
+    /// here (verifier P2-2 on #424 removed the scan-loop pass).
     let scanOrganization (org: OrganizationId) (stoppingToken: CancellationToken) =
         task {
             store.RequeueExpiredLocalAttempts org |> ignore
-
-            // FG-026b. The periodic lease-expiry trigger. Bounded by the scan,
-            // tenant-scoped, and never re-invoking: it only moves stale
-            // prepared/applied rows to uncertain and publishes their surface.
-            match store.ReconcileStaleEffects(org, "lease_expired") with
-            | Ok [] -> ()
-            | Ok classified ->
-                for checkpoint in classified do
-                    logger.LogWarning(
-                        "FG-026b effect {EffectKey} for {AttemptId} is uncertain after lease expiry; operator reconciliation is required",
-                        checkpoint.EffectKey,
-                        checkpoint.AttemptId.Value)
-            | Error error -> logger.LogError("FG-026b effect reconciliation failed: {Reason}", error)
 
             match
                 store.ClaimNextExecution(
@@ -1101,7 +1089,12 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
     member internal _.ScanOrganization(org: OrganizationId, stoppingToken: CancellationToken) =
         scanOrganization org stoppingToken
 
-    /// The in-process trigger test runs only this loop, with the scan loop
+    /// The in-process trigger tests call the cadence's pass directly, after the
+    /// production scan aged and requeued the lease; it is the same code the loop
+    /// ticks.
+    member internal _.ReconcileOnce() = reconcileEveryOrganization ()
+
+    /// The in-process cadence test runs only this loop, with the scan loop
     /// deliberately never started, to prove classification does not wait on
     /// claim execution.
     member internal _.ReconciliationLoop(stoppingToken: CancellationToken) =
