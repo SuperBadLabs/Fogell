@@ -105,6 +105,14 @@ type EffectAdvance =
     | RecordApplied
     | RecordConfirmed
 
+/// FG-026b. One bounded page of an organization's uncertain effects in the
+/// listing order (prepared_at, attempt_id, effect_key). `NextCursor` is an
+/// opaque keyset cursor bound to the organization; None means the page was
+/// the last.
+type UncertainEffectPage =
+    { Effects: EffectCheckpoint list
+      NextCursor: string option }
+
 /// FG-027b. The immutable decision snapshot read from durable storage.  The
 /// embedded Domain value is the exact value originally decided: a child is
 /// reconstructed as queued even after its live attempt has advanced.
@@ -1404,6 +1412,97 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         reader.Close()
         tx.Commit()
         checkpoints
+
+    /// FG-026b. The bounded operator listing: at most `limit` (1..1000)
+    /// uncertain effects in the same order as ListUncertainEffects, continued
+    /// through an opaque keyset cursor over (prepared_at, attempt_id,
+    /// effect_key). The cursor carries the organization it was issued for and
+    /// is refused for any other, so a cursor can neither leak nor skip across
+    /// tenants. No new column: the order keys already exist.
+    member _.ListUncertainEffectsPage
+        (org: OrganizationId, cursor: string option, limit: int)
+        : Result<UncertainEffectPage, string> =
+        let cursorVersion = "fg026b-1"
+
+        let encode (checkpoint: EffectCheckpoint, preparedAt: DateTime) =
+            let text =
+                String.concat
+                    "|"
+                    [ cursorVersion
+                      org.Value.ToString()
+                      string preparedAt.Ticks
+                      checkpoint.AttemptId.Value.ToString()
+                      checkpoint.EffectKey ]
+
+            Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes text)
+
+        let decode (raw: string) =
+            try
+                let text = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String raw)
+
+                match text.Split('|', 5) with
+                | [| version; cursorOrg; ticks; attempt; key |] when version = cursorVersion ->
+                    if Guid.Parse cursorOrg <> org.Value then
+                        Error "cursor belongs to another organization"
+                    else
+                        Ok(Some(DateTime(Int64.Parse ticks, DateTimeKind.Utc), Guid.Parse attempt, key))
+                | _ -> Error "cursor is malformed"
+            with _ ->
+                Error "cursor is malformed"
+
+        if limit < 1 || limit > 1000 then
+            Error "page limit must be an integer from 1 through 1000"
+        else
+            match (match cursor with None -> Ok None | Some raw -> decode raw) with
+            | Error error -> Error error
+            | Ok after ->
+                use conn = openConn ()
+                use tx = beginTenantTransaction conn org
+                use cmd = conn.CreateCommand()
+                cmd.Transaction <- tx
+
+                let keyset =
+                    match after with
+                    | None -> ""
+                    | Some _ -> " AND (prepared_at, attempt_id, effect_key) > (@ts, @a, @k)"
+
+                cmd.CommandText <-
+                    $"SELECT {effectProjection}, prepared_at
+                      FROM effect_checkpoints
+                      WHERE organization_id = @o AND state = 'uncertain'{keyset}
+                      ORDER BY prepared_at, attempt_id, effect_key
+                      LIMIT @limit"
+                cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                // One row past the page decides whether a next cursor exists.
+                cmd.Parameters.AddWithValue("limit", limit + 1) |> ignore
+
+                match after with
+                | None -> ()
+                | Some(preparedAt, attempt, key) ->
+                    cmd.Parameters.Add(
+                        NpgsqlParameter("ts", NpgsqlTypes.NpgsqlDbType.TimestampTz, Value = preparedAt))
+                    |> ignore
+                    cmd.Parameters.AddWithValue("a", attempt) |> ignore
+                    cmd.Parameters.AddWithValue("k", key) |> ignore
+
+                use reader = cmd.ExecuteReader()
+
+                let rows =
+                    [ while reader.Read() do
+                          yield readCheckpoint reader, reader.GetDateTime 9 ]
+
+                reader.Close()
+                tx.Commit()
+
+                let page = rows |> List.truncate limit
+
+                let next =
+                    if rows.Length > limit then
+                        Some(encode (List.last page))
+                    else
+                        None
+
+                Ok { Effects = page |> List.map fst; NextCursor = next }
 
     /// Read-only idempotency probe for admission compatibility across stricter
     /// execution preflights. An exact durable result may be replayed without

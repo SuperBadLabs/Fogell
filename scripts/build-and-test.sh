@@ -263,7 +263,7 @@ if lane_active audits; then
   # named, the controller's effect-bearing calls are a pinned allow-list, the
   # in-process trigger test makes no manual Store call, and a producer's
   # invocation closures are reached only through dispatch. Its proof runs
-  # first: sixteen planted violations must be refused by name and two clean
+  # first: eighteen planted violations must be refused by name and two clean
   # copies accepted, in scratch copies, before the real tree is judged.
   echo "=== effect dispatch audit + its planted-violation proof (FG-026b, blocking) ==="
   ./scripts/prove-effect-dispatch-audit.sh || { echo "EFFECT-DISPATCH AUDIT PROOF FAILED"; exit 1; }

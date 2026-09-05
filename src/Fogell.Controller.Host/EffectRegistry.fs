@@ -51,6 +51,13 @@ module EffectProducer =
 module EffectProducerConfig =
     let disabled = { FileDropRoot = None; KillAt = None }
 
+    /// The operator creates this empty file inside the drop root. It pins the
+    /// destination: startup refuses a root without it, and the connector
+    /// refuses to write when it is gone (an unmounted or replaced volume has
+    /// no marker), instead of recreating a root on whatever is underneath.
+    [<Literal>]
+    let fileDropRootMarker = ".fogell-drop-root"
+
     let killWindowNames =
         [ "prepare", EffectKillWindow.AfterPrepare
           "invoke", EffectKillWindow.AfterInvoke
@@ -103,6 +110,8 @@ module EffectProducerConfig =
                 if rootKey.StartsWith(stateKey, StringComparison.Ordinal)
                    || stateKey.StartsWith(rootKey, StringComparison.Ordinal) then
                     Error "FOGELL_EFFECT_FILE_DROP_ROOT must be disjoint from FOGELL_STATE_ROOT"
+                elif not (File.Exists(Path.Combine(root, fileDropRootMarker))) then
+                    Error $"FOGELL_EFFECT_FILE_DROP_ROOT must contain the operator-created {fileDropRootMarker} marker file"
                 elif not (probeWritable root) then
                     Error "FOGELL_EFFECT_FILE_DROP_ROOT is not writable by the service identity"
                 else

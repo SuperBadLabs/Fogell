@@ -59,7 +59,7 @@ Two further settings are optional (FG-026b) and enable the registered
 external-effect producer:
 
 ```text
-FOGELL_EFFECT_FILE_DROP_ROOT        absolute, existing, writable directory disjoint from FOGELL_STATE_ROOT; absent = no producer enabled
+FOGELL_EFFECT_FILE_DROP_ROOT        absolute, existing, writable directory disjoint from FOGELL_STATE_ROOT, containing an operator-created empty `.fogell-drop-root` marker file; absent = no producer enabled
 FOGELL_EFFECT_KILL_AT               prepare | invoke | apply | confirm; crash-window proof only, refused without the drop root
 ```
 
@@ -67,12 +67,20 @@ With the drop root set, every attempt that reaches a natural terminal writes one
 receipt `<root>/<organization>/<attempt>.receipt` through the FG-026 ledger
 (prepare, invoke, applied, confirmed) before its terminal status is published;
 a refused or uncertain effect fails the attempt closed into
-`reconciliation_required` (reason `effect_dispatch_unconfirmed`). Every worker
-scan and every startup classify stale prepared/applied ledger rows as uncertain,
-publish one `effect.uncertain` event and outbox row per row, and never
-re-invoke them; `GET /api/v1/organizations/{org}/effects/uncertain` lists them
-read-only. The kill hook exists only for `scripts/prove-fg026b-effect-dispatch.sh`
-and must never be set on a service.
+`reconciliation_required` (reason `effect_dispatch_unconfirmed`). The marker
+pins the destination: the controller creates only the per-organization
+subdirectory, never the root, and if the marker is gone (an unmounted or
+replaced volume) the effect is refused before preparation or left uncertain
+after it rather than written to whatever directory took the root's place.
+Stale prepared/applied ledger rows are classified as uncertain on an
+independent cadence of one lease period (`FOGELL_WORKER_LEASE_SECONDS`) that
+does not wait on claim execution, on every worker scan, and at startup; each
+classification publishes one `effect.uncertain` event and outbox row and never
+re-invokes. `GET /api/v1/organizations/{org}/effects/uncertain?limit=N&cursor=C`
+lists them read-only in pages (`limit` 1..1000, default 200; `next_cursor` in
+the response continues the listing and is bound to the organization). The kill
+hook exists only for `scripts/prove-fg026b-effect-dispatch.sh` and must never
+be set on a service.
 
 The maintenance identity that performs a restore (`ActivateRestore`) needs
 `SELECT, UPDATE` on `effect_checkpoints` in addition to its attempt, node,

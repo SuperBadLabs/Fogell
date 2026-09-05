@@ -2194,6 +2194,8 @@ let effectDispatch =
         IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg026b-drop-{Guid.NewGuid():N}")
 
     do IO.Directory.CreateDirectory dropRoot |> ignore
+    // The operator-created marker that pins the destination.
+    do IO.File.WriteAllBytes(IO.Path.Combine(dropRoot, EffectProducerConfig.fileDropRootMarker), [||])
 
     let abortSentinel = "fg026b-window-abort"
     let abort () = raise (InvalidOperationException abortSentinel)
@@ -2315,7 +2317,7 @@ let effectDispatch =
 
     /// The production worker against the shared test store, with the file-drop
     /// simulator enabled and no kill hook. Its scan is the lease-expiry trigger.
-    let newWorker () =
+    let newWorkerWithLease (leaseSeconds: int) =
         let stateRoot = IO.Path.Combine(dropRoot, "worker-state")
         IO.Directory.CreateDirectory stateRoot |> ignore
 
@@ -2331,13 +2333,15 @@ let effectDispatch =
               MaxPipelineBytes = 1024
               MaxLogChunks = 100
               PollMilliseconds = 50
-              LeaseSeconds = 60
+              LeaseSeconds = leaseSeconds
               EffectProducers = { FileDropRoot = Some dropRoot; KillAt = None } }
 
         new LocalWorker(
             workerConfig,
             store,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<LocalWorker>.Instance)
+
+    let newWorker () = newWorkerWithLease 60
 
     let withEffectEnvironment (root: string option) (kill: string option) f =
         let names = [ "FOGELL_EFFECT_FILE_DROP_ROOT"; "FOGELL_EFFECT_KILL_AT" ]
@@ -2418,6 +2422,14 @@ let effectDispatch =
                       (EffectProducerConfig.loadFromEnvironment stateRoot)
                       (Error "FOGELL_EFFECT_FILE_DROP_ROOT must be disjoint from FOGELL_STATE_ROOT")
                       "a destination that contains the state root is refused as well")
+
+              withEffectEnvironment (Some destination) None (fun () ->
+                  Expect.equal
+                      (EffectProducerConfig.loadFromEnvironment stateRoot)
+                      (Error $"FOGELL_EFFECT_FILE_DROP_ROOT must contain the operator-created {EffectProducerConfig.fileDropRootMarker} marker file")
+                      "an unpinned destination (no operator marker) is refused: the controller never creates the root")
+
+              IO.File.WriteAllBytes(IO.Path.Combine(destination, EffectProducerConfig.fileDropRootMarker), [||])
 
               withEffectEnvironment (Some destination) (Some "teardown") (fun () ->
                   Expect.equal
@@ -2757,6 +2769,7 @@ let effectDispatch =
               let root = IO.Path.Combine(dropRoot, $"config-{Guid.NewGuid():N}")
               let destination = IO.Path.Combine(root, "drop")
               IO.Directory.CreateDirectory destination |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(destination, EffectProducerConfig.fileDropRootMarker), [||])
               let tokenFile = IO.Path.Combine(root, "token")
               let runHost = IO.Path.Combine(root, "run-host")
               IO.File.WriteAllText(tokenFile, String.replicate 32 "t")
@@ -2901,13 +2914,109 @@ let effectDispatch =
               // FG026B_NO_MANUAL_STORE_END
           }
 
+          test "the reconciliation cadence classifies a stale row within two lease periods while the scan loop never runs" {
+              // Codex finding 1 on #424: the scan loop runs one claim to
+              // completion, so a pass bound to it waits for an unrelated build.
+              // Here the scan loop is never started at all; only the periodic
+              // loop runs, on the shortest lease the configuration allows.
+              use worker = newWorkerWithLease 10
+              let owner = "local:fg026b-cadence:owner"
+              let org, claim = runningClaim "fg026b-cadence" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let invocations, invocation = counted claim Success
+              let key = effectKey claim
+
+              abortedRun store authority (withHook EffectKillWindow.AfterInvoke) invocation
+              expireLease org claim.AttemptId
+              Expect.equal (ledgerRow org claim.AttemptId key) (Some("prepared", None)) "stale prepared row before the cadence runs"
+
+              use stop = new Threading.CancellationTokenSource()
+              let loop = worker.ReconciliationLoop stop.Token
+              let deadline = DateTime.UtcNow.AddSeconds 20.0
+              let mutable classified = false
+
+              while not classified && DateTime.UtcNow < deadline do
+                  Threading.Thread.Sleep 250
+                  classified <- ledgerRow org claim.AttemptId key = Some("uncertain", Some "prepared")
+
+              stop.Cancel()
+              loop.Wait(TimeSpan.FromSeconds 10.0) |> ignore
+              Expect.isTrue loop.IsCompletedSuccessfully "the cadence loop stops with its token and does not fault"
+              Expect.isTrue classified "classified within two lease periods without any claim finishing"
+              Expect.equal invocations.Value 1 "the cadence invoked nothing"
+              Expect.equal (receiptCount org) 1 "the cadence wrote nothing"
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use cmd = conn.CreateCommand()
+              cmd.CommandText <-
+                  "SELECT (SELECT count(*) FROM events WHERE organization_id = @o AND attempt_id = @a AND kind = 'effect.uncertain'),
+                          (SELECT count(*) FROM outbox WHERE organization_id = @o AND topic = 'effect.uncertain' AND body->>'attempt' = @a::text)"
+              cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+              cmd.Parameters.AddWithValue("a", claim.AttemptId.Value) |> ignore
+              use reader = cmd.ExecuteReader()
+              Expect.isTrue (reader.Read()) "surface row"
+              Expect.equal (reader.GetInt64 0, reader.GetInt64 1) (1L, 1L) "exactly one event and one outbox row from the cadence"
+          }
+
+          test "a destination that is no longer the pinned root refuses before preparation and is never recreated after it" {
+              // Codex finding 3 on #424: CreateDirectory on a vanished root
+              // would recreate it on whatever filesystem is underneath.
+              let owner = "fg026b-unpinned-owner"
+              let org, claim = runningClaim "fg026b-unpinned" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let root = IO.Path.Combine(dropRoot, $"unpinned-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory root |> ignore
+              let marker = IO.Path.Combine(root, EffectProducerConfig.fileDropRootMarker)
+              IO.File.WriteAllBytes(marker, [||])
+              let invocations = ref 0
+              let real = FileDropReceipt.invocation root claim Success
+              let counted =
+                  { real with
+                      Invoke =
+                          fun () ->
+                              invocations.Value <- invocations.Value + 1
+                              real.Invoke() }
+
+              // Unmounted before the effect starts: refused, no ledger row.
+              IO.File.Delete marker
+              match EffectDispatch.run store authority EffectDispatch.noHooks counted with
+              | DispatchOutcome.Refused reason -> Expect.stringContains reason "not pinned" "names the missing marker"
+              | other -> failtestf "an unpinned destination was not refused: %A" other
+              Expect.equal (ledgerRows org claim.AttemptId) 0L "nothing was prepared"
+              Expect.equal invocations.Value 0 "nothing was invoked"
+
+              // Pinned at preparation, gone by invocation: the row stays
+              // prepared for the trigger, nothing is written, and the root is
+              // not brought back.
+              IO.File.WriteAllBytes(marker, [||])
+              let vanish () = IO.Directory.Delete(root, true)
+              match EffectDispatch.run store authority { EffectDispatch.noHooks with AfterPrepare = vanish } counted with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "not pinned" "the invocation refused the replaced destination"
+              | other -> failtestf "a destination lost after preparation was not uncertain: %A" other
+              Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("prepared", None)) "the row awaits the trigger"
+              Expect.equal invocations.Value 1 "the invocation was attempted once"
+              Expect.isFalse (IO.Directory.Exists root) "the connector did not recreate the root"
+
+              // Remounted: the same authority and payload complete through the
+              // idempotent connector; the receipt lands on the pinned root.
+              IO.Directory.CreateDirectory root |> ignore
+              IO.File.WriteAllBytes(marker, [||])
+              Expect.equal (EffectDispatch.run store authority EffectDispatch.noHooks counted) (DispatchOutcome.Confirmed false) "confirms once the root is pinned again"
+              Expect.isTrue (IO.File.Exists(FileDropReceipt.receiptPath root claim)) "the receipt is on the pinned root"
+              Expect.equal (counted.Confirm()) (Ok true) "evidence reads true while pinned"
+              IO.File.Delete marker
+              Expect.equal (counted.Confirm()) (Ok false) "an unpinned root offers no evidence, whatever bytes it holds"
+          }
+
           test "GET effects/uncertain lists one organization's uncertain effects read-only, denies other organizations their view of it, and refuses a malformed organization" {
               let app, baseUrl = startServer 1000
 
               try
                   use worker = newWorker ()
                   let owner = "local:fg026b-route:owner"
-                  let org, claim = runningClaim "fg026b-route" owner
+                  let org, project = freshProject ()
+                  let claim = admitClaim org project "fg026b-route" owner
                   let authority = EffectAuthority.ofClaim owner claim
                   let invocations, invocation = counted claim Success
                   let key = effectKey claim
@@ -2917,7 +3026,7 @@ let effectDispatch =
                   Expect.equal emptyCode 200 "an organization with nothing uncertain lists an empty set"
                   Expect.equal
                       emptyBody
-                      $"{{\"organization_id\":\"{org.Value}\",\"effects\":[]}}"
+                      $"{{\"organization_id\":\"{org.Value}\",\"effects\":[],\"next_cursor\":null}}"
                       "the empty listing names the organization and no effects"
 
                   abortedRun store authority (withHook EffectKillWindow.AfterInvoke) invocation
@@ -2952,7 +3061,7 @@ let effectDispatch =
                   Expect.equal otherCode 200 "another organization is served its own view"
                   Expect.equal
                       otherBody
-                      $"{{\"organization_id\":\"{otherOrg.Value}\",\"effects\":[]}}"
+                      $"{{\"organization_id\":\"{otherOrg.Value}\",\"effects\":[],\"next_cursor\":null}}"
                       "another organization sees nothing of this tenant's uncertainty"
 
                   let malformedCode, malformedBody =
@@ -2967,8 +3076,56 @@ let effectDispatch =
                   let postCode, _ = send HttpMethod.Post (url org) (Some token) None (Some "{}")
                   Expect.equal postCode 405 "the surface is read-only: nothing replays, resolves or dismisses through it"
 
-                  Expect.equal invocations.Value 1 "listing never invokes"
-                  Expect.equal (receiptCount org) 1 "listing never writes"
+                  // Codex finding 4 on #424: the listing is bounded. A second
+                  // stranded effect in the same organization makes two pages
+                  // of one.
+                  let secondClaim = admitClaim org project "fg026b-route-2" owner
+                  let secondInvocations, secondInvocation = counted secondClaim Success
+                  abortedRun store (EffectAuthority.ofClaim owner secondClaim) (withHook EffectKillWindow.AfterInvoke) secondInvocation
+                  expireLease org secondClaim.AttemptId
+                  worker.ScanOrganization(org, Threading.CancellationToken.None).Result |> ignore
+
+                  let firstPageCode, firstPageBody = send HttpMethod.Get $"{url org}?limit=1" (Some token) None None
+                  Expect.equal firstPageCode 200 "a bounded page is served"
+                  use firstPage = JsonDocument.Parse firstPageBody
+                  let firstEffects = firstPage.RootElement.GetProperty("effects").EnumerateArray() |> List.ofSeq
+                  Expect.equal firstEffects.Length 1 "limit bounds the page"
+                  Expect.equal (firstEffects.Head.GetProperty("attempt_id").GetString()) (claim.AttemptId.Value.ToString()) "the older row comes first"
+                  let nextCursor = firstPage.RootElement.GetProperty("next_cursor").GetString()
+                  Expect.isNotNull nextCursor "a full page with more behind it carries a cursor"
+
+                  let secondPageCode, secondPageBody =
+                      send HttpMethod.Get $"{url org}?limit=1&cursor={Uri.EscapeDataString nextCursor}" (Some token) None None
+                  Expect.equal secondPageCode 200 "the cursor continues the listing"
+                  use secondPage = JsonDocument.Parse secondPageBody
+                  let secondEffects = secondPage.RootElement.GetProperty("effects").EnumerateArray() |> List.ofSeq
+                  Expect.equal secondEffects.Length 1 "the second page holds the remaining row"
+                  Expect.equal (secondEffects.Head.GetProperty("attempt_id").GetString()) (secondClaim.AttemptId.Value.ToString()) "no row is skipped or repeated"
+                  Expect.equal (secondPage.RootElement.GetProperty("next_cursor").ValueKind) JsonValueKind.Null "the last page carries no cursor"
+
+                  let bothCode, bothBody = send HttpMethod.Get $"{url org}?limit=2" (Some token) None None
+                  Expect.equal bothCode 200 "a page wide enough lists both"
+                  use both = JsonDocument.Parse bothBody
+                  Expect.equal (both.RootElement.GetProperty("effects").GetArrayLength()) 2 "both rows on one page"
+                  Expect.equal (both.RootElement.GetProperty("next_cursor").ValueKind) JsonValueKind.Null "and no cursor when nothing is behind it"
+
+                  let crossOrgCode, crossOrgBody =
+                      send HttpMethod.Get $"{url otherOrg}?cursor={Uri.EscapeDataString nextCursor}" (Some token) None None
+                  Expect.equal crossOrgCode 400 "a cursor issued for one organization is refused for another"
+                  Expect.stringContains crossOrgBody "invalid_cursor" "with the stable code"
+                  Expect.isFalse (crossOrgBody.Contains key) "and leaks nothing"
+
+                  let garbageCode, garbageBody = send HttpMethod.Get $"{url org}?cursor=not-a-cursor" (Some token) None None
+                  Expect.equal garbageCode 400 "a malformed cursor is refused"
+                  Expect.stringContains garbageBody "invalid_cursor" "with the stable code"
+
+                  for badLimit in [ "0"; "1001"; "abc"; "-5" ] do
+                      let badCode, badBody = send HttpMethod.Get $"{url org}?limit={badLimit}" (Some token) None None
+                      Expect.equal badCode 400 $"limit={badLimit} is refused"
+                      Expect.stringContains badBody "invalid_limit" $"limit={badLimit} names the refusal"
+
+                  Expect.equal (invocations.Value, secondInvocations.Value) (1, 1) "listing never invokes"
+                  Expect.equal (receiptCount org) 2 "listing never writes: one receipt per stranded attempt"
               finally
                   app.StopAsync() |> Async.AwaitTask |> Async.RunSynchronously
           }

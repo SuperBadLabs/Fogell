@@ -23,14 +23,17 @@ module EffectAuthority =
           Fence = claim.Fence
           Owner = owner }
 
-/// One producer's invocation against its destination. `Invoke` must be
-/// idempotent-or-ambiguous — it may find its effect already present and say
-/// so, but it never retries towards success on its own. `Confirm` reads
-/// destination evidence only and never changes the destination.
+/// One producer's invocation against its destination. `Destination` says
+/// whether the pinned destination is still the one configured (checked before
+/// preparation and again inside `Invoke`; it never creates or repairs it).
+/// `Invoke` must be idempotent-or-ambiguous — it may find its effect already
+/// present and say so, but it never retries towards success on its own.
+/// `Confirm` reads destination evidence only and never changes the destination.
 type EffectInvocation =
     { Producer: EffectProducer
       Identity: string
       Payload: byte array
+      Destination: unit -> Result<unit, string>
       Invoke: unit -> Result<unit, string>
       Confirm: unit -> Result<bool, string> }
 
@@ -47,7 +50,8 @@ type DispatchHooks =
 type DispatchOutcome =
     /// The ledger reached confirmed. `replay` is true when it already had.
     | Confirmed of replay: bool
-    /// Authority or payload refusal at preparation. Nothing was invoked.
+    /// Authority, payload or destination refusal before preparation completed.
+    /// Nothing was invoked.
     | Refused of string
     /// The effect may have happened. The row stays prepared or applied for the
     /// bounded reconciliation trigger to classify; nothing re-invokes it.
@@ -106,30 +110,57 @@ module FileDropReceipt =
 
         Text.Encoding.UTF8.GetBytes text
 
-    let private write (path: string) (bytes: byte array) =
-        Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
-
-        if File.Exists path then
-            // The destination is idempotent per attempt: a receipt that already
-            // exists is this connector's contract, and Confirm decides whether
-            // its bytes are the ones this attempt meant to leave.
+    /// The root is pinned by the operator-created marker file that startup
+    /// validated. An unmounted or replaced destination has no marker, and a
+    /// receipt must never be created on whatever directory took its place.
+    let pinned (root: string) =
+        if Directory.Exists root
+           && File.Exists(Path.Combine(root, EffectProducerConfig.fileDropRootMarker)) then
             Ok()
         else
-            let temporary = path + $".{Guid.NewGuid():N}.tmp"
-            File.WriteAllBytes(temporary, bytes)
+            Error $"destination root is not pinned: {root} or its {EffectProducerConfig.fileDropRootMarker} marker is absent"
 
-            try
-                File.Move(temporary, path, false)
-                Ok()
-            with :? IOException when File.Exists path ->
-                (try File.Delete temporary with _ -> ())
-                Ok()
+    let private write (root: string) (path: string) (bytes: byte array) =
+        match pinned root with
+        | Error error -> Error error
+        | Ok() ->
+            // Only the per-organization directory is ever created; the root
+            // itself was just seen to exist and is never (re)created here.
+            Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
 
-    let private read (path: string) (bytes: byte array) =
-        if File.Exists path then
-            Ok(CryptographicOperations.FixedTimeEquals(File.ReadAllBytes path, bytes))
-        else
-            Ok false
+            let written =
+                if File.Exists path then
+                    // The destination is idempotent per attempt: a receipt that
+                    // already exists is this connector's contract, and Confirm
+                    // decides whether its bytes are the ones this attempt meant
+                    // to leave.
+                    Ok()
+                else
+                    let temporary = path + $".{Guid.NewGuid():N}.tmp"
+                    File.WriteAllBytes(temporary, bytes)
+
+                    try
+                        File.Move(temporary, path, false)
+                        Ok()
+                    with :? IOException when File.Exists path ->
+                        (try File.Delete temporary with _ -> ())
+                        Ok()
+
+            // A root that vanished between the check and the rename would have
+            // been recreated by the directory step; a receipt on that
+            // replacement is not evidence, so the write is reported ambiguous.
+            match written with
+            | Error error -> Error error
+            | Ok() -> pinned root
+
+    let private read (root: string) (path: string) (bytes: byte array) =
+        match pinned root with
+        | Error _ -> Ok false
+        | Ok() ->
+            if File.Exists path then
+                Ok(CryptographicOperations.FixedTimeEquals(File.ReadAllBytes path, bytes))
+            else
+                Ok false
 
     let invocation (root: string) (claim: ExecutionClaim) (terminal: BuildStatus) : EffectInvocation =
         let path = receiptPath root claim
@@ -138,8 +169,9 @@ module FileDropReceipt =
         { Producer = EffectProducer.FileDropReceipt
           Identity = identity claim
           Payload = bytes
-          Invoke = fun () -> write path bytes
-          Confirm = fun () -> read path bytes }
+          Destination = fun () -> pinned root
+          Invoke = fun () -> write root path bytes
+          Confirm = fun () -> read root path bytes }
 
 module EffectDispatch =
     let noHooks =
@@ -198,38 +230,44 @@ module EffectDispatch =
             | Ok false -> DispatchOutcome.Uncertain "destination evidence absent after invocation"
             | Error error -> DispatchOutcome.Uncertain $"destination evidence unreadable: {error}"
 
-        match
-            store.PrepareEffect(
-                authority.Organization,
-                authority.Attempt,
-                authority.Fence,
-                authority.Owner,
-                key,
-                invocation.Payload)
-        with
-        | Error error -> DispatchOutcome.Refused error
-        | Ok outcome ->
-            match outcome.Checkpoint.State with
-            | EffectConfirmed -> DispatchOutcome.Confirmed true
-            | EffectUncertain ->
-                DispatchOutcome.Uncertain "checkpoint is already uncertain and awaits operator reconciliation"
-            | EffectApplied ->
-                // Applied means the invocation completed once. Re-read the
-                // evidence; never invoke again.
-                confirmFromEvidence ()
-            | EffectPrepared ->
-                hooks.AfterPrepare()
+        // A destination that is no longer the pinned one refuses before any
+        // ledger row exists: there is nothing to prepare against.
+        match guarded invocation.Destination with
+        | Error error -> DispatchOutcome.Refused $"destination refused: {error}"
+        | Ok() ->
 
-                match guarded invocation.Invoke with
-                | Error error -> DispatchOutcome.Uncertain $"invocation failed after preparation: {error}"
-                | Ok() ->
-                    hooks.AfterInvoke()
+            match
+                store.PrepareEffect(
+                    authority.Organization,
+                    authority.Attempt,
+                    authority.Fence,
+                    authority.Owner,
+                    key,
+                    invocation.Payload)
+            with
+            | Error error -> DispatchOutcome.Refused error
+            | Ok outcome ->
+                match outcome.Checkpoint.State with
+                | EffectConfirmed -> DispatchOutcome.Confirmed true
+                | EffectUncertain ->
+                    DispatchOutcome.Uncertain "checkpoint is already uncertain and awaits operator reconciliation"
+                | EffectApplied ->
+                    // Applied means the invocation completed once. Re-read the
+                    // evidence; never invoke again.
+                    confirmFromEvidence ()
+                | EffectPrepared ->
+                    hooks.AfterPrepare()
 
-                    match advance RecordApplied with
-                    | Error error -> DispatchOutcome.Uncertain $"application not recorded: {error}"
-                    | Ok _ ->
-                        hooks.AfterApply()
-                        confirmFromEvidence ()
+                    match guarded invocation.Invoke with
+                    | Error error -> DispatchOutcome.Uncertain $"invocation failed after preparation: {error}"
+                    | Ok() ->
+                        hooks.AfterInvoke()
+
+                        match advance RecordApplied with
+                        | Error error -> DispatchOutcome.Uncertain $"application not recorded: {error}"
+                        | Ok _ ->
+                            hooks.AfterApply()
+                            confirmFromEvidence ()
 
     /// Every registered producer that the configuration enables, in registry
     /// order. The match is exhaustive over EffectProducer, so a new case must

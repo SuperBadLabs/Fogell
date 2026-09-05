@@ -52,7 +52,10 @@ type UncertainEffect =
 
 type UncertainEffectsResponse =
     { [<JsonPropertyName "organization_id">] OrganizationId: string
-      [<JsonPropertyName "effects">] Effects: UncertainEffect list }
+      [<JsonPropertyName "effects">] Effects: UncertainEffect list
+      /// Opaque keyset cursor for `?cursor=` on the next request; null on the
+      /// last page. Bound to the organization it was issued for.
+      [<JsonPropertyName "next_cursor">] NextCursor: string option }
 
 /// Errors carry a stable code as well as a message, so a client can branch on
 /// the code and show the message. ADR 0001 forbids an unnamed rejection.
