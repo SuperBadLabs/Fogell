@@ -297,4 +297,4 @@ Read with the two sections above; this is the second addendum.
 - **Next candidates:** none in this class. The next receipt needs a
   capability from FG-242's inventory, an execution rule for unallocatable
   stage agents (refuse or model `label`/`docker`/`dockerfile`, which gates
-  fifteen files), or `make` pinned in the container for `charlires`.
+  thirteen files), or `make` pinned in the container for `charlires`.
