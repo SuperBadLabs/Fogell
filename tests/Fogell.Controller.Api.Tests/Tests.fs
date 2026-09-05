@@ -3326,6 +3326,90 @@ let effectDispatch =
               Expect.equal (IO.Directory.GetFiles(organizationDirectory, "*.receipt").Length) 1 "one receipt"
           }
 
+          test "startup runs the writer's exact sequence as its probe and refuses by syscall name when the filesystem cannot rename without replace" {
+              // Codex round 9 (P2): a probe that only proves a file create let a
+              // filesystem without RENAME_NOREPLACE or directory fsync pass
+              // startup and fail every receipt later.
+              let stateRoot = IO.Path.Combine(dropRoot, $"probe-state-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory stateRoot |> ignore
+              let root = IO.Path.Combine(dropRoot, $"probe-root-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory root |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(root, EffectProducerConfig.fileDropRootMarker), [||])
+              let probeDirectory = IO.Path.Combine(root, DestinationDescriptor.probeDirectory)
+
+              Expect.equal (EffectProducerConfig.validateFileDropRoot stateRoot root) (Ok(IO.Path.GetFullPath root)) "a healthy root passes the full write sequence"
+              Expect.isFalse (IO.Directory.Exists probeDirectory) "the probe directory is removed after a successful probe"
+              Expect.isEmpty (IO.Directory.GetFiles(root, "*", IO.SearchOption.AllDirectories) |> Array.filter (fun f -> not (f.EndsWith EffectProducerConfig.fileDropRootMarker))) "the probe leaves nothing but the marker"
+
+              // A filesystem that refuses RENAME_NOREPLACE (EINVAL, as an old
+              // kernel or filesystem answers renameat2 flags).
+              let noRenameNoReplace =
+                  { DestinationDescriptor.nativeWriteSyscalls with
+                      RenameNoReplace = fun _ _ _ -> Error 22 }
+              match EffectProducerConfig.validateFileDropRootWith noRenameNoReplace stateRoot root with
+              | Error reason ->
+                  Expect.stringContains reason "renameat2(RENAME_NOREPLACE)" "the refusal names the syscall"
+                  Expect.stringContains reason "errno 22" "and the errno"
+                  Expect.stringContains reason "does not support the receipt write sequence" "as a startup refusal"
+              | Ok accepted -> failtestf "a root without RENAME_NOREPLACE was accepted: %s" accepted
+              Expect.isEmpty (IO.Directory.GetFiles(root, "*.tmp", IO.SearchOption.AllDirectories)) "the probe's temp was unlinked on the failed rename"
+              Expect.isFalse (IO.Directory.Exists probeDirectory) "the probe directory is removed after a failed probe too"
+
+              // The probe's own cleanup failing is a refusal as well.
+              let noUnlink =
+                  { DestinationDescriptor.nativeWriteSyscalls with
+                      Unlink = fun _ _ -> Error 30 }
+              match EffectProducerConfig.validateFileDropRootWith noUnlink stateRoot root with
+              | Error reason -> Expect.stringContains reason "unlinkat of the probe receipt failed (errno 30)" "an unlink that fails at startup is named"
+              | Ok accepted -> failtestf "a root whose probe receipt cannot be unlinked was accepted: %s" accepted
+              // Leave the root clean for the next arm.
+              if IO.Directory.Exists probeDirectory then IO.Directory.Delete(probeDirectory, true)
+
+              Expect.equal (EffectProducerConfig.validateFileDropRoot stateRoot root) (Ok(IO.Path.GetFullPath root)) "the healthy sequence still passes afterwards"
+          }
+
+          test "a temp file whose unlink fails after a failed write is reported in the trace and the Uncertain reason, never confirmed" {
+              // Codex round 9 (P2): unlinkat's return was discarded and the trace
+              // said temp-unlinked even when the unlink failed (EROFS, EIO).
+              let owner = "fg026b-erofs-owner"
+              let org, claim = runningClaim "fg026b-erofs" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let organizationDirectory = IO.Path.Combine(dropRoot, org.Value.ToString "N")
+              let steps = Collections.Generic.List<string>()
+              let failing (stream: IO.Stream) (bytes: byte array) =
+                  stream.Write(bytes, 0, 1)
+                  raise (IO.IOException "Input/output error (simulated)")
+              let readOnlyRemount =
+                  { DestinationDescriptor.nativeWriteSyscalls with
+                      Unlink = fun _ _ -> Error 30 }
+              let invocation = FileDropReceipt.invocationWithIo ignore steps.Add failing readOnlyRemount dropRoot claim Success
+
+              match EffectDispatch.run store authority EffectDispatch.noHooks invocation with
+              | DispatchOutcome.Uncertain reason ->
+                  Expect.stringContains reason "Input/output error" "the write failure is the reason"
+                  Expect.stringContains reason "unlinkat of the receipt temp file" "and the unlink failure is named"
+                  Expect.stringContains reason "errno 30" "with its errno"
+                  Expect.stringContains reason "orphan remains for the operator" "and the orphan is stated"
+              | other -> failtestf "a failed write with a failed unlink produced %A" other
+              Expect.contains (List.ofSeq steps) "temp-unlink-failed:30" "the trace names the failed unlink"
+              Expect.isFalse (steps.Contains "temp-unlinked") "the trace does not claim an unlink that did not happen"
+              Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("prepared", None)) "the row is prepared, never confirmed"
+              Expect.equal (IO.Directory.GetFiles(organizationDirectory, "*.tmp").Length) 1 "the orphan temp is visible to the operator (the injected unlink refused it)"
+
+              // An EEXIST loser whose unlink fails is also reported, not confirmed.
+              IO.File.Delete(IO.Directory.GetFiles(organizationDirectory, "*.tmp").[0])
+              IO.Directory.CreateDirectory(FileDropReceipt.receiptPath dropRoot claim) |> ignore
+              steps.Clear()
+              let loser = FileDropReceipt.invocationWithIo ignore steps.Add DestinationDescriptor.writeBytes readOnlyRemount dropRoot claim Success
+              // The receipt name is now held by a planted directory, so the write
+              // sees an existing entry and never creates a temp; Confirm refuses
+              // the directory.
+              match EffectDispatch.run store authority EffectDispatch.noHooks loser with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "evidence absent" "a planted directory is no evidence"
+              | other -> failtestf "a planted directory produced %A" other
+              Expect.equal (IO.Directory.GetFiles(organizationDirectory, "*.tmp").Length) 0 "no temp was created for an existing entry"
+          }
+
           test "GET effects/uncertain lists one organization's uncertain effects read-only, denies other organizations their view of it, and refuses a malformed organization" {
               let app, baseUrl = startServer 1000
 

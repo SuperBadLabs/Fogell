@@ -332,6 +332,206 @@ module internal DestinationDescriptor =
 
             walk start 0
 
+    [<Literal>]
+    let private AtRemoveDirectory = 0x200
+
+    /// Removes only the startup probe directory this process created; never
+    /// used on an organization directory or anything an operator or pipeline
+    /// wrote.
+    let private rmdirAt (directory: SafeFileHandle) (name: string) =
+        unlinkAtNative (descriptor directory, name, AtRemoveDirectory)
+
+    /// The two syscalls whose failure the tests inject (Codex #424 round 9):
+    /// a filesystem without RENAME_NOREPLACE at startup, and an unlink that
+    /// fails on a read-only remount. `Error` carries errno.
+    type WriteSyscalls =
+        { RenameNoReplace: SafeFileHandle -> string -> string -> Result<unit, int>
+          Unlink: SafeFileHandle -> string -> Result<unit, int> }
+
+    let nativeWriteSyscalls =
+        { RenameNoReplace =
+            fun directory oldName newName ->
+                if renameAt2 directory oldName newName RenameNoReplace >= 0 then Ok() else Error(errno ())
+          Unlink = fun directory name -> if unlinkAt directory name >= 0 then Ok() else Error(errno ()) }
+
+    [<Literal>]
+    let ReceiptFileMode = 0o600
+
+    [<Literal>]
+    let OrganizationDirectoryMode = 0o755
+
+    let writeBytes (stream: Stream) (bytes: byte array) = stream.Write(bytes, 0, bytes.Length)
+
+    /// Only the per-organization directory is ever created, relative to the
+    /// root descriptor and non-recursively; EEXIST is the idempotent case. The
+    /// root is fsynced after the attempt so the new entry is durable before
+    /// anything is written under it.
+    let private openOrganizationDirectory
+        (trace: string -> unit)
+        (table: LinuxOpenFlags.Table)
+        (rootHandle: SafeFileHandle)
+        (name: string)
+        =
+        let made = mkdirAt rootHandle name OrganizationDirectoryMode
+
+        if made < 0 && errno () <> EEXIST then
+            Error $"mkdirat of the organization directory failed in the pinned destination (errno {errno ()})"
+        else
+            match sync rootHandle with
+            | Error error -> Error $"fsync of the pinned root after mkdirat failed: {error}"
+            | Ok() ->
+                trace "root-fsynced"
+                let fd = openAt rootHandle name (directoryFlags table) 0
+
+                if fd < 0 then
+                    Error $"openat of the organization directory failed in the pinned destination (errno {errno ()})"
+                else
+                    Ok(owned fd)
+
+    /// The writer's exact sequence, shared by dispatch and the startup probe
+    /// (Codex #424 round 9): mkdirat + fsync(root) + openat the organization
+    /// directory; if the receipt name is free, openat(O_CREAT|O_EXCL) a temp
+    /// of this process's choosing, write, Flush(true), renameat2(NOREPLACE),
+    /// fsync(directory). The temp file's lifetime is one try/finally (round 8):
+    /// every exit that did not rename it unlinks the process's own name through
+    /// the directory descriptor, an exception becomes the error, and an unlink
+    /// that itself fails is reported (`temp-unlink-failed:<errno>`) rather than
+    /// traced as success. Every message names the syscall and errno.
+    let writeReceipt
+        (syscalls: WriteSyscalls)
+        (trace: string -> unit)
+        (writer: Stream -> byte array -> unit)
+        (table: LinuxOpenFlags.Table)
+        (rootHandle: SafeFileHandle)
+        (organization: string)
+        (fileName: string)
+        (bytes: byte array)
+        : Result<unit, string> =
+        match openOrganizationDirectory trace table rootHandle organization with
+        | Error error -> Error error
+        | Ok directoryHandle ->
+            use directoryHandle = directoryHandle
+            let existing = openAt directoryHandle fileName (fileReadFlags table) 0
+
+            if existing >= 0 then
+                // The destination is idempotent per attempt: a receipt that
+                // already exists is this connector's contract, and Confirm
+                // decides whether its bytes are the ones this attempt meant to
+                // leave. Whatever it is (a FIFO, a directory, a link) it is only
+                // ever judged, never read here and never replaced.
+                (owned existing).Dispose()
+                trace "existing"
+                Ok()
+            else
+                let temporary = fileName + $".{Guid.NewGuid():N}.tmp"
+
+                let fd =
+                    openAt
+                        directoryHandle
+                        temporary
+                        (OpenWriteOnly ||| OpenCreate ||| OpenExclusive ||| table.NoFollow ||| OpenCloseOnExec)
+                        ReceiptFileMode
+
+                if fd < 0 then
+                    // Nothing was created; nothing to clean.
+                    Error $"openat(O_CREAT|O_EXCL) of the receipt temp file failed in the pinned destination (errno {errno ()})"
+                else
+                    let mutable renamed = false
+                    let mutable unlinkFailure: int option = None
+
+                    let published =
+                        try
+                            try
+                                do
+                                    use stream = new FileStream(owned fd, FileAccess.Write, 1, false)
+                                    writer stream bytes
+                                    stream.Flush true
+
+                                trace "temp-fsynced"
+
+                                match syscalls.RenameNoReplace directoryHandle temporary fileName with
+                                | Ok() ->
+                                    renamed <- true
+                                    trace "renamed"
+                                    Ok()
+                                | Error error when error = EEXIST ->
+                                    // Something now holds the receipt name: a
+                                    // concurrent writer of the same attempt, or a
+                                    // planted entry. Confirm judges it.
+                                    Ok()
+                                | Error error ->
+                                    Error $"renameat2(RENAME_NOREPLACE) of the receipt failed in the pinned destination (errno {error})"
+                            with ex ->
+                                // ENOSPC, EIO, a closed descriptor: the effect may
+                                // or may not have reached the destination; the row
+                                // stays where it is for the trigger.
+                                Error $"receipt write failed in the pinned destination: {ex.Message}"
+                        finally
+                            if not renamed then
+                                // Only this process's own O_EXCL temp name is ever
+                                // unlinked, through the directory descriptor, and
+                                // never a directory.
+                                match syscalls.Unlink directoryHandle temporary with
+                                | Ok() -> trace "temp-unlinked"
+                                | Error error ->
+                                    unlinkFailure <- Some error
+                                    trace $"temp-unlink-failed:{error}"
+
+                    let published =
+                        match unlinkFailure, published with
+                        | Some error, Ok() ->
+                            Error $"unlinkat of the receipt temp file {temporary} failed in the pinned destination (errno {error}); the orphan remains for the operator"
+                        | Some error, Error reason ->
+                            Error $"{reason}; unlinkat of the receipt temp file {temporary} also failed (errno {error}); the orphan remains for the operator"
+                        | None, result -> result
+
+                    match published with
+                    | Error error -> Error error
+                    | Ok() ->
+                        // The directory entry is durable before the ledger may
+                        // record applied or confirmed.
+                        match sync directoryHandle with
+                        | Error error -> Error $"fsync of the organization directory after renameat2 failed: {error}"
+                        | Ok() ->
+                            trace "organization-fsynced"
+                            Ok()
+
+    [<Literal>]
+    let probeDirectory = ".fogell-probe"
+
+    /// The startup probe (Codex #424 round 9): the writer's exact sequence,
+    /// through the same code, against a `.fogell-probe` directory under the
+    /// pinned root with a one-byte payload, then the probe receipt is unlinked
+    /// and the probe directory removed. Whichever step fails names its syscall
+    /// and errno; a filesystem without directory fsync or RENAME_NOREPLACE is
+    /// therefore refused at startup rather than on every completed build.
+    let probeWrite (syscalls: WriteSyscalls) (table: LinuxOpenFlags.Table) (rootHandle: SafeFileHandle) =
+        let fileName = $"probe-{Guid.NewGuid():N}.receipt"
+
+        let written =
+            writeReceipt syscalls ignore writeBytes table rootHandle probeDirectory fileName [| 1uy |]
+
+        let cleanup () =
+            let directory = openAt rootHandle probeDirectory (directoryFlags table) 0
+
+            if directory < 0 then
+                Error $"openat of the probe directory for cleanup failed (errno {errno ()})"
+            else
+                use directoryHandle = owned directory
+                let unlinked = syscalls.Unlink directoryHandle fileName
+                let removed = rmdirAt rootHandle probeDirectory
+
+                match unlinked with
+                | Error error when error <> ENOENT -> Error $"unlinkat of the probe receipt failed (errno {error})"
+                | _ when removed < 0 -> Error $"rmdir of the probe directory failed (errno {errno ()})"
+                | _ -> Ok()
+
+        match written with
+        | Error error ->
+            cleanup () |> ignore
+            Error error
+        | Ok() -> cleanup ()
+
     let withPinnedRoot (root: string) (body: LinuxOpenFlags.Table -> SafeFileHandle -> Result<'a, string>) =
         match LinuxOpenFlags.current with
         | Error error -> Error $"destination root is not pinned: {error}"
@@ -370,25 +570,25 @@ module EffectProducerConfig =
         if path.EndsWith(Path.DirectorySeparatorChar) then path
         else path + string Path.DirectorySeparatorChar
 
-    let private probeWritable (directory: string) =
-        let probePath = Path.Combine(directory, $".fogell-effect-probe-{Guid.NewGuid():N}.tmp")
+    /// Codex #424 round 9: the startup probe is the writer's exact sequence
+    /// through the descriptor layer (mkdirat, fsync, openat(O_CREAT|O_EXCL),
+    /// write, Flush(true), renameat2(RENAME_NOREPLACE), fsync, unlinkat,
+    /// rmdir of the probe directory), not a File.Open that proves only a
+    /// create. A filesystem without directory fsync or RENAME_NOREPLACE is
+    /// refused here, naming the syscall and errno, instead of failing every
+    /// completed build later.
+    let private probeWriteSequence (syscalls: DestinationDescriptor.WriteSyscalls) (root: string) =
+        match LinuxOpenFlags.current with
+        | Error error -> Error $"FOGELL_EFFECT_FILE_DROP_ROOT cannot be probed on this architecture: {error}"
+        | Ok table ->
+            match DestinationDescriptor.openRoot table root with
+            | Error error -> Error $"FOGELL_EFFECT_FILE_DROP_ROOT is not readable as the pinned directory: {error}"
+            | Ok rootHandle ->
+                use rootHandle = rootHandle
 
-        try
-            let options =
-                FileStreamOptions(
-                    Mode = FileMode.CreateNew,
-                    Access = FileAccess.Write,
-                    Share = FileShare.None,
-                    Options = FileOptions.DeleteOnClose,
-                    UnixCreateMode = (UnixFileMode.UserRead ||| UnixFileMode.UserWrite))
-
-            use probe = File.Open(probePath, options)
-            probe.WriteByte 0uy
-            true
-        with _ ->
-            false
-
-    /// Codex #424 round 4: startup exercises exactly the descriptor opens
+                match DestinationDescriptor.probeWrite syscalls table rootHandle with
+                | Error error -> Error $"FOGELL_EFFECT_FILE_DROP_ROOT does not support the receipt write sequence: {error}"
+                | Ok() -> Ok()
     /// dispatch performs, so a root or marker that is writable but not
     /// readable (0300, 0200), a linked or non-regular marker, or an oversized
     /// one refuses startup by name instead of failing every completed build.
@@ -450,7 +650,7 @@ module EffectProducerConfig =
     /// a readable regular marker file: a receipt is an external effect only if
     /// it lives outside the state the controller restores, and dispatch must be
     /// able to open at runtime exactly what startup accepted.
-    let validateFileDropRoot (stateRoot: string) (raw: string) =
+    let internal validateFileDropRootWith (syscalls: DestinationDescriptor.WriteSyscalls) (stateRoot: string) (raw: string) =
         if not (Path.IsPathFullyQualified raw) then
             Error "FOGELL_EFFECT_FILE_DROP_ROOT must be absolute"
         else
@@ -471,10 +671,12 @@ module EffectProducerConfig =
                     match validatePinnedForReading stateRoot root with
                     | Error error -> Error error
                     | Ok() ->
-                        if not (probeWritable root) then
-                            Error "FOGELL_EFFECT_FILE_DROP_ROOT is not writable by the service identity"
-                        else
-                            Ok root
+                        match probeWriteSequence syscalls root with
+                        | Error error -> Error error
+                        | Ok() -> Ok root
+
+    let validateFileDropRoot (stateRoot: string) (raw: string) =
+        validateFileDropRootWith DestinationDescriptor.nativeWriteSyscalls stateRoot raw
 
     /// Reads the two optional variables. Both absent is the production default;
     /// a kill hook without a simulator destination is refused because nothing
