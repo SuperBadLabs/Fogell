@@ -1,0 +1,43 @@
+=== face-off on luigi: sizes=[50, 100] heats=5 serial ===
+
+--- probe (largest size, one build each) ---
+  fogell: OK (5.4s)
+  jenkins: OK (66.2s)
+
+  calibration (probe seconds at n=100) — compare across runs to spot
+  environment drift; Jenkins absolutes have moved 38% within a session
+  for identical work, so only WITHIN-run ratios are safe to quote:
+    fogell        5.4s
+    jenkins      66.2s
+
+--- heats (per-build deadline 265s) ---
+  fogell n=50 h=1: 2989 ms
+  fogell n=50 h=2: 2973 ms
+  fogell n=50 h=3: 3043 ms
+  fogell n=50 h=4: 2979 ms
+  fogell n=50 h=5: 3065 ms
+  fogell n=100 h=1: 5325 ms
+  fogell n=100 h=2: 5246 ms
+  fogell n=100 h=3: 5236 ms
+  fogell n=100 h=4: 5116 ms
+  fogell n=100 h=5: 5249 ms
+  jenkins n=50 h=1: 30804 ms
+  jenkins n=50 h=2: 30495 ms
+  jenkins n=50 h=3: 30466 ms
+  jenkins n=50 h=4: 30570 ms
+  jenkins n=50 h=5: 30374 ms
+  jenkins n=100 h=1: 61082 ms
+  jenkins n=100 h=2: 60629 ms
+  jenkins n=100 h=3: 60703 ms
+  jenkins n=100 h=4: 61064 ms
+  jenkins n=100 h=5: 60854 ms
+
+=== marginal cost per unit (50 → 100) ===
+  fogell         2989ms →     5246ms      45.1 ms/unit (median)    42.9 (min) Δ5%
+  jenkins       30495ms →    60854ms     607.2 ms/unit (median)   605.1 (min) Δ0%
+
+  vs Jenkins (within-run ratio — the portable claim):
+    fogell     13.5x faster
+
+wrote /home/srikanth/faceoff2/out/2026-09-05-luigi.tsv
+FACEOFF_EXIT=0

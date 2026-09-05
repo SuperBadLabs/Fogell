@@ -1,0 +1,43 @@
+=== face-off on mario: sizes=[50, 100] heats=5 serial ===
+
+--- probe (largest size, one build each) ---
+  fogell: OK (2.5s)
+  jenkins: OK (42.4s)
+
+  calibration (probe seconds at n=100) — compare across runs to spot
+  environment drift; Jenkins absolutes have moved 38% within a session
+  for identical work, so only WITHIN-run ratios are safe to quote:
+    fogell        2.5s
+    jenkins      42.4s
+
+--- heats (per-build deadline 170s) ---
+  fogell n=50 h=1: 1669 ms
+  fogell n=50 h=2: 1647 ms
+  fogell n=50 h=3: 1663 ms
+  fogell n=50 h=4: 1607 ms
+  fogell n=50 h=5: 1629 ms
+  fogell n=100 h=1: 2613 ms
+  fogell n=100 h=2: 2737 ms
+  fogell n=100 h=3: 2824 ms
+  fogell n=100 h=4: 2917 ms
+  fogell n=100 h=5: 2804 ms
+  jenkins n=50 h=1: 19393 ms
+  jenkins n=50 h=2: 19357 ms
+  jenkins n=50 h=3: 19699 ms
+  jenkins n=50 h=4: 19977 ms
+  jenkins n=50 h=5: 20027 ms
+  jenkins n=100 h=1: 39556 ms
+  jenkins n=100 h=2: 39762 ms
+  jenkins n=100 h=3: 39435 ms
+  jenkins n=100 h=4: 40021 ms
+  jenkins n=100 h=5: 39602 ms
+
+=== marginal cost per unit (50 → 100) ===
+  fogell         1647ms →     2804ms      23.1 ms/unit (median)    20.1 (min) Δ13%
+  jenkins       19699ms →    39602ms     398.1 ms/unit (median)   401.6 (min) Δ1%
+
+  vs Jenkins (within-run ratio — the portable claim):
+    fogell     17.2x faster
+
+wrote /home/srikanth/faceoff2/out/2026-09-05-mario.tsv
+FACEOFF_EXIT=0

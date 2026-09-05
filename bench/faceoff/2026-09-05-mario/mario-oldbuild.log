@@ -1,0 +1,28 @@
+=== running OLD (2026-08-30) build ===
+=== face-off on mario: sizes=[50, 100] heats=5 serial ===
+
+--- probe (largest size, one build each) ---
+  fogell: OK (1.7s)
+
+  calibration (probe seconds at n=100) — compare across runs to spot
+  environment drift; Jenkins absolutes have moved 38% within a session
+  for identical work, so only WITHIN-run ratios are safe to quote:
+    fogell        1.7s
+
+--- heats (per-build deadline 60s) ---
+  fogell n=50 h=1: 1054 ms
+  fogell n=50 h=2: 1299 ms
+  fogell n=50 h=3: 1080 ms
+  fogell n=50 h=4: 1152 ms
+  fogell n=50 h=5: 1062 ms
+  fogell n=100 h=1: 1672 ms
+  fogell n=100 h=2: 1615 ms
+  fogell n=100 h=3: 1620 ms
+  fogell n=100 h=4: 1878 ms
+  fogell n=100 h=5: 1699 ms
+
+=== marginal cost per unit (50 → 100) ===
+  fogell         1080ms →     1672ms      11.8 ms/unit (median)    11.2 (min) Δ5%
+
+wrote /home/srikanth/faceoff2/out/2026-09-05-mario-oldbuild.tsv
+=== restored: e60cde34 ===

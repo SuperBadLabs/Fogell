@@ -1,0 +1,22 @@
+# host=luigi jenkins=http://127.0.0.1:18085
+# calibration probe n=100: fogell=5.4s jenkins=66.2s
+fogell	50	1	2989
+fogell	50	2	2973
+fogell	50	3	3043
+fogell	50	4	2979
+fogell	50	5	3065
+fogell	100	1	5325
+fogell	100	2	5246
+fogell	100	3	5236
+fogell	100	4	5116
+fogell	100	5	5249
+jenkins	50	1	30804
+jenkins	50	2	30495
+jenkins	50	3	30466
+jenkins	50	4	30570
+jenkins	50	5	30374
+jenkins	100	1	61082
+jenkins	100	2	60629
+jenkins	100	3	60703
+jenkins	100	4	61064
+jenkins	100	5	60854
