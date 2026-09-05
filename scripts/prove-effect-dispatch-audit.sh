@@ -22,6 +22,7 @@ audited_files=(
   src/Fogell.Controller.Host/Program.fs
   src/Fogell.Controller.Host/Config.fs
   src/Fogell.Controller.Api/Router.fs
+  src/Fogell.Controller.Api/ArtifactSnapshots.fs
   tests/Fogell.Controller.Api.Tests/Tests.fs
 )
 
@@ -99,6 +100,11 @@ expect reject "a second AdvanceEffect call inside EffectDispatch is a second pat
   append_line src/Fogell.Controller.Host/EffectDispatch.fs \
   '    let planted (store: Store) org attempt fence = store.AdvanceEffect(org, attempt, fence, "owner", "k", [| 1uy |], RecordApplied)'
 
+expect reject "a second ledger path through a differently named Store binding inside EffectDispatch" \
+  "question 1: EffectDispatch.fs must hold exactly one PrepareEffect and one AdvanceEffect call" \
+  append_line src/Fogell.Controller.Host/EffectDispatch.fs \
+  '    let plantedSecondPath (s: Store) org attempt fence = s.AdvanceEffect(org, attempt, fence, "owner", "k", [| 1uy |], RecordConfirmed)'
+
 expect reject "a reconciliation trigger outside its bound sites" \
   "question 2: reconciliation trigger call outside its bound sites" \
   append_line src/Fogell.Controller.Api/Router.fs \
@@ -137,6 +143,21 @@ expect reject "a second file write of an already-allowed kind in the worker" \
   append_line src/Fogell.Controller.Host/Worker.fs \
   '    let plantedWrite (path: string) = File.WriteAllBytes(path, [| 0uy |])'
 
+expect reject "an unlisted directory move in the host" \
+  "question 4: effect-bearing calls under the controller are not the pinned allow-list" \
+  append_line src/Fogell.Controller.Host/Program.fs \
+  '    let plantedMove (source: string) (target: string) = Directory.Move(source, target)'
+
+expect reject "a producer driven through its Invoke closure with no ledger row" \
+  "question 6: effect invocation reached outside EffectDispatch" \
+  append_line src/Fogell.Controller.Host/Worker.fs \
+  '    let plantedBypass root claim status = (FileDropReceipt.invocation root claim status).Invoke()'
+
+expect reject "an EffectInvocation assembled outside dispatch" \
+  "question 6: effect invocation reached outside EffectDispatch" \
+  append_line src/Fogell.Controller.Api/Router.fs \
+  '    let plantedInvocation (template: EffectInvocation) = { template with Invoke = fun () -> Ok() }'
+
 expect reject "a manual reconciliation call inside the trigger test fence" \
   "question 5: manual Store call inside the no-manual-store fence" \
   insert_after tests/Fogell.Controller.Api.Tests/Tests.fs '// FG026B_NO_MANUAL_STORE_BEGIN' \
@@ -162,4 +183,4 @@ if [ "$fails" -ne 0 ]; then
   echo "EFFECT-DISPATCH AUDIT PROOF FAILED: $fails arm(s)" >&2
   exit 1
 fi
-echo "EFFECT-DISPATCH AUDIT PROOF: 12 planted violations rejected by name, 2 clean copies accepted"
+echo "EFFECT-DISPATCH AUDIT PROOF: 16 planted violations rejected by name, 2 clean copies accepted"
