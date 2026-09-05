@@ -745,16 +745,28 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                             e.restore_epoch, encode(e.payload_digest, 'hex') AS encode, e.state, e.uncertain_from
               ){emit}
               SELECT m.organization_id, m.attempt_id, m.effect_key, m.fence, m.authority_owner,
-                     m.restore_epoch, m.encode, m.state, m.uncertain_from, {counts}
-                FROM moved m"
+                     m.restore_epoch, m.encode, m.state, m.uncertain_from, {counts},
+                     c.candidate_count
+                FROM (SELECT count(*) AS candidate_count FROM candidates) c
+                LEFT JOIN moved m ON true"
         classify.Parameters.AddWithValue("o", org.Value) |> ignore
         classify.Parameters.AddWithValue("chunk", classificationChunk) |> ignore
         reason |> Option.iter (fun value -> classify.Parameters.AddWithValue("reason", value) |> ignore)
         use reader = classify.ExecuteReader()
 
+        // The candidate-count row is always present (LEFT JOIN), so a chunk
+        // that moved nothing still reports how many candidates it saw: the
+        // loops terminate on candidate exhaustion, never on the moved count,
+        // because a skipped (held) row makes a chunk short without exhausting
+        // anything (hosted run 33989057339 on f19a35e7 caught exactly that).
+        let mutable candidates = 0L
+
         let rows =
             [ while reader.Read() do
-                  yield readCheckpoint reader, reader.GetInt64 9, reader.GetInt64 10 ]
+                  candidates <- reader.GetInt64 11
+
+                  if not (reader.IsDBNull 0) then
+                      yield readCheckpoint reader, reader.GetInt64 9, reader.GetInt64 10 ]
 
         reader.Close()
 
@@ -763,22 +775,38 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             failwith "effect uncertainty truth was not emitted exactly once per classified checkpoint"
         | _ -> ()
 
-        rows
-        |> List.map (fun (checkpoint, _, _) -> checkpoint)
-        |> List.sortBy (fun checkpoint -> checkpoint.AttemptId.Value, checkpoint.EffectKey)
+        let moved =
+            rows
+            |> List.map (fun (checkpoint, _, _) -> checkpoint)
+            |> List.sortBy (fun checkpoint -> checkpoint.AttemptId.Value, checkpoint.EffectKey)
+
+        moved, int candidates
+
+    /// The chunk loops stop when the candidate selection came up short (the
+    /// stale set is exhausted) or when a chunk moved nothing (everything left
+    /// is held or became live); a bounded cap turns a pathological spin into a
+    /// named refusal instead of an unbounded loop.
+    [<Literal>]
+    let classificationChunkCap = 10000
+
+    let exhausted (moved: EffectCheckpoint list) (candidates: int) =
+        candidates < classificationChunk || moved.IsEmpty
 
     /// Every stale row, chunk after chunk, inside the caller's transaction;
     /// no operator surface (the FG-026 primitive's contract).
     let markStaleEffects (conn: NpgsqlConnection) (tx: NpgsqlTransaction) (org: OrganizationId) =
-        let rec loop acc =
-            let chunk = classifyChunk conn tx org None false
+        let rec loop acc iteration =
+            if iteration >= classificationChunkCap then
+                failwith $"effect classification did not converge within {classificationChunkCap} chunks"
 
-            if chunk.Length < classificationChunk then
+            let chunk, candidates = classifyChunk conn tx org None false
+
+            if exhausted chunk candidates then
                 List.rev acc @ chunk
             else
-                loop (List.rev chunk @ acc)
+                loop (List.rev chunk @ acc) (iteration + 1)
 
-        loop [] |> List.sortBy (fun checkpoint -> checkpoint.AttemptId.Value, checkpoint.EffectKey)
+        loop [] 0 |> List.sortBy (fun checkpoint -> checkpoint.AttemptId.Value, checkpoint.EffectKey)
 
     /// FG-026b. Classification with its operator surface, chunk after chunk,
     /// inside the caller's transaction (ActivateRestore); the trigger members
@@ -789,15 +817,18 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         (org: OrganizationId)
         (reason: string)
         =
-        let rec loop acc =
-            let chunk = classifyChunk conn tx org (Some reason) false
+        let rec loop acc iteration =
+            if iteration >= classificationChunkCap then
+                failwith $"effect classification did not converge within {classificationChunkCap} chunks"
 
-            if chunk.Length < classificationChunk then
+            let chunk, candidates = classifyChunk conn tx org (Some reason) false
+
+            if exhausted chunk candidates then
                 List.rev acc @ chunk
             else
-                loop (List.rev chunk @ acc)
+                loop (List.rev chunk @ acc) (iteration + 1)
 
-        loop [] |> List.sortBy (fun checkpoint -> checkpoint.AttemptId.Value, checkpoint.EffectKey)
+        loop [] 0 |> List.sortBy (fun checkpoint -> checkpoint.AttemptId.Value, checkpoint.EffectKey)
 
     /// One chunk in its own short transaction, for the trigger members.
     let classifyOneChunk (openConnection: unit -> NpgsqlConnection) (org: OrganizationId) (reason: string option) =
@@ -1454,14 +1485,17 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
     member _.ReconcileStaleEffects(org: OrganizationId, reason: string) : Result<EffectCheckpoint list, string> =
         validateReconciliationReason reason
 
-        let rec loop acc =
-            match retrySerializationFailure (fun () -> classifyOneChunk openConn org (Some reason)) with
-            | Error error -> Error error
-            | Ok chunk when chunk.Length < classificationChunk ->
-                Ok(List.rev acc @ chunk |> List.sortBy (fun checkpoint -> checkpoint.AttemptId.Value, checkpoint.EffectKey))
-            | Ok chunk -> loop (List.rev chunk @ acc)
+        let rec loop acc iteration =
+            if iteration >= classificationChunkCap then
+                Error $"effect classification did not converge within {classificationChunkCap} chunks; the remaining candidates stay for the next pass"
+            else
+                match retrySerializationFailure (fun () -> classifyOneChunk openConn org (Some reason)) with
+                | Error error -> Error error
+                | Ok(chunk, candidates) when exhausted chunk candidates ->
+                    Ok(List.rev acc @ chunk |> List.sortBy (fun checkpoint -> checkpoint.AttemptId.Value, checkpoint.EffectKey))
+                | Ok(chunk, _) -> loop (List.rev chunk @ acc) (iteration + 1)
 
-        loop []
+        loop [] 0
 
     member _.ListUncertainEffects(org: OrganizationId) : EffectCheckpoint list =
         use conn = openConn ()
