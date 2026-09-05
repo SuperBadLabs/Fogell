@@ -159,15 +159,15 @@ observed=$(
   done | LC_ALL=C sort | uniq -c | sed 's/^ *//' | LC_ALL=C sort
 )
 # The allow-list, per file and token: every native entry point (DllImport) under
-# the controller, the simulator's descriptor-bound write/read and its kill, the
+# the controller, the descriptor-bound receipt writer and evidence reader in
+# EffectRegistry.fs (shared by dispatch and the startup probe), the kill hook, the
 # worker's atomic definition write, child launch and event-stream reader, the
-# readiness probes in Config.fs and EffectRegistry.fs, the FG-251 secure
+# readiness probes in Config.fs, the FG-251 secure
 # token-file reader in Config.fs, the artifact reader in Router.fs, and the
 # staging -> snapshot move in ArtifactSnapshots.fs.
 expected=$(printf '%s\n' \
   "1 $dispatch_fs .Kill()" \
   "7 $registry_fs DllImport" \
-  "1 $dispatch_fs FileStream" \
   "1 $worker_fs File.Move" \
   "1 $worker_fs File.WriteAllBytes" \
   "1 $worker_fs FileStream" \
@@ -176,7 +176,6 @@ expected=$(printf '%s\n' \
   "4 $host_dir/Config.fs DllImport" \
   "4 $host_dir/ProcessGroup.fs DllImport" \
   "3 $host_dir/Config.fs FileStream" \
-  "1 $registry_fs File.Open" \
   "2 $registry_fs FileStream" \
   "3 $api_dir/Router.fs FileStream" \
   "3 $api_dir/Router.fs DllImport" \

@@ -113,64 +113,23 @@ module FileDropReceipt =
         Text.Encoding.UTF8.GetBytes text
 
     // ---- descriptor-bound destination I/O ------------------------------------
-    // Codex on #424 (rounds 3 and 4). All destination I/O goes through
+    // Codex on #424 (rounds 3, 4, 8 and 9). All destination I/O goes through
     // DestinationDescriptor: the root is opened once with O_DIRECTORY|O_NOFOLLOW,
     // the marker and the receipt are opened O_NONBLOCK relative to it and must
-    // be regular files with one link before a byte is read, the organization
-    // directory is mkdirat'ed non-recursively and fsynced into the root, the
-    // temp file is an O_EXCL name of this process's choosing, published with
-    // RENAME_NOREPLACE and fsynced into the organization directory, and the
-    // marker is re-read through the root descriptor after the rename.
-
-    [<Literal>]
-    let private ReceiptFileMode = 0o600
-
-    [<Literal>]
-    let private OrganizationDirectoryMode = 0o755
+    // be regular files with one link before a byte is read, and the write is
+    // DestinationDescriptor.writeReceipt — the same sequence the startup probe
+    // runs — followed by a re-read of the marker through the root descriptor.
 
     /// The root is pinned by the operator-created marker file that startup
     /// validated. An unmounted or replaced destination has no marker, and a
     /// receipt must never be created on whatever directory took its place.
     let pinned (root: string) = DestinationDescriptor.withPinnedRoot root (fun _ _ -> Ok())
 
-    /// Only the per-organization directory is ever created, relative to the
-    /// root descriptor and non-recursively; EEXIST is the idempotent case. The
-    /// root is fsynced after the attempt so the new entry is durable before
-    /// anything is written under it.
-    let private openOrganizationDirectory
-        (trace: string -> unit)
-        (table: LinuxOpenFlags.Table)
-        (rootHandle: SafeFileHandle)
-        (name: string)
-        =
-        let made = DestinationDescriptor.mkdirAt rootHandle name OrganizationDirectoryMode
-
-        if made < 0 && DestinationDescriptor.errno () <> DestinationDescriptor.EEXIST then
-            Error $"cannot create the organization directory in the pinned destination (errno {DestinationDescriptor.errno ()})"
-        else
-            match DestinationDescriptor.sync rootHandle with
-            | Error error -> Error $"cannot make the organization directory durable in the pinned destination: {error}"
-            | Ok() ->
-                trace "root-fsynced"
-                let fd = DestinationDescriptor.openAt rootHandle name (DestinationDescriptor.directoryFlags table) 0
-
-                if fd < 0 then
-                    Error $"cannot open the organization directory in the pinned destination (errno {DestinationDescriptor.errno ()})"
-                else
-                    Ok(DestinationDescriptor.owned fd)
-
-    /// Codex #424 round 8: the temp file's lifetime is one try/finally. On any
-    /// exit that did not rename it — a refused create is nothing to clean, but a
-    /// write or fsync that throws (ENOSPC, an I/O error), a rename refusal, and
-    /// the EEXIST loser all leave through the same finally — the process's own
-    /// O_EXCL name is unlinked through the organization directory descriptor
-    /// (never anything else, never a directory), and an exception becomes the
-    /// Uncertain reason instead of propagating. Repeated terminal attempts
-    /// during a destination outage therefore leave no `.tmp` behind.
     let private writeWith
         (afterPin: unit -> unit)
         (trace: string -> unit)
         (writer: Stream -> byte array -> unit)
+        (syscalls: DestinationDescriptor.WriteSyscalls)
         (root: string)
         (organization: string)
         (fileName: string)
@@ -179,102 +138,15 @@ module FileDropReceipt =
         DestinationDescriptor.withPinnedRoot root (fun table rootHandle ->
             afterPin ()
 
-            match openOrganizationDirectory trace table rootHandle organization with
+            match DestinationDescriptor.writeReceipt syscalls trace writer table rootHandle organization fileName bytes with
             | Error error -> Error error
-            | Ok directoryHandle ->
-                use directoryHandle = directoryHandle
-                let existing = DestinationDescriptor.openAt directoryHandle fileName (DestinationDescriptor.fileReadFlags table) 0
-
-                let written =
-                    if existing >= 0 then
-                        // The destination is idempotent per attempt: a receipt
-                        // that already exists is this connector's contract, and
-                        // Confirm decides whether its bytes are the ones this
-                        // attempt meant to leave. Whatever it is (a FIFO, a
-                        // directory, a link) it is only ever judged, never read
-                        // here and never replaced.
-                        (DestinationDescriptor.owned existing).Dispose()
-                        trace "existing"
-                        Ok()
-                    else
-                        let temporary = fileName + $".{Guid.NewGuid():N}.tmp"
-
-                        let fd =
-                            DestinationDescriptor.openAt
-                                directoryHandle
-                                temporary
-                                (DestinationDescriptor.OpenWriteOnly
-                                 ||| DestinationDescriptor.OpenCreate
-                                 ||| DestinationDescriptor.OpenExclusive
-                                 ||| table.NoFollow
-                                 ||| DestinationDescriptor.OpenCloseOnExec)
-                                ReceiptFileMode
-
-                        if fd < 0 then
-                            // Nothing was created; nothing to clean.
-                            Error $"cannot create the receipt in the pinned destination (errno {DestinationDescriptor.errno ()})"
-                        else
-                            let mutable renamed = false
-
-                            let published =
-                                try
-                                    try
-                                        do
-                                            use stream = new FileStream(DestinationDescriptor.owned fd, FileAccess.Write, 1, false)
-                                            writer stream bytes
-                                            stream.Flush true
-
-                                        trace "temp-fsynced"
-
-                                        if DestinationDescriptor.renameAt2 directoryHandle temporary fileName DestinationDescriptor.RenameNoReplace >= 0 then
-                                            renamed <- true
-                                            trace "renamed"
-                                            Ok()
-                                        else
-                                            let error = DestinationDescriptor.errno ()
-
-                                            if error = DestinationDescriptor.EEXIST then
-                                                // Something now holds the receipt name: a
-                                                // concurrent writer of the same attempt, or
-                                                // a planted entry. Confirm judges it.
-                                                Ok()
-                                            else
-                                                Error $"cannot publish the receipt in the pinned destination (errno {error})"
-                                    with ex ->
-                                        // ENOSPC, EIO, a closed descriptor: the effect
-                                        // may or may not have reached the destination;
-                                        // the row stays where it is for the trigger.
-                                        Error $"receipt write failed in the pinned destination: {ex.Message}"
-                                finally
-                                    if not renamed then
-                                        // Only this process's own O_EXCL temp name is
-                                        // ever unlinked, through the directory
-                                        // descriptor, and never a directory.
-                                        DestinationDescriptor.unlinkAt directoryHandle temporary |> ignore
-                                        trace "temp-unlinked"
-
-                            match published with
-                            | Error error -> Error error
-                            | Ok() ->
-                                // The directory entry is durable before the ledger
-                                // may record applied or confirmed.
-                                match DestinationDescriptor.sync directoryHandle with
-                                | Error error -> Error $"cannot make the receipt durable in the pinned destination: {error}"
-                                | Ok() ->
-                                    trace "organization-fsynced"
-                                    Ok()
-
+            | Ok() ->
                 // The marker is re-read through the same descriptor after the
                 // rename: a root that was replaced meanwhile is reported as
                 // ambiguous rather than as a confirmed effect.
-                match written with
-                | Error error -> Error error
-                | Ok() ->
-                    match DestinationDescriptor.markerPinned table rootHandle with
-                    | Error error -> Error $"destination root is not pinned: {error}"
-                    | Ok() -> Ok())
-
-    let private writeBytes (stream: Stream) (bytes: byte array) = stream.Write(bytes, 0, bytes.Length)
+                match DestinationDescriptor.markerPinned table rootHandle with
+                | Error error -> Error $"destination root is not pinned: {error}"
+                | Ok() -> Ok())
 
     /// Evidence is a regular, single-link receipt of exactly the payload's
     /// length, opened non-blocking through the descriptors and read through a
@@ -312,13 +184,15 @@ module FileDropReceipt =
     let private organizationName (claim: ExecutionClaim) = claim.OrganizationId.Value.ToString "N"
     let private receiptFileName (claim: ExecutionClaim) = identity claim + ".receipt"
 
-    /// The in-process test seam: `afterPin` runs after the root descriptor and
-    /// its marker were verified and before anything is created; `trace`
-    /// receives the write's durability steps in order.
-    let internal invocationWithWriter
+    /// The in-process test seams: `afterPin` runs after the root descriptor
+    /// and its marker were verified and before anything is created; `trace`
+    /// receives the write's durability steps in order; `writer` is the body
+    /// of the temp write; `syscalls` lets a rename or unlink be made to fail.
+    let internal invocationWithIo
         (afterPin: unit -> unit)
         (trace: string -> unit)
         (writer: Stream -> byte array -> unit)
+        (syscalls: DestinationDescriptor.WriteSyscalls)
         (root: string)
         (claim: ExecutionClaim)
         (terminal: BuildStatus)
@@ -331,12 +205,15 @@ module FileDropReceipt =
           Identity = identity claim
           Payload = bytes
           Destination = fun () -> pinned root
-          Invoke = fun () -> writeWith afterPin trace writer root organization fileName bytes
+          Invoke = fun () -> writeWith afterPin trace writer syscalls root organization fileName bytes
           Confirm = fun () -> read root organization fileName bytes }
+
+    let internal invocationWithWriter (afterPin: unit -> unit) (trace: string -> unit) (writer: Stream -> byte array -> unit) =
+        invocationWithIo afterPin trace writer DestinationDescriptor.nativeWriteSyscalls
 
     /// The in-process seams without an injected writer.
     let internal invocationWith (afterPin: unit -> unit) (trace: string -> unit) =
-        invocationWithWriter afterPin trace writeBytes
+        invocationWithWriter afterPin trace DestinationDescriptor.writeBytes
 
     let invocation (root: string) (claim: ExecutionClaim) (terminal: BuildStatus) : EffectInvocation =
         invocationWith ignore ignore root claim terminal
