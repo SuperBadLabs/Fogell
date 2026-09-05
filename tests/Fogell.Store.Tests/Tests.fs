@@ -4139,6 +4139,57 @@ let effectReconciliation =
               Expect.isLessThan watch.ElapsedMilliseconds 5000L "and does not spin"
               holderTx.Commit()
               Expect.equal (reconcileOk org "lease_expired" |> List.map (fun c -> c.AttemptId) |> List.sort) (List.sort allHeld) "the next pass classifies all three once they are released"
+          }
+
+          test "a held prefix of the candidate window is skipped, not counted: 250 stale rows with the 100 lowest held are classified past them in one pass" {
+              // Codex #424 round 11 (thread fmyYR): with LIMIT applied before
+              // SKIP LOCKED, a held first hundred filled the window every pass,
+              // moved nothing, and the unlocked tail was never reached. The
+              // lock now sits inside the window, so a held row never counts
+              // toward it.
+              let org, project = freshProject ()
+              let payload = [| 2uy; 5uy; 0uy |]
+              let stale =
+                  [ for index in 1..250 do
+                        let attempt, fence = runningAttempt org project $"fg026b-prefix-{index}" "agent-stale" 60
+                        prepareEffectOk org attempt.AttemptId fence "agent-stale" $"file-drop-receipt:p{index}" payload |> ignore
+                        attempt.AttemptId ]
+              expireLeases org stale
+              let heldPrefix = stale |> List.sortBy (fun a -> a.Value) |> List.take 100
+              let tail = stale |> List.filter (fun a -> not (List.contains a heldPrefix))
+
+              use holder = new Npgsql.NpgsqlConnection(connectionString)
+              holder.Open()
+              use holderTx = holder.BeginTransaction()
+              use hold = holder.CreateCommand()
+              hold.Transaction <- holderTx
+              hold.CommandText <- "SELECT id FROM attempts WHERE organization_id = @o AND id = ANY(@ids) ORDER BY id FOR UPDATE"
+              hold.Parameters.AddWithValue("o", org.Value) |> ignore
+              hold.Parameters.AddWithValue("ids", heldPrefix |> List.map (fun a -> a.Value) |> Array.ofList) |> ignore
+              use heldRows = hold.ExecuteReader()
+              let held = [ while heldRows.Read() do yield heldRows.GetGuid 0 ]
+              heldRows.Close()
+              Expect.equal held.Length 100 "the hundred lowest attempt ids are held"
+
+              let pass = Async.StartAsTask(async { return Store(connectionString).ReconcileStaleEffects(org, "lease_expired") })
+              Expect.isTrue (pass.Wait(TimeSpan.FromSeconds 20.0)) "the pass completed without waiting on the held prefix"
+              let classified =
+                  match pass.Result with
+                  | Ok checkpoints -> checkpoints
+                  | Error error -> failtestf "the pass failed: %s" error
+              Expect.equal (classified |> List.map (fun c -> c.AttemptId) |> List.sort) (List.sort tail) "a single pass classified the 150 unlocked rows past the held prefix"
+              Expect.isFalse (classified |> List.exists (fun c -> List.contains c.AttemptId heldPrefix)) "no held row was touched"
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use instants = conn.CreateCommand()
+              instants.CommandText <- "SELECT count(DISTINCT uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND state = 'uncertain'"
+              instants.Parameters.AddWithValue("o", org.Value) |> ignore
+              Expect.equal (instants.ExecuteScalar() :?> int64) 2L "the 150 rows took two chunks (100 + 50): the window was full of unlocked rows, not of held ones"
+
+              holderTx.Commit()
+              Expect.equal (reconcileOk org "lease_expired" |> List.map (fun c -> c.AttemptId) |> List.sort) (List.sort heldPrefix) "the next pass classifies the released hundred"
+              Expect.equal (reconcileOk org "lease_expired") [] "and the pass after that finds nothing"
           } ]
 
 /// FG-027b Store foundation. This proves durable retry arbitration and replay;

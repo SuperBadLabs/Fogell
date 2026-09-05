@@ -652,6 +652,19 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
     [<Literal>]
     let classificationChunk = 100
 
+    /// The same live-authority test against an already joined attempt row
+    /// `a`. `IS NOT TRUE` so a NULL lease owner or expiry reads as stale, not
+    /// as unknown.
+    let liveAuthorityJoinedAbsent =
+        "(a.fence = e.fence
+          AND a.lease_owner = e.authority_owner
+          AND a.lease_expires_at > clock_timestamp()
+          AND a.state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
+          AND a.restore_epoch = e.restore_epoch
+          AND a.restore_epoch = (
+              SELECT restore_epoch FROM controller_metadata WHERE singleton
+          )) IS NOT TRUE"
+
     let liveAuthorityAbsent =
         "NOT EXISTS (
              SELECT 1
@@ -717,18 +730,14 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             $"WITH candidates AS (
                   SELECT /* FG026_MARKER_SNAPSHOT */ e.organization_id, e.attempt_id, e.effect_key
                     FROM effect_checkpoints e
+                    JOIN attempts a
+                      ON a.organization_id = e.organization_id AND a.id = e.attempt_id
                    WHERE e.organization_id = @o
                      AND e.state IN ('prepared', 'applied')
-                     AND {liveAuthorityAbsent}
+                     AND {liveAuthorityJoinedAbsent}
                    ORDER BY e.attempt_id
+                     FOR UPDATE OF a{locked}
                    LIMIT @chunk
-              ), locked AS (
-                  SELECT a.id
-                    FROM attempts a
-                   WHERE a.organization_id = @o
-                     AND a.id IN (SELECT attempt_id FROM candidates)
-                   ORDER BY a.id
-                     FOR UPDATE{locked}
               ), moved AS (
                   UPDATE effect_checkpoints e
                      SET uncertain_from = e.state,
@@ -738,7 +747,6 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                    WHERE e.organization_id = c.organization_id
                      AND e.attempt_id = c.attempt_id
                      AND e.effect_key = c.effect_key
-                     AND e.attempt_id IN (SELECT id FROM locked)
                      AND e.state IN ('prepared', 'applied')
                      AND {liveAuthorityAbsent}
                   RETURNING e.organization_id, e.attempt_id, e.effect_key, e.fence, e.authority_owner,
