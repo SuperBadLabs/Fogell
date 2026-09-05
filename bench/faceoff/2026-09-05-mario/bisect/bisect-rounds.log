@@ -1,0 +1,29 @@
+=== round 1  (order: 76072354 b5f9edf3 de684547 66904473 16982e1a 793b565e ac3e934e e60cde34) ===
+  r1 76072354     fogell          984ms →     1612ms      12.6 ms/unit (median)    12.6 (min) Δ0%
+  r1 b5f9edf3     fogell          982ms →     1578ms      11.9 ms/unit (median)    11.3 (min) Δ5%
+  r1 de684547     fogell         1091ms →     1629ms      10.8 ms/unit (median)    11.0 (min) Δ2%
+  r1 66904473     fogell         1055ms →     2950ms      37.9 ms/unit (median)    23.8 (min) Δ37%  <-- ESTIMATORS DISAGREE, TREAT AS UNRELIABLE
+  r1 16982e1a     fogell         1660ms →     2996ms      26.7 ms/unit (median)    24.6 (min) Δ8%
+  r1 793b565e     fogell         1795ms →     3063ms      25.4 ms/unit (median)    23.5 (min) Δ7%
+  r1 ac3e934e     fogell         2253ms →     3325ms      21.4 ms/unit (median)    20.0 (min) Δ7%
+  r1 e60cde34     fogell         1945ms →     3469ms      30.5 ms/unit (median)    29.7 (min) Δ2%
+=== round 2  (order: e60cde34 ac3e934e 793b565e 16982e1a 66904473 de684547 b5f9edf3 76072354) ===
+  r2 e60cde34     fogell         2302ms →     3406ms      22.1 ms/unit (median)    22.4 (min) Δ2%
+  r2 ac3e934e     fogell         2262ms →     3350ms      21.8 ms/unit (median)    22.1 (min) Δ2%
+  r2 793b565e     fogell         2039ms →     3327ms      25.8 ms/unit (median)    17.4 (min) Δ33%  <-- ESTIMATORS DISAGREE, TREAT AS UNRELIABLE
+  r2 16982e1a     fogell         2117ms →     3393ms      25.5 ms/unit (median)    24.7 (min) Δ3%
+  r2 66904473     fogell         1835ms →     2451ms      12.3 ms/unit (median)    15.0 (min) Δ22%  <-- ESTIMATORS DISAGREE, TREAT AS UNRELIABLE
+  r2 de684547     fogell         1677ms →     2579ms      18.0 ms/unit (median)     8.6 (min) Δ52%  <-- ESTIMATORS DISAGREE, TREAT AS UNRELIABLE
+  r2 b5f9edf3     fogell         1613ms →     2472ms      17.2 ms/unit (median)    14.1 (min) Δ18%  <-- ESTIMATORS DISAGREE, TREAT AS UNRELIABLE
+  r2 76072354     fogell         1874ms →     2464ms      11.8 ms/unit (median)     8.4 (min) Δ29%  <-- ESTIMATORS DISAGREE, TREAT AS UNRELIABLE
+=== round 3  (order: 76072354 b5f9edf3 de684547 66904473 16982e1a 793b565e ac3e934e e60cde34) ===
+  r3 76072354     fogell         1644ms →     2454ms      16.2 ms/unit (median)    16.0 (min) Δ1%
+  r3 b5f9edf3     fogell         1724ms →     2389ms      13.3 ms/unit (median)     8.2 (min) Δ38%  <-- ESTIMATORS DISAGREE, TREAT AS UNRELIABLE
+  r3 de684547     fogell         1705ms →     2535ms      16.6 ms/unit (median)    16.1 (min) Δ3%
+  r3 66904473     fogell         2043ms →     2467ms       8.5 ms/unit (median)    13.6 (min) Δ60%  <-- ESTIMATORS DISAGREE, TREAT AS UNRELIABLE
+  r3 16982e1a     fogell         2133ms →     3346ms      24.3 ms/unit (median)    26.0 (min) Δ7%
+  r3 793b565e     fogell         2107ms →     3308ms      24.0 ms/unit (median)    18.7 (min) Δ22%  <-- ESTIMATORS DISAGREE, TREAT AS UNRELIABLE
+  r3 ac3e934e     fogell         2653ms →     3364ms      14.2 ms/unit (median)    11.8 (min) Δ17%  <-- ESTIMATORS DISAGREE, TREAT AS UNRELIABLE
+  r3 e60cde34     fogell         2245ms →     3419ms      23.5 ms/unit (median)    20.7 (min) Δ12%
+=== done; engine link restored to e60cde34 ===
+DRIVER_EXIT=0

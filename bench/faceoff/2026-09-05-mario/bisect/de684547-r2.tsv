@@ -1,0 +1,12 @@
+# host=mario jenkins=http://127.0.0.1:18083
+# calibration probe n=100: fogell=2.2s
+fogell	50	1	1944
+fogell	50	2	1677
+fogell	50	3	1708
+fogell	50	4	1661
+fogell	50	5	1633
+fogell	100	1	3197
+fogell	100	2	2867
+fogell	100	3	2579
+fogell	100	4	2063
+fogell	100	5	2254
