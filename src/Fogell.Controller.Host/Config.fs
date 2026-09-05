@@ -3,6 +3,9 @@ namespace Fogell.Controller.Host
 open System
 open System.IO
 open System.Runtime.InteropServices
+open System.Text
+open Microsoft.Win32.SafeHandles
+open Fogell.Domain
 
 type ControllerConfig =
     { RuntimeDatabaseUrl: string
@@ -19,6 +22,171 @@ type ControllerConfig =
       LeaseSeconds: int }
 
 module ControllerConfig =
+
+    [<Literal>]
+    let internal maxApiTokenFileBytes = 4096
+
+    [<Literal>]
+    let private OpenReadOnly = 0
+
+    [<Literal>]
+    let private OpenNonBlocking = 0x800
+
+    [<Literal>]
+    let private OpenCloseOnExec = 0x80000
+
+    [<Literal>]
+    let private AtEmptyPath = 0x1000
+
+    [<Literal>]
+    let private AtNoAutomount = 0x800
+
+    [<Literal>]
+    let private StatxType = 0x1u
+
+    [<Literal>]
+    let private StatxMode = 0x2u
+
+    [<Literal>]
+    let private StatxUid = 0x8u
+
+    [<Literal>]
+    let private StatxSize = 0x200u
+
+    [<Literal>]
+    let private RegularFileType = 0x8000us
+
+    [<Literal>]
+    let private FileTypeMask = 0xF000us
+
+    [<Literal>]
+    let private PermissionMask = 0x0FFFus
+
+    [<StructLayout(LayoutKind.Sequential, Size = 256)>]
+    type internal LinuxStatx =
+        struct
+            val mutable Mask: uint32
+            val mutable BlockSize: uint32
+            val mutable Attributes: uint64
+            val mutable LinkCount: uint32
+            val mutable UserId: uint32
+            val mutable GroupId: uint32
+            val mutable Mode: uint16
+            val mutable Spare0: uint16
+            val mutable Inode: uint64
+            val mutable Size: uint64
+        end
+
+    type internal TokenFileMetadata =
+        { Mode: uint16
+          Owner: uint32
+          Size: uint64 }
+
+    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
+    extern int private openFile(string path, int flags)
+
+    [<DllImport("libc", SetLastError = true)>]
+    extern int private statx(int directoryFileDescriptor, string path, int flags, uint32 mask, LinuxStatx& buffer)
+
+    [<DllImport("libc")>]
+    extern uint32 private geteuid()
+
+    let internal tokenFileOpenFlags (table: LinuxOpenFlags.Table) =
+        OpenReadOnly ||| OpenNonBlocking ||| table.NoFollow ||| OpenCloseOnExec
+
+    let internal tokenFileMetadataFromStatx (status: LinuxStatx) =
+        let required = StatxType ||| StatxMode ||| StatxUid ||| StatxSize
+
+        if status.Mask &&& required <> required then
+            Error "FOGELL_API_TOKEN_FILE metadata could not be read from the opened file"
+        else
+            Ok
+                { Mode = status.Mode
+                  Owner = status.UserId
+                  Size = status.Size }
+
+    let internal validateTokenFileMetadata effectiveUserId metadata =
+        let permissions = metadata.Mode &&& PermissionMask
+
+        if metadata.Mode &&& FileTypeMask <> RegularFileType then
+            Error "FOGELL_API_TOKEN_FILE must name a regular non-symlink file"
+        elif metadata.Owner <> effectiveUserId then
+            Error "FOGELL_API_TOKEN_FILE must be owned by the service identity"
+        elif permissions <> 0x0100us && permissions <> 0x0180us then
+            Error "FOGELL_API_TOKEN_FILE mode must be 0400 or 0600"
+        elif metadata.Size > uint64 maxApiTokenFileBytes then
+            Error $"FOGELL_API_TOKEN_FILE must be at most {maxApiTokenFileBytes} bytes"
+        else
+            Ok()
+
+    let private readBoundedTokenBytes (stream: FileStream) =
+        let bytes = Array.zeroCreate<byte> (maxApiTokenFileBytes + 1)
+        let mutable total = 0
+        let mutable reading = true
+
+        while reading && total < bytes.Length do
+            let count = stream.Read(bytes, total, bytes.Length - total)
+
+            if count = 0 then
+                reading <- false
+            else
+                total <- total + count
+
+        if total > maxApiTokenFileBytes then
+            Error $"FOGELL_API_TOKEN_FILE must be at most {maxApiTokenFileBytes} bytes"
+        else
+            try
+                // Preserve the historical acceptance of a UTF-8 BOM, but do
+                // not let StreamReader's BOM detection admit UTF-16/32 or let
+                // replacement fallback silently rewrite malformed bytes.
+                let offset =
+                    if total >= 3 && bytes[0] = 0xEFuy && bytes[1] = 0xBBuy && bytes[2] = 0xBFuy then 3 else 0
+
+                let strictUtf8 = UTF8Encoding(false, true)
+                Ok(strictUtf8.GetString(bytes, offset, total - offset))
+            with _ ->
+                Error "FOGELL_API_TOKEN_FILE could not be decoded"
+
+    /// Open once with no-follow and classify the opened inode, then read only
+    /// through that descriptor. The callbacks are internal test seams used to
+    /// prove pathname replacement and post-metadata growth cannot bypass it.
+    let internal readTokenFileSecurelyWith afterOpen afterMetadata path =
+        if not (OperatingSystem.IsLinux()) then
+            Error "FOGELL_API_TOKEN_FILE security requires Linux"
+        else
+            match LinuxOpenFlags.current with
+            | Error reason -> Error $"FOGELL_API_TOKEN_FILE security is unavailable: {reason}"
+            | Ok table ->
+                let descriptor =
+                    openFile (path, tokenFileOpenFlags table)
+
+                if descriptor < 0 then
+                    Error "FOGELL_API_TOKEN_FILE must name a readable regular non-symlink file"
+                else
+                    use handle = new SafeFileHandle(nativeint descriptor, true)
+
+                    try
+                        afterOpen descriptor
+                        let mutable status = Unchecked.defaultof<LinuxStatx>
+                        let required = StatxType ||| StatxMode ||| StatxUid ||| StatxSize
+
+                        if statx (descriptor, "", AtEmptyPath ||| AtNoAutomount, required, &status) <> 0 then
+                            Error "FOGELL_API_TOKEN_FILE metadata could not be read from the opened file"
+                        else
+                            match tokenFileMetadataFromStatx status with
+                            | Error error -> Error error
+                            | Ok metadata ->
+                                match validateTokenFileMetadata (geteuid ()) metadata with
+                                | Error error -> Error error
+                                | Ok () ->
+                                    afterMetadata ()
+                                    use stream = new FileStream(handle, FileAccess.Read, 4096, false)
+                                    readBoundedTokenBytes stream
+                    with _ ->
+                        Error "FOGELL_API_TOKEN_FILE could not be securely read"
+
+    let internal readTokenFileSecurely path =
+        readTokenFileSecurelyWith ignore ignore path
 
     [<Literal>]
     let internal trustedSetsidLauncher = "/usr/bin/setsid"
@@ -224,7 +392,10 @@ module ControllerConfig =
         | Ok item -> item
         | Error error -> invalidOp error
 
-    let internal loadWithSetsidLauncher setsidLauncher =
+    let internal loadWithSetsidLauncherAndTokenReader
+        (tokenReader: string -> Result<string, string>)
+        setsidLauncher
+        =
         let runtime = required "FOGELL_DATABASE_URL"
         let maintenance = required "FOGELL_MAINTENANCE_DATABASE_URL"
         let tokenFile = required "FOGELL_API_TOKEN_FILE" |> Result.bind validateTokenFilePath
@@ -271,32 +442,36 @@ module ControllerConfig =
                 Error "runtime and maintenance database URLs must be distinct capabilities"
             elif not (isExecutableByServiceIdentity runHostValue) then
                 Error "FOGELL_RUN_HOST_PATH does not name an executable file"
-            elif not (File.Exists tokenPath) then
-                Error "FOGELL_API_TOKEN_FILE does not name a file"
             else
                 match uriResult with
                 | Error error -> Error error
                 | Ok _ ->
-                    let token = File.ReadAllText(tokenPath).TrimEnd('\r', '\n')
+                    match tokenReader tokenPath with
+                    | Error error -> Error error
+                    | Ok rawToken ->
+                        let token = rawToken.TrimEnd('\r', '\n')
 
-                    if token.Length < 32 || token <> token.Trim() then
-                        Error "API token file must contain at least 32 non-padded characters"
-                    else
-                        match prepareStateRoot stateRootValue with
-                        | Error error -> Error error
-                        | Ok _ ->
-                            Ok
-                                { RuntimeDatabaseUrl = runtimeValue
-                                  MaintenanceDatabaseUrl = maintenanceValue
-                                  ApiToken = token
-                                  ListenUrl = listenValue
-                                  StateRoot = stateRootValue
-                                  RunHostPath = runHostValue
-                                  SetsidPath = setsidValue
-                                  TrustPool = value trustPool
-                                  MaxPipelineBytes = value maxPipeline
-                                  MaxLogChunks = value maxLogs
-                                  PollMilliseconds = value poll
-                                  LeaseSeconds = value lease }
+                        if token.Length < 32 || token <> token.Trim() then
+                            Error "API token file must contain at least 32 non-padded characters"
+                        else
+                            match prepareStateRoot stateRootValue with
+                            | Error error -> Error error
+                            | Ok _ ->
+                                Ok
+                                    { RuntimeDatabaseUrl = runtimeValue
+                                      MaintenanceDatabaseUrl = maintenanceValue
+                                      ApiToken = token
+                                      ListenUrl = listenValue
+                                      StateRoot = stateRootValue
+                                      RunHostPath = runHostValue
+                                      SetsidPath = setsidValue
+                                      TrustPool = value trustPool
+                                      MaxPipelineBytes = value maxPipeline
+                                      MaxLogChunks = value maxLogs
+                                      PollMilliseconds = value poll
+                                      LeaseSeconds = value lease }
+
+    let internal loadWithSetsidLauncher setsidLauncher =
+        loadWithSetsidLauncherAndTokenReader readTokenFileSecurely setsidLauncher
 
     let load () = loadWithSetsidLauncher trustedSetsidLauncher
