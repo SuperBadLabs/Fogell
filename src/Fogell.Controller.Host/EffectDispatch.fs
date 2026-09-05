@@ -159,9 +159,18 @@ module FileDropReceipt =
                 else
                     Ok(DestinationDescriptor.owned fd)
 
+    /// Codex #424 round 8: the temp file's lifetime is one try/finally. On any
+    /// exit that did not rename it — a refused create is nothing to clean, but a
+    /// write or fsync that throws (ENOSPC, an I/O error), a rename refusal, and
+    /// the EEXIST loser all leave through the same finally — the process's own
+    /// O_EXCL name is unlinked through the organization directory descriptor
+    /// (never anything else, never a directory), and an exception becomes the
+    /// Uncertain reason instead of propagating. Repeated terminal attempts
+    /// during a destination outage therefore leave no `.tmp` behind.
     let private writeWith
         (afterPin: unit -> unit)
         (trace: string -> unit)
+        (writer: Stream -> byte array -> unit)
         (root: string)
         (organization: string)
         (fileName: string)
@@ -202,33 +211,47 @@ module FileDropReceipt =
                                 ReceiptFileMode
 
                         if fd < 0 then
+                            // Nothing was created; nothing to clean.
                             Error $"cannot create the receipt in the pinned destination (errno {DestinationDescriptor.errno ()})"
                         else
-                            do
-                                use stream = new FileStream(DestinationDescriptor.owned fd, FileAccess.Write, 1, false)
-                                stream.Write(bytes, 0, bytes.Length)
-                                stream.Flush true
-
-                            trace "temp-fsynced"
+                            let mutable renamed = false
 
                             let published =
-                                if DestinationDescriptor.renameAt2 directoryHandle temporary fileName DestinationDescriptor.RenameNoReplace >= 0 then
-                                    trace "renamed"
-                                    Ok()
-                                else
-                                    let error = DestinationDescriptor.errno ()
-                                    // Only this process's own O_EXCL temp name is
-                                    // ever unlinked, and never a directory.
-                                    DestinationDescriptor.unlinkAt directoryHandle temporary |> ignore
-                                    trace "temp-unlinked"
+                                try
+                                    try
+                                        do
+                                            use stream = new FileStream(DestinationDescriptor.owned fd, FileAccess.Write, 1, false)
+                                            writer stream bytes
+                                            stream.Flush true
 
-                                    if error = DestinationDescriptor.EEXIST then
-                                        // Something now holds the receipt name: a
-                                        // concurrent writer of the same attempt, or
-                                        // a planted entry. Confirm judges it.
-                                        Ok()
-                                    else
-                                        Error $"cannot publish the receipt in the pinned destination (errno {error})"
+                                        trace "temp-fsynced"
+
+                                        if DestinationDescriptor.renameAt2 directoryHandle temporary fileName DestinationDescriptor.RenameNoReplace >= 0 then
+                                            renamed <- true
+                                            trace "renamed"
+                                            Ok()
+                                        else
+                                            let error = DestinationDescriptor.errno ()
+
+                                            if error = DestinationDescriptor.EEXIST then
+                                                // Something now holds the receipt name: a
+                                                // concurrent writer of the same attempt, or
+                                                // a planted entry. Confirm judges it.
+                                                Ok()
+                                            else
+                                                Error $"cannot publish the receipt in the pinned destination (errno {error})"
+                                    with ex ->
+                                        // ENOSPC, EIO, a closed descriptor: the effect
+                                        // may or may not have reached the destination;
+                                        // the row stays where it is for the trigger.
+                                        Error $"receipt write failed in the pinned destination: {ex.Message}"
+                                finally
+                                    if not renamed then
+                                        // Only this process's own O_EXCL temp name is
+                                        // ever unlinked, through the directory
+                                        // descriptor, and never a directory.
+                                        DestinationDescriptor.unlinkAt directoryHandle temporary |> ignore
+                                        trace "temp-unlinked"
 
                             match published with
                             | Error error -> Error error
@@ -250,6 +273,8 @@ module FileDropReceipt =
                     match DestinationDescriptor.markerPinned table rootHandle with
                     | Error error -> Error $"destination root is not pinned: {error}"
                     | Ok() -> Ok())
+
+    let private writeBytes (stream: Stream) (bytes: byte array) = stream.Write(bytes, 0, bytes.Length)
 
     /// Evidence is a regular, single-link receipt of exactly the payload's
     /// length, opened non-blocking through the descriptors and read through a
@@ -290,9 +315,10 @@ module FileDropReceipt =
     /// The in-process test seam: `afterPin` runs after the root descriptor and
     /// its marker were verified and before anything is created; `trace`
     /// receives the write's durability steps in order.
-    let internal invocationWith
+    let internal invocationWithWriter
         (afterPin: unit -> unit)
         (trace: string -> unit)
+        (writer: Stream -> byte array -> unit)
         (root: string)
         (claim: ExecutionClaim)
         (terminal: BuildStatus)
@@ -305,8 +331,12 @@ module FileDropReceipt =
           Identity = identity claim
           Payload = bytes
           Destination = fun () -> pinned root
-          Invoke = fun () -> writeWith afterPin trace root organization fileName bytes
+          Invoke = fun () -> writeWith afterPin trace writer root organization fileName bytes
           Confirm = fun () -> read root organization fileName bytes }
+
+    /// The in-process seams without an injected writer.
+    let internal invocationWith (afterPin: unit -> unit) (trace: string -> unit) =
+        invocationWithWriter afterPin trace writeBytes
 
     let invocation (root: string) (claim: ExecutionClaim) (terminal: BuildStatus) : EffectInvocation =
         invocationWith ignore ignore root claim terminal
