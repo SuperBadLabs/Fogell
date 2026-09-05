@@ -21,6 +21,7 @@ audited_files=(
   src/Fogell.Controller.Host/Worker.fs
   src/Fogell.Controller.Host/Program.fs
   src/Fogell.Controller.Host/Config.fs
+  src/Fogell.Controller.Host/ProcessGroup.fs
   src/Fogell.Controller.Api/Router.fs
   src/Fogell.Controller.Api/ArtifactSnapshots.fs
   tests/Fogell.Controller.Api.Tests/Tests.fs

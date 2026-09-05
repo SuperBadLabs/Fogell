@@ -3009,6 +3009,78 @@ let effectDispatch =
               Expect.equal (counted.Confirm()) (Ok false) "an unpinned root offers no evidence, whatever bytes it holds"
           }
 
+          test "an oversized pre-written receipt is no evidence: Confirm checks the length on the open descriptor and never reads it" {
+              // Codex finding 5 on #424: ReadAllBytes on the predictable path
+              // would allocate whatever a same-UID writer left there.
+              let owner = "fg026b-oversized-owner"
+              let org, claim = runningClaim "fg026b-oversized" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let invocations, invocation = counted claim Success
+              let path = FileDropReceipt.receiptPath dropRoot claim
+              IO.Directory.CreateDirectory(IO.Path.GetDirectoryName path) |> ignore
+
+              // A 3 GiB sparse file: reading it whole would exceed the byte-array
+              // limit and surface as an exception, so an evidence read that
+              // touches the bytes cannot answer Ok false.
+              do
+                  use oversized = IO.File.Create path
+                  oversized.SetLength(3L * 1024L * 1024L * 1024L)
+
+              let before = GC.GetTotalAllocatedBytes false
+              Expect.equal (invocation.Confirm()) (Ok false) "a receipt of the wrong length is not evidence"
+              Expect.isLessThan (GC.GetTotalAllocatedBytes false - before) (64L * 1024L * 1024L) "the oversized file was not read into memory"
+
+              match EffectDispatch.run store authority EffectDispatch.noHooks invocation with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "evidence absent" "the outcome is uncertain, never confirmed, and not an exception"
+              | other -> failtestf "an oversized pre-written receipt produced %A" other
+              Expect.equal invocations.Value 1 "the idempotent write saw the existing file and left it alone"
+              Expect.equal (IO.FileInfo(path).Length) (3L * 1024L * 1024L * 1024L) "the pre-written file is untouched"
+              Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("applied", None)) "applied, awaiting the trigger"
+
+              // Same length, different bytes: still no evidence.
+              IO.File.WriteAllBytes(path, Array.create invocation.Payload.Length 0x20uy)
+              Expect.equal (invocation.Confirm()) (Ok false) "equal length with different bytes is refused byte-exactly"
+              IO.File.WriteAllBytes(path, invocation.Payload)
+              Expect.equal (invocation.Confirm()) (Ok true) "the exact bytes confirm"
+          }
+
+          test "a root that vanishes after the pin creates nothing at the configured path" {
+              // Codex finding 6 on #424: a recursive CreateDirectory after the pin
+              // would rebuild the organization directory on the underlying
+              // filesystem. Everything after the pin is relative to the opened
+              // root descriptor, so a dead root fails and recreates nothing.
+              let owner = "fg026b-descriptor-owner"
+              let org, claim = runningClaim "fg026b-descriptor" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let root = IO.Path.Combine(dropRoot, $"vanishing-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory root |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(root, EffectProducerConfig.fileDropRootMarker), [||])
+              let organizationDirectory = IO.Path.Combine(root, org.Value.ToString "N")
+
+              // The pin succeeded (root opened, marker seen through it); the
+              // mount then vanishes before anything is created.
+              let vanish () = IO.Directory.Delete(root, true)
+              let invocation = FileDropReceipt.invocationWith vanish root claim Success
+
+              match EffectDispatch.run store authority EffectDispatch.noHooks invocation with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "pinned destination" "the write failed on the dead descriptor"
+              | other -> failtestf "a root lost after the pin produced %A" other
+              Expect.isFalse (IO.Directory.Exists root) "the configured path was not recreated"
+              Expect.isFalse (IO.Directory.Exists organizationDirectory) "no organization directory exists at the configured path"
+              Expect.isFalse (IO.File.Exists(FileDropReceipt.receiptPath root claim)) "no receipt exists anywhere under the configured path"
+              Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("prepared", None)) "the row awaits the trigger"
+
+              // A symlink standing in for the root is not the pinned root.
+              let elsewhere = IO.Path.Combine(dropRoot, $"elsewhere-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory elsewhere |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(elsewhere, EffectProducerConfig.fileDropRootMarker), [||])
+              IO.File.CreateSymbolicLink(root, elsewhere) |> ignore
+              match EffectDispatch.run store authority EffectDispatch.noHooks (FileDropReceipt.invocation root claim Success) with
+              | DispatchOutcome.Refused reason -> Expect.stringContains reason "without following links" "a linked root is refused before preparation is touched"
+              | other -> failtestf "a symlinked root produced %A" other
+              Expect.isFalse (IO.Directory.Exists(IO.Path.Combine(elsewhere, org.Value.ToString "N"))) "nothing was written through the link"
+          }
+
           test "GET effects/uncertain lists one organization's uncertain effects read-only, denies other organizations their view of it, and refuses a malformed organization" {
               let app, baseUrl = startServer 1000
 

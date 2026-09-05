@@ -148,12 +148,17 @@ classified tenant-scoped uncertain by the lease-expiry scan, the startup pass an
 and listed read-only on `GET .../effects/uncertain`; nothing re-invokes it. The
 audit is a name-based source tripwire plus the compile-time exhaustive match,
 not a formal proof. The simulator's destination is byte-checked, not
-authenticated: the root is pinned only by an operator-created marker file
-(never recreated by the controller; a vanished root refuses or leaves the effect
-uncertain), not by device identity, and is not symlink-resolved or checked for
-group writability, so a same-UID pipeline can pre-write an attempt's receipt —
+authenticated, and descriptor-bound to the pinned root: the root is opened once
+with `O_DIRECTORY|O_NOFOLLOW` and pinned by an operator-created marker file seen
+through that descriptor; the organization directory, temp file, rename and
+evidence read are all relative to it, so a vanished or replaced root refuses or
+leaves the effect uncertain and nothing is created at the configured path (the
+controller never recreates the root). Evidence is a length-checked, bounded
+read, so a pre-written oversized file costs a stat, not an allocation. The pin
+is the marker plus the descriptor, not device identity, and group writability is
+not checked, so a same-UID pipeline can still pre-write an attempt's receipt —
 with the exact bytes the result is byte-identical (attribution, not truth), with
-any other bytes its own build fails closed into Uncertain. Arbitrary shell/process
+any other bytes or length its own build fails closed into Uncertain. Arbitrary shell/process
 side effects remain governed by the execution and egress boundaries, not this
 ledger.
 
