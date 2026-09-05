@@ -3,7 +3,9 @@ namespace Fogell.Controller.Host
 open System
 open System.Diagnostics
 open System.IO
+open System.Runtime.InteropServices
 open System.Security.Cryptography
+open Microsoft.Win32.SafeHandles
 open Fogell.Domain
 open Fogell.Store
 
@@ -110,68 +112,239 @@ module FileDropReceipt =
 
         Text.Encoding.UTF8.GetBytes text
 
+    // ---- descriptor-bound destination I/O ------------------------------------
+    // Codex on #424 (EffectDispatch.fs:129, :161). The configured path string is
+    // resolved exactly once per operation, to open the root with
+    // O_DIRECTORY|O_NOFOLLOW; everything after that — the marker check, the
+    // per-organization directory, the temp file, the rename and the evidence
+    // read — happens relative to that descriptor. If the mount vanishes after
+    // the pin, mkdirat/openat on the dead descriptor fail (ENOENT/ESTALE) and
+    // nothing is created at the configured path on whatever filesystem is
+    // underneath. Evidence is read through a bounded stream whose length is
+    // checked first, so a pre-written oversized receipt costs a stat, not an
+    // allocation.
+
+    [<Literal>]
+    let private OpenReadOnly = 0
+
+    [<Literal>]
+    let private OpenWriteOnly = 1
+
+    [<Literal>]
+    let private OpenCreate = 0x40
+
+    [<Literal>]
+    let private OpenExclusive = 0x80
+
+    [<Literal>]
+    let private OpenCloseOnExec = 0x80000
+
+    [<Literal>]
+    let private RenameNoReplace = 1u
+
+    [<Literal>]
+    let private EEXIST = 17
+
+    [<Literal>]
+    let private ReceiptFileMode = 0o600
+
+    [<Literal>]
+    let private OrganizationDirectoryMode = 0o755
+
+    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
+    extern int private openPath(string path, int flags)
+
+    [<DllImport("libc", EntryPoint = "openat", SetLastError = true)>]
+    extern int private openAt(int directory, string name, int flags, int mode)
+
+    [<DllImport("libc", EntryPoint = "mkdirat", SetLastError = true)>]
+    extern int private mkdirAt(int directory, string name, int mode)
+
+    [<DllImport("libc", EntryPoint = "renameat2", SetLastError = true)>]
+    extern int private renameAt2(int oldDirectory, string oldName, int newDirectory, string newName, uint32 flags)
+
+    [<DllImport("libc", EntryPoint = "unlinkat", SetLastError = true)>]
+    extern int private unlinkAt(int directory, string name, int flags)
+
+    let private errno () = Marshal.GetLastPInvokeError()
+    let private owned (fd: int) = new SafeFileHandle(nativeint fd, true)
+    let private descriptor (handle: SafeFileHandle) = int (handle.DangerousGetHandle())
+
+    let private directoryFlags (table: LinuxOpenFlags.Table) =
+        OpenReadOnly ||| table.Directory ||| table.NoFollow ||| OpenCloseOnExec
+
+    let private fileReadFlags (table: LinuxOpenFlags.Table) =
+        OpenReadOnly ||| table.NoFollow ||| OpenCloseOnExec
+
+    /// The one place the configured path string is resolved.
+    let private openRoot (table: LinuxOpenFlags.Table) (root: string) =
+        let fd = openPath (root, directoryFlags table)
+
+        if fd < 0 then
+            Error $"destination root is not pinned: cannot open {root} as a directory without following links (errno {errno ()})"
+        else
+            Ok(owned fd)
+
+    /// The marker seen through the root descriptor, never through the path.
+    let private markerPresent (table: LinuxOpenFlags.Table) (rootHandle: SafeFileHandle) =
+        let fd = openAt (descriptor rootHandle, EffectProducerConfig.fileDropRootMarker, fileReadFlags table, 0)
+
+        if fd < 0 then
+            Error $"destination root is not pinned: its {EffectProducerConfig.fileDropRootMarker} marker is absent (errno {errno ()})"
+        else
+            (owned fd).Dispose()
+            Ok()
+
+    let private withPinnedRoot (root: string) (body: LinuxOpenFlags.Table -> SafeFileHandle -> Result<'a, string>) =
+        match LinuxOpenFlags.current with
+        | Error error -> Error $"destination root is not pinned: {error}"
+        | Ok table ->
+            match openRoot table root with
+            | Error error -> Error error
+            | Ok rootHandle ->
+                use rootHandle = rootHandle
+
+                match markerPresent table rootHandle with
+                | Error error -> Error error
+                | Ok() -> body table rootHandle
+
     /// The root is pinned by the operator-created marker file that startup
     /// validated. An unmounted or replaced destination has no marker, and a
     /// receipt must never be created on whatever directory took its place.
-    let pinned (root: string) =
-        if Directory.Exists root
-           && File.Exists(Path.Combine(root, EffectProducerConfig.fileDropRootMarker)) then
-            Ok()
+    let pinned (root: string) = withPinnedRoot root (fun _ _ -> Ok())
+
+    /// Only the per-organization directory is ever created, relative to the
+    /// root descriptor and non-recursively; EEXIST is the idempotent case.
+    let private openOrganizationDirectory (table: LinuxOpenFlags.Table) (rootHandle: SafeFileHandle) (name: string) =
+        let made = mkdirAt (descriptor rootHandle, name, OrganizationDirectoryMode)
+
+        if made < 0 && errno () <> EEXIST then
+            Error $"cannot create the organization directory in the pinned destination (errno {errno ()})"
         else
-            Error $"destination root is not pinned: {root} or its {EffectProducerConfig.fileDropRootMarker} marker is absent"
+            let fd = openAt (descriptor rootHandle, name, directoryFlags table, 0)
 
-    let private write (root: string) (path: string) (bytes: byte array) =
-        match pinned root with
-        | Error error -> Error error
-        | Ok() ->
-            // Only the per-organization directory is ever created; the root
-            // itself was just seen to exist and is never (re)created here.
-            Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
-
-            let written =
-                if File.Exists path then
-                    // The destination is idempotent per attempt: a receipt that
-                    // already exists is this connector's contract, and Confirm
-                    // decides whether its bytes are the ones this attempt meant
-                    // to leave.
-                    Ok()
-                else
-                    let temporary = path + $".{Guid.NewGuid():N}.tmp"
-                    File.WriteAllBytes(temporary, bytes)
-
-                    try
-                        File.Move(temporary, path, false)
-                        Ok()
-                    with :? IOException when File.Exists path ->
-                        (try File.Delete temporary with _ -> ())
-                        Ok()
-
-            // A root that vanished between the check and the rename would have
-            // been recreated by the directory step; a receipt on that
-            // replacement is not evidence, so the write is reported ambiguous.
-            match written with
-            | Error error -> Error error
-            | Ok() -> pinned root
-
-    let private read (root: string) (path: string) (bytes: byte array) =
-        match pinned root with
-        | Error _ -> Ok false
-        | Ok() ->
-            if File.Exists path then
-                Ok(CryptographicOperations.FixedTimeEquals(File.ReadAllBytes path, bytes))
+            if fd < 0 then
+                Error $"cannot open the organization directory in the pinned destination (errno {errno ()})"
             else
-                Ok false
+                Ok(owned fd)
 
-    let invocation (root: string) (claim: ExecutionClaim) (terminal: BuildStatus) : EffectInvocation =
-        let path = receiptPath root claim
+    let private writeWith (afterPin: unit -> unit) (root: string) (organization: string) (fileName: string) (bytes: byte array) =
+        withPinnedRoot root (fun table rootHandle ->
+            afterPin ()
+
+            match openOrganizationDirectory table rootHandle organization with
+            | Error error -> Error error
+            | Ok directoryHandle ->
+                use directoryHandle = directoryHandle
+                let directory = descriptor directoryHandle
+                let existing = openAt (directory, fileName, fileReadFlags table, 0)
+
+                let written =
+                    if existing >= 0 then
+                        // The destination is idempotent per attempt: a receipt
+                        // that already exists is this connector's contract, and
+                        // Confirm decides whether its bytes are the ones this
+                        // attempt meant to leave.
+                        (owned existing).Dispose()
+                        Ok()
+                    else
+                        let temporary = fileName + $".{Guid.NewGuid():N}.tmp"
+
+                        let fd =
+                            openAt (
+                                directory,
+                                temporary,
+                                OpenWriteOnly ||| OpenCreate ||| OpenExclusive ||| table.NoFollow ||| OpenCloseOnExec,
+                                ReceiptFileMode
+                            )
+
+                        if fd < 0 then
+                            Error $"cannot create the receipt in the pinned destination (errno {errno ()})"
+                        else
+                            do
+                                use stream = new FileStream(owned fd, FileAccess.Write, 1, false)
+                                stream.Write(bytes, 0, bytes.Length)
+                                stream.Flush true
+
+                            if renameAt2 (directory, temporary, directory, fileName, RenameNoReplace) >= 0 then
+                                Ok()
+                            else
+                                let error = errno ()
+                                unlinkAt (directory, temporary, 0) |> ignore
+
+                                if error = EEXIST then
+                                    // A concurrent writer of the same attempt won
+                                    // the rename; that receipt is the idempotent
+                                    // destination and Confirm judges its bytes.
+                                    Ok()
+                                else
+                                    Error $"cannot publish the receipt in the pinned destination (errno {error})"
+
+                // The marker is re-read through the same descriptor after the
+                // rename: a root that was replaced meanwhile is reported as
+                // ambiguous rather than as a confirmed effect.
+                match written with
+                | Error error -> Error error
+                | Ok() -> markerPresent table rootHandle)
+
+    let private write root organization fileName bytes =
+        writeWith ignore root organization fileName bytes
+
+    /// Evidence is a byte-exact receipt of exactly the payload's length, read
+    /// through a bounded stream after the length is checked on the open
+    /// descriptor. Any other length, a short read, or an unpinned root is no
+    /// evidence (Ok false); nothing here allocates more than the payload.
+    let private read (root: string) (organization: string) (fileName: string) (bytes: byte array) =
+        let evidence =
+            withPinnedRoot root (fun table rootHandle ->
+                let directory = openAt (descriptor rootHandle, organization, directoryFlags table, 0)
+
+                if directory < 0 then
+                    Ok false
+                else
+                    use directoryHandle = owned directory
+                    let fd = openAt (descriptor directoryHandle, fileName, fileReadFlags table, 0)
+
+                    if fd < 0 then
+                        Ok false
+                    else
+                        use stream = new FileStream(owned fd, FileAccess.Read, 1, false)
+
+                        if stream.Length <> int64 bytes.Length then
+                            Ok false
+                        else
+                            let buffer = Array.zeroCreate<byte> bytes.Length
+
+                            try
+                                stream.ReadExactly(buffer, 0, buffer.Length)
+                                // A byte past the expected length is not the receipt.
+                                Ok(stream.ReadByte() = -1 && CryptographicOperations.FixedTimeEquals(buffer, bytes))
+                            with :? EndOfStreamException ->
+                                Ok false)
+
+        match evidence with
+        | Ok present -> Ok present
+        | Error _ -> Ok false
+
+    let private organizationName (claim: ExecutionClaim) = claim.OrganizationId.Value.ToString "N"
+    let private receiptFileName (claim: ExecutionClaim) = identity claim + ".receipt"
+
+    /// The in-process test seam: `afterPin` runs after the root descriptor and
+    /// its marker were verified and before anything is created.
+    let internal invocationWith (afterPin: unit -> unit) (root: string) (claim: ExecutionClaim) (terminal: BuildStatus) : EffectInvocation =
+        let organization = organizationName claim
+        let fileName = receiptFileName claim
         let bytes = payload claim terminal
 
         { Producer = EffectProducer.FileDropReceipt
           Identity = identity claim
           Payload = bytes
           Destination = fun () -> pinned root
-          Invoke = fun () -> write root path bytes
-          Confirm = fun () -> read root path bytes }
+          Invoke = fun () -> writeWith afterPin root organization fileName bytes
+          Confirm = fun () -> read root organization fileName bytes }
+
+    let invocation (root: string) (claim: ExecutionClaim) (terminal: BuildStatus) : EffectInvocation =
+        invocationWith ignore root claim terminal
 
 module EffectDispatch =
     let noHooks =
