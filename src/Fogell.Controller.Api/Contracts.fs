@@ -36,6 +36,30 @@ type ExplainResponse =
       [<JsonPropertyName "capabilities">] Capabilities: string list
       [<JsonPropertyName "explanation">] Explanation: string }
 
+/// FG-026b. One external effect whose outcome the controller cannot know.
+/// Read-only: the API lists uncertainty for an operator, it never replays,
+/// resolves, or dismisses it.
+type UncertainEffect =
+    { [<JsonPropertyName "attempt_id">] AttemptId: string
+      [<JsonPropertyName "effect_key">] EffectKey: string
+      [<JsonPropertyName "fence">] Fence: int64
+      [<JsonPropertyName "authority_owner">] AuthorityOwner: string
+      [<JsonPropertyName "restore_epoch">] RestoreEpoch: int64
+      [<JsonPropertyName "payload_sha256">] PayloadSha256: string
+      /// "prepared" when the invocation may never have happened, "applied"
+      /// when it did but its confirmation was lost.
+      [<JsonPropertyName "uncertain_from">] UncertainFrom: string
+      /// When the row entered the uncertain set (ISO 8601, UTC): the listing's
+      /// first order key, so pages never skip a row classified behind a cursor.
+      [<JsonPropertyName "uncertain_at">] UncertainAt: string }
+
+type UncertainEffectsResponse =
+    { [<JsonPropertyName "organization_id">] OrganizationId: string
+      [<JsonPropertyName "effects">] Effects: UncertainEffect list
+      /// Opaque keyset cursor for `?cursor=` on the next request; null on the
+      /// last page. Bound to the organization it was issued for.
+      [<JsonPropertyName "next_cursor">] NextCursor: string option }
+
 /// Errors carry a stable code as well as a message, so a client can branch on
 /// the code and show the message. ADR 0001 forbids an unnamed rejection.
 type ErrorResponse =

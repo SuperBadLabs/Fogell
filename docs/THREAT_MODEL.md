@@ -134,12 +134,44 @@ paths publish reasoned reconciliation atomically.
 The FG-026 Store foundation persists immutable payload digests through
 `prepared`, `applied`, `confirmed`, and terminal `uncertain`, and lists stale
 effects per tenant. FG-027b persists retry arbitration and exact replay. These
-are durable primitives, not a claim that every registered external-effect step
-uses `PrepareEffect`/`AdvanceEffect` or that controller retry policy is complete.
-The current runnable worker has no generic external connector that discharges
-those integration residuals; FG-026b owns controller-managed producer adoption,
-scheduled reconciliation, and operator surfacing. Arbitrary shell/process side
-effects remain governed by the execution and egress boundaries, not this ledger.
+are durable primitives, not a claim that every external-effect step uses
+`PrepareEffect`/`AdvanceEffect` or that controller retry policy is complete.
+FG-026b bounds the controller-managed producers in a closed-world registry
+(`EffectProducer`) whose single dispatch path (`EffectDispatch.run`) is the only
+ledger caller under `src/`; a source audit and its planted-violation proof refuse
+any other caller, any unrouted producer, and any unlisted effect-bearing call
+under the controller. The registry holds one producer today, the file-drop
+receipt destination simulator, because the inventory found no controller-managed
+external-effect producer in the runnable worker. Stale prepared/applied work is
+classified tenant-scoped uncertain by the lease-expiry scan, the startup pass and
+`ActivateRestore`, each publishing one `effect.uncertain` event and outbox row,
+and listed read-only on `GET .../effects/uncertain`; nothing re-invokes it. The
+audit is a name-based source tripwire plus the compile-time exhaustive match,
+not a formal proof. The simulator's destination is byte-checked, not
+authenticated, and descriptor-bound to the pinned root: the root is opened once
+with `O_DIRECTORY|O_NOFOLLOW` and pinned by an operator-created marker file seen
+through that descriptor; the organization directory, temp file, rename and
+evidence read are all relative to it, so a vanished or replaced root refuses or
+leaves the effect uncertain and nothing is created at the configured path (the
+controller never recreates the root). Every read-side open is non-blocking and
+followed by a regular-file, single-link check, so a planted FIFO, directory,
+device, socket or hard link can neither park the worker nor pass as a marker or
+receipt; evidence is a length-checked, bounded read, so a pre-written oversized
+file costs a stat, not an allocation; the receipt's directory entry and the
+organization directory are fsynced before the ledger may record applied or
+confirmed; startup performs the same opens, so an unreadable root or marker
+refuses startup by name. Startup also refuses a drop root that is physically
+inside (or contains) the state root by device/inode ancestry; that check is an
+operator-configuration guard, a bind-mounted alias of a state-root subdirectory
+is invisible to it and is the operator's own configuration, and since the
+destination is byte-checked and unauthenticated by design (FG-073) such an
+alias changes attribution, not truth. The pin
+is the marker plus the descriptor, not device identity, and group writability is
+not checked, so a same-UID pipeline can still pre-write an attempt's receipt —
+with the exact bytes the result is byte-identical (attribution, not truth), with
+any other bytes or length its own build fails closed into Uncertain. Arbitrary shell/process
+side effects remain governed by the execution and egress boundaries, not this
+ledger.
 
 **Boundary.** Transaction-local RLS context is selected by trusted controller
 code; PostgreSQL custom settings are not an identity provider. Code already
@@ -445,7 +477,7 @@ recorded inputs and oracle.
 | Guess another project’s artifact URL or use traversal/symlink substitution | Organization/project/build/terminal-attempt lineage, strict relative segments, and Linux descriptor containment refuse it. A same-UID writer can still change an ordinary artifact in place. | Keep FG-042b lineage, terminal-state, byte-identity, traversal, and symlink tests; use workload identity or VM isolation for hostile concurrent writers. |
 | Exhaust memory with a known-length or chunked pipeline body | Router retains at most the configured maximum plus one byte and returns 413. Fogell adds no explicit application-level request deadline, rate limiter, or aggregate-concurrency cap; server/deployment defaults are outside this proof. | Keep both body-shape tests; add deployment-level deadline, rate, and concurrency controls separately. |
 | Forge an approval by writing Run.Host inbox files | Fresh controller admission refuses unbounded `input`; the filesystem inbox is standalone trusted orchestration only. | Build an authenticated controller approval broker before exposing approvals. |
-| Replay or substitute an external-effect payload | The Store ledger rejects digest substitution and lists stale prepared/applied effects; no controller-managed producer or scheduler consumes it. Arbitrary shell effects are outside the modelled ledger. | Close FG-026b for the bounded producer registry: require connector integration, scheduled classification, and operator surfacing before claiming modelled-effect safety. |
+| Replay or substitute an external-effect payload | The Store ledger rejects digest substitution and stale owner/fence/lease/epoch before any invocation; the closed-world registry's single dispatch path is the only ledger caller and is audited as such; stale prepared/applied work is classified uncertain by the lease-expiry, startup and restore triggers, surfaced as `effect.uncertain` events/outbox rows and a read-only per-tenant listing, and never re-invoked (FG-026b, proven under a SIGKILL of the real controller in each window). One producer is registered: the file-drop receipt simulator. Arbitrary shell effects are outside the modelled ledger, and cross-attempt destination idempotency is each connector's own contract. | Register every future controller-managed connector as an `EffectProducer` case (the compiler, the registry test and the source audit refuse a case that bypasses dispatch); build operator resolution of uncertain effects separately — the listing is read-only. |
 | Fetch a changed or compromised dependency | Changed graph/content is rejected against locks; correctly locked malicious content is still accepted. | Add trusted-feed, advisory/SBOM/signature and reproducibility controls as separate evidence. |
 | Replace or loosen the API token file | Startup binds one final-component-no-follow descriptor, requires regular type, service uid, exact 0400/0600 mode and a 4096-byte ceiling, then reads from that descriptor. A same-uid writer can still modify the opened inode in place, and ancestor links are not independently refused. | Separate controller and workload identities; protect the path's directory ancestry; control rotation/restart. |
 
@@ -502,10 +534,12 @@ recorded inputs and oracle.
 - Stash descriptor containment does not confine arbitrary shell reads, hard links,
   mounts, same-UID controller-state access, or selectors with separate contracts;
   its file/directory-link behavior is proven only on pinned Linux.
-- The effect checkpoint and retry ledgers are durable Store foundations, not
-  evidence that every step/connector or controller policy consumes them;
-  FG-026b owns the controller-managed producer and scheduled-reconciliation
-  residual, while arbitrary shell/process effects remain outside that ledger.
+- The effect checkpoint ledger is consumed by exactly one controller-managed
+  producer (the file-drop receipt simulator) through the audited FG-026b
+  registry and dispatch path; it is not evidence that any other connector
+  exists or that an uncertain effect can be resolved through the API, and
+  arbitrary shell/process effects remain outside that ledger. The retry ledger
+  remains a Store foundation only.
 - NuGet locks and source-cleared warm-cache restore do not establish package
   safety, vulnerability freshness, cold-airgap operation, or reproducibility.
 - The runnable controller is single-node Linux and has no remote mTLS agent

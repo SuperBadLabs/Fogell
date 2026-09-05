@@ -13,7 +13,7 @@ open Fogell.Store
 
 /// FG-060. The public API.
 ///
-/// Six endpoints, all tenant-scoped in the path. Authorization is checked before
+/// Seven endpoints, all tenant-scoped in the path. Authorization is checked before
 /// anything else on every route — including before the path parameters are parsed
 /// — so an unauthenticated caller cannot learn whether an organization or build
 /// exists by comparing 404 against 400.
@@ -656,6 +656,68 @@ module Router =
         }
         :> Threading.Tasks.Task
 
+    /// FG-026b. GET …/effects/uncertain — which external effects of this
+    /// organization did the controller lose track of? Read-only and tenant
+    /// scoped by the route: the Store selects one organization and the
+    /// database's forced RLS refuses every other.
+    let private uncertainEffects (state: ApiState) (ctx: HttpContext) =
+        task {
+            if not (authorized state ctx) then
+                return! fail ctx 401 "unauthorized" "a valid bearer token is required" None
+            else
+                match guid (string ctx.Request.RouteValues["organizationId"]) with
+                | None -> return! fail ctx 400 "malformed_identifier" "organization must be a UUID" None
+                | Some org ->
+                    // Bounded: ?limit= defaults to 200 and is refused above 1000;
+                    // ?cursor= continues from the previous page's next_cursor.
+                    let limit =
+                        match ctx.Request.Query.TryGetValue "limit" with
+                        | true, values when values.Count > 0 && not (String.IsNullOrWhiteSpace values.[0]) ->
+                            match Int32.TryParse values.[0] with
+                            | true, value when value >= 1 && value <= 1000 -> Ok value
+                            | _ -> Error()
+                        | _ -> Ok 200
+
+                    let cursor =
+                        match ctx.Request.Query.TryGetValue "cursor" with
+                        | true, values when values.Count > 0 && not (String.IsNullOrWhiteSpace values.[0]) ->
+                            Some values.[0]
+                        | _ -> None
+
+                    match limit with
+                    | Error() ->
+                        return! fail ctx 400 "invalid_limit" "limit must be an integer from 1 through 1000" None
+                    | Ok limit ->
+                        match state.Store.ListUncertainEffectsPage(OrganizationId org, cursor, limit) with
+                        | Error error -> return! fail ctx 400 "invalid_cursor" error None
+                        | Ok page ->
+                            let effects =
+                                page.Effects
+                                |> List.map (fun entry ->
+                                    let checkpoint = entry.Checkpoint
+
+                                    { AttemptId = checkpoint.AttemptId.Value.ToString()
+                                      EffectKey = checkpoint.EffectKey
+                                      Fence = checkpoint.Fence.Value
+                                      AuthorityOwner = checkpoint.AuthorityOwner
+                                      RestoreEpoch = checkpoint.RestoreEpoch.Value
+                                      PayloadSha256 = checkpoint.PayloadSha256
+                                      UncertainFrom =
+                                        match checkpoint.UncertainOrigin with
+                                        | Some UncertainAfterPrepare -> "prepared"
+                                        | Some UncertainAfterApply -> "applied"
+                                        | None -> "unknown"
+                                      UncertainAt = entry.UncertainAt.ToUniversalTime().ToString("o") })
+
+                            let payload: UncertainEffectsResponse =
+                                { OrganizationId = org.ToString()
+                                  Effects = effects
+                                  NextCursor = page.NextCursor }
+
+                            return! json ctx 200 payload
+        }
+        :> Threading.Tasks.Task
+
     let private orgPath = "/api/v1/organizations/{organizationId}"
 
     let map (state: ApiState) (endpoints: IEndpointRouteBuilder) =
@@ -668,4 +730,5 @@ module Router =
         |> ignore
         endpoints.MapPost($"{orgPath}/projects/{{projectId}}/builds/{{buildId}}/cancel", RequestDelegate(cancel state)) |> ignore
         endpoints.MapGet($"{orgPath}/scheduler/explain", RequestDelegate(explain state)) |> ignore
+        endpoints.MapGet($"{orgPath}/effects/uncertain", RequestDelegate(uncertainEffects state)) |> ignore
         endpoints

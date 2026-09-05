@@ -20,6 +20,11 @@ open Fogell.Execution
 [<DllImport("libc")>]
 extern uint32 private geteuid()
 
+/// FG-026b round-4 probes plant hard links where the connector reads
+/// (mkfifo is declared above for FG-251).
+[<DllImport("libc", SetLastError = true)>]
+extern int private link(string existing, string newPath)
+
 [<DllImport("libc", SetLastError = true)>]
 extern int private mkfifo(string path, uint32 mode)
 
@@ -933,7 +938,8 @@ let endpoints =
                     HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}/logs"
                     HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}/attempts/{Guid.NewGuid()}/artifacts/output.bin"
                     HttpMethod.Post, $"{baseUrl}/api/v1/organizations/{o}/projects/{p}/builds/{b}/cancel"
-                    HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/scheduler/explain" ]
+                    HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/scheduler/explain"
+                    HttpMethod.Get, $"{baseUrl}/api/v1/organizations/{o}/effects/uncertain" ]
 
               for method, url in routes do
                   let code, body = send method url None (Some "k") (Some pipeline)
@@ -2184,6 +2190,1440 @@ let endpoints =
           }
         ]
 
+/// FG-026b. The closed-world registry, the single dispatch path, the
+/// file-drop destination simulator and the four crash windows, driven against
+/// real attempts on live PostgreSQL. The trigger arms run the production worker
+/// scan and never call a Store reconciliation member themselves.
+let effectDispatch =
+    let dropRoot =
+        IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg026b-drop-{Guid.NewGuid():N}")
+
+    do IO.Directory.CreateDirectory dropRoot |> ignore
+    // The operator-created marker that pins the destination.
+    do IO.File.WriteAllBytes(IO.Path.Combine(dropRoot, EffectProducerConfig.fileDropRootMarker), [||])
+
+    let abortSentinel = "fg026b-window-abort"
+    let abort () = raise (InvalidOperationException abortSentinel)
+
+    let admitClaimWith (beginExecution: bool) (org: OrganizationId) (project: ProjectId) (key: string) (owner: string) =
+        let admitted =
+            match
+                store.AdmitBuild
+                    { OrganizationId = org
+                      ProjectId = project
+                      IdempotencyKey = key
+                      PipelineSource = Text.Encoding.UTF8.GetBytes $"pipeline:{key}"
+                      StageNames = [ "effect" ]
+                      RequiredTrustPool = "trusted-linux"
+                      RequiredCapabilities = [ "linux" ] }
+            with
+            | Ok admitted -> admitted
+            | Error error -> failtestf "admission failed: %s" error
+
+        let claim =
+            match store.ClaimNextExecution(org, owner, "trusted-linux", [ "linux" ], 60) with
+            | Ok(Some claim) when claim.AttemptId = admitted.AttemptId -> claim
+            | other -> failtestf "execution claim did not return the admitted attempt: %A" other
+
+        if beginExecution then
+            match store.BeginExecution(org, claim.AttemptId, claim.Fence, owner, 60) with
+            | Ok ExecutionStarted -> ()
+            | other -> failtestf "execution start failed: %A" other
+
+        claim
+
+    let admitClaim org project key owner = admitClaimWith true org project key owner
+
+    let runningClaim key owner =
+        let org, project = freshProject ()
+        org, admitClaim org project key owner
+
+    /// Offered but not yet started: the state in which a fence can still move.
+    let offeredClaim key owner =
+        let org, project = freshProject ()
+        org, admitClaimWith false org project key owner
+
+    let ledgerRow (org: OrganizationId) (attempt: AttemptId) (key: string) =
+        use conn = new Npgsql.NpgsqlConnection(connectionString)
+        conn.Open()
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <-
+            "SELECT state, uncertain_from FROM effect_checkpoints
+             WHERE organization_id = @o AND attempt_id = @a AND effect_key = @k"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        cmd.Parameters.AddWithValue("k", key) |> ignore
+        use reader = cmd.ExecuteReader()
+
+        if reader.Read() then
+            Some(reader.GetString 0, (if reader.IsDBNull 1 then None else Some(reader.GetString 1)))
+        else
+            None
+
+    let ledgerRows (org: OrganizationId) (attempt: AttemptId) =
+        use conn = new Npgsql.NpgsqlConnection(connectionString)
+        conn.Open()
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <-
+            "SELECT count(*) FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = @a"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        cmd.ExecuteScalar() :?> int64
+
+    let expireLease (org: OrganizationId) (attempt: AttemptId) =
+        use conn = new Npgsql.NpgsqlConnection(connectionString)
+        conn.Open()
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <-
+            "UPDATE attempts SET lease_expires_at = clock_timestamp() - interval '1 second'
+             WHERE organization_id = @o AND id = @a"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        Expect.equal (cmd.ExecuteNonQuery()) 1 "the attempt's lease was aged"
+
+    let receiptCount (org: OrganizationId) =
+        let directory = IO.Path.Combine(dropRoot, org.Value.ToString "N")
+
+        if IO.Directory.Exists directory then
+            IO.Directory.GetFiles(directory, "*.receipt").Length
+        else
+            0
+
+    /// The real file-drop connector with its invocation counted. The counter
+    /// is the number of times the destination was driven; the receipt count is
+    /// what the destination holds.
+    let counted (claim: ExecutionClaim) (terminal: BuildStatus) =
+        let invocations = ref 0
+        let real = FileDropReceipt.invocation dropRoot claim terminal
+
+        invocations,
+        { real with
+            Invoke =
+                fun () ->
+                    invocations.Value <- invocations.Value + 1
+                    real.Invoke() }
+
+    let effectKey (claim: ExecutionClaim) =
+        EffectProducer.effectKey EffectProducer.FileDropReceipt (FileDropReceipt.identity claim)
+
+    let withHook (window: EffectKillWindow) =
+        match window with
+        | EffectKillWindow.AfterPrepare -> { EffectDispatch.noHooks with AfterPrepare = abort }
+        | EffectKillWindow.AfterInvoke -> { EffectDispatch.noHooks with AfterInvoke = abort }
+        | EffectKillWindow.AfterApply -> { EffectDispatch.noHooks with AfterApply = abort }
+        | EffectKillWindow.AfterConfirm -> { EffectDispatch.noHooks with AfterConfirm = abort }
+
+    let abortedRun (store: Store) authority hooks invocation =
+        try
+            EffectDispatch.run store authority hooks invocation |> ignore
+            failtest "the window hook did not abort the dispatch"
+        with :? InvalidOperationException as ex when ex.Message = abortSentinel ->
+            ()
+
+    /// The production worker against the shared test store, with the file-drop
+    /// simulator enabled and no kill hook. Its scan is the lease-expiry trigger.
+    let newWorkerWithLease (leaseSeconds: int) =
+        let stateRoot = IO.Path.Combine(dropRoot, "worker-state")
+        IO.Directory.CreateDirectory stateRoot |> ignore
+
+        let workerConfig: ControllerConfig =
+            { RuntimeDatabaseUrl = connectionString
+              MaintenanceDatabaseUrl = connectionString + ";Application Name=fg026b-maintenance"
+              ApiToken = token
+              ListenUrl = "http://127.0.0.1:0"
+              StateRoot = stateRoot
+              RunHostPath = "/bin/true"
+              SetsidPath = ControllerConfig.trustedSetsidLauncher
+              TrustPool = "trusted-linux"
+              MaxPipelineBytes = 1024
+              MaxLogChunks = 100
+              PollMilliseconds = 50
+              LeaseSeconds = leaseSeconds
+              EffectProducers = { FileDropRoot = Some dropRoot; KillAt = None } }
+
+        new LocalWorker(
+            workerConfig,
+            store,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<LocalWorker>.Instance)
+
+    let newWorker () = newWorkerWithLease 60
+
+    let withEffectEnvironment (root: string option) (kill: string option) f =
+        let names = [ "FOGELL_EFFECT_FILE_DROP_ROOT"; "FOGELL_EFFECT_KILL_AT" ]
+        let previous = names |> List.map (fun name -> name, Environment.GetEnvironmentVariable name)
+        Environment.SetEnvironmentVariable("FOGELL_EFFECT_FILE_DROP_ROOT", Option.toObj root)
+        Environment.SetEnvironmentVariable("FOGELL_EFFECT_KILL_AT", Option.toObj kill)
+
+        try
+            f ()
+        finally
+            previous |> List.iter (fun (name, value) -> Environment.SetEnvironmentVariable(name, value))
+
+    testList
+        "FG-026b effect dispatch"
+        [ test "the registry is closed: every EffectProducer case is registered exactly once with a unique name" {
+              let cases =
+                  Microsoft.FSharp.Reflection.FSharpType.GetUnionCases(typeof<EffectProducer>)
+                  |> Array.map (fun case ->
+                      Microsoft.FSharp.Reflection.FSharpValue.MakeUnion(case, [||]) :?> EffectProducer)
+                  |> List.ofArray
+
+              Expect.equal (List.sort EffectProducer.all) (List.sort cases) "EffectProducer.all lists every declared case"
+              Expect.equal (List.distinct EffectProducer.all) EffectProducer.all "no producer is registered twice"
+
+              let names = EffectProducer.all |> List.map EffectProducer.name
+              Expect.equal (List.distinct names) names "producer names are unique"
+
+              for name in names do
+                  Expect.isTrue
+                      (name |> Seq.forall (fun c -> Char.IsLower c || Char.IsDigit c || c = '-'))
+                      $"producer name '{name}' is a stable lowercase code"
+
+              Expect.equal
+                  (EffectProducer.effectKey EffectProducer.FileDropReceipt "abc")
+                  "file-drop-receipt:abc"
+                  "the ledger key is the producer name and the attempt-scoped identity"
+          }
+
+          test "effect producer configuration refuses a kill hook without a destination and a destination that is relative, missing, or inside the state root" {
+              let stateRoot = IO.Path.Combine(dropRoot, "state")
+              IO.Directory.CreateDirectory stateRoot |> ignore
+              let nested = IO.Path.Combine(stateRoot, "nested")
+              IO.Directory.CreateDirectory nested |> ignore
+              let destination = IO.Path.Combine(dropRoot, "destination")
+              IO.Directory.CreateDirectory destination |> ignore
+
+              withEffectEnvironment None None (fun () ->
+                  Expect.equal
+                      (EffectProducerConfig.loadFromEnvironment stateRoot)
+                      (Ok EffectProducerConfig.disabled)
+                      "both variables absent is the production default: no producer enabled")
+
+              withEffectEnvironment None (Some "invoke") (fun () ->
+                  match EffectProducerConfig.loadFromEnvironment stateRoot with
+                  | Error error -> Expect.stringContains error "requires FOGELL_EFFECT_FILE_DROP_ROOT" "a kill hook needs a simulator"
+                  | Ok config -> failtestf "kill hook without a destination was accepted: %A" config)
+
+              withEffectEnvironment (Some "relative/drop") None (fun () ->
+                  Expect.equal
+                      (EffectProducerConfig.loadFromEnvironment stateRoot)
+                      (Error "FOGELL_EFFECT_FILE_DROP_ROOT must be absolute")
+                      "relative destinations are refused")
+
+              withEffectEnvironment (Some(IO.Path.Combine(dropRoot, "missing"))) None (fun () ->
+                  Expect.equal
+                      (EffectProducerConfig.loadFromEnvironment stateRoot)
+                      (Error "FOGELL_EFFECT_FILE_DROP_ROOT must name an existing directory")
+                      "a missing destination is never created by the controller")
+
+              withEffectEnvironment (Some nested) None (fun () ->
+                  Expect.equal
+                      (EffectProducerConfig.loadFromEnvironment stateRoot)
+                      (Error "FOGELL_EFFECT_FILE_DROP_ROOT must be disjoint from FOGELL_STATE_ROOT")
+                      "a destination inside the state root is controller state, not an external effect")
+
+              withEffectEnvironment (Some dropRoot) None (fun () ->
+                  Expect.equal
+                      (EffectProducerConfig.loadFromEnvironment stateRoot)
+                      (Error "FOGELL_EFFECT_FILE_DROP_ROOT must be disjoint from FOGELL_STATE_ROOT")
+                      "a destination that contains the state root is refused as well")
+
+              withEffectEnvironment (Some destination) None (fun () ->
+                  Expect.equal
+                      (EffectProducerConfig.loadFromEnvironment stateRoot)
+                      (Error $"FOGELL_EFFECT_FILE_DROP_ROOT must contain the operator-created {EffectProducerConfig.fileDropRootMarker} marker file")
+                      "an unpinned destination (no operator marker) is refused: the controller never creates the root")
+
+              IO.File.WriteAllBytes(IO.Path.Combine(destination, EffectProducerConfig.fileDropRootMarker), [||])
+
+              withEffectEnvironment (Some destination) (Some "teardown") (fun () ->
+                  Expect.equal
+                      (EffectProducerConfig.loadFromEnvironment stateRoot)
+                      (Error "FOGELL_EFFECT_KILL_AT must be one of prepare, invoke, apply, confirm")
+                      "an unknown window is refused")
+
+              withEffectEnvironment (Some destination) (Some "apply") (fun () ->
+                  Expect.equal
+                      (EffectProducerConfig.loadFromEnvironment stateRoot)
+                      (Ok
+                          { FileDropRoot = Some(IO.Path.GetFullPath destination)
+                            KillAt = Some EffectKillWindow.AfterApply })
+                      "a valid destination with a named window enables the simulator and arms the hook")
+
+              Expect.equal
+                  (EffectProducerConfig.killWindowNames |> List.map fst)
+                  [ "prepare"; "invoke"; "apply"; "confirm" ]
+                  "the four windows are the four ledger transitions"
+          }
+
+          test "with no producer enabled the terminal path makes no Store call" {
+              let unreachable = Store("Host=127.0.0.1;Port=9;Username=nobody;Database=nowhere;Timeout=1")
+              let org, claim = runningClaim "fg026b-disabled" "fg026b-disabled-owner"
+              let authority = EffectAuthority.ofClaim "fg026b-disabled-owner" claim
+
+              Expect.equal
+                  (EffectDispatch.runRegistered unreachable authority EffectDispatch.noHooks EffectProducerConfig.disabled claim Success)
+                  []
+                  "no producer, no dispatch, no database round trip"
+
+              Expect.equal (ledgerRows org claim.AttemptId) 0L "the ledger holds nothing for the attempt"
+              Expect.equal (receiptCount org) 0 "the destination holds nothing"
+          }
+
+          test "a registered file-drop receipt runs prepare, invoke, apply and confirm once, and an exact same-attempt replay is a no-op" {
+              let owner = "fg026b-once-owner"
+              let org, claim = runningClaim "fg026b-once" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let invocations, invocation = counted claim Success
+
+              Expect.equal
+                  (EffectDispatch.run store authority EffectDispatch.noHooks invocation)
+                  (DispatchOutcome.Confirmed false)
+                  "first dispatch confirms"
+              Expect.equal invocations.Value 1 "the destination was driven once"
+              Expect.equal (receiptCount org) 1 "one receipt"
+              Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("confirmed", None)) "ledger confirmed"
+              Expect.sequenceEqual
+                  (IO.File.ReadAllBytes(FileDropReceipt.receiptPath dropRoot claim))
+                  invocation.Payload
+                  "the receipt is the exact canonical payload"
+              Expect.equal
+                  (Text.Encoding.UTF8.GetString invocation.Payload)
+                  $"{{\"build\":\"{claim.BuildId.Value}\",\"attempt\":\"{claim.AttemptId.Value}\",\"fence\":{claim.Fence.Value},\"pipeline_sha256\":\"{claim.PipelineSha256}\",\"journal_terminal\":\"Success\"}}"
+                  "the receipt names the build, attempt, fence, pipeline digest and journal terminal"
+
+              for replay in 1..2 do
+                  Expect.equal
+                      (EffectDispatch.run store authority EffectDispatch.noHooks invocation)
+                      (DispatchOutcome.Confirmed true)
+                      $"replay {replay} is recognised as already confirmed"
+
+              Expect.equal invocations.Value 1 "no replay drives the destination again"
+              Expect.equal (receiptCount org) 1 "still one receipt"
+
+              let registered =
+                  EffectDispatch.runRegistered
+                      store
+                      authority
+                      EffectDispatch.noHooks
+                      { FileDropRoot = Some dropRoot; KillAt = None }
+                      claim
+                      Success
+              Expect.equal
+                  registered
+                  [ EffectProducer.FileDropReceipt, DispatchOutcome.Confirmed true ]
+                  "the registered path reaches the same row through the same key and payload"
+          }
+
+          test "payload substitution on the same attempt-scoped key is refused before any invocation" {
+              let owner = "fg026b-subst-owner"
+              let org, claim = runningClaim "fg026b-subst" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let invocations, invocation = counted claim Success
+
+              // A prepared row with no invocation yet: a different payload under
+              // the same key is refused and still nothing is invoked.
+              abortedRun store authority (withHook EffectKillWindow.AfterPrepare) invocation
+              Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("prepared", None)) "prepared, nothing invoked"
+              let substitutedInvocations, substituted = counted claim Failure
+              match EffectDispatch.run store authority EffectDispatch.noHooks substituted with
+              | DispatchOutcome.Refused reason -> Expect.stringContains reason "payload bytes" "the refusal names the digest mismatch"
+              | other -> failtestf "substituted payload was not refused: %A" other
+              Expect.equal (invocations.Value, substitutedInvocations.Value) (0, 0) "neither invocation ran"
+              Expect.equal (receiptCount org) 0 "no receipt"
+
+              // The original payload resumes under the same live authority and
+              // confirms; the substitute is still refused afterwards.
+              Expect.equal
+                  (EffectDispatch.run store authority EffectDispatch.noHooks invocation)
+                  (DispatchOutcome.Confirmed false)
+                  "the exact payload completes"
+              match EffectDispatch.run store authority EffectDispatch.noHooks substituted with
+              | DispatchOutcome.Refused _ -> ()
+              | other -> failtestf "substituted payload after confirmation was not refused: %A" other
+              Expect.equal (invocations.Value, substitutedInvocations.Value) (1, 0) "only the exact payload ever drove the destination"
+              Expect.sequenceEqual
+                  (IO.File.ReadAllBytes(FileDropReceipt.receiptPath dropRoot claim))
+                  invocation.Payload
+                  "the receipt bytes are the confirmed payload"
+
+              // A flipped byte in the destination is not evidence: a replay sees
+              // the ledger confirmed and never re-invokes, while a fresh confirm
+              // read would have refused it.
+              let path = FileDropReceipt.receiptPath dropRoot claim
+              let tampered = IO.File.ReadAllBytes path
+              tampered.[0] <- tampered.[0] ^^^ 1uy
+              IO.File.WriteAllBytes(path, tampered)
+              Expect.equal (invocation.Confirm()) (Ok false) "the connector's evidence read refuses flipped bytes"
+              Expect.equal
+                  (EffectDispatch.run store authority EffectDispatch.noHooks invocation)
+                  (DispatchOutcome.Confirmed true)
+                  "a confirmed row replays without touching the destination"
+              Expect.equal invocations.Value 1 "tampering after confirmation never triggers a re-invocation"
+          }
+
+          test "stale fence, wrong owner, expired lease and pre-restore epoch are each refused before any invocation" {
+              let refused label (org: OrganizationId) (claim: ExecutionClaim) authority =
+                  let invocations, invocation = counted claim Success
+
+                  match EffectDispatch.run store authority EffectDispatch.noHooks invocation with
+                  | DispatchOutcome.Refused reason ->
+                      Expect.stringContains reason "stale fence, wrong owner, expired lease, pre-restore epoch" $"{label} names the authority refusal"
+                  | other -> failtestf "%s was not refused: %A" label other
+
+                  Expect.equal invocations.Value 0 $"{label}: nothing invoked"
+                  Expect.equal (ledgerRows org claim.AttemptId) 0L $"{label}: no ledger row"
+                  Expect.equal (receiptCount org) 0 $"{label}: no receipt"
+
+              let fenceOrg, fenceClaim = offeredClaim "fg026b-stale-fence" "fg026b-fence-owner"
+              let newerFence =
+                  match store.OfferAttempt(fenceOrg, fenceClaim.AttemptId, "fg026b-fence-owner", 60) with
+                  | Ok fence -> fence
+                  | Error error -> failtestf "re-offer failed: %s" error
+              Expect.isGreaterThan newerFence.Value fenceClaim.Fence.Value "the fence advanced"
+              refused "stale fence" fenceOrg fenceClaim (EffectAuthority.ofClaim "fg026b-fence-owner" fenceClaim)
+
+              let ownerOrg, ownerClaim = runningClaim "fg026b-wrong-owner" "fg026b-owner-a"
+              refused "wrong owner" ownerOrg ownerClaim (EffectAuthority.ofClaim "fg026b-owner-b" ownerClaim)
+
+              let leaseOrg, leaseClaim = runningClaim "fg026b-expired-lease" "fg026b-lease-owner"
+              expireLease leaseOrg leaseClaim.AttemptId
+              refused "expired lease" leaseOrg leaseClaim (EffectAuthority.ofClaim "fg026b-lease-owner" leaseClaim)
+
+              let epochOrg, epochClaim = runningClaim "fg026b-pre-restore" "fg026b-epoch-owner"
+              store.ActivateRestore() |> ignore
+              refused "pre-restore epoch" epochOrg epochClaim (EffectAuthority.ofClaim "fg026b-epoch-owner" epochClaim)
+          }
+
+          test "an abort in each of the four windows leaves the ledger in that window's state and the destination with that window's receipt" {
+              let expectations =
+                  [ EffectKillWindow.AfterPrepare, ("prepared", 0)
+                    EffectKillWindow.AfterInvoke, ("prepared", 1)
+                    EffectKillWindow.AfterApply, ("applied", 1)
+                    EffectKillWindow.AfterConfirm, ("confirmed", 1) ]
+
+              for window, (state, receipts) in expectations do
+                  let owner = $"fg026b-window-owner-%A{window}"
+                  let org, claim = runningClaim $"fg026b-window-%A{window}" owner
+                  let authority = EffectAuthority.ofClaim owner claim
+                  let invocations, invocation = counted claim Success
+
+                  abortedRun store authority (withHook window) invocation
+                  Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some(state, None)) $"%A{window}: ledger state"
+                  Expect.equal (receiptCount org) receipts $"%A{window}: receipt count"
+                  Expect.equal invocations.Value receipts $"%A{window}: invocation count"
+
+                  // Resume under the same live authority: prepared work is driven
+                  // through the idempotent connector, applied work only re-reads
+                  // evidence, confirmed work replays as a no-op. The destination
+                  // never holds more than one receipt.
+                  let resumed = EffectDispatch.run store authority EffectDispatch.noHooks invocation
+                  let expectedResume, expectedInvocations =
+                      match window with
+                      | EffectKillWindow.AfterPrepare -> DispatchOutcome.Confirmed false, 1
+                      | EffectKillWindow.AfterInvoke -> DispatchOutcome.Confirmed false, 2
+                      | EffectKillWindow.AfterApply -> DispatchOutcome.Confirmed false, 1
+                      | EffectKillWindow.AfterConfirm -> DispatchOutcome.Confirmed true, 1
+                  Expect.equal resumed expectedResume $"%A{window}: resume outcome"
+                  Expect.equal invocations.Value expectedInvocations $"%A{window}: invocations after resume"
+                  Expect.equal (receiptCount org) 1 $"%A{window}: exactly one receipt after resume"
+                  Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("confirmed", None)) $"%A{window}: confirmed after resume"
+          }
+
+          test "an invocation failure or absent destination evidence is reported uncertain, leaves the row for reconciliation, and is never re-driven from applied" {
+              let owner = "fg026b-uncertain-owner"
+              let org, claim = runningClaim "fg026b-uncertain" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let _, real = counted claim Success
+
+              let failing = { real with Invoke = fun () -> Error "destination refused the connection" }
+              match EffectDispatch.run store authority EffectDispatch.noHooks failing with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "invocation failed after preparation" "names the window"
+              | other -> failtestf "failed invocation was not uncertain: %A" other
+              Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("prepared", None)) "the row stays prepared"
+
+              let throwing = { real with Invoke = fun () -> failwith "connector threw" }
+              match EffectDispatch.run store authority EffectDispatch.noHooks throwing with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "connector threw" "an exception is data, not a crash"
+              | other -> failtestf "throwing invocation was not uncertain: %A" other
+
+              let blind = ref 0
+              let invokedBlind =
+                  { real with
+                      Invoke =
+                          fun () ->
+                              blind.Value <- blind.Value + 1
+                              real.Invoke()
+                      Confirm = fun () -> Ok false }
+              match EffectDispatch.run store authority EffectDispatch.noHooks invokedBlind with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "evidence absent" "names the missing evidence"
+              | other -> failtestf "absent evidence was not uncertain: %A" other
+              Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("applied", None)) "the row is applied and awaits reconciliation"
+              Expect.equal blind.Value 1 "driven once"
+
+              match EffectDispatch.run store authority EffectDispatch.noHooks invokedBlind with
+              | DispatchOutcome.Uncertain _ -> ()
+              | other -> failtestf "applied row without evidence was not uncertain: %A" other
+              Expect.equal blind.Value 1 "an applied row is never re-driven; only its evidence is re-read"
+
+              let unreadable = { real with Confirm = fun () -> Error "destination unreadable" }
+              match EffectDispatch.run store authority EffectDispatch.noHooks unreadable with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "unreadable" "names the evidence failure"
+              | other -> failtestf "unreadable evidence was not uncertain: %A" other
+
+              // The real evidence is present, so the honest read confirms.
+              Expect.equal (EffectDispatch.run store authority EffectDispatch.noHooks real) (DispatchOutcome.Confirmed false) "evidence present confirms"
+              Expect.equal (receiptCount org) 1 "one receipt throughout"
+          }
+
+          test "a retry child has a fresh attempt-scoped ledger identity and the parent's confirmed row is untouched" {
+              let owner = "fg026b-retry-owner"
+              let org, parent = runningClaim "fg026b-retry" owner
+              let parentAuthority = EffectAuthority.ofClaim owner parent
+              let parentInvocations, parentInvocation = counted parent Failure
+              Expect.equal
+                  (EffectDispatch.run store parentAuthority EffectDispatch.noHooks parentInvocation)
+                  (DispatchOutcome.Confirmed false)
+                  "parent confirms"
+              match store.PublishTerminal(org, parent.AttemptId, parent.Fence, owner, Failure) with
+              | Ok() -> ()
+              | Error error -> failtestf "parent publication failed: %s" error
+
+              let childId = AttemptId(Guid.NewGuid())
+              match store.DecideRetry(org, parent.AttemptId, 2, childId) with
+              | Ok _ -> ()
+              | Error error -> failtestf "retry decision failed: %A" error
+              let child =
+                  match store.ClaimNextExecution(org, owner, "trusted-linux", [ "linux" ], 60) with
+                  | Ok(Some claim) when claim.AttemptId = childId -> claim
+                  | other -> failtestf "the retry child was not claimed: %A" other
+              Expect.equal child.RetryOf (Some parent.AttemptId) "the child carries its parent"
+              match store.BeginExecution(org, child.AttemptId, child.Fence, owner, 60) with
+              | Ok ExecutionStarted -> ()
+              | other -> failtestf "child execution start failed: %A" other
+
+              let childInvocations, childInvocation = counted child Success
+              Expect.notEqual (effectKey child) (effectKey parent) "the child's key is a new attempt-scoped identity"
+              Expect.equal
+                  (EffectDispatch.run store (EffectAuthority.ofClaim owner child) EffectDispatch.noHooks childInvocation)
+                  (DispatchOutcome.Confirmed false)
+                  "the child prepares and confirms afresh"
+              Expect.equal (childInvocations.Value, parentInvocations.Value) (1, 1) "each attempt drove its own destination once"
+              Expect.equal (ledgerRow org parent.AttemptId (effectKey parent)) (Some("confirmed", None)) "the parent row is untouched"
+              Expect.equal (ledgerRow org child.AttemptId (effectKey child)) (Some("confirmed", None)) "the child row is confirmed"
+              Expect.equal (receiptCount org) 2 "two attempts, two receipts: cross-attempt idempotency is the connector's contract, not the ledger's"
+
+              // The parent is terminal: its authority is gone, and its confirmed
+              // row can neither be replayed nor re-prepared by anyone.
+              match EffectDispatch.run store parentAuthority EffectDispatch.noHooks parentInvocation with
+              | DispatchOutcome.Refused _ -> ()
+              | other -> failtestf "a terminal parent's authority was accepted: %A" other
+              Expect.equal parentInvocations.Value 1 "nothing drove the parent's destination again"
+          }
+
+          test "terminal publication is allowed only when every registered producer confirmed" {
+              let producer = EffectProducer.FileDropReceipt
+
+              Expect.equal
+                  (WorkerControl.effectDispatchDisposition [])
+                  WorkerControl.EffectDispatchDisposition.PublishAllowed
+                  "an empty registry confirms vacuously: the terminal path without a producer is unchanged"
+              Expect.equal
+                  (WorkerControl.effectDispatchDisposition [ producer, DispatchOutcome.Confirmed false ])
+                  WorkerControl.EffectDispatchDisposition.PublishAllowed
+                  "a fresh confirmation allows publication"
+              Expect.equal
+                  (WorkerControl.effectDispatchDisposition [ producer, DispatchOutcome.Confirmed true ])
+                  WorkerControl.EffectDispatchDisposition.PublishAllowed
+                  "a replayed confirmation allows publication"
+
+              for outcome in [ DispatchOutcome.Refused "stale"; DispatchOutcome.Uncertain "evidence absent" ] do
+                  Expect.equal
+                      (WorkerControl.effectDispatchDisposition [ producer, DispatchOutcome.Confirmed false; producer, outcome ])
+                      (WorkerControl.EffectDispatchDisposition.ReconcileRequired "effect_dispatch_unconfirmed")
+                      $"%A{outcome} fails closed into reconciliation with a stable reason"
+          }
+
+          test "the startup pass classifies every organization once and turns a throwing pass into a reported error" {
+              let first = OrganizationId(Guid.NewGuid())
+              let second = OrganizationId(Guid.NewGuid())
+              let reports = Collections.Generic.List<OrganizationId * Result<EffectCheckpoint list, string>>()
+
+              Program.reconcileEffectsAtStartup
+                  (fun () -> [ first; second ])
+                  (fun org -> if org = first then Ok [] else failwith "database unavailable")
+                  (fun org outcome -> reports.Add((org, outcome)))
+
+              Expect.equal
+                  (List.ofSeq reports)
+                  [ first, Ok []; second, Error "database unavailable" ]
+                  "each organization is reported exactly once and a throw does not stop the pass"
+
+              let failedListing = Collections.Generic.List<OrganizationId * Result<EffectCheckpoint list, string>>()
+              Program.reconcileEffectsAtStartup
+                  (fun () -> failwith "no organizations")
+                  (fun _ -> failtest "no organization may be reconciled when the listing failed")
+                  (fun org outcome -> failedListing.Add((org, outcome)))
+              Expect.equal
+                  (List.ofSeq failedListing)
+                  [ OrganizationId Guid.Empty, Error "no organizations" ]
+                  "a failed listing is reported once and refuses nothing"
+          }
+
+          test "ControllerConfig carries the effect producer configuration and refuses a kill hook without a destination at startup" {
+              let root = IO.Path.Combine(dropRoot, $"config-{Guid.NewGuid():N}")
+              let destination = IO.Path.Combine(root, "drop")
+              IO.Directory.CreateDirectory destination |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(destination, EffectProducerConfig.fileDropRootMarker), [||])
+              let tokenFile = IO.Path.Combine(root, "token")
+              let runHost = IO.Path.Combine(root, "run-host")
+              IO.File.WriteAllText(tokenFile, String.replicate 32 "t")
+              // FG-251: the token file must be a service-owned regular file at 0400/0600.
+              IO.File.SetUnixFileMode(tokenFile, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite)
+              IO.File.WriteAllText(runHost, "#!/bin/sh\nexit 0\n")
+              IO.File.SetUnixFileMode(runHost, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserExecute)
+
+              let required =
+                  [ "FOGELL_DATABASE_URL", "Host=runtime;Database=fogell"
+                    "FOGELL_MAINTENANCE_DATABASE_URL", "Host=maintenance;Database=fogell"
+                    "FOGELL_API_TOKEN_FILE", tokenFile
+                    "FOGELL_LISTEN_URL", "http://127.0.0.1:18083"
+                    "FOGELL_STATE_ROOT", IO.Path.Combine(root, "state")
+                    "FOGELL_RUN_HOST_PATH", runHost
+                    "FOGELL_LOCAL_TRUST_POOL", "trusted-linux"
+                    "FOGELL_MAX_PIPELINE_BYTES", "1024"
+                    "FOGELL_MAX_LOG_CHUNKS", "100"
+                    "FOGELL_WORKER_POLL_MS", "50"
+                    "FOGELL_WORKER_LEASE_SECONDS", "60" ]
+              let previous = required |> List.map (fun (name, _) -> name, Environment.GetEnvironmentVariable name)
+
+              try
+                  for name, value in required do
+                      Environment.SetEnvironmentVariable(name, value)
+
+                  withEffectEnvironment None None (fun () ->
+                      match ControllerConfig.loadWithSetsidLauncher ControllerConfig.trustedSetsidLauncher with
+                      | Ok config -> Expect.equal config.EffectProducers EffectProducerConfig.disabled "no producer without the variables"
+                      | Error error -> failtestf "configuration refused: %s" error)
+
+                  withEffectEnvironment (Some destination) (Some "confirm") (fun () ->
+                      match ControllerConfig.loadWithSetsidLauncher ControllerConfig.trustedSetsidLauncher with
+                      | Ok config ->
+                          Expect.equal
+                              config.EffectProducers
+                              { FileDropRoot = Some(IO.Path.GetFullPath destination)
+                                KillAt = Some EffectKillWindow.AfterConfirm }
+                              "the simulator destination and armed window reach the worker configuration"
+                      | Error error -> failtestf "configuration refused: %s" error)
+
+                  withEffectEnvironment None (Some "prepare") (fun () ->
+                      match ControllerConfig.loadWithSetsidLauncher ControllerConfig.trustedSetsidLauncher with
+                      | Ok _ -> failtest "a kill hook without a destination reached a configured controller"
+                      | Error error -> Expect.stringContains error "requires FOGELL_EFFECT_FILE_DROP_ROOT" "startup names the refusal")
+
+                  withEffectEnvironment (Some(IO.Path.Combine(root, "state"))) None (fun () ->
+                      match ControllerConfig.loadWithSetsidLauncher ControllerConfig.trustedSetsidLauncher with
+                      | Ok _ -> failtest "the state root itself was accepted as an external destination"
+                      | Error error -> Expect.stringContains error "disjoint from FOGELL_STATE_ROOT" "startup names the containment refusal")
+              finally
+                  previous |> List.iter (fun (name, value) -> Environment.SetEnvironmentVariable(name, value))
+          }
+
+          test "the production lease-expiry trigger classifies an abort in the prepare, invoke and apply windows as tenant-scoped uncertainty with an operator surface and never re-invokes; a confirmed row survives lease loss unlisted" {
+              use worker = newWorker ()
+
+              let surface (org: OrganizationId) (attempt: AttemptId) =
+                  use conn = new Npgsql.NpgsqlConnection(connectionString)
+                  conn.Open()
+                  use cmd = conn.CreateCommand()
+                  cmd.CommandText <-
+                      "SELECT (SELECT count(*) FROM events e
+                                WHERE e.organization_id = @o AND e.attempt_id = @a AND e.kind = 'effect.uncertain'),
+                              (SELECT count(*) FROM outbox o
+                                WHERE o.organization_id = @o AND o.topic = 'effect.uncertain'
+                                  AND o.body->>'attempt' = @a::text),
+                              (SELECT string_agg(e.payload->>'reason' || '/' || (e.payload->>'uncertain_from'), ',')
+                                 FROM events e
+                                WHERE e.organization_id = @o AND e.attempt_id = @a AND e.kind = 'effect.uncertain'),
+                              (SELECT state FROM attempts WHERE organization_id = @o AND id = @a)"
+                  cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                  cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+                  use reader = cmd.ExecuteReader()
+                  Expect.isTrue (reader.Read()) "surface row"
+                  let events = reader.GetInt64 0
+                  let outbox = reader.GetInt64 1
+                  let reasons = if reader.IsDBNull 2 then "" else reader.GetString 2
+                  let attemptState = reader.GetString 3
+                  reader.Close()
+                  events, outbox, reasons, attemptState
+
+              let windows =
+                  [ EffectKillWindow.AfterPrepare, Some("prepared", 0)
+                    EffectKillWindow.AfterInvoke, Some("prepared", 1)
+                    EffectKillWindow.AfterApply, Some("applied", 1)
+                    EffectKillWindow.AfterConfirm, None ]
+
+              // FG026B_NO_MANUAL_STORE_BEGIN
+              // Only the real dispatch, an aged lease, and the production
+              // worker scan appear below; the source audit refuses a manual
+              // reconciliation call inside this fence.
+              for window, classification in windows do
+                  // The production owner shape: the periodic requeue only reaps
+                  // leases held by a local controller identity.
+                  let owner = $"local:fg026b-trigger:%A{window}"
+                  let org, claim = runningClaim $"fg026b-trigger-%A{window}" owner
+                  let authority = EffectAuthority.ofClaim owner claim
+                  let invocations, invocation = counted claim Success
+                  let key = effectKey claim
+
+                  abortedRun store authority (withHook window) invocation
+                  let invocationsAtAbort = invocations.Value
+                  let receiptsAtAbort = receiptCount org
+                  expireLease org claim.AttemptId
+
+                  let ran = worker.ScanOrganization(org, Threading.CancellationToken.None).Result
+                  Expect.isFalse ran $"%A{window}: the scan claimed nothing in this organization"
+                  // The scan only ages and requeues; classification is the
+                  // cadence's pass (verifier P2-2 on #424 removed the scan pass).
+                  worker.ReconcileOnce()
+
+                  let events, outbox, reasons, attemptState = surface org claim.AttemptId
+                  Expect.equal attemptState "reconciliation_required" $"%A{window}: the attempt lost its lease to the production requeue"
+
+                  match classification with
+                  | Some(origin, receipts) ->
+                      Expect.equal (ledgerRow org claim.AttemptId key) (Some("uncertain", Some origin)) $"%A{window}: classified uncertain with its origin"
+                      Expect.equal (events, outbox) (1L, 1L) $"%A{window}: exactly one effect.uncertain event and outbox row"
+                      Expect.equal reasons $"lease_expired/{origin}" $"%A{window}: the surface names the trigger and the origin"
+                      Expect.equal (receiptCount org) receipts $"%A{window}: the destination is untouched by classification"
+                      Expect.contains
+                          (store.ListUncertainEffects org |> List.map (fun c -> c.EffectKey))
+                          key
+                          $"%A{window}: the tenant listing carries the row"
+                  | None ->
+                      Expect.equal (ledgerRow org claim.AttemptId key) (Some("confirmed", None)) $"%A{window}: a confirmed row is final across lease loss"
+                      Expect.equal (events, outbox) (0L, 0L) $"%A{window}: nothing to surface"
+                      Expect.equal (receiptCount org) 1 $"%A{window}: one receipt"
+                      Expect.isEmpty (store.ListUncertainEffects org) $"%A{window}: not listed"
+
+                  Expect.equal invocations.Value invocationsAtAbort $"%A{window}: the trigger invoked nothing"
+                  Expect.equal (receiptCount org) receiptsAtAbort $"%A{window}: the trigger wrote nothing"
+
+                  // The old authority is gone: neither a resume nor a second scan
+                  // drives the destination, and the surface is not duplicated.
+                  match EffectDispatch.run store authority EffectDispatch.noHooks invocation with
+                  | DispatchOutcome.Refused _ -> ()
+                  | other -> failtestf "%A: resume under lost authority was not refused: %A" window other
+                  worker.ScanOrganization(org, Threading.CancellationToken.None).Result |> ignore
+                  worker.ReconcileOnce()
+                  let eventsAgain, outboxAgain, _, _ = surface org claim.AttemptId
+                  Expect.equal (eventsAgain, outboxAgain) (events, outbox) $"%A{window}: a second scan publishes nothing more"
+                  Expect.equal invocations.Value invocationsAtAbort $"%A{window}: still nothing re-invoked"
+                  Expect.equal (receiptCount org) receiptsAtAbort $"%A{window}: still nothing written"
+              // FG026B_NO_MANUAL_STORE_END
+          }
+
+          test "the reconciliation cadence classifies a stale row within two lease periods while the scan loop never runs" {
+              // Codex finding 1 on #424: the scan loop runs one claim to
+              // completion, so a pass bound to it waits for an unrelated build.
+              // Here the scan loop is never started at all; only the periodic
+              // loop runs, on the shortest lease the configuration allows.
+              use worker = newWorkerWithLease 10
+              let owner = "local:fg026b-cadence:owner"
+              let org, claim = runningClaim "fg026b-cadence" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let invocations, invocation = counted claim Success
+              let key = effectKey claim
+
+              abortedRun store authority (withHook EffectKillWindow.AfterInvoke) invocation
+              expireLease org claim.AttemptId
+              Expect.equal (ledgerRow org claim.AttemptId key) (Some("prepared", None)) "stale prepared row before the cadence runs"
+
+              use stop = new Threading.CancellationTokenSource()
+              let loop = worker.ReconciliationLoop stop.Token
+              let deadline = DateTime.UtcNow.AddSeconds 20.0
+              let mutable classified = false
+
+              while not classified && DateTime.UtcNow < deadline do
+                  Threading.Thread.Sleep 250
+                  classified <- ledgerRow org claim.AttemptId key = Some("uncertain", Some "prepared")
+
+              stop.Cancel()
+              loop.Wait(TimeSpan.FromSeconds 10.0) |> ignore
+              Expect.isTrue loop.IsCompletedSuccessfully "the cadence loop stops with its token and does not fault"
+              Expect.isTrue classified "classified within two lease periods without any claim finishing"
+              Expect.equal invocations.Value 1 "the cadence invoked nothing"
+              Expect.equal (receiptCount org) 1 "the cadence wrote nothing"
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use cmd = conn.CreateCommand()
+              cmd.CommandText <-
+                  "SELECT (SELECT count(*) FROM events WHERE organization_id = @o AND attempt_id = @a AND kind = 'effect.uncertain'),
+                          (SELECT count(*) FROM outbox WHERE organization_id = @o AND topic = 'effect.uncertain' AND body->>'attempt' = @a::text)"
+              cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+              cmd.Parameters.AddWithValue("a", claim.AttemptId.Value) |> ignore
+              use reader = cmd.ExecuteReader()
+              Expect.isTrue (reader.Read()) "surface row"
+              Expect.equal (reader.GetInt64 0, reader.GetInt64 1) (1L, 1L) "exactly one event and one outbox row from the cadence"
+          }
+
+          test "a destination that is no longer the pinned root refuses before preparation and is never recreated after it" {
+              // Codex finding 3 on #424: CreateDirectory on a vanished root
+              // would recreate it on whatever filesystem is underneath.
+              let owner = "fg026b-unpinned-owner"
+              let org, claim = runningClaim "fg026b-unpinned" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let root = IO.Path.Combine(dropRoot, $"unpinned-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory root |> ignore
+              let marker = IO.Path.Combine(root, EffectProducerConfig.fileDropRootMarker)
+              IO.File.WriteAllBytes(marker, [||])
+              let invocations = ref 0
+              let real = FileDropReceipt.invocation root claim Success
+              let counted =
+                  { real with
+                      Invoke =
+                          fun () ->
+                              invocations.Value <- invocations.Value + 1
+                              real.Invoke() }
+
+              // Unmounted before the effect starts: refused, no ledger row.
+              IO.File.Delete marker
+              match EffectDispatch.run store authority EffectDispatch.noHooks counted with
+              | DispatchOutcome.Refused reason -> Expect.stringContains reason "not pinned" "names the missing marker"
+              | other -> failtestf "an unpinned destination was not refused: %A" other
+              Expect.equal (ledgerRows org claim.AttemptId) 0L "nothing was prepared"
+              Expect.equal invocations.Value 0 "nothing was invoked"
+
+              // Pinned at preparation, gone by invocation: the row stays
+              // prepared for the trigger, nothing is written, and the root is
+              // not brought back.
+              IO.File.WriteAllBytes(marker, [||])
+              let vanish () = IO.Directory.Delete(root, true)
+              match EffectDispatch.run store authority { EffectDispatch.noHooks with AfterPrepare = vanish } counted with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "not pinned" "the invocation refused the replaced destination"
+              | other -> failtestf "a destination lost after preparation was not uncertain: %A" other
+              Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("prepared", None)) "the row awaits the trigger"
+              Expect.equal invocations.Value 1 "the invocation was attempted once"
+              Expect.isFalse (IO.Directory.Exists root) "the connector did not recreate the root"
+
+              // Remounted: the same authority and payload complete through the
+              // idempotent connector; the receipt lands on the pinned root.
+              IO.Directory.CreateDirectory root |> ignore
+              IO.File.WriteAllBytes(marker, [||])
+              Expect.equal (EffectDispatch.run store authority EffectDispatch.noHooks counted) (DispatchOutcome.Confirmed false) "confirms once the root is pinned again"
+              Expect.isTrue (IO.File.Exists(FileDropReceipt.receiptPath root claim)) "the receipt is on the pinned root"
+              Expect.equal (counted.Confirm()) (Ok true) "evidence reads true while pinned"
+              IO.File.Delete marker
+              Expect.equal (counted.Confirm()) (Ok false) "an unpinned root offers no evidence, whatever bytes it holds"
+          }
+
+          test "an oversized pre-written receipt is no evidence: Confirm checks the length on the open descriptor and never reads it" {
+              // Codex finding 5 on #424: ReadAllBytes on the predictable path
+              // would allocate whatever a same-UID writer left there.
+              let owner = "fg026b-oversized-owner"
+              let org, claim = runningClaim "fg026b-oversized" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let invocations, invocation = counted claim Success
+              let path = FileDropReceipt.receiptPath dropRoot claim
+              IO.Directory.CreateDirectory(IO.Path.GetDirectoryName path) |> ignore
+
+              // A 3 GiB sparse file: reading it whole would exceed the byte-array
+              // limit and surface as an exception, so an evidence read that
+              // touches the bytes cannot answer Ok false.
+              do
+                  use oversized = IO.File.Create path
+                  oversized.SetLength(3L * 1024L * 1024L * 1024L)
+
+              let before = GC.GetTotalAllocatedBytes false
+              Expect.equal (invocation.Confirm()) (Ok false) "a receipt of the wrong length is not evidence"
+              Expect.isLessThan (GC.GetTotalAllocatedBytes false - before) (64L * 1024L * 1024L) "the oversized file was not read into memory"
+
+              match EffectDispatch.run store authority EffectDispatch.noHooks invocation with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "evidence absent" "the outcome is uncertain, never confirmed, and not an exception"
+              | other -> failtestf "an oversized pre-written receipt produced %A" other
+              Expect.equal invocations.Value 1 "the idempotent write saw the existing file and left it alone"
+              Expect.equal (IO.FileInfo(path).Length) (3L * 1024L * 1024L * 1024L) "the pre-written file is untouched"
+              Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("applied", None)) "applied, awaiting the trigger"
+
+              // Same length, different bytes: still no evidence.
+              IO.File.WriteAllBytes(path, Array.create invocation.Payload.Length 0x20uy)
+              Expect.equal (invocation.Confirm()) (Ok false) "equal length with different bytes is refused byte-exactly"
+              IO.File.WriteAllBytes(path, invocation.Payload)
+              Expect.equal (invocation.Confirm()) (Ok true) "the exact bytes confirm"
+          }
+
+          test "a root that vanishes after the pin creates nothing at the configured path" {
+              // Codex finding 6 on #424: a recursive CreateDirectory after the pin
+              // would rebuild the organization directory on the underlying
+              // filesystem. Everything after the pin is relative to the opened
+              // root descriptor, so a dead root fails and recreates nothing.
+              let owner = "fg026b-descriptor-owner"
+              let org, claim = runningClaim "fg026b-descriptor" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let root = IO.Path.Combine(dropRoot, $"vanishing-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory root |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(root, EffectProducerConfig.fileDropRootMarker), [||])
+              let organizationDirectory = IO.Path.Combine(root, org.Value.ToString "N")
+
+              // The pin succeeded (root opened, marker seen through it); the
+              // mount then vanishes before anything is created.
+              let vanish () = IO.Directory.Delete(root, true)
+              let invocation = FileDropReceipt.invocationWith vanish ignore root claim Success
+
+              match EffectDispatch.run store authority EffectDispatch.noHooks invocation with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "pinned destination" "the write failed on the dead descriptor"
+              | other -> failtestf "a root lost after the pin produced %A" other
+              Expect.isFalse (IO.Directory.Exists root) "the configured path was not recreated"
+              Expect.isFalse (IO.Directory.Exists organizationDirectory) "no organization directory exists at the configured path"
+              Expect.isFalse (IO.File.Exists(FileDropReceipt.receiptPath root claim)) "no receipt exists anywhere under the configured path"
+              Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("prepared", None)) "the row awaits the trigger"
+
+              // A symlink standing in for the root is not the pinned root.
+              let elsewhere = IO.Path.Combine(dropRoot, $"elsewhere-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory elsewhere |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(elsewhere, EffectProducerConfig.fileDropRootMarker), [||])
+              IO.File.CreateSymbolicLink(root, elsewhere) |> ignore
+              match EffectDispatch.run store authority EffectDispatch.noHooks (FileDropReceipt.invocation root claim Success) with
+              | DispatchOutcome.Refused reason -> Expect.stringContains reason "without following links" "a linked root is refused before preparation is touched"
+              | other -> failtestf "a symlinked root produced %A" other
+              Expect.isFalse (IO.Directory.Exists(IO.Path.Combine(elsewhere, org.Value.ToString "N"))) "nothing was written through the link"
+          }
+
+          test "a FIFO planted at the receipt path or the marker path is refused within a bounded time and never blocks the worker" {
+              // Codex round 4 (P1): a blocking open of a planted FIFO would park
+              // the worker forever. Every read-side open is O_NONBLOCK and is
+              // followed by a regular-file check.
+              let owner = "fg026b-fifo-owner"
+              let org, claim = runningClaim "fg026b-fifo" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let root = IO.Path.Combine(dropRoot, $"fifo-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory root |> ignore
+              let marker = IO.Path.Combine(root, EffectProducerConfig.fileDropRootMarker)
+              IO.File.WriteAllBytes(marker, [||])
+              let invocations = ref 0
+              let real = FileDropReceipt.invocation root claim Success
+              let counted =
+                  { real with
+                      Invoke =
+                          fun () ->
+                              invocations.Value <- invocations.Value + 1
+                              real.Invoke() }
+
+              let bounded label (action: unit -> 'a) =
+                  let watch = Diagnostics.Stopwatch.StartNew()
+                  let result = action ()
+                  Expect.isLessThan watch.ElapsedMilliseconds 1000L $"{label} returned within a second"
+                  result
+
+              // A FIFO where the receipt should be: the write leaves it alone
+              // (idempotent existing entry), Confirm refuses it as not a regular
+              // file, the outcome is Uncertain, and nothing waited on a writer.
+              let receiptPath = FileDropReceipt.receiptPath root claim
+              IO.Directory.CreateDirectory(IO.Path.GetDirectoryName receiptPath) |> ignore
+              Expect.equal (mkfifo (receiptPath, 0o600u)) 0 "a FIFO was planted at the receipt path"
+              Expect.equal (bounded "Confirm on a FIFO receipt" counted.Confirm) (Ok false) "a FIFO is no evidence"
+              match bounded "dispatch over a FIFO receipt" (fun () -> EffectDispatch.run store authority EffectDispatch.noHooks counted) with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "evidence absent" "uncertain, never confirmed"
+              | other -> failtestf "a FIFO receipt produced %A" other
+              Expect.equal invocations.Value 1 "the write saw the existing entry and did not replace it"
+              Expect.isTrue (IO.File.Exists receiptPath) "the planted FIFO is still there: nothing was replaced or unlinked"
+              IO.File.Delete receiptPath
+
+              // A FIFO where the marker should be: the pin is refused before
+              // preparation, in bounded time, and nothing is invoked.
+              IO.File.Delete marker
+              Expect.equal (mkfifo (marker, 0o600u)) 0 "a FIFO was planted at the marker path"
+              match bounded "pin over a FIFO marker" (fun () -> FileDropReceipt.pinned root) with
+              | Error reason -> Expect.stringContains reason "not a regular file" "the marker must be a regular file"
+              | Ok() -> failtest "a FIFO marker pinned the root"
+              match bounded "dispatch over a FIFO marker" (fun () -> EffectDispatch.run store authority EffectDispatch.noHooks counted) with
+              | DispatchOutcome.Refused reason -> Expect.stringContains reason "not a regular file" "refused before anything is touched"
+              | other -> failtestf "a FIFO marker produced %A" other
+              Expect.equal invocations.Value 1 "nothing was invoked under an unpinned root"
+
+              // A directory or a symlink standing in for the marker is refused
+              // the same way.
+              IO.File.Delete marker
+              IO.Directory.CreateDirectory marker |> ignore
+              match FileDropReceipt.pinned root with
+              | Error reason -> Expect.stringContains reason "not a regular file" "a directory is not the marker"
+              | Ok() -> failtest "a directory marker pinned the root"
+              IO.Directory.Delete marker
+              let elsewhere = IO.Path.Combine(root, "real-marker")
+              IO.File.WriteAllBytes(elsewhere, [||])
+              IO.File.CreateSymbolicLink(marker, elsewhere) |> ignore
+              match FileDropReceipt.pinned root with
+              | Error reason -> Expect.stringContains reason "cannot be opened for reading" "a linked marker is refused without following it"
+              | Ok() -> failtest "a symlinked marker pinned the root"
+              IO.File.Delete marker
+              Expect.equal (link (elsewhere, marker)) 0 "a hard link was planted at the marker path"
+              match FileDropReceipt.pinned root with
+              | Error reason -> Expect.stringContains reason "more than one link" "a hard-linked marker is refused"
+              | Ok() -> failtest "a hard-linked marker pinned the root"
+          }
+
+          test "the receipt's directory entry is made durable in order: temp data, rename, organization directory, after the root gained the organization entry" {
+              // Codex round 4 (P1): fsync of the temp file alone leaves the
+              // rename and the new organization directory undurable while the
+              // ledger records applied/confirmed.
+              let owner = "fg026b-durable-owner"
+              let org, claim = runningClaim "fg026b-durable" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let steps = Collections.Generic.List<string>()
+              let invocation = FileDropReceipt.invocationWith ignore steps.Add dropRoot claim Success
+
+              Expect.equal (EffectDispatch.run store authority EffectDispatch.noHooks invocation) (DispatchOutcome.Confirmed false) "confirms"
+              Expect.equal
+                  (List.ofSeq steps)
+                  [ "root-fsynced"; "temp-fsynced"; "renamed"; "organization-fsynced" ]
+                  "the root is synced after the organization entry, the temp data before the rename, the organization directory after it"
+
+              // A replay drives nothing and syncs nothing.
+              steps.Clear()
+              Expect.equal (EffectDispatch.run store authority EffectDispatch.noHooks invocation) (DispatchOutcome.Confirmed true) "replay"
+              Expect.isEmpty steps "a confirmed replay performs no destination I/O"
+          }
+
+          test "startup refuses a drop root or marker that is writable but not readable, by name" {
+              // Codex round 4 (P2): the old probe proved write/exec on the root
+              // and existence of the marker; dispatch then failed every build on
+              // a 0300 root or a 0200 marker. Startup now performs the runtime
+              // opens. (Root bypasses permission bits, so the arms are skipped
+              // under an effective uid of 0.)
+              let stateRoot = IO.Path.Combine(dropRoot, $"unreadable-state-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory stateRoot |> ignore
+              let root = IO.Path.Combine(dropRoot, $"unreadable-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory root |> ignore
+              let marker = IO.Path.Combine(root, EffectProducerConfig.fileDropRootMarker)
+              IO.File.WriteAllBytes(marker, [||])
+              let restore () =
+                  IO.File.SetUnixFileMode(root, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute)
+                  if IO.File.Exists marker then
+                      IO.File.SetUnixFileMode(marker, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite)
+
+              try
+                  Expect.isOk (EffectProducerConfig.validateFileDropRoot stateRoot root) "a readable, writable, pinned root is accepted"
+
+                  if not (effectiveIdentityIsRoot ()) then
+                      IO.File.SetUnixFileMode(root, IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute)
+                      match EffectProducerConfig.validateFileDropRoot stateRoot root with
+                      | Error reason -> Expect.stringContains reason "is not readable as the pinned directory" "a 0300 root is refused by name"
+                      | Ok accepted -> failtestf "a 0300 root was accepted: %s" accepted
+                      restore ()
+
+                      IO.File.SetUnixFileMode(marker, IO.UnixFileMode.UserWrite)
+                      match EffectProducerConfig.validateFileDropRoot stateRoot root with
+                      | Error reason -> Expect.stringContains reason "readable regular" "a 0200 marker is refused by name"
+                      | Ok accepted -> failtestf "a 0200 marker was accepted: %s" accepted
+                      restore ()
+
+                  // An oversized marker is refused at startup even when readable.
+                  do
+                      use sparse = IO.File.Open(marker, IO.FileMode.Open, IO.FileAccess.Write)
+                      sparse.SetLength(DestinationDescriptor.markerMaxBytes + 1L)
+                  match EffectProducerConfig.validateFileDropRoot stateRoot root with
+                  | Error reason -> Expect.stringContains reason "larger than" "an oversized marker is refused by name"
+                  | Ok accepted -> failtestf "an oversized marker was accepted: %s" accepted
+
+                  // A FIFO marker is refused at startup, in bounded time.
+                  IO.File.Delete marker
+                  Expect.equal (mkfifo (marker, 0o600u)) 0 "a FIFO was planted at the marker path"
+                  let watch = Diagnostics.Stopwatch.StartNew()
+                  match EffectProducerConfig.validateFileDropRoot stateRoot root with
+                  | Error reason -> Expect.stringContains reason "not a regular file" "a FIFO marker is refused by name"
+                  | Ok accepted -> failtestf "a FIFO marker was accepted: %s" accepted
+                  Expect.isLessThan watch.ElapsedMilliseconds 1000L "startup validation did not block on the FIFO"
+              finally
+                  restore ()
+          }
+
+          test "startup decides drop-root disjointness physically: a symlinked ancestor into the state root is refused, a genuine sibling passes" {
+              // Codex round 5 (P2): the lexical StartsWith on GetFullPath cannot
+              // see `/srv/alias -> /srv/state` with root `/srv/alias/drop`.
+              let area = IO.Path.Combine(dropRoot, $"physical-{Guid.NewGuid():N}")
+              let stateRoot = IO.Path.Combine(area, "state")
+              let inside = IO.Path.Combine(stateRoot, "drop")
+              IO.Directory.CreateDirectory inside |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(inside, EffectProducerConfig.fileDropRootMarker), [||])
+              let alias = IO.Path.Combine(area, "alias")
+              IO.Directory.CreateSymbolicLink(alias, stateRoot) |> ignore
+              let throughAlias = IO.Path.Combine(alias, "drop")
+
+              Expect.isFalse
+                  ((IO.Path.GetFullPath throughAlias).StartsWith(IO.Path.GetFullPath stateRoot + "/"))
+                  "the lexical check alone would accept the aliased path"
+              match EffectProducerConfig.validateFileDropRoot stateRoot throughAlias with
+              | Error reason -> Expect.stringContains reason "physically inside" "the walk finds the state root above the drop root"
+              | Ok accepted -> failtestf "a symlinked ancestor into the state root was accepted: %s" accepted
+
+              match EffectProducerConfig.validateFileDropRoot stateRoot stateRoot with
+              | Error reason -> Expect.stringContains reason "disjoint" "the state root itself is still refused lexically first"
+              | Ok accepted -> failtestf "the state root itself was accepted: %s" accepted
+
+              // The reverse: the drop root physically containing the state root
+              // through an alias of the state root.
+              let outer = IO.Path.Combine(area, "outer")
+              let nestedState = IO.Path.Combine(outer, "nested-state")
+              IO.Directory.CreateDirectory nestedState |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(outer, EffectProducerConfig.fileDropRootMarker), [||])
+              let stateAlias = IO.Path.Combine(area, "state-alias")
+              IO.Directory.CreateSymbolicLink(stateAlias, nestedState) |> ignore
+              match EffectProducerConfig.validateFileDropRoot stateAlias outer with
+              | Error reason -> Expect.stringContains reason "physically contains" "the reverse walk finds the drop root above the state root"
+              | Ok accepted -> failtestf "a drop root containing the aliased state root was accepted: %s" accepted
+
+              // A genuine sibling passes.
+              let sibling = IO.Path.Combine(area, "sibling")
+              IO.Directory.CreateDirectory sibling |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(sibling, EffectProducerConfig.fileDropRootMarker), [||])
+              Expect.equal (EffectProducerConfig.validateFileDropRoot stateRoot sibling) (Ok(IO.Path.GetFullPath sibling)) "a disjoint sibling is accepted"
+          }
+
+          test "a write that fails mid-stream leaves no temp file behind, reports Uncertain with the cause, and the row is never confirmed" {
+              // Codex round 8 (P2): a Write or Flush(true) that throws (ENOSPC,
+              // EIO) used to leave the process-owned .tmp behind; repeated
+              // terminal attempts during an outage accumulated them.
+              let owner = "fg026b-enospc-owner"
+              let org, claim = runningClaim "fg026b-enospc" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let organizationDirectory = IO.Path.Combine(dropRoot, org.Value.ToString "N")
+              let temps () =
+                  if IO.Directory.Exists organizationDirectory then
+                      IO.Directory.GetFiles(organizationDirectory, "*.tmp") |> Array.length
+                  else
+                      0
+              let steps = Collections.Generic.List<string>()
+
+              // The injected writer writes one byte and then fails the way a full
+              // destination does; the temp file exists at that moment.
+              let failing (stream: IO.Stream) (bytes: byte array) =
+                  stream.Write(bytes, 0, 1)
+                  Expect.equal (temps ()) 1 "the temp file exists while the write is in flight"
+                  raise (IO.IOException "No space left on device (simulated)")
+
+              let invocation = FileDropReceipt.invocationWithWriter ignore steps.Add failing dropRoot claim Success
+
+              for attempt in 1..3 do
+                  match EffectDispatch.run store authority EffectDispatch.noHooks invocation with
+                  | DispatchOutcome.Uncertain reason ->
+                      Expect.stringContains reason "No space left on device" $"attempt {attempt}: the exception is the reason, not a crash"
+                  | other -> failtestf "attempt %d: a failed write produced %A" attempt other
+                  Expect.equal (temps ()) 0 $"attempt {attempt}: no temp file is left behind"
+                  Expect.isFalse (IO.File.Exists(FileDropReceipt.receiptPath dropRoot claim)) $"attempt {attempt}: no receipt was published"
+                  Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("prepared", None)) $"attempt {attempt}: the row is prepared, never applied or confirmed"
+
+              Expect.equal
+                  (List.ofSeq steps |> List.filter (fun step -> step = "temp-unlinked"))
+                  [ "temp-unlinked"; "temp-unlinked"; "temp-unlinked" ]
+                  "every failed attempt unlinked its own temp name"
+              Expect.isFalse (steps.Contains "renamed") "nothing was renamed"
+              Expect.isFalse (steps.Contains "organization-fsynced") "the organization directory was not fsynced after a failed write"
+
+              // A worker survives it: the same authority completes with a healthy
+              // writer, leaving exactly one receipt and no temp file.
+              Expect.equal
+                  (EffectDispatch.run store authority EffectDispatch.noHooks (FileDropReceipt.invocation dropRoot claim Success))
+                  (DispatchOutcome.Confirmed false)
+                  "a healthy write after the outage confirms"
+              Expect.equal (temps ()) 0 "still no temp file"
+              Expect.equal (IO.Directory.GetFiles(organizationDirectory, "*.receipt").Length) 1 "one receipt"
+          }
+
+          test "startup runs the writer's exact sequence as its probe and refuses by syscall name when the filesystem cannot rename without replace" {
+              // Codex round 9 (P2): a probe that only proves a file create let a
+              // filesystem without RENAME_NOREPLACE or directory fsync pass
+              // startup and fail every receipt later.
+              let stateRoot = IO.Path.Combine(dropRoot, $"probe-state-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory stateRoot |> ignore
+              let root = IO.Path.Combine(dropRoot, $"probe-root-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory root |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(root, EffectProducerConfig.fileDropRootMarker), [||])
+              let probeDirectories () = IO.Directory.GetDirectories(root, DestinationDescriptor.probeDirectoryPrefix + "*")
+
+              Expect.equal (EffectProducerConfig.validateFileDropRoot stateRoot root) (Ok(IO.Path.GetFullPath root)) "a healthy root passes the full write sequence"
+              Expect.isEmpty (probeDirectories ()) "the probe directory is removed after a successful probe"
+              Expect.isEmpty (IO.Directory.GetFiles(root, "*", IO.SearchOption.AllDirectories) |> Array.filter (fun f -> not (f.EndsWith EffectProducerConfig.fileDropRootMarker))) "the probe leaves nothing but the marker"
+
+              // A filesystem that refuses RENAME_NOREPLACE (EINVAL, as an old
+              // kernel or filesystem answers renameat2 flags).
+              let noRenameNoReplace =
+                  { DestinationDescriptor.nativeWriteSyscalls with
+                      RenameNoReplace = fun _ _ _ -> Error 22 }
+              match EffectProducerConfig.validateFileDropRootWith noRenameNoReplace stateRoot root with
+              | Error reason ->
+                  Expect.stringContains reason "renameat2(RENAME_NOREPLACE)" "the refusal names the syscall"
+                  Expect.stringContains reason "errno 22" "and the errno"
+                  Expect.stringContains reason "does not support the receipt write sequence" "as a startup refusal"
+              | Ok accepted -> failtestf "a root without RENAME_NOREPLACE was accepted: %s" accepted
+              Expect.isEmpty (IO.Directory.GetFiles(root, "*.tmp", IO.SearchOption.AllDirectories)) "the probe's temp was unlinked on the failed rename"
+              Expect.isEmpty (probeDirectories ()) "the probe directory is removed after a failed probe too"
+
+              // The probe's own cleanup failing is a refusal as well.
+              let noUnlink =
+                  { DestinationDescriptor.nativeWriteSyscalls with
+                      Unlink = fun _ _ -> Error 30 }
+              match EffectProducerConfig.validateFileDropRootWith noUnlink stateRoot root with
+              | Error reason -> Expect.stringContains reason "unlinkat of the probe receipt failed (errno 30)" "an unlink that fails at startup is named"
+              | Ok accepted -> failtestf "a root whose probe receipt cannot be unlinked was accepted: %s" accepted
+              // Leave the root clean for the next arm.
+              for stale in probeDirectories () do IO.Directory.Delete(stale, true)
+
+              Expect.equal (EffectProducerConfig.validateFileDropRoot stateRoot root) (Ok(IO.Path.GetFullPath root)) "the healthy sequence still passes afterwards"
+          }
+
+          test "a temp file whose unlink fails after a failed write is reported in the trace and the Uncertain reason, never confirmed" {
+              // Codex round 9 (P2): unlinkat's return was discarded and the trace
+              // said temp-unlinked even when the unlink failed (EROFS, EIO).
+              let owner = "fg026b-erofs-owner"
+              let org, claim = runningClaim "fg026b-erofs" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let organizationDirectory = IO.Path.Combine(dropRoot, org.Value.ToString "N")
+              let steps = Collections.Generic.List<string>()
+              let failing (stream: IO.Stream) (bytes: byte array) =
+                  stream.Write(bytes, 0, 1)
+                  raise (IO.IOException "Input/output error (simulated)")
+              let readOnlyRemount =
+                  { DestinationDescriptor.nativeWriteSyscalls with
+                      Unlink = fun _ _ -> Error 30 }
+              let invocation = FileDropReceipt.invocationWithIo ignore steps.Add failing readOnlyRemount dropRoot claim Success
+
+              match EffectDispatch.run store authority EffectDispatch.noHooks invocation with
+              | DispatchOutcome.Uncertain reason ->
+                  Expect.stringContains reason "Input/output error" "the write failure is the reason"
+                  Expect.stringContains reason "unlinkat of the receipt temp file" "and the unlink failure is named"
+                  Expect.stringContains reason "errno 30" "with its errno"
+                  Expect.stringContains reason "orphan remains for the operator" "and the orphan is stated"
+              | other -> failtestf "a failed write with a failed unlink produced %A" other
+              Expect.contains (List.ofSeq steps) "temp-unlink-failed:30" "the trace names the failed unlink"
+              Expect.isFalse (steps.Contains "temp-unlinked") "the trace does not claim an unlink that did not happen"
+              Expect.equal (ledgerRow org claim.AttemptId (effectKey claim)) (Some("prepared", None)) "the row is prepared, never confirmed"
+              Expect.equal (IO.Directory.GetFiles(organizationDirectory, "*.tmp").Length) 1 "the orphan temp is visible to the operator (the injected unlink refused it)"
+
+              // An EEXIST loser whose unlink fails is also reported, not confirmed.
+              IO.File.Delete(IO.Directory.GetFiles(organizationDirectory, "*.tmp").[0])
+              IO.Directory.CreateDirectory(FileDropReceipt.receiptPath dropRoot claim) |> ignore
+              steps.Clear()
+              let loser = FileDropReceipt.invocationWithIo ignore steps.Add DestinationDescriptor.writeBytes readOnlyRemount dropRoot claim Success
+              // The receipt name is now held by a planted directory, so the write
+              // sees an existing entry and never creates a temp; Confirm refuses
+              // the directory.
+              match EffectDispatch.run store authority EffectDispatch.noHooks loser with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "evidence absent" "a planted directory is no evidence"
+              | other -> failtestf "a planted directory produced %A" other
+              Expect.equal (IO.Directory.GetFiles(organizationDirectory, "*.tmp").Length) 0 "no temp was created for an existing entry"
+          }
+
+          test "the startup probe uses a per-process directory: a leftover probe directory with a stray file, and two concurrent validations, all pass" {
+              // Verifier P2-1 on #424: a fixed `.fogell-probe` name made a
+              // leftover (a prober that died between rename and unlink) or a
+              // second controller probing the same root refuse every later
+              // startup with ENOTEMPTY/ENOENT.
+              let stateRoot = IO.Path.Combine(dropRoot, $"shared-state-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory stateRoot |> ignore
+              let root = IO.Path.Combine(dropRoot, $"shared-root-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory root |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(root, EffectProducerConfig.fileDropRootMarker), [||])
+
+              // A leftover from an older prober, with a stray receipt inside.
+              let leftover = IO.Path.Combine(root, ".fogell-probe")
+              IO.Directory.CreateDirectory leftover |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(leftover, "probe-dead.receipt"), [| 1uy |])
+              // And a per-process-shaped leftover from a prober that died mid-way.
+              let deadProbe = IO.Path.Combine(root, DestinationDescriptor.probeDirectoryPrefix + "deadbeef")
+              IO.Directory.CreateDirectory deadProbe |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(deadProbe, "probe-dead.receipt"), [| 1uy |])
+
+              Expect.equal (EffectProducerConfig.validateFileDropRoot stateRoot root) (Ok(IO.Path.GetFullPath root)) "leftovers of other probers do not refuse this startup"
+              Expect.isTrue (IO.Directory.Exists leftover && IO.Directory.Exists deadProbe) "and are never touched: only this process's own probe directory is removed"
+
+              let results =
+                  [ 1..8 ]
+                  |> List.map (fun _ -> Threading.Tasks.Task.Run(fun () -> EffectProducerConfig.validateFileDropRoot stateRoot root))
+                  |> List.map (fun task -> task.Result)
+              Expect.allEqual results (Ok(IO.Path.GetFullPath root)) "eight concurrent validations of one root all pass"
+              Expect.isEmpty
+                  (IO.Directory.GetDirectories root |> Array.filter (fun d -> IO.Path.GetFileName d <> ".fogell-probe" && IO.Path.GetFileName d <> IO.Path.GetFileName deadProbe))
+                  "every prober removed its own probe directory"
+          }
+
+          test "the disjointness walk needs only search permission on ancestors: a 0311 ancestor passes, and the aliased case is still refused" {
+              // Verifier P2-3 on #424: opening each parent O_RDONLY needed read
+              // permission, so a hardened 0711/0311 ancestor refused startup
+              // with EACCES. The walk now opens parents O_PATH.
+              let area = IO.Path.Combine(dropRoot, $"hardened-{Guid.NewGuid():N}")
+              let ancestor = IO.Path.Combine(area, "ancestor")
+              let stateRoot = IO.Path.Combine(area, "state")
+              let root = IO.Path.Combine(ancestor, "drop")
+              IO.Directory.CreateDirectory stateRoot |> ignore
+              IO.Directory.CreateDirectory root |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(root, EffectProducerConfig.fileDropRootMarker), [||])
+              let restore () =
+                  IO.File.SetUnixFileMode(ancestor, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute)
+
+              try
+                  if not (effectiveIdentityIsRoot ()) then
+                      IO.File.SetUnixFileMode(ancestor, IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute)
+                      Expect.equal (EffectProducerConfig.validateFileDropRoot stateRoot root) (Ok(IO.Path.GetFullPath root)) "a 0311 ancestor is walked with search permission only"
+
+                  // The aliased case is still refused through the same walk.
+                  let inside = IO.Path.Combine(stateRoot, "drop")
+                  IO.Directory.CreateDirectory inside |> ignore
+                  IO.File.WriteAllBytes(IO.Path.Combine(inside, EffectProducerConfig.fileDropRootMarker), [||])
+                  let alias = IO.Path.Combine(area, "alias")
+                  IO.Directory.CreateSymbolicLink(alias, stateRoot) |> ignore
+                  match EffectProducerConfig.validateFileDropRoot stateRoot (IO.Path.Combine(alias, "drop")) with
+                  | Error reason -> Expect.stringContains reason "physically inside" "the O_PATH walk still finds the state root above the aliased drop root"
+                  | Ok accepted -> failtestf "a symlinked ancestor into the state root was accepted: %s" accepted
+              finally
+                  restore ()
+          }
+
+          test "GET effects/uncertain lists one organization's uncertain effects read-only, denies other organizations their view of it, and refuses a malformed organization" {
+              let app, baseUrl = startServer 1000
+
+              try
+                  use worker = newWorker ()
+                  let owner = "local:fg026b-route:owner"
+                  let org, project = freshProject ()
+                  let claim = admitClaim org project "fg026b-route" owner
+                  let authority = EffectAuthority.ofClaim owner claim
+                  let invocations, invocation = counted claim Success
+                  let key = effectKey claim
+                  let url (o: OrganizationId) = $"{baseUrl}/api/v1/organizations/{o.Value}/effects/uncertain"
+
+                  let emptyCode, emptyBody = send HttpMethod.Get (url org) (Some token) None None
+                  Expect.equal emptyCode 200 "an organization with nothing uncertain lists an empty set"
+                  Expect.equal
+                      emptyBody
+                      $"{{\"organization_id\":\"{org.Value}\",\"effects\":[],\"next_cursor\":null}}"
+                      "the empty listing names the organization and no effects"
+
+                  abortedRun store authority (withHook EffectKillWindow.AfterInvoke) invocation
+                  expireLease org claim.AttemptId
+                  worker.ScanOrganization(org, Threading.CancellationToken.None).Result |> ignore
+                  worker.ReconcileOnce()
+
+                  let code, body = send HttpMethod.Get (url org) (Some token) None None
+                  Expect.equal code 200 "the tenant listing is served"
+                  use document = JsonDocument.Parse body
+                  let root = document.RootElement
+                  Expect.equal (root.GetProperty("organization_id").GetString()) (org.Value.ToString()) "the response names the organization"
+                  let effects = root.GetProperty("effects").EnumerateArray() |> List.ofSeq
+                  Expect.equal effects.Length 1 "exactly one uncertain effect"
+                  let effect = effects.Head
+                  Expect.equal (effect.GetProperty("attempt_id").GetString()) (claim.AttemptId.Value.ToString()) "attempt_id"
+                  Expect.equal (effect.GetProperty("effect_key").GetString()) key "effect_key"
+                  Expect.equal (effect.GetProperty("fence").GetInt64()) claim.Fence.Value "fence"
+                  Expect.equal (effect.GetProperty("authority_owner").GetString()) owner "authority_owner"
+                  Expect.equal (effect.GetProperty("uncertain_from").GetString()) "prepared" "uncertain_from names the window"
+                  Expect.equal
+                      (effect.GetProperty("payload_sha256").GetString())
+                      (Convert.ToHexStringLower(Security.Cryptography.SHA256.HashData invocation.Payload))
+                      "payload_sha256 is the digest of the exact prepared bytes"
+                  Expect.equal
+                      (effect.GetProperty("restore_epoch").GetInt64())
+                      (store.CurrentRestoreEpoch().Value)
+                      "restore_epoch is the epoch the effect was prepared under"
+                  let uncertainAt = DateTimeOffset.Parse(effect.GetProperty("uncertain_at").GetString(), Globalization.CultureInfo.InvariantCulture)
+                  Expect.isTrue (uncertainAt.Offset = TimeSpan.Zero && uncertainAt > DateTimeOffset.UtcNow.AddMinutes -5.0) "uncertain_at is a recent UTC instant"
+                  Expect.equal (effect.EnumerateObject() |> Seq.length) 8 "the wire shape has exactly the eight documented fields"
+
+                  let otherOrg, _ = freshProject ()
+                  let otherCode, otherBody = send HttpMethod.Get (url otherOrg) (Some token) None None
+                  Expect.equal otherCode 200 "another organization is served its own view"
+                  Expect.equal
+                      otherBody
+                      $"{{\"organization_id\":\"{otherOrg.Value}\",\"effects\":[],\"next_cursor\":null}}"
+                      "another organization sees nothing of this tenant's uncertainty"
+
+                  let malformedCode, malformedBody =
+                      send HttpMethod.Get $"{baseUrl}/api/v1/organizations/not-a-uuid/effects/uncertain" (Some token) None None
+                  Expect.equal malformedCode 400 "a malformed organization is refused"
+                  Expect.stringContains malformedBody "malformed_identifier" "with the stable code"
+
+                  let unauthorizedCode, unauthorizedBody = send HttpMethod.Get (url org) None None None
+                  Expect.equal unauthorizedCode 401 "no bearer, no listing"
+                  Expect.isFalse (unauthorizedBody.Contains key) "an unauthenticated caller learns no effect key"
+
+                  let postCode, _ = send HttpMethod.Post (url org) (Some token) None (Some "{}")
+                  Expect.equal postCode 405 "the surface is read-only: nothing replays, resolves or dismisses through it"
+
+                  // Codex finding 4 on #424: the listing is bounded. A second
+                  // stranded effect in the same organization makes two pages
+                  // of one.
+                  let secondClaim = admitClaim org project "fg026b-route-2" owner
+                  let secondInvocations, secondInvocation = counted secondClaim Success
+                  abortedRun store (EffectAuthority.ofClaim owner secondClaim) (withHook EffectKillWindow.AfterInvoke) secondInvocation
+                  expireLease org secondClaim.AttemptId
+                  worker.ScanOrganization(org, Threading.CancellationToken.None).Result |> ignore
+                  worker.ReconcileOnce()
+
+                  let firstPageCode, firstPageBody = send HttpMethod.Get $"{url org}?limit=1" (Some token) None None
+                  Expect.equal firstPageCode 200 "a bounded page is served"
+                  use firstPage = JsonDocument.Parse firstPageBody
+                  let firstEffects = firstPage.RootElement.GetProperty("effects").EnumerateArray() |> List.ofSeq
+                  Expect.equal firstEffects.Length 1 "limit bounds the page"
+                  Expect.equal (firstEffects.Head.GetProperty("attempt_id").GetString()) (claim.AttemptId.Value.ToString()) "the row that entered the uncertain set first comes first"
+                  let nextCursor = firstPage.RootElement.GetProperty("next_cursor").GetString()
+                  Expect.isNotNull nextCursor "a full page with more behind it carries a cursor"
+
+                  let secondPageCode, secondPageBody =
+                      send HttpMethod.Get $"{url org}?limit=1&cursor={Uri.EscapeDataString nextCursor}" (Some token) None None
+                  Expect.equal secondPageCode 200 "the cursor continues the listing"
+                  use secondPage = JsonDocument.Parse secondPageBody
+                  let secondEffects = secondPage.RootElement.GetProperty("effects").EnumerateArray() |> List.ofSeq
+                  Expect.equal secondEffects.Length 1 "the second page holds the remaining row"
+                  Expect.equal (secondEffects.Head.GetProperty("attempt_id").GetString()) (secondClaim.AttemptId.Value.ToString()) "no row is skipped or repeated"
+                  Expect.equal (secondPage.RootElement.GetProperty("next_cursor").ValueKind) JsonValueKind.Null "the last page carries no cursor"
+
+                  let bothCode, bothBody = send HttpMethod.Get $"{url org}?limit=2" (Some token) None None
+                  Expect.equal bothCode 200 "a page wide enough lists both"
+                  use both = JsonDocument.Parse bothBody
+                  Expect.equal (both.RootElement.GetProperty("effects").GetArrayLength()) 2 "both rows on one page"
+                  Expect.equal (both.RootElement.GetProperty("next_cursor").ValueKind) JsonValueKind.Null "and no cursor when nothing is behind it"
+
+                  let crossOrgCode, crossOrgBody =
+                      send HttpMethod.Get $"{url otherOrg}?cursor={Uri.EscapeDataString nextCursor}" (Some token) None None
+                  Expect.equal crossOrgCode 400 "a cursor issued for one organization is refused for another"
+                  Expect.stringContains crossOrgBody "invalid_cursor" "with the stable code"
+                  Expect.isFalse (crossOrgBody.Contains key) "and leaks nothing"
+
+                  let garbageCode, garbageBody = send HttpMethod.Get $"{url org}?cursor=not-a-cursor" (Some token) None None
+                  Expect.equal garbageCode 400 "a malformed cursor is refused"
+                  Expect.stringContains garbageBody "invalid_cursor" "with the stable code"
+
+                  // Codex round 5: well-formed base64 with a hostile payload is
+                  // the same 400, decided before any database statement.
+                  let forged (fields: string list) =
+                      Uri.EscapeDataString(
+                          Convert.ToBase64String(
+                              Text.Encoding.UTF8.GetBytes(String.concat "|" ("fg026b-2" :: org.Value.ToString() :: fields))))
+                  let ticks = string DateTime.UtcNow.Ticks
+                  for label, cursor in
+                      [ "NUL key", forged [ ticks; ticks; claim.AttemptId.Value.ToString(); "file-drop-receipt:\000" ]
+                        "oversized key", forged [ ticks; ticks; claim.AttemptId.Value.ToString(); String.replicate 300 "k" ]
+                        "non-GUID attempt", forged [ ticks; ticks; "attempt"; key ]
+                        "garbage timestamp", forged [ "now"; ticks; claim.AttemptId.Value.ToString(); key ] ] do
+                      let tamperedCode, tamperedBody = send HttpMethod.Get $"{url org}?cursor={cursor}" (Some token) None None
+                      Expect.equal tamperedCode 400 $"a tampered cursor with {label} is refused"
+                      Expect.stringContains tamperedBody "invalid_cursor" $"{label}: with the stable code, not a 500"
+
+                  for badLimit in [ "0"; "1001"; "abc"; "-5" ] do
+                      let badCode, badBody = send HttpMethod.Get $"{url org}?limit={badLimit}" (Some token) None None
+                      Expect.equal badCode 400 $"limit={badLimit} is refused"
+                      Expect.stringContains badBody "invalid_limit" $"limit={badLimit} names the refusal"
+
+                  Expect.equal (invocations.Value, secondInvocations.Value) (1, 1) "listing never invokes"
+                  Expect.equal (receiptCount org) 2 "listing never writes: one receipt per stranded attempt"
+              finally
+                  app.StopAsync() |> Async.AwaitTask |> Async.RunSynchronously
+          }
+
+          test "effect dispatch teardown" {
+              if IO.Directory.Exists dropRoot then IO.Directory.Delete(dropRoot, true)
+          } ]
+
 [<EntryPoint>]
 let main argv =
     if not available then
@@ -2207,4 +3647,5 @@ let main argv =
                           executionLauncherValidation
                           tokenFileIntegrity
                           authorization
+                          effectDispatch
                           endpoints ]))
