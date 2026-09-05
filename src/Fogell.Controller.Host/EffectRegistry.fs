@@ -2,6 +2,9 @@ namespace Fogell.Controller.Host
 
 open System
 open System.IO
+open System.Runtime.InteropServices
+open Microsoft.Win32.SafeHandles
+open Fogell.Domain
 
 /// FG-026b. The closed world of controller-managed external-effect producers.
 ///
@@ -48,6 +51,227 @@ module EffectProducer =
     /// has a fresh identity for the same producer and destination.
     let effectKey producer (identity: string) = $"{name producer}:{identity}"
 
+/// FG-026b (Codex #424 rounds 3 and 4). The descriptor layer shared by startup
+/// validation and the file-drop connector, so startup exercises exactly the
+/// opens the connector performs. The configured path string is resolved once,
+/// to open the root with O_DIRECTORY|O_NOFOLLOW; everything else is relative to
+/// that descriptor. Every read-side open is O_NONBLOCK and is followed by a
+/// statx that requires a regular file with one link before any byte is read:
+/// a FIFO, socket, device, directory or hard link planted by a same-UID
+/// pipeline (FG-073) can therefore neither block the worker nor pass as a
+/// marker or a receipt. Writes create only O_EXCL names of the connector's own
+/// choosing and publish them with RENAME_NOREPLACE; directories are fsynced
+/// after every entry they gain.
+module internal DestinationDescriptor =
+
+    [<Literal>]
+    let marker = ".fogell-drop-root"
+
+    /// The marker is an empty or tiny operator file; startup reads it through
+    /// the descriptor and refuses anything larger, so a sparse giant cannot
+    /// be substituted for it.
+    [<Literal>]
+    let markerMaxBytes = 4096L
+
+    [<Literal>]
+    let OpenReadOnly = 0
+
+    [<Literal>]
+    let OpenWriteOnly = 1
+
+    [<Literal>]
+    let OpenCreate = 0x40
+
+    [<Literal>]
+    let OpenExclusive = 0x80
+
+    [<Literal>]
+    let OpenNonBlocking = 0x800
+
+    [<Literal>]
+    let OpenCloseOnExec = 0x80000
+
+    [<Literal>]
+    let RenameNoReplace = 1u
+
+    [<Literal>]
+    let ENOENT = 2
+
+    [<Literal>]
+    let EEXIST = 17
+
+    [<Literal>]
+    let private AtEmptyPath = 0x1000
+
+    [<Literal>]
+    let private StatxType = 0x1u
+
+    [<Literal>]
+    let private StatxNlink = 0x4u
+
+    [<Literal>]
+    let private StatxSize = 0x200u
+
+    [<Literal>]
+    let private FileTypeMask = 0xF000us
+
+    [<Literal>]
+    let private RegularFileType = 0x8000us
+
+    [<StructLayout(LayoutKind.Sequential, Size = 256)>]
+    type LinuxStatx =
+        struct
+            val mutable Mask: uint32
+            val mutable BlockSize: uint32
+            val mutable Attributes: uint64
+            val mutable LinkCount: uint32
+            val mutable UserId: uint32
+            val mutable GroupId: uint32
+            val mutable Mode: uint16
+            val mutable Spare0: uint16
+            val mutable Inode: uint64
+            val mutable Size: uint64
+        end
+
+    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
+    extern int private openPath(string path, int flags)
+
+    [<DllImport("libc", EntryPoint = "openat", SetLastError = true)>]
+    extern int private openAtNative(int directory, string name, int flags, int mode)
+
+    [<DllImport("libc", EntryPoint = "mkdirat", SetLastError = true)>]
+    extern int private mkdirAtNative(int directory, string name, int mode)
+
+    [<DllImport("libc", EntryPoint = "renameat2", SetLastError = true)>]
+    extern int private renameAt2Native(int oldDirectory, string oldName, int newDirectory, string newName, uint32 flags)
+
+    [<DllImport("libc", EntryPoint = "unlinkat", SetLastError = true)>]
+    extern int private unlinkAtNative(int directory, string name, int flags)
+
+    [<DllImport("libc", EntryPoint = "fsync", SetLastError = true)>]
+    extern int private fsyncNative(int descriptor)
+
+    [<DllImport("libc", SetLastError = true)>]
+    extern int private statx(int directoryFileDescriptor, string path, int flags, uint32 mask, LinuxStatx& buffer)
+
+    let errno () = Marshal.GetLastPInvokeError()
+    let owned (fd: int) = new SafeFileHandle(nativeint fd, true)
+    let descriptor (handle: SafeFileHandle) = int (handle.DangerousGetHandle())
+
+    let directoryFlags (table: LinuxOpenFlags.Table) =
+        OpenReadOnly ||| table.Directory ||| table.NoFollow ||| OpenCloseOnExec
+
+    /// Read-side opens never block: a FIFO with no writer opens at once and
+    /// is then refused by the regular-file check instead of parking the worker.
+    let fileReadFlags (table: LinuxOpenFlags.Table) =
+        OpenReadOnly ||| table.NoFollow ||| OpenNonBlocking ||| OpenCloseOnExec
+
+    let openAt (directory: SafeFileHandle) (name: string) (flags: int) (mode: int) =
+        openAtNative (descriptor directory, name, flags, mode)
+
+    let mkdirAt (directory: SafeFileHandle) (name: string) (mode: int) =
+        mkdirAtNative (descriptor directory, name, mode)
+
+    let renameAt2 (directory: SafeFileHandle) (oldName: string) (newName: string) (flags: uint32) =
+        renameAt2Native (descriptor directory, oldName, descriptor directory, newName, flags)
+
+    /// Only ever aimed at a name this process created with O_EXCL; never a
+    /// directory (flags 0, never AT_REMOVEDIR).
+    let unlinkAt (directory: SafeFileHandle) (name: string) =
+        unlinkAtNative (descriptor directory, name, 0)
+
+    type RegularFile = { Size: int64; Links: uint32 }
+
+    /// statx through the open descriptor: the file must be a regular file.
+    let regularFile (handle: SafeFileHandle) : Result<RegularFile, string> =
+        let mutable status = Unchecked.defaultof<LinuxStatx>
+
+        if statx (descriptor handle, "", AtEmptyPath, StatxType ||| StatxNlink ||| StatxSize, &status) <> 0 then
+            Error $"cannot stat the open descriptor (errno {errno ()})"
+        elif status.Mode &&& FileTypeMask <> RegularFileType then
+            Error "not a regular file"
+        else
+            Ok { Size = int64 status.Size; Links = status.LinkCount }
+
+    let sync (handle: SafeFileHandle) =
+        if fsyncNative (descriptor handle) <> 0 then
+            Error $"fsync failed (errno {errno ()})"
+        else
+            Ok()
+
+    /// The one place the configured path string is resolved.
+    let openRoot (table: LinuxOpenFlags.Table) (root: string) =
+        let fd = openPath (root, directoryFlags table)
+
+        if fd < 0 then
+            Error $"cannot open {root} for reading as a directory without following links (errno {errno ()})"
+        else
+            Ok(owned fd)
+
+    /// The marker seen through the root descriptor, never through the path:
+    /// opened non-blocking, required to be a regular file with one link.
+    let openMarker (table: LinuxOpenFlags.Table) (rootHandle: SafeFileHandle) : Result<SafeFileHandle, string> =
+        let fd = openAt rootHandle marker (fileReadFlags table) 0
+
+        if fd < 0 then
+            let error = errno ()
+
+            if error = ENOENT then
+                Error $"{marker} marker is absent"
+            else
+                Error $"{marker} marker cannot be opened for reading (errno {error})"
+        else
+            let handle = owned fd
+
+            match regularFile handle with
+            | Ok file when file.Links = 1u -> Ok handle
+            | Ok _ ->
+                handle.Dispose()
+                Error $"{marker} marker has more than one link"
+            | Error error ->
+                handle.Dispose()
+                Error $"{marker} marker is {error}"
+
+    let markerPinned (table: LinuxOpenFlags.Table) (rootHandle: SafeFileHandle) =
+        match openMarker table rootHandle with
+        | Error error -> Error error
+        | Ok handle ->
+            handle.Dispose()
+            Ok()
+
+    /// Exactly the regular file's bytes, at most `maxBytes`, through the open
+    /// descriptor; anything else is a refusal, never a partial answer.
+    let readBounded (handle: SafeFileHandle) (maxBytes: int64) : Result<byte array, string> =
+        match regularFile handle with
+        | Error error -> Error error
+        | Ok file when file.Size > maxBytes -> Error $"is {file.Size} bytes, larger than the {maxBytes}-byte bound"
+        | Ok file ->
+            try
+                use stream = new FileStream(handle, FileAccess.Read, 1, false)
+                let buffer = Array.zeroCreate<byte> (int file.Size)
+                stream.ReadExactly(buffer, 0, buffer.Length)
+
+                if stream.ReadByte() <> -1 then
+                    Error "grew while being read"
+                else
+                    Ok buffer
+            with
+            | :? EndOfStreamException -> Error "shrank while being read"
+            | :? IOException as error -> Error $"could not be read: {error.Message}"
+
+    let withPinnedRoot (root: string) (body: LinuxOpenFlags.Table -> SafeFileHandle -> Result<'a, string>) =
+        match LinuxOpenFlags.current with
+        | Error error -> Error $"destination root is not pinned: {error}"
+        | Ok table ->
+            match openRoot table root with
+            | Error error -> Error $"destination root is not pinned: {error}"
+            | Ok rootHandle ->
+                use rootHandle = rootHandle
+
+                match markerPinned table rootHandle with
+                | Error error -> Error $"destination root is not pinned: {error}"
+                | Ok() -> body table rootHandle
+
 module EffectProducerConfig =
     let disabled = { FileDropRoot = None; KillAt = None }
 
@@ -56,7 +280,7 @@ module EffectProducerConfig =
     /// refuses to write when it is gone (an unmounted or replaced volume has
     /// no marker), instead of recreating a root on whatever is underneath.
     [<Literal>]
-    let fileDropRootMarker = ".fogell-drop-root"
+    let fileDropRootMarker = DestinationDescriptor.marker
 
     let killWindowNames =
         [ "prepare", EffectKillWindow.AfterPrepare
@@ -91,10 +315,34 @@ module EffectProducerConfig =
         with _ ->
             false
 
+    /// Codex #424 round 4: startup exercises exactly the descriptor opens
+    /// dispatch performs, so a root or marker that is writable but not
+    /// readable (0300, 0200), a linked or non-regular marker, or an oversized
+    /// one refuses startup by name instead of failing every completed build.
+    let private validatePinnedForReading (root: string) =
+        match LinuxOpenFlags.current with
+        | Error error -> Error $"FOGELL_EFFECT_FILE_DROP_ROOT cannot be pinned on this architecture: {error}"
+        | Ok table ->
+            match DestinationDescriptor.openRoot table root with
+            | Error error -> Error $"FOGELL_EFFECT_FILE_DROP_ROOT is not readable as the pinned directory: {error}"
+            | Ok rootHandle ->
+                use rootHandle = rootHandle
+
+                match DestinationDescriptor.openMarker table rootHandle with
+                | Error error ->
+                    Error $"FOGELL_EFFECT_FILE_DROP_ROOT must contain a readable regular {fileDropRootMarker} marker file: {error}"
+                | Ok markerHandle ->
+                    use markerHandle = markerHandle
+
+                    match DestinationDescriptor.readBounded markerHandle DestinationDescriptor.markerMaxBytes with
+                    | Error error -> Error $"FOGELL_EFFECT_FILE_DROP_ROOT marker {fileDropRootMarker} {error}"
+                    | Ok _ -> Ok()
+
     /// The simulator destination must be an absolute, existing, writable
-    /// directory that is disjoint from the controller state root: a receipt is
-    /// an external effect only if it lives outside the state the controller
-    /// restores.
+    /// directory that is disjoint from the controller state root and pinned by
+    /// a readable regular marker file: a receipt is an external effect only if
+    /// it lives outside the state the controller restores, and dispatch must be
+    /// able to open at runtime exactly what startup accepted.
     let validateFileDropRoot (stateRoot: string) (raw: string) =
         if not (Path.IsPathFullyQualified raw) then
             Error "FOGELL_EFFECT_FILE_DROP_ROOT must be absolute"
@@ -112,10 +360,14 @@ module EffectProducerConfig =
                     Error "FOGELL_EFFECT_FILE_DROP_ROOT must be disjoint from FOGELL_STATE_ROOT"
                 elif not (File.Exists(Path.Combine(root, fileDropRootMarker))) then
                     Error $"FOGELL_EFFECT_FILE_DROP_ROOT must contain the operator-created {fileDropRootMarker} marker file"
-                elif not (probeWritable root) then
-                    Error "FOGELL_EFFECT_FILE_DROP_ROOT is not writable by the service identity"
                 else
-                    Ok root
+                    match validatePinnedForReading root with
+                    | Error error -> Error error
+                    | Ok() ->
+                        if not (probeWritable root) then
+                            Error "FOGELL_EFFECT_FILE_DROP_ROOT is not writable by the service identity"
+                        else
+                            Ok root
 
     /// Reads the two optional variables. Both absent is the production default;
     /// a kill hook without a simulator destination is refused because nothing

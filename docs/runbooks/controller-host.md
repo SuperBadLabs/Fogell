@@ -59,7 +59,7 @@ Two further settings are optional (FG-026b) and enable the registered
 external-effect producer:
 
 ```text
-FOGELL_EFFECT_FILE_DROP_ROOT        absolute, existing, writable directory disjoint from FOGELL_STATE_ROOT, containing an operator-created empty `.fogell-drop-root` marker file; absent = no producer enabled
+FOGELL_EFFECT_FILE_DROP_ROOT        absolute, existing, readable+writable directory disjoint from FOGELL_STATE_ROOT, containing an operator-created `.fogell-drop-root` marker that is a readable regular file with one link of at most 4096 bytes (empty is fine); startup performs the runtime opens and refuses by name; absent = no producer enabled
 FOGELL_EFFECT_KILL_AT               prepare | invoke | apply | confirm; crash-window proof only, refused without the drop root
 ```
 

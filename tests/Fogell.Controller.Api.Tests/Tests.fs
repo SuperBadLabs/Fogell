@@ -20,6 +20,11 @@ open Fogell.Execution
 [<DllImport("libc")>]
 extern uint32 private geteuid()
 
+/// FG-026b round-4 probes plant hard links where the connector reads
+/// (mkfifo is declared above for FG-251).
+[<DllImport("libc", SetLastError = true)>]
+extern int private link(string existing, string newPath)
+
 [<DllImport("libc", SetLastError = true)>]
 extern int private mkfifo(string path, uint32 mode)
 
@@ -3060,7 +3065,7 @@ let effectDispatch =
               // The pin succeeded (root opened, marker seen through it); the
               // mount then vanishes before anything is created.
               let vanish () = IO.Directory.Delete(root, true)
-              let invocation = FileDropReceipt.invocationWith vanish root claim Success
+              let invocation = FileDropReceipt.invocationWith vanish ignore root claim Success
 
               match EffectDispatch.run store authority EffectDispatch.noHooks invocation with
               | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "pinned destination" "the write failed on the dead descriptor"
@@ -3079,6 +3084,154 @@ let effectDispatch =
               | DispatchOutcome.Refused reason -> Expect.stringContains reason "without following links" "a linked root is refused before preparation is touched"
               | other -> failtestf "a symlinked root produced %A" other
               Expect.isFalse (IO.Directory.Exists(IO.Path.Combine(elsewhere, org.Value.ToString "N"))) "nothing was written through the link"
+          }
+
+          test "a FIFO planted at the receipt path or the marker path is refused within a bounded time and never blocks the worker" {
+              // Codex round 4 (P1): a blocking open of a planted FIFO would park
+              // the worker forever. Every read-side open is O_NONBLOCK and is
+              // followed by a regular-file check.
+              let owner = "fg026b-fifo-owner"
+              let org, claim = runningClaim "fg026b-fifo" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let root = IO.Path.Combine(dropRoot, $"fifo-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory root |> ignore
+              let marker = IO.Path.Combine(root, EffectProducerConfig.fileDropRootMarker)
+              IO.File.WriteAllBytes(marker, [||])
+              let invocations = ref 0
+              let real = FileDropReceipt.invocation root claim Success
+              let counted =
+                  { real with
+                      Invoke =
+                          fun () ->
+                              invocations.Value <- invocations.Value + 1
+                              real.Invoke() }
+
+              let bounded label (action: unit -> 'a) =
+                  let watch = Diagnostics.Stopwatch.StartNew()
+                  let result = action ()
+                  Expect.isLessThan watch.ElapsedMilliseconds 1000L $"{label} returned within a second"
+                  result
+
+              // A FIFO where the receipt should be: the write leaves it alone
+              // (idempotent existing entry), Confirm refuses it as not a regular
+              // file, the outcome is Uncertain, and nothing waited on a writer.
+              let receiptPath = FileDropReceipt.receiptPath root claim
+              IO.Directory.CreateDirectory(IO.Path.GetDirectoryName receiptPath) |> ignore
+              Expect.equal (mkfifo (receiptPath, 0o600u)) 0 "a FIFO was planted at the receipt path"
+              Expect.equal (bounded "Confirm on a FIFO receipt" counted.Confirm) (Ok false) "a FIFO is no evidence"
+              match bounded "dispatch over a FIFO receipt" (fun () -> EffectDispatch.run store authority EffectDispatch.noHooks counted) with
+              | DispatchOutcome.Uncertain reason -> Expect.stringContains reason "evidence absent" "uncertain, never confirmed"
+              | other -> failtestf "a FIFO receipt produced %A" other
+              Expect.equal invocations.Value 1 "the write saw the existing entry and did not replace it"
+              Expect.isTrue (IO.File.Exists receiptPath) "the planted FIFO is still there: nothing was replaced or unlinked"
+              IO.File.Delete receiptPath
+
+              // A FIFO where the marker should be: the pin is refused before
+              // preparation, in bounded time, and nothing is invoked.
+              IO.File.Delete marker
+              Expect.equal (mkfifo (marker, 0o600u)) 0 "a FIFO was planted at the marker path"
+              match bounded "pin over a FIFO marker" (fun () -> FileDropReceipt.pinned root) with
+              | Error reason -> Expect.stringContains reason "not a regular file" "the marker must be a regular file"
+              | Ok() -> failtest "a FIFO marker pinned the root"
+              match bounded "dispatch over a FIFO marker" (fun () -> EffectDispatch.run store authority EffectDispatch.noHooks counted) with
+              | DispatchOutcome.Refused reason -> Expect.stringContains reason "not a regular file" "refused before anything is touched"
+              | other -> failtestf "a FIFO marker produced %A" other
+              Expect.equal invocations.Value 1 "nothing was invoked under an unpinned root"
+
+              // A directory or a symlink standing in for the marker is refused
+              // the same way.
+              IO.File.Delete marker
+              IO.Directory.CreateDirectory marker |> ignore
+              match FileDropReceipt.pinned root with
+              | Error reason -> Expect.stringContains reason "not a regular file" "a directory is not the marker"
+              | Ok() -> failtest "a directory marker pinned the root"
+              IO.Directory.Delete marker
+              let elsewhere = IO.Path.Combine(root, "real-marker")
+              IO.File.WriteAllBytes(elsewhere, [||])
+              IO.File.CreateSymbolicLink(marker, elsewhere) |> ignore
+              match FileDropReceipt.pinned root with
+              | Error reason -> Expect.stringContains reason "cannot be opened for reading" "a linked marker is refused without following it"
+              | Ok() -> failtest "a symlinked marker pinned the root"
+              IO.File.Delete marker
+              Expect.equal (link (elsewhere, marker)) 0 "a hard link was planted at the marker path"
+              match FileDropReceipt.pinned root with
+              | Error reason -> Expect.stringContains reason "more than one link" "a hard-linked marker is refused"
+              | Ok() -> failtest "a hard-linked marker pinned the root"
+          }
+
+          test "the receipt's directory entry is made durable in order: temp data, rename, organization directory, after the root gained the organization entry" {
+              // Codex round 4 (P1): fsync of the temp file alone leaves the
+              // rename and the new organization directory undurable while the
+              // ledger records applied/confirmed.
+              let owner = "fg026b-durable-owner"
+              let org, claim = runningClaim "fg026b-durable" owner
+              let authority = EffectAuthority.ofClaim owner claim
+              let steps = Collections.Generic.List<string>()
+              let invocation = FileDropReceipt.invocationWith ignore steps.Add dropRoot claim Success
+
+              Expect.equal (EffectDispatch.run store authority EffectDispatch.noHooks invocation) (DispatchOutcome.Confirmed false) "confirms"
+              Expect.equal
+                  (List.ofSeq steps)
+                  [ "root-fsynced"; "temp-fsynced"; "renamed"; "organization-fsynced" ]
+                  "the root is synced after the organization entry, the temp data before the rename, the organization directory after it"
+
+              // A replay drives nothing and syncs nothing.
+              steps.Clear()
+              Expect.equal (EffectDispatch.run store authority EffectDispatch.noHooks invocation) (DispatchOutcome.Confirmed true) "replay"
+              Expect.isEmpty steps "a confirmed replay performs no destination I/O"
+          }
+
+          test "startup refuses a drop root or marker that is writable but not readable, by name" {
+              // Codex round 4 (P2): the old probe proved write/exec on the root
+              // and existence of the marker; dispatch then failed every build on
+              // a 0300 root or a 0200 marker. Startup now performs the runtime
+              // opens. (Root bypasses permission bits, so the arms are skipped
+              // under an effective uid of 0.)
+              let stateRoot = IO.Path.Combine(dropRoot, $"unreadable-state-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory stateRoot |> ignore
+              let root = IO.Path.Combine(dropRoot, $"unreadable-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory root |> ignore
+              let marker = IO.Path.Combine(root, EffectProducerConfig.fileDropRootMarker)
+              IO.File.WriteAllBytes(marker, [||])
+              let restore () =
+                  IO.File.SetUnixFileMode(root, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute)
+                  if IO.File.Exists marker then
+                      IO.File.SetUnixFileMode(marker, IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite)
+
+              try
+                  Expect.isOk (EffectProducerConfig.validateFileDropRoot stateRoot root) "a readable, writable, pinned root is accepted"
+
+                  if not (effectiveIdentityIsRoot ()) then
+                      IO.File.SetUnixFileMode(root, IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute)
+                      match EffectProducerConfig.validateFileDropRoot stateRoot root with
+                      | Error reason -> Expect.stringContains reason "is not readable as the pinned directory" "a 0300 root is refused by name"
+                      | Ok accepted -> failtestf "a 0300 root was accepted: %s" accepted
+                      restore ()
+
+                      IO.File.SetUnixFileMode(marker, IO.UnixFileMode.UserWrite)
+                      match EffectProducerConfig.validateFileDropRoot stateRoot root with
+                      | Error reason -> Expect.stringContains reason "readable regular" "a 0200 marker is refused by name"
+                      | Ok accepted -> failtestf "a 0200 marker was accepted: %s" accepted
+                      restore ()
+
+                  // An oversized marker is refused at startup even when readable.
+                  do
+                      use sparse = IO.File.Open(marker, IO.FileMode.Open, IO.FileAccess.Write)
+                      sparse.SetLength(DestinationDescriptor.markerMaxBytes + 1L)
+                  match EffectProducerConfig.validateFileDropRoot stateRoot root with
+                  | Error reason -> Expect.stringContains reason "larger than" "an oversized marker is refused by name"
+                  | Ok accepted -> failtestf "an oversized marker was accepted: %s" accepted
+
+                  // A FIFO marker is refused at startup, in bounded time.
+                  IO.File.Delete marker
+                  Expect.equal (mkfifo (marker, 0o600u)) 0 "a FIFO was planted at the marker path"
+                  let watch = Diagnostics.Stopwatch.StartNew()
+                  match EffectProducerConfig.validateFileDropRoot stateRoot root with
+                  | Error reason -> Expect.stringContains reason "not a regular file" "a FIFO marker is refused by name"
+                  | Ok accepted -> failtestf "a FIFO marker was accepted: %s" accepted
+                  Expect.isLessThan watch.ElapsedMilliseconds 1000L "startup validation did not block on the FIFO"
+              finally
+                  restore ()
           }
 
           test "GET effects/uncertain lists one organization's uncertain effects read-only, denies other organizations their view of it, and refuses a malformed organization" {
