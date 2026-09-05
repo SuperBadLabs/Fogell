@@ -3234,6 +3234,48 @@ let effectDispatch =
                   restore ()
           }
 
+          test "startup decides drop-root disjointness physically: a symlinked ancestor into the state root is refused, a genuine sibling passes" {
+              // Codex round 5 (P2): the lexical StartsWith on GetFullPath cannot
+              // see `/srv/alias -> /srv/state` with root `/srv/alias/drop`.
+              let area = IO.Path.Combine(dropRoot, $"physical-{Guid.NewGuid():N}")
+              let stateRoot = IO.Path.Combine(area, "state")
+              let inside = IO.Path.Combine(stateRoot, "drop")
+              IO.Directory.CreateDirectory inside |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(inside, EffectProducerConfig.fileDropRootMarker), [||])
+              let alias = IO.Path.Combine(area, "alias")
+              IO.Directory.CreateSymbolicLink(alias, stateRoot) |> ignore
+              let throughAlias = IO.Path.Combine(alias, "drop")
+
+              Expect.isFalse
+                  ((IO.Path.GetFullPath throughAlias).StartsWith(IO.Path.GetFullPath stateRoot + "/"))
+                  "the lexical check alone would accept the aliased path"
+              match EffectProducerConfig.validateFileDropRoot stateRoot throughAlias with
+              | Error reason -> Expect.stringContains reason "physically inside" "the walk finds the state root above the drop root"
+              | Ok accepted -> failtestf "a symlinked ancestor into the state root was accepted: %s" accepted
+
+              match EffectProducerConfig.validateFileDropRoot stateRoot stateRoot with
+              | Error reason -> Expect.stringContains reason "disjoint" "the state root itself is still refused lexically first"
+              | Ok accepted -> failtestf "the state root itself was accepted: %s" accepted
+
+              // The reverse: the drop root physically containing the state root
+              // through an alias of the state root.
+              let outer = IO.Path.Combine(area, "outer")
+              let nestedState = IO.Path.Combine(outer, "nested-state")
+              IO.Directory.CreateDirectory nestedState |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(outer, EffectProducerConfig.fileDropRootMarker), [||])
+              let stateAlias = IO.Path.Combine(area, "state-alias")
+              IO.Directory.CreateSymbolicLink(stateAlias, nestedState) |> ignore
+              match EffectProducerConfig.validateFileDropRoot stateAlias outer with
+              | Error reason -> Expect.stringContains reason "physically contains" "the reverse walk finds the drop root above the state root"
+              | Ok accepted -> failtestf "a drop root containing the aliased state root was accepted: %s" accepted
+
+              // A genuine sibling passes.
+              let sibling = IO.Path.Combine(area, "sibling")
+              IO.Directory.CreateDirectory sibling |> ignore
+              IO.File.WriteAllBytes(IO.Path.Combine(sibling, EffectProducerConfig.fileDropRootMarker), [||])
+              Expect.equal (EffectProducerConfig.validateFileDropRoot stateRoot sibling) (Ok(IO.Path.GetFullPath sibling)) "a disjoint sibling is accepted"
+          }
+
           test "GET effects/uncertain lists one organization's uncertain effects read-only, denies other organizations their view of it, and refuses a malformed organization" {
               let app, baseUrl = startServer 1000
 
@@ -3343,6 +3385,22 @@ let effectDispatch =
                   let garbageCode, garbageBody = send HttpMethod.Get $"{url org}?cursor=not-a-cursor" (Some token) None None
                   Expect.equal garbageCode 400 "a malformed cursor is refused"
                   Expect.stringContains garbageBody "invalid_cursor" "with the stable code"
+
+                  // Codex round 5: well-formed base64 with a hostile payload is
+                  // the same 400, decided before any database statement.
+                  let forged (fields: string list) =
+                      Uri.EscapeDataString(
+                          Convert.ToBase64String(
+                              Text.Encoding.UTF8.GetBytes(String.concat "|" ("fg026b-1" :: org.Value.ToString() :: fields))))
+                  let ticks = string DateTime.UtcNow.Ticks
+                  for label, cursor in
+                      [ "NUL key", forged [ ticks; claim.AttemptId.Value.ToString(); "file-drop-receipt:\000" ]
+                        "oversized key", forged [ ticks; claim.AttemptId.Value.ToString(); String.replicate 300 "k" ]
+                        "non-GUID attempt", forged [ ticks; "attempt"; key ]
+                        "garbage timestamp", forged [ "now"; claim.AttemptId.Value.ToString(); key ] ] do
+                      let tamperedCode, tamperedBody = send HttpMethod.Get $"{url org}?cursor={cursor}" (Some token) None None
+                      Expect.equal tamperedCode 400 $"a tampered cursor with {label} is refused"
+                      Expect.stringContains tamperedBody "invalid_cursor" $"{label}: with the stable code, not a 500"
 
                   for badLimit in [ "0"; "1001"; "abc"; "-5" ] do
                       let badCode, badBody = send HttpMethod.Get $"{url org}?limit={badLimit}" (Some token) None None
