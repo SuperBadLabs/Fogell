@@ -146,7 +146,8 @@ records the same Copilot availability boundary. Post-accounting exact-main run
   other, set-id, and sticky bit remains forbidden.
 - Keep both bounds: reject sampled size above 4096 and read at most 4097 bytes.
   The second bound protects growth after metadata validation.
-- Preserve strict UTF-8, BOM refusal, trailing CR/LF trimming, and the existing
+- Preserve strict UTF-8, the existing optional UTF-8 BOM stripping,
+  non-UTF-8/UTF-16 BOM refusal, trailing CR/LF trimming, and the existing
   32-non-padding-character token rule.
 - A FIFO, directory, symlink, insecure replacement, incomplete metadata,
   unsupported platform, or wrong owner is a stable configuration refusal, not
