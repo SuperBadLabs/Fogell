@@ -356,7 +356,9 @@ Read with the two sections above; this is the second addendum.
   again before promotion the lane checks both resolved Make paths and hashes,
   the container image ID/digest, and that the HTTP oracle URL names the same
   SSH host and exact published `8080/tcp -> 0.0.0.0:18083` binding. Its
-  service-free hostile proof kills every identity or endpoint substitution.
+  REST traffic then uses a lane-life-bound authenticated SSH tunnel to that
+  host's loopback listener; the service-free hostile proof kills every identity,
+  endpoint, direct-HTTP, or tunnel-lifecycle substitution.
 - **Publication remains.** The ticket is
   [`tickets/FG-254.md`](tickets/FG-254.md). Exact-head local gate, final review,
   hosted gate, protected merge, and accounting are still required before DONE.

@@ -140,12 +140,21 @@ echo "  refused missing pin id"
 audit_runner() {
   runner=$1
   pre=$(rg -n '^verify_runtime_pins \|\| die ' "$runner" | sed -n '1s/:.*//p')
-  run=$(rg -n 'dotnet "\$cli"' "$runner" | sed -n '1s/:.*//p')
+  tunnel=$(rg -n '^tunnel_url=http://127\.0\.0\.1:18084$' "$runner" | sed -n '1s/:.*//p')
+  busy=$(rg -n 'busy_json=\$\(curl -sS -m 10 "\$tunnel_url/' "$runner" | sed -n '1s/:.*//p')
+  run=$(rg -n 'dotnet "\$cli" "\$tunnel_url"' "$runner" | sed -n '1s/:.*//p')
   post=$(rg -n '^elif ! verify_runtime_pins; then$' "$runner" | sed -n '1s/:.*//p')
   promote=$(rg -n '^[[:space:]]*mkdir -p "\$FOGELL_RECEIPT_DIR"' "$runner" | sed -n '1s/:.*//p')
-  [[ "$pre" =~ ^[0-9]+$ && "$run" =~ ^[0-9]+$ && "$post" =~ ^[0-9]+$ && "$promote" =~ ^[0-9]+$ ]] || return 1
-  [ "$(rg -c '^  \./scripts/check-corpus-runtime-pins\.sh differential/corpus-runtime-pins\.tsv "\$\{pin_ids\[@\]\}"$' "$runner")" -eq 1 ] || return 1
-  [ "$pre" -lt "$run" ] && [ "$run" -lt "$post" ] && [ "$post" -lt "$promote" ]
+  [[ "$pre" =~ ^[0-9]+$ && "$tunnel" =~ ^[0-9]+$ && "$busy" =~ ^[0-9]+$ && "$run" =~ ^[0-9]+$ && "$post" =~ ^[0-9]+$ && "$promote" =~ ^[0-9]+$ ]] || return 1
+  [ "$(rg -c '^  \./scripts/check-corpus-runtime-pins\.sh differential/corpus-runtime-pins\.tsv "\$\{pin_ids\[@\]\}"$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^remote_port=\$\{FOGELL_JENKINS_URL##\*:\}$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^tunnel_forward=127\.0\.0\.1:18084:127\.0\.0\.1:\$remote_port$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c -- '-o ExitOnForwardFailure=yes' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^tail --pid=\$\$ -f /dev/null 9>&- \| ssh -o BatchMode=yes -o ExitOnForwardFailure=yes ' "$runner")" = 1 ] || return 1
+  [ "$(rg -c 'FOGELL_JENKINS_HOST.*echo tunneled; exec cat >/dev/null.*tunnel_fifo' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^FOGELL_JENKINS_URL="\$tunnel_url" \./scripts/no-egress-fence\.sh fogell run -- \\$' "$runner")" = 1 ] || return 1
+  [ "$pre" -lt "$tunnel" ] && [ "$tunnel" -lt "$busy" ] && [ "$busy" -lt "$run" ] \
+    && [ "$run" -lt "$post" ] && [ "$post" -lt "$promote" ]
 }
 
 audit_runner scripts/run-corpus-differential.sh \
@@ -160,5 +169,25 @@ sed -i '/^elif ! verify_runtime_pins; then$/d' "$scratch/runner"
 if audit_runner "$scratch/runner"; then
   echo "RUNTIME-PIN PROOF FAILED: pre-promotion check mutant was accepted" >&2; exit 1
 fi
-echo "=== corpus runtime pin: both runner call sites and removal mutants proven ==="
+cp scripts/run-corpus-differential.sh "$scratch/runner"
+sed -i 's/dotnet "$cli" "$tunnel_url"/dotnet "$cli" "$FOGELL_JENKINS_URL"/' "$scratch/runner"
+if audit_runner "$scratch/runner"; then
+  echo "RUNTIME-PIN PROOF FAILED: direct-HTTP execution mutant was accepted" >&2; exit 1
+fi
+cp scripts/run-corpus-differential.sh "$scratch/runner"
+sed -i 's/-o ExitOnForwardFailure=yes //' "$scratch/runner"
+if audit_runner "$scratch/runner"; then
+  echo "RUNTIME-PIN PROOF FAILED: permissive tunnel-bind mutant was accepted" >&2; exit 1
+fi
+cp scripts/run-corpus-differential.sh "$scratch/runner"
+sed -i '/ExitOnForwardFailure=yes/s/tail --pid=$$ -f \/dev\/null 9>&- | //' "$scratch/runner"
+if audit_runner "$scratch/runner"; then
+  echo "RUNTIME-PIN PROOF FAILED: owner-unbound tunnel mutant was accepted" >&2; exit 1
+fi
+cp scripts/run-corpus-differential.sh "$scratch/runner"
+sed -i 's/127.0.0.1:$remote_port/attacker.invalid:$remote_port/' "$scratch/runner"
+if audit_runner "$scratch/runner"; then
+  echo "RUNTIME-PIN PROOF FAILED: uninspected tunnel-target mutant was accepted" >&2; exit 1
+fi
+echo "=== corpus runtime pin: both pin checks, authenticated REST tunnel, and removal mutants proven ==="
 echo "CORPUS RUNTIME PIN: ALL ASSERTIONS PASSED"

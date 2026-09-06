@@ -112,16 +112,10 @@ fi
 exec 9>"$lock_dir/fogell-corpus-lane.lock" || die "could not open the lane lock in $lock_dir"
 flock -n 9 || die "another corpus lane of this user holds $lock_dir/fogell-corpus-lane.lock"
 
-if ! busy_json=$(curl -sS -m 10 "$FOGELL_JENKINS_URL/computer/api/json?tree=busyExecutors" 2>&1); then
-  die "the oracle at $FOGELL_JENKINS_URL did not answer the busy check: ${busy_json:-no output}"
-fi
-busy=$(printf '%s' "$busy_json" | sed -n 's/.*"busyExecutors":\([0-9]*\).*/\1/p')
-[ "${busy:-x}" = "0" ] || die "oracle reports busyExecutors=${busy:-unknown}; the lane is single-tenant"
-
 # The Jenkins fence is ONE table in ONE namespace, shared by every corpus lane
-# from every user and host. The busy check above reserves nothing, so two
-# lanes could both pass it and the first to exit would unfence the second
-# (Codex on PR #389). The lease is a `flock` held ON THE JENKINS HOST by a
+# from every user and host. A busy check by itself reserves nothing, so two
+# lanes could otherwise both pass it and the first to exit would unfence the
+# second (Codex on PR #389). The lease is a `flock` held ON THE JENKINS HOST by a
 # background ssh session for the life of this lane: atomic across users and
 # hosts, and bound to THIS PROCESS's life: the remote holder is `cat` reading
 # ssh's stdin, and that stdin is fed by `tail --pid=$$`, which exits when this
@@ -149,6 +143,7 @@ echo "corpus lane: holding the lane lease on $FOGELL_JENKINS_HOST (released when
 # pid later (Copilot on PR #398). Every variable the trap reads is
 # initialised first.
 fence_applied=; poller=; run_pid=; completed=; lease_watch=; run_receipts=
+tunnel_pid=; tunnel_watch=; tunnel_dir=
 started=$(date -u +%FT%TZ)
 # The trap goes in BEFORE apply so a partially applied fence is never left
 # behind. Teardown policy: quiesce first; if the quiesce FAILS the fence is
@@ -173,6 +168,7 @@ cleanup() {
   trap '' TERM INT HUP
   [ -n "$poller" ] && kill -KILL "$poller" 2>/dev/null
   [ -n "$lease_watch" ] && kill -KILL "$lease_watch" 2>/dev/null
+  [ -n "$tunnel_watch" ] && kill -KILL "$tunnel_watch" 2>/dev/null
   # Stop the fenced run FIRST, and wait for its own teardown, so nothing of
   # ours is still executing when the namespace is quiesced and unfenced.
   if [ -n "$run_pid" ] && kill -0 "$run_pid" 2>/dev/null; then kill -TERM "$run_pid" 2>/dev/null; wait "$run_pid" 2>/dev/null || true; fi
@@ -191,6 +187,8 @@ cleanup() {
       echo "corpus lane: QUIESCE FAILED — the Jenkins fence is LEFT UP on purpose; recover per docs/runbooks/no-egress-fence.md" >&2
     fi
   fi
+  [ -n "$tunnel_pid" ] && kill "$tunnel_pid" 2>/dev/null
+  [ -n "$tunnel_dir" ] && rm -rf "$tunnel_dir"
   kill "$lease_pid" 2>/dev/null || true
   [ -n "$lease_dir" ] && rm -rf "$lease_dir"
   [ -n "$snap_dir" ] && rm -rf "$snap_dir"
@@ -212,6 +210,37 @@ verify_runtime_pins || die "a selected corpus runtime pin did not match"
 pinned_at=$(./scripts/no-egress-fence.sh jenkins started-at) || die "could not re-read the pinned container's start instant"
 [ "$pinned_at" = "$started_at" ] \
   || die "the Jenkins container restarted while its runtime pins were checked ($started_at -> $pinned_at)"
+
+# REST AUTHENTICATION. The configured HTTP endpoint above is still checked
+# against the inspected host/container port mapping, but HTTP across the LAN
+# has no server authentication. Every Jenkins REST byte used for this receipt
+# therefore travels through an SSH local forward to loopback on THAT SAME
+# inspected host. The forward is life-bound to this lane exactly like the
+# remote lease: when this pid dies, tail closes ssh's stdin, the remote `cat`
+# exits, and the listener disappears. ExitOnForwardFailure makes an occupied
+# local port a refusal rather than an accidental connection to another service.
+remote_port=${FOGELL_JENKINS_URL##*:}
+tunnel_url=http://127.0.0.1:18084
+tunnel_forward=127.0.0.1:18084:127.0.0.1:$remote_port
+tunnel_dir=$(mktemp -d); tunnel_fifo="$tunnel_dir/ready"; mkfifo "$tunnel_fifo"
+tail --pid=$$ -f /dev/null 9>&- | ssh -o BatchMode=yes -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=5 -o ServerAliveCountMax=1 -T -L "$tunnel_forward" \
+  "$FOGELL_JENKINS_HOST" 'echo tunneled; exec cat >/dev/null' > "$tunnel_fifo" 2>/dev/null 9>&- &
+tunnel_pid=$!; disown "$tunnel_pid"
+if ! IFS= read -r -t 20 tunnel_word < "$tunnel_fifo" || [ "$tunnel_word" != tunneled ]; then
+  kill "$tunnel_pid" 2>/dev/null; rm -rf "$tunnel_dir"; tunnel_dir=
+  die "could not establish the authenticated Jenkins REST tunnel on $tunnel_url (${tunnel_word:-no answer: ssh exited or 20 s elapsed})"
+fi
+rm -rf "$tunnel_dir"; tunnel_dir=
+echo "corpus lane: Jenkins REST is tunneled over SSH to $FOGELL_JENKINS_HOST loopback port $remote_port"
+( tail --pid="$tunnel_pid" -f /dev/null; echo "corpus lane: REST TUNNEL LOST — aborting" >&2; kill -TERM $$ 2>/dev/null ) 9>&- &
+tunnel_watch=$!; disown "$tunnel_watch"
+
+if ! busy_json=$(curl -sS -m 10 "$tunnel_url/computer/api/json?tree=busyExecutors" 2>&1); then
+  die "the authenticated oracle tunnel at $tunnel_url did not answer the busy check: ${busy_json:-no output}"
+fi
+busy=$(printf '%s' "$busy_json" | sed -n 's/.*"busyExecutors":\([0-9]*\).*/\1/p')
+[ "${busy:-x}" = "0" ] || die "oracle reports busyExecutors=${busy:-unknown}; the lane is single-tenant"
 run_receipts=$(mktemp -d)
 # QUIESCE BEFORE APPLY: a leftover of an earlier build holding a connection it
 # opened before the fence would otherwise keep it (the rule now rejects the
@@ -236,8 +265,8 @@ echo "corpus lane: proving the Fogell-side fence, then running ${#files[@]} corp
 # in the background under `wait` so a TERM from the watchers is not deferred
 # behind it.
 export FOGELL_FENCE_OWNER_PID=$$
-./scripts/no-egress-fence.sh fogell run -- \
-  dotnet "$cli" "$FOGELL_JENKINS_URL" "$FOGELL_JENKINS_CORE" "$run_receipts" "${snaps[@]}" 9>&- & run_pid=$!
+FOGELL_JENKINS_URL="$tunnel_url" ./scripts/no-egress-fence.sh fogell run -- \
+  dotnet "$cli" "$tunnel_url" "$FOGELL_JENKINS_CORE" "$run_receipts" "${snaps[@]}" 9>&- & run_pid=$!
 wait "$run_pid" && rc=0 || rc=$?
 kill -KILL "$poller" 2>/dev/null || true; poller=
 

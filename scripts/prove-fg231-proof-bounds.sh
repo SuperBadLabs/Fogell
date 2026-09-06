@@ -15,10 +15,12 @@
 #   - an HTTP request against a socket that accepts and never answers;
 #   - a synchronous Run.Host invocation that never exits, once leaving on
 #     SIGTERM and once ignoring it (GNU timeout returns 124 and 137);
-#   - with FOGELL_FG224_CONTROLLER_IMAGE set, a refusal after the container
+#   - with FOGELL_FG224_CONTROLLER_IMAGE set, recovery after one PID1 query
+#     stalls, refusal when that per-query budget is removed, a late-query pair
+#     that kills removal of the aggregate-deadline clamp, a refusal after the container
 #     launched whose runtime stop then hangs (a daemon that stopped
-#     answering), and a runtime run that takes 15 s to create the container
-#     (a cold image pull) so the identity budget expires first, runtime stop
+#     answering), and a runtime run that takes 35 s to create the container
+#     so the 30 s identity budget expires first, runtime stop
 #     fails fast on a container that does not exist, and the client then
 #     brings the controller up with nothing left to stop it — the two
 #     readings of hosted jobs 100045425020 and 100055372746.
@@ -248,14 +250,98 @@ plant "$copy" \
 run_arm run-host-restart-ignores-term "$copy" \
   'FG-224 REFUSED: line [0-9]+: `timeout -k 5 "\$1" "\$\{@:2\}"` exited 137 \(budget expired\) in bounded called from line [0-9]+'
 
-# Arms 4 and 5 need the digest-pinned image. Both end in the EXIT trap's
+# The final six arms need the digest-pinned image. The refusal arms end in the EXIT trap's
 # bounded reap, which must kill the runtime client, remove the container
 # by name, and name the reap; each first reproduces the refusal that reached
 # the trap.
 if [[ -n "$controller_image" ]]; then
   reap_expected='controller container client \(pid [0-9]+\) did not exit within 15000 ms and was killed'
 
-  # Arm 4: the container is up (its PID1 identity is compared against a name
+  # Arms 4a/4b: the first identity query stalls longer than its dedicated
+  # two-second TERM budget and ignores TERM so the one-second KILL grace is
+  # exercised too.  The unmodified proof must kill that client, retry, and
+  # read PID1.  A byte-mutant that restores the general 30-second runtime
+  # budget must consume the complete startup deadline and refuse instead.
+  mkdir -p "$scratch/runtime-first-exec-stalls"
+  cat >"$scratch/runtime-first-exec-stalls/$runtime" <<EOS
+#!/usr/bin/env bash
+if [[ "\${1:-}" = exec && "\${2:-}" = fogell-fg224-proof-* && ! -e "$scratch/first-exec-seen" ]]; then
+  : >"$scratch/first-exec-seen"
+  exec /bin/sh -c 'trap "" TERM; exec /bin/sleep 35'
+fi
+exec "$real_runtime" "\$@"
+EOS
+  chmod +x "$scratch/runtime-first-exec-stalls/$runtime"
+
+  copy=$(stage container-query-recovers)
+  plant "$copy" \
+    '      [[ "$pid1_executable" = "$controller" ]] && break' \
+    '      [[ "$pid1_executable" = "$controller" ]] && { echo "FG-231 PID1 QUERY RECOVERED" >&2; exit 91; }'
+  run_arm container-query-recovers "$copy" 'FG-231 PID1 QUERY RECOVERED' \
+    "PATH=$scratch/runtime-first-exec-stalls:$PATH" "FOGELL_FG224_CONTROLLER_IMAGE=$controller_image"
+
+  rm -f "$scratch/first-exec-seen"
+  copy=$(stage container-query-budget-removed)
+  plant "$copy" \
+    '      pid1_executable=$(bounded_pid1_query "$query_term_seconds" "$runtime" exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true)' \
+    '      pid1_executable=$(bounded "$runtime_budget" "$runtime" exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true)'
+  run_arm container-query-budget-removed "$copy" \
+    'FG-224 REFUSED: container PID1 was unreadable, expected .* \(container running;' \
+    "PATH=$scratch/runtime-first-exec-stalls:$PATH" "FOGELL_FG224_CONTROLLER_IMAGE=$controller_image"
+
+  # Arms 4c/4d pin the remaining-time arithmetic itself.  A staged five-and-a-
+  # half-second aggregate window leaves less than the full two-second TERM
+  # budget after the TERM-ignoring first query consumes its TERM+KILL slot.
+  # Record the actual budgets passed to the query helper: the real clamp must
+  # reduce the second one, while a byte-mutant deleting only that clamp must
+  # expose a second full 2.000-second budget.
+  rm -f "$scratch/first-exec-seen"
+  clamp_budgets="$scratch/container-query-clamp.budgets"
+  copy=$(stage container-query-clamp)
+  plant "$copy" 'pid1_identity_budget_ms=30000' 'pid1_identity_budget_ms=5500'
+  plant "$copy" \
+    '      pid1_executable=$(bounded_pid1_query "$query_term_seconds" "$runtime" exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true)' \
+    '      echo "$query_term_seconds" >>"'"$clamp_budgets"'"
+      pid1_executable=$(
+        bounded_pid1_query "$query_term_seconds" "$runtime" exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true
+      )'
+  plant "$copy" \
+    '      [[ "$pid1_executable" = "$controller" ]] && break' \
+    '      [[ "$pid1_executable" = "$controller" ]] && { echo "FG-231 PID1 DEADLINE CLAMPED" >&2; exit 91; }'
+  run_arm container-query-clamp "$copy" 'FG-231 PID1 DEADLINE CLAMPED' \
+    "PATH=$scratch/runtime-first-exec-stalls:$PATH" "FOGELL_FG224_CONTROLLER_IMAGE=$controller_image"
+  [[ "$(head -n 1 "$clamp_budgets")" = 2.000 \
+      && "$(wc -l <"$clamp_budgets")" -ge 2 \
+      && "$(tail -n 1 "$clamp_budgets")" =~ ^[01]\.[0-9]{3}$ ]] \
+    || { echo "FG-231 REFUSED: late PID1 query was not clamped inside the aggregate deadline: $(tr '\n' ' ' <"$clamp_budgets")" >&2; exit 1; }
+
+  rm -f "$scratch/first-exec-seen"
+  mutant_budgets="$scratch/container-query-clamp-removed.budgets"
+  copy=$(stage container-query-clamp-removed)
+  plant "$copy" 'pid1_identity_budget_ms=30000' 'pid1_identity_budget_ms=5500'
+  plant "$copy" \
+    '      query_term_ms=$pid1_query_budget_ms
+      if (( query_term_ms + pid1_query_kill_grace_ms > remaining_ms )); then
+        query_term_ms=$(( remaining_ms - pid1_query_kill_grace_ms ))
+      fi' \
+    '      query_term_ms=$pid1_query_budget_ms'
+  plant "$copy" \
+    '      pid1_executable=$(bounded_pid1_query "$query_term_seconds" "$runtime" exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true)' \
+    '      echo "$query_term_seconds" >>"'"$mutant_budgets"'"
+      pid1_executable=$(
+        bounded_pid1_query "$query_term_seconds" "$runtime" exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true
+      )'
+  plant "$copy" \
+    '      [[ "$pid1_executable" = "$controller" ]] && break' \
+    '      [[ "$pid1_executable" = "$controller" ]] && { echo "FG-231 PID1 DEADLINE CLAMP MUTANT REACHED" >&2; exit 91; }'
+  run_arm container-query-clamp-removed "$copy" 'FG-231 PID1 DEADLINE CLAMP MUTANT REACHED' \
+    "PATH=$scratch/runtime-first-exec-stalls:$PATH" "FOGELL_FG224_CONTROLLER_IMAGE=$controller_image"
+  [[ "$(wc -l <"$mutant_budgets")" -ge 2 \
+      && "$(sort -u "$mutant_budgets")" = 2.000 ]] \
+    || { echo "FG-231 REFUSED: clamp-removal mutant did not expose its full late-query budget: $(tr '\n' ' ' <"$mutant_budgets")" >&2; exit 1; }
+  echo "FG-231 aggregate-deadline clamp removal: late full-budget query exposed — KILLED"
+
+  # Arm 5: the container is up (its PID1 identity is compared against a name
   # the controller cannot have, so the launch refuses) and runtime stop never
   # returns.
   mkdir -p "$scratch/runtime-stop-hangs" "$scratch/runtime-run-delayed"
@@ -264,14 +350,14 @@ if [[ -n "$controller_image" ]]; then
 [[ "\${1:-}" = stop ]] && exec /bin/sleep infinity
 exec "$real_runtime" "\$@"
 EOS
-  # Arm 5: runtime run takes 15 s to create the container, longer than the
-  # 10 s identity budget. The proof refuses with the container absent, the
+  # Arm 6: runtime run takes 35 s to create the container, longer than the
+  # 30 s identity budget. The proof refuses with the container absent, the
   # real runtime stop fails fast on a name that does not exist yet, and the
   # client then starts the controller during the reap. Nothing is mutated in
   # the proof itself: this is hosted job 100045425020's own sequence.
   cat >"$scratch/runtime-run-delayed/$runtime" <<EOS
 #!/usr/bin/env bash
-[[ "\${1:-}" = run ]] && /bin/sleep 15
+[[ "\${1:-}" = run ]] && /bin/sleep 35
 exec "$real_runtime" "\$@"
 EOS
   chmod +x "$scratch/runtime-stop-hangs/$runtime" "$scratch/runtime-run-delayed/$runtime"
@@ -291,7 +377,7 @@ EOS
   rg -q 'FG-224 REFUSED: container PID1 was unreadable, expected .* \(container absent;' "$scratch/container-run-delayed.stderr" \
     || { echo "FG-231 REFUSED: container-run-delayed did not first refuse on an absent container" >&2; exit 1; }
 else
-  echo "FG-231: FOGELL_FG224_CONTROLLER_IMAGE is unset; the two container-stop arms did not run"
+  echo "FG-231: FOGELL_FG224_CONTROLLER_IMAGE is unset; the six image-dependent arms did not run"
 fi
 
 echo "FG-231 PROOF PASS: $arms_run planted stalls in the runnable-controller proof each became a named refusal within budget and left no controller behind"

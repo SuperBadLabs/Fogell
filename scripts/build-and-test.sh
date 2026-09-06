@@ -410,9 +410,10 @@ if lane_active build; then
   # FG-254. A tool-backed corpus receipt is publishable only when its allowlist
   # row selects a structured runtime pin and the runner verifies command
   # resolution, both tool hashes, the Jenkins image ID/digest, and that the
-  # execution URL is the inspected container's published port before execution
-  # and again before promotion. Prove every mismatch and both call sites
-  # without the private corpus or Jenkins lab.
+  # configured endpoint is the inspected container's published port before
+  # execution and again before promotion. The REST run itself must use a
+  # lane-life-bound authenticated SSH tunnel to that host. Prove every mismatch,
+  # both pin call sites, and the tunnel wiring without the private corpus or lab.
   ./scripts/prove-corpus-runtime-pins.sh \
     || { echo "CORPUS RUNTIME-PIN PROOF FAILED"; exit 1; }
 

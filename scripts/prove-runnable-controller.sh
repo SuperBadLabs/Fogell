@@ -63,8 +63,8 @@ liveness_host_pid=""
 # worse than one that fails, since nothing names the call it is stuck in.
 #
 # The budgets below are the proof's own poll budgets restated as wall-clock
-# deadlines: 10 s for readiness and identity (the old 200 x 50 ms), 80 s for
-# the post-exit tail (800 x 100 ms). A single HTTP request is bounded by the
+# deadlines: 10 s for ordinary readiness (the old 200 x 50 ms), 30 s for PID1
+# startup identity, and 80 s for the post-exit tail (800 x 100 ms). A single HTTP request is bounded by the
 # shortest of them; a container-runtime call, synchronous controller or Run.Host
 # invocation, and a reaped process each get a budget wide enough that only a
 # hang can exhaust it.
@@ -72,6 +72,15 @@ http_max_time=10
 runtime_budget=30
 process_budget=30
 reap_budget_ms=15000
+# Container creation and the first exec share runtime state.  Keep each PID1
+# read short so one client waiting on that state cannot consume the whole
+# startup window (hosted run 34048888704 did exactly that: the first exec used
+# the 30 s general runtime budget, then the already-running container was
+# refused without a retry).  The wider deadline is for startup as a whole;
+# no individual identity client may monopolise it.
+pid1_identity_budget_ms=30000
+pid1_query_budget_ms=2000
+pid1_query_kill_grace_ms=1000
 # The one-time image pull. Sized under the hosted step's 10-minute bound, so
 # it is a bound there too; the hosted PID1 step has already pulled the image,
 # where this is a no-op.
@@ -98,6 +107,17 @@ before_deadline() {
 # `budget_expired` is the one place that says so.
 bounded() {
   timeout -k 5 "$1" "${@:2}"
+}
+
+# PID1 readiness is the one runtime call made inside a shorter aggregate
+# deadline.  Its caller supplies a TERM budget already clamped so this one
+# second KILL grace cannot carry the call beyond that deadline.
+bounded_pid1_query() {
+  timeout -k 1 "$1" "${@:2}"
+}
+
+seconds_from_ms() {
+  printf '%d.%03d\n' "$(( $1 / 1000 ))" "$(( $1 % 1000 ))"
 }
 
 budget_expired() {
@@ -417,9 +437,19 @@ launch_controller() {
   if [[ -n "$controller_image" ]]; then
     local pid1_executable=""
     local poll_deadline
-    poll_deadline=$(deadline_after 10000)
+    local remaining_ms
+    local query_term_ms
+    local query_term_seconds
+    poll_deadline=$(deadline_after "$pid1_identity_budget_ms")
     while before_deadline "$poll_deadline"; do
-      pid1_executable=$(bounded "$runtime_budget" "$runtime" exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true)
+      remaining_ms=$(( poll_deadline - $(now_ms) ))
+      (( remaining_ms > pid1_query_kill_grace_ms )) || break
+      query_term_ms=$pid1_query_budget_ms
+      if (( query_term_ms + pid1_query_kill_grace_ms > remaining_ms )); then
+        query_term_ms=$(( remaining_ms - pid1_query_kill_grace_ms ))
+      fi
+      query_term_seconds=$(seconds_from_ms "$query_term_ms")
+      pid1_executable=$(bounded_pid1_query "$query_term_seconds" "$runtime" exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true)
       [[ "$pid1_executable" = "$controller" ]] && break
       kill -0 "$host_pid" 2>/dev/null \
         || { echo "FG-224 REFUSED: controller container exited before PID1 identity was proven" >&2; exit 1; }
