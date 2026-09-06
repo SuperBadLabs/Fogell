@@ -103,3 +103,89 @@ One run, non-sealed bench Jenkins (360 plugins vs the oracle's 90), no Maven or
 SCM tooling configured. The linter validates Declarative structure, not runtime
 behaviour: a file it accepts may still fail when run. None of this is sealed
 evidence and none of it carries an FG-005 seal.
+
+---
+
+# Addendum — SCM configured, and the differential re-run properly: 306 / 307
+
+The earlier 292/307 was **my misconfiguration, not an unpinned rig**. `fogell-diff`
+has five canonicalisation hooks and I had set one.
+
+| hook | folds | set by |
+|---|---|---|
+| `FOGELL_JENKINS_WORKSPACE` / `_CMD` | workspace enumeration | `jenkins-workspace-v2.sh` |
+| `FOGELL_JENKINS_WIPE_CMD` | clears workspace — kills the stale `.git` divergence | `jenkins-workspace-v2.sh` |
+| `FOGELL_JENKINS_ENV_CMD` | engine-inherited env, so `$HOME` paths canonicalise | `run-differential.sh` |
+| `FOGELL_JENKINS_GIT_VERSION_CMD` | folds `git --version` to `${GITVERSION}` | `run-differential.sh` |
+| `FOGELL_SCM_URL` | the SCM fixture repo | `run-differential.sh` |
+
+## SCM configuration
+
+The fixture repo already existed on luigi (`100.105.179.51`) at `~/fogell-scm/repo.git`
+with 74 branches including every `case/checkout-scm-*` — **only the git daemon was
+down**. Started as documented:
+
+```
+git daemon --base-path=$HOME/fogell-scm --export-all --enable=receive-pack --reuseaddr --port=9418
+```
+
+Verified reachable from mario and from inside the Jenkins container. `sync-scm-cases`
+ran clean (nothing to update). **`FOGELL_SCM_URL` alone changed nothing** — re-running
+the 15 failures with only it set still gave 0/15. The canonicalisation hooks were the
+actual fix.
+
+## Result: 306 / 307 tier-1 proven, live
+
+With every hook configured, all fourteen previously-failing cases prove —
+`checkout-scm-*`, `git-step-*`, `env-inherited-output-fold`,
+`parallel-inherited-env-fold`, `xtrace-continuation-inherited`. The git `2.47.3`
+vs `2.43.0` difference and the `/var/jenkins_home` vs `/tmp/fogell-diff-…` paths
+fold exactly as the harness intends.
+
+**The board's 307/307 therefore survives live re-derivation, with one exception.**
+
+## The exception: `script-capture-escaped-descendant`
+
+```
+fogell side failed: progressive output reader did not reach EOF
+within the shared 500ms output-drain budget
+```
+
+FG-181's case: a descendant that ESCAPES the process group via `setsid` and holds
+the inherited stdout write end open after the shell exits. Its committed receipt
+says `VERDICT: PROVEN (tier 1) — same result, same output, same workspace hash`.
+
+**The receipt is fresh, not stale.** Its `case-digest` matches the file on disk
+byte for byte, and both were last touched by the same commit (`40786565`,
+2026-08-12).
+
+**It does not reproduce, and the failure is not explained by rig, host, or FG-224:**
+
+| condition | result |
+|---|---|
+| current main, mario, 5 runs | 5/5 fail |
+| `76072354` (pre-FG-224, 08-30), mario, 2 runs | 2/2 fail |
+| `16982e1a` (FG-224, 08-31), mario, 2 runs | 2/2 fail |
+| current main, **luigi** — the host where it was sealed, 3 runs | 3/3 fail |
+
+Twelve consecutive failures across two hosts and three engine builds spanning a
+week. So the behaviour changed between the receipt's sealing (2026-08-12) and
+`76072354` (2026-08-30) — **a window this run did not bisect.**
+
+**A sealed tier-1 receipt therefore counts toward 307/307 while no longer
+reproducing.** The scorecard's own caveat covers file freshness via digest; this
+receipt passes that check and still overstates the engine's current behaviour.
+That is the boards-may-not-be-true failure mode, found by measurement, and it is
+the one place today where a board claim does not survive re-derivation.
+
+**Not separated:** engine and harness are built from the same tree, so all twelve
+runs varied them together. Whether the change is in the engine's output drain or
+in the differential harness's reader is not established here.
+
+## Note on rig exposure
+
+Jenkins was republished on the tailnet (`100.127.170.90:18086`) so HeMan could
+drive the collector over ssh, alongside the existing loopback binding. It is
+unauthenticated, matching how `jenkins-oracle-228` is already exposed. Receipts
+were written to a scratch directory throughout; **no committed receipt was
+overwritten.**

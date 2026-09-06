@@ -1,0 +1,30 @@
+  git-step-default-branch.Jenkinsfile            re-running (diverged, attempt 3 of 3)
+  git-step-default-branch.Jenkinsfile            DIVERGED(1)      git-step-default-branch.receipt.txt
+        output line 3: jenkins=> git rev-parse --resolve-git-dir ${WORKSPACE}/.git # timeout=10 fogell=Cloning the remote Git repository
+  git-step-deletedir.Jenkinsfile                 re-running (diverged, attempt 2 of 3)
+  git-step-deletedir.Jenkinsfile                 re-running (diverged, attempt 3 of 3)
+  git-step-deletedir.b1.Jenkinsfile              DIVERGED(1)      git-step-deletedir.b1.receipt.txt
+        output line 3: jenkins=> git rev-parse --resolve-git-dir ${WORKSPACE}/.git # timeout=10 fogell=Cloning the remote Git repository
+  git-step-deletedir.b2.Jenkinsfile              DIVERGED(1)      git-step-deletedir.b2.receipt.txt
+        output line 8: jenkins=> git --version # 'git version 2.47.3' fogell=> git --version # 'git version 2.43.0'
+  git-step-refetch.Jenkinsfile                   re-running (diverged, attempt 2 of 3)
+  git-step-refetch.Jenkinsfile                   re-running (diverged, attempt 3 of 3)
+  git-step-refetch.b1.Jenkinsfile                DIVERGED(1)      git-step-refetch.b1.receipt.txt
+        output line 3: jenkins=> git rev-parse --resolve-git-dir ${WORKSPACE}/.git # timeout=10 fogell=Cloning the remote Git repository
+  git-step-refetch.b2.Jenkinsfile                DIVERGED(1)      git-step-refetch.b2.receipt.txt
+        output line 8: jenkins=> git --version # 'git version 2.47.3' fogell=> git --version # 'git version 2.43.0'
+  env-inherited-output-fold.Jenkinsfile          re-running (diverged, attempt 2 of 3)
+  env-inherited-output-fold.Jenkinsfile          re-running (diverged, attempt 3 of 3)
+  env-inherited-output-fold.Jenkinsfile          DIVERGED(1)      env-inherited-output-fold.receipt.txt
+        output line 1: jenkins=/var/jenkins_home fogell=/tmp/fogell-diff-95b5c1cc/_agent_home/1ec3a50a3c258d0e682ab7df834a397d2b1d913f820b3ee2442bd84a2e7c97c4
+  parallel-inherited-env-fold.Jenkinsfile        re-running (diverged, attempt 2 of 3)
+  parallel-inherited-env-fold.Jenkinsfile        re-running (diverged, attempt 3 of 3)
+  parallel-inherited-env-fold.Jenkinsfile        DIVERGED(1)      parallel-inherited-env-fold.receipt.txt
+        output line 0: jenkins=+ echo /var/jenkins_home fogell=+ echo /tmp/fogell-diff-95b5c1cc/_agent_home/9641e55cac362969b4a34ed3c783a76b9b9506c86d794cd8dfd9c6766326894e
+  xtrace-continuation-inherited.Jenkinsfile      re-running (diverged, attempt 2 of 3)
+  xtrace-continuation-inherited.Jenkinsfile      re-running (diverged, attempt 3 of 3)
+  xtrace-continuation-inherited.Jenkinsfile      DIVERGED(1)      xtrace-continuation-inherited.receipt.txt
+        output line 1: jenkins=/var/jenkins_home/tail fogell=/tmp/fogell-diff-95b5c1cc/_agent_home/fe28859c0d6ceb92a655fcc6cc397fa967bfadf75ea854c6a35611c5d47a1c36/tail
+
+tier-1 proven (incl. workspace): 0 / 15
+proven-partial (result+output):  0 / 15
