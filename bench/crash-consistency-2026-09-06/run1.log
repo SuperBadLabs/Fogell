@@ -1,0 +1,22 @@
+kill at t+15s, stage-2 step sleeps 45s after writing its marker
+
+=== fogell ===
+  markers at kill : {'s1': 1, 's2': 1}
+  markers at end  : {'s1': 1, 's2': 1}
+  engine verdict  : exit 3
+  -> one effect across the crash
+  journal: build-identity	525eb32224d64556bcfbd04dd71427c6 | step-started	s1	0	sh | step-finished	s1	0	success | stage-committed	s1 | step-started	s2	0	sh
+
+=== mcloving ===
+  markers at kill : {'s1': 1, 's2': 1}
+  markers at end  : {'s1': 1, 's2': 1}
+  engine verdict  : aborted
+  -> one effect across the crash
+
+=== jenkins ===
+  markers at kill : {'s1': 1, 's2': 1}
+  markers at end  : {'s1': 1, 's2': 1}
+  engine verdict  : no terminal verdict in 420s
+  -> one effect across the crash
+
+EXIT=0
