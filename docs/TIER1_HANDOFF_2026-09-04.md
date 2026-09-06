@@ -335,3 +335,23 @@ Read with the two sections above; this is the second addendum.
   source tree. Copilot review `5124265373` is an error artifact, not a review;
   FG-253 remains PARTIAL until a substantive review of `665b7bac` exists or the
   owner explicitly records a reviewer exception.
+
+## 2026-09-06 custodian addendum — FG-254 candidate
+
+- **Measured, publication pending: FG-254.** The exact GNU Make 4.3 executable
+  already on HeMan (SHA-256 `d78b8f1d…`) is copied into a network-disabled,
+  digest-checked immutable derivative of the pinned Jenkins 2.568.1 image.
+  Three real `sh -xe script.sh.copy` probes on each engine matched in output
+  and exit before the corpus allowlist changed.
+- **One corpus file moved.** `charlires_golang-docker-jenkins` ran alone
+  through the cross-host lease and both proven no-egress fences. Receipt
+  `charlires_golang-docker-jenkins` is Tier-1 PROVEN: both engines fail at the
+  first `make build-base` because the empty workspace has no Makefile, emit the
+  same two later-stage skip sentences, and retain the same empty workspace.
+  The intended build, later Make targets, `ls`, and `junit` do not run and are
+  not claimed.
+- **Generated accounting:** `tier1=13`, `admitted=187`, `tier3=28`; the
+  separate hand-written population remains 308 of 308 proven.
+- **Publication remains.** The ticket is
+  [`tickets/FG-254.md`](tickets/FG-254.md). Exact-head local gate, final review,
+  hosted gate, protected merge, and accounting are still required before DONE.

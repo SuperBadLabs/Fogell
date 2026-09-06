@@ -52,7 +52,7 @@ bszeti_kubernetes-integration-test.Jenkinsfile	admitted	-	parsed; execution NOT 
 buildit_jenkins-pipeline-libraries.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 camiloribeiro_cdeasy.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 captjt_jenkins-pipeline-express.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-charlires_golang-docker-jenkins.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
+charlires_golang-docker-jenkins.Jenkinsfile	1	-	receipt:charlires_golang-docker-jenkins
 choiis_Cpp-IOCP-Server.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 chrsoo_microservices.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 cinqict_jenkinsdev.Jenkinsfile	1	-	receipt:cinqict_jenkinsdev
