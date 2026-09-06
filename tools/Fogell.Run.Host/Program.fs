@@ -638,12 +638,78 @@ let main argv =
             eprintfn "workspace path or job-name contains tab/newline/carriage-return (after symlink resolution) — unjournalable; refusing"
             exit 2
 
-        // repair a torn tail BEFORE the plan is built: the reconciliation
-        // refusal exits before any journal open, and an operator's appended
-        // fix would otherwise land invisibly behind the fragment
-        Journal.repairTail journalPath
+        // FG-253. An unsupported agent must be refused before even the recovery
+        // write below. Read only enough journal state to preserve the established
+        // terminal no-op: a complete, newline-terminated BuildFinished record
+        // means the Jenkinsfile may already have been rotated and must not be
+        // required. For every non-terminal journal, including one with a torn
+        // tail, run the same persisted preflight while the journal bytes are
+        // still untouched.
+        let readAndPreflightScript () =
+            let candidate = File.ReadAllText jenkinsfile
 
-        let plan = Resume.plan (Journal.read journalPath)
+            match FogellSide.preflightPersistedExecution candidate with
+            | Error why ->
+                eprintfn $"{why}"
+                exit 2
+            | Ok _ -> candidate
+
+        let terminalPlan, scriptBeforeRepair =
+            if not (File.Exists journalPath) then
+                None, Some(readAndPreflightScript ())
+            else
+                // Bind framing and decoded records to one immutable byte
+                // snapshot. FileShare is only advisory on the supported Linux
+                // runtime, so neither a lock flag nor two pathname reads can
+                // prevent an old newline from being associated with a newly
+                // appended, unterminated BuildFinished record. Decode only the
+                // newline-terminated prefix: a durable BuildFinished remains a
+                // terminal no-op even if unrelated torn bytes follow it, while
+                // an unterminated BuildFinished is never trusted.
+                let snapshotBytes = File.ReadAllBytes journalPath
+
+                let durableLength =
+                    snapshotBytes
+                    |> Array.tryFindIndexBack ((=) (byte '\n'))
+                    |> Option.map ((+) 1)
+                    |> Option.defaultValue 0
+
+                let durableRecords =
+                    use snapshot = new MemoryStream(snapshotBytes, 0, durableLength, false)
+                    use reader = new StreamReader(snapshot, Encoding.UTF8, true)
+                    let decoded = ResizeArray<Record>()
+                    let mutable keepReading = true
+
+                    while keepReading && not reader.EndOfStream do
+                        match Record.decode (reader.ReadLine()) with
+                        | Some record -> decoded.Add record
+                        | None -> keepReading <- false
+
+                    decoded |> Seq.toList
+
+                let hasDurableTerminal =
+                    durableRecords
+                    |> List.exists (function
+                        | BuildFinished _ -> true
+                        | _ -> false)
+
+                if hasDurableTerminal then
+                    Some(Resume.plan durableRecords), None
+                else
+                    None, Some(readAndPreflightScript ())
+
+        // Repair a torn tail BEFORE the non-terminal plan is built: an
+        // operator's appended fix would otherwise land invisibly behind the
+        // fragment. The unsupported-agent refusal above exits before this
+        // mutation; Journal.openAt repeats the repair before its first append as
+        // the deepest durability guard. A durable terminal plan is carried from
+        // the locked snapshot and needs neither a repair nor a second read.
+        let plan =
+            match terminalPlan with
+            | Some completed -> completed
+            | None ->
+                Journal.repairTail journalPath
+                Resume.plan (Journal.read journalPath)
         buildIdentity <- defaultArg plan.BuildIdentity ""
 
         // what the journal already says is written down — see consumeAnswer
@@ -675,18 +741,13 @@ let main argv =
             0
         | None ->
 
-        let script = File.ReadAllText jenkinsfile
-
-        // The durable host owns fresh-workspace preparation, so runWith's shared
-        // preflight would otherwise be too late to preserve the old tree. Use the same
-        // preflight here before a build identity, journal record, answer adoption or
-        // workspace wipe. runPersisted applies the same durable guard again before
-        // entering runWith's generic execution preflight.
-        match FogellSide.preflightPersistedExecution script with
-        | Error why ->
-            eprintfn $"{why}"
-            exit 2
-        | Ok _ -> ()
+        // Populated by the read-only pre-repair guard on every non-terminal
+        // journal. Only a parsed BuildFinished record whose line is durably
+        // terminated can leave it empty, and that record survives repairTail.
+        let script =
+            match scriptBeforeRepair with
+            | Some candidate -> candidate
+            | None -> readAndPreflightScript ()
 
         let digest =
             use h = Security.Cryptography.SHA256.Create()

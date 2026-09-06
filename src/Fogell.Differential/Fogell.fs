@@ -359,19 +359,37 @@ module FogellSide =
             | Result.Error why -> Result.Error why
             | Result.Ok(Some why) -> Result.Error why
             | Result.Ok None ->
+                // FG-253. This repository's runnable controller is explicitly a
+                // single-node controller, and the differential runner exercises that
+                // same local executor. `built-in` is therefore the one label this
+                // execution path offers. Every other label needs scheduler capability
+                // matching, while docker/dockerfile need provisioning and environment
+                // semantics; treating any of them as `agent any` silently runs work
+                // Jenkins would queue or provision elsewhere.
+                let unsupportedAgent scope agent =
+                    match agent with
+                    | AgentLabel label when not (String.Equals(label, "built-in", StringComparison.Ordinal)) ->
+                        Some $"{scope} (`label`: `{label}`)"
+                    | AgentDocker _ -> Some $"{scope} (`docker`)"
+                    | AgentDockerfile _ -> Some $"{scope} (`dockerfile`)"
+                    | AgentUnmodelled(kind, _) -> Some $"{scope} (`{kind}`)"
+                    | AgentAny
+                    | AgentNone
+                    | AgentLabel _ -> None
+
                 let agentScopes =
-                    [ match pipeline.Agent with
-                      | AgentUnmodelled(kind, _) -> yield $"pipeline (`{kind}`)"
-                      | _ -> ()
+                    [ match unsupportedAgent "pipeline" pipeline.Agent with
+                      | Some scope -> yield scope
+                      | None -> ()
                       for stage in Pipeline.flattenStages pipeline.Stages do
-                          match stage.Agent with
-                          | Some(AgentUnmodelled(kind, _)) -> yield $"stage '{stage.Name}' (`{kind}`)"
-                          | _ -> () ]
+                          match stage.Agent |> Option.bind (unsupportedAgent $"stage '{stage.Name}'") with
+                          | Some scope -> yield scope
+                          | None -> () ]
 
                 if not (List.isEmpty agentScopes) then
                     Result.Error(
-                        "unsupported_agent: plugin-defined Declarative agents are parsed for admission but execution is refused "
-                        + "until provisioning, workspace placement and agent environment semantics are implemented; scopes: "
+                        "unsupported_agent: Declarative agents not offered by the single-node executor are parsed for admission but execution is refused "
+                        + "until label matching, provisioning, workspace placement and agent environment semantics are implemented; scopes: "
                         + String.concat ", " agentScopes
                     )
                 else
@@ -592,11 +610,15 @@ module FogellSide =
         // repeated lexical bindings share it instead of multiplying full encoded
         // strings in WalkerCtx's run-scoped protection history.
         let credentialsForRun = lazy (credentials ())
-        // The execution root belongs to the caller and may intentionally be a
-        // shared/mounted parent.  Create it when absent, but never chmod or
-        // otherwise reinterpret an existing root; only Fogell's child HOME is
-        // private agent state.
-        Directory.CreateDirectory workspaceRoot |> ignore
+        let prepareWorkspaceRoot () =
+            // The execution root belongs to the caller and may intentionally be a
+            // shared/mounted parent. Create it when absent, but never chmod or
+            // otherwise reinterpret an existing root; only Fogell's child HOME is
+            // private agent state. This helper is deliberately invoked only after
+            // executionPreflight has admitted the script: an engine-unavailable
+            // refusal must remain free of filesystem effects.
+            Directory.CreateDirectory workspaceRoot |> ignore
+
         let workspace = Path.Combine(workspaceRoot, jobName)
         // Artifacts and SCM history live outside the workspace hash.
         let artifactRoot = Path.Combine(workspaceRoot, "_artifacts")
@@ -642,6 +664,7 @@ module FogellSide =
         match executionPreflight script with
         | EngineUnavailable why -> Result.Error why
         | ReferenceRejected _ ->
+            prepareWorkspaceRoot ()
             let scmPreflightNotes = verifyScmDefinition ()
             prepareFreshJob ()
             // After the fresh-job reset above, do not create a workspace. A new
@@ -660,6 +683,7 @@ module FogellSide =
                   Timestamps = (0, 0)
                   ReportedFailureReason = true }
         | Ready pipeline ->
+            prepareWorkspaceRoot ()
             let scmPreflightNotes = verifyScmDefinition ()
             prepareFreshJob ()
             let buildHomeRoot = Path.Combine(workspaceRoot, "_agent_home")
