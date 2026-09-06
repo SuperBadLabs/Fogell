@@ -368,3 +368,7 @@ Read with the two sections above; this is the second addendum.
 - **Publication remains.** The ticket is
   [`tickets/FG-254.md`](tickets/FG-254.md). Exact-head local gate, final review,
   hosted gate, protected merge, and accounting are still required before DONE.
+  The fresh disposable-controller lane passed on signed `a8aec39b` from
+  `22:09:40Z` to `22:10:50Z`; its exact-commit private CLI closure was
+  `50488f605c4782453e52d369e5ddd7a0f2e1708b69089075e1d8486ba63a2463`,
+  and the promoted receipt remained byte-identical.
