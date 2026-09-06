@@ -352,6 +352,11 @@ Read with the two sections above; this is the second addendum.
   not claimed.
 - **Generated accounting:** `tier1=13`, `admitted=187`, `tier3=28`; the
   separate hand-written population remains 308 of 308 proven.
+- **The runtime pin is executable policy, not prose.** Before execution and
+  again before promotion the lane checks both resolved Make paths and hashes,
+  the container image ID/digest, and that the HTTP oracle URL names the same
+  SSH host and exact published `8080/tcp -> 0.0.0.0:18083` binding. Its
+  service-free hostile proof kills every identity or endpoint substitution.
 - **Publication remains.** The ticket is
   [`tickets/FG-254.md`](tickets/FG-254.md). Exact-head local gate, final review,
   hosted gate, protected merge, and accounting are still required before DONE.

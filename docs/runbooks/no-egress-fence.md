@@ -22,10 +22,12 @@ regenerate the ledger with
 An allowlist row may name a fourth-field runtime-pin ID from
 `differential/corpus-runtime-pins.tsv`. Under the cross-host lease and before
 any corpus execution, the lane verifies the command resolves to the pinned
-path on each engine, both resolved files have the pinned SHA-256, and the live
-Jenkins container uses the pinned image ID and digest. It repeats the complete
-check before promotion. Any missing, malformed, unavailable, or changed value
-discards the run's private receipts. Rows with no fourth field keep the
+path on each engine, both resolved files have the pinned SHA-256, the live
+Jenkins container uses the pinned image ID and digest, and the differential's
+HTTP URL names that same SSH host at the exact port published from the pinned
+container port. It repeats the complete check before promotion. Any missing,
+malformed, unavailable, or changed value discards the run's private receipts.
+Rows with no fourth field keep the
 historical no-tool behavior. The runner names that committed pin file
 literally; there is no caller override for the expected tuple.
 

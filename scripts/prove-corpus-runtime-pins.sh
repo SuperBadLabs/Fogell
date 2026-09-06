@@ -12,15 +12,19 @@ local_path=$(PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin c
 local_sha=$(sha256sum -- "$local_path" | cut -d' ' -f1)
 image_id=$(printf 'a%.0s' {1..64})
 image_digest="sha256:$(printf 'b%.0s' {1..64})"
+container_port=8080/tcp
+host_binding=0.0.0.0:18083
 
 apply_fixture() {
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    make-pin make "$local_path" /usr/local/bin/make "$local_sha" "$image_id" "$image_digest" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    make-pin make "$local_path" /usr/local/bin/make "$local_sha" "$image_id" "$image_digest" "$container_port" "$host_binding" \
     > "$scratch/pins.tsv"
   export FAKE_REMOTE_PATH=/usr/local/bin/make
   export FAKE_REMOTE_TOOL_SHA=$local_sha
   export FAKE_IMAGE_ID=$image_id
   export FAKE_IMAGE_DIGEST=$image_digest
+  export FAKE_PORT_BINDING=$host_binding
+  export FOGELL_JENKINS_URL=http://fake:18083
   unset FAKE_SSH_FAIL
 }
 
@@ -34,6 +38,7 @@ case "$remote_command" in
   *"podman exec "*" sha256sum -- "*) printf '%s  %s\n' "$FAKE_REMOTE_TOOL_SHA" "$FAKE_REMOTE_PATH" ;;
   *"podman inspect "*"Image"*) printf '%s\n' "$FAKE_IMAGE_ID" ;;
   *"podman image inspect "*"Digest"*) printf '%s\n' "$FAKE_IMAGE_DIGEST" ;;
+  *"podman port "*) printf '%s\n' "$FAKE_PORT_BINDING" ;;
   *) printf 'unexpected ssh command: %s\n' "$remote_command" >&2; exit 3 ;;
 esac
 EOF
@@ -84,6 +89,22 @@ FAKE_IMAGE_DIGEST="sha256:$(printf 'e%.0s' {1..64})"
 must_refuse "image digest replacement" "Jenkins image digest"
 apply_fixture
 
+FOGELL_JENKINS_URL=http://other-host:18083
+must_refuse "independent Jenkins endpoint host" "does not match inspected SSH host"
+apply_fixture
+
+FOGELL_JENKINS_URL=http://fake:18084
+must_refuse "independent Jenkins endpoint port" "expected published port"
+apply_fixture
+
+FOGELL_JENKINS_URL=http://fake:18083/proxy
+must_refuse "proxied Jenkins endpoint path" "must be exactly"
+apply_fixture
+
+FAKE_PORT_BINDING=0.0.0.0:18084
+must_refuse "container port-binding drift" "Jenkins port binding"
+apply_fixture
+
 export FAKE_SSH_FAIL=1
 must_refuse "unavailable remote identity" "could not resolve Jenkins tool"
 apply_fixture
@@ -92,15 +113,23 @@ sed -i "s/$local_sha/bad/" "$scratch/pins.tsv"
 must_refuse "malformed tool digest" "invalid tool SHA-256"
 apply_fixture
 
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  make-pin make "$local_path" /usr/local/bin/make "$local_sha" "$image_id" "$image_digest" \
+sed -i "s#\t$container_port\t#\tbad-port\t#" "$scratch/pins.tsv"
+must_refuse "malformed container port" "invalid Jenkins container port"
+apply_fixture
+
+sed -i "s#\t$host_binding#\t127.0.0.1:18083#" "$scratch/pins.tsv"
+must_refuse "malformed host binding" "invalid Jenkins host binding"
+apply_fixture
+
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  make-pin make "$local_path" /usr/local/bin/make "$local_sha" "$image_id" "$image_digest" "$container_port" "$host_binding" \
   >> "$scratch/pins.tsv"
 must_refuse "duplicate pin id" "duplicate pin id"
 apply_fixture
 
 set +e
 missing_out=$(PATH="$scratch/bin:$PATH" \
-  FOGELL_JENKINS_HOST=fake FOGELL_JENKINS_CONTAINER=jenkins-lab \
+  FOGELL_JENKINS_HOST=fake FOGELL_JENKINS_CONTAINER=jenkins-lab FOGELL_JENKINS_URL=http://fake:18083 \
   ./scripts/check-corpus-runtime-pins.sh "$scratch/pins.tsv" absent-pin 2>&1); missing_rc=$?
 set -e
 if [ "$missing_rc" -eq 0 ] || [[ "$missing_out" != *"is not defined"* ]]; then

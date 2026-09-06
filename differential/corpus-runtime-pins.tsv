@@ -1,2 +1,2 @@
-# pin-id	tool-name	local-tool	jenkins-tool	tool-sha256	jenkins-image-id	jenkins-image-digest
-gnu-make-4.3-d78b8f1d	make	/usr/bin/make	/usr/local/bin/make	d78b8f1d099fbcfb6f2f49ab87223b9b68fb3956642f92d6ec6de812e8afa965	ddc4e247ca53c13baab8df6d13ab6646a4663ce2e843187661c74b8860a163f3	sha256:dfdd9ae5effae9bc2484e25944437a23cf06949074de7c56cd5cd42981843990
+# pin-id	tool-name	local-tool	jenkins-tool	tool-sha256	jenkins-image-id	jenkins-image-digest	jenkins-container-port	jenkins-host-binding
+gnu-make-4.3-d78b8f1d	make	/usr/bin/make	/usr/local/bin/make	d78b8f1d099fbcfb6f2f49ab87223b9b68fb3956642f92d6ec6de812e8afa965	ddc4e247ca53c13baab8df6d13ab6646a4663ce2e843187661c74b8860a163f3	sha256:dfdd9ae5effae9bc2484e25944437a23cf06949074de7c56cd5cd42981843990	8080/tcp	0.0.0.0:18083

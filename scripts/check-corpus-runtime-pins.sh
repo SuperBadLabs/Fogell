@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Verify the exact command resolution, tool bytes and Jenkins image selected by
-# an allowlisted corpus row. The corpus runner calls this under its cross-host
-# lease before execution and again before receipt promotion.
+# Verify the exact command resolution, tool bytes, Jenkins image, and published
+# endpoint selected by an allowlisted corpus row. The corpus runner calls this
+# under its cross-host lease before execution and again before receipt promotion.
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 
@@ -12,6 +12,7 @@ pins_file=$1
 shift
 : "${FOGELL_JENKINS_HOST:=luigi}"
 : "${FOGELL_JENKINS_CONTAINER:=jenkins-lab}"
+: "${FOGELL_JENKINS_URL:=http://luigi:18083}"
 [ -f "$pins_file" ] || die "$pins_file is missing"
 
 # This is the fixed build PATH in ProcessGroup.fs. Resolving under the same
@@ -21,11 +22,11 @@ build_path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # shellcheck source=scripts/jenkins-workspace-v2.sh disable=SC1091
 source scripts/jenkins-workspace-v2.sh || die "Jenkins command quoting helpers could not be loaded"
 
-declare -A tool_name=() local_tool=() jenkins_tool=() tool_sha=() image_id=() image_digest=()
-while IFS=$'\t' read -r pin command local_path jenkins_path sha expected_image expected_digest extra; do
+declare -A tool_name=() local_tool=() jenkins_tool=() tool_sha=() image_id=() image_digest=() container_port=() host_binding=()
+while IFS=$'\t' read -r pin command local_path jenkins_path sha expected_image expected_digest expected_container_port expected_host_binding extra; do
   [ -n "$pin" ] || continue
   case "$pin" in \#*) continue ;; esac
-  [ -z "${extra:-}" ] || die "pin '$pin' has more than seven tab-separated fields"
+  [ -z "${extra:-}" ] || die "pin '$pin' has more than nine tab-separated fields"
   [[ "$pin" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die "invalid pin id '$pin'"
   [ -z "${tool_name[$pin]+x}" ] || die "duplicate pin id '$pin'"
   [[ "$command" =~ ^[A-Za-z0-9._+-]+$ ]] || die "pin '$pin' has an unsafe tool name"
@@ -34,12 +35,22 @@ while IFS=$'\t' read -r pin command local_path jenkins_path sha expected_image e
   [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || die "pin '$pin' has an invalid tool SHA-256"
   [[ "$expected_image" =~ ^[0-9a-f]{64}$ ]] || die "pin '$pin' has an invalid Jenkins image ID"
   [[ "$expected_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die "pin '$pin' has an invalid Jenkins image digest"
+  [[ "$expected_container_port" =~ ^[1-9][0-9]{0,4}/tcp$ ]] \
+    || die "pin '$pin' has an invalid Jenkins container port"
+  port_number=${expected_container_port%/tcp}
+  [ "$port_number" -le 65535 ] || die "pin '$pin' has an invalid Jenkins container port"
+  [[ "$expected_host_binding" =~ ^(0\.0\.0\.0|\[::\]):[1-9][0-9]{0,4}$ ]] \
+    || die "pin '$pin' has an invalid Jenkins host binding"
+  binding_port=${expected_host_binding##*:}
+  [ "$binding_port" -le 65535 ] || die "pin '$pin' has an invalid Jenkins host binding"
   tool_name[$pin]=$command
   local_tool[$pin]=$local_path
   jenkins_tool[$pin]=$jenkins_path
   tool_sha[$pin]=$sha
   image_id[$pin]=$expected_image
   image_digest[$pin]=$expected_digest
+  container_port[$pin]=$expected_container_port
+  host_binding[$pin]=$expected_host_binding
 done < "$pins_file"
 
 declare -A requested=()
@@ -98,6 +109,32 @@ for pin in "$@"; do
   [ "$observed_digest" = "${image_digest[$pin]}" ] \
     || die "pin '$pin' Jenkins image digest is $observed_digest, expected ${image_digest[$pin]}"
 
-  printf 'corpus runtime pin: %s verified (tool %s; image %s; digest %s)\n' \
-    "$pin" "${tool_sha[$pin]}" "${image_id[$pin]}" "${image_digest[$pin]}"
+  # The URL used by the differential must name the same SSH host whose
+  # container was inspected, and its port must be the exact published binding
+  # of that container's pinned Jenkins port. This prevents an independently
+  # overridden URL from executing on an uninspected Jenkins service.
+  if [[ "$FOGELL_JENKINS_URL" =~ ^http://([A-Za-z0-9._-]+):([1-9][0-9]{0,4})$ ]]; then
+    url_host=${BASH_REMATCH[1]}
+    url_port=${BASH_REMATCH[2]}
+  else
+    die "pin '$pin' Jenkins URL must be exactly http://<ssh-host>:<published-port>"
+  fi
+  [ "$url_port" -le 65535 ] \
+    || die "pin '$pin' Jenkins URL has an invalid published port"
+  [ "$url_host" = "$FOGELL_JENKINS_HOST" ] \
+    || die "pin '$pin' Jenkins URL host '$url_host' does not match inspected SSH host '$FOGELL_JENKINS_HOST'"
+  expected_url_port=${host_binding[$pin]##*:}
+  [ "$url_port" = "$expected_url_port" ] \
+    || die "pin '$pin' Jenkins URL port is $url_port, expected published port $expected_url_port"
+  container_port_q=$(fogell_quote_posix_shell_v2 "${container_port[$pin]}") \
+    || die "pin '$pin' could not quote the Jenkins container port"
+  if ! observed_binding=$(ssh -o BatchMode=yes -- "$FOGELL_JENKINS_HOST" \
+      "podman port $container_q $container_port_q" 2>/dev/null); then
+    die "pin '$pin' could not inspect the Jenkins container port binding"
+  fi
+  [ "$observed_binding" = "${host_binding[$pin]}" ] \
+    || die "pin '$pin' Jenkins port binding is ${observed_binding:-nothing}, expected ${host_binding[$pin]}"
+
+  printf 'corpus runtime pin: %s verified (tool %s; image %s; digest %s; endpoint %s)\n' \
+    "$pin" "${tool_sha[$pin]}" "${image_id[$pin]}" "${image_digest[$pin]}" "$FOGELL_JENKINS_URL"
 done
