@@ -22,11 +22,11 @@ build_path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # shellcheck source=scripts/jenkins-workspace-v2.sh disable=SC1091
 source scripts/jenkins-workspace-v2.sh || die "Jenkins command quoting helpers could not be loaded"
 
-declare -A tool_name=() local_tool=() jenkins_tool=() tool_sha=() image_id=() image_digest=() container_port=() host_binding=()
-while IFS=$'\t' read -r pin command local_path jenkins_path sha expected_image expected_digest expected_container_port expected_host_binding extra; do
+declare -A tool_name=() local_tool=() jenkins_tool=() tool_sha=() image_id=() image_digest=() container_port=() host_binding=() jenkins_node=()
+while IFS=$'\t' read -r pin command local_path jenkins_path sha expected_image expected_digest expected_container_port expected_host_binding expected_node extra; do
   [ -n "$pin" ] || continue
   case "$pin" in \#*) continue ;; esac
-  [ -z "${extra:-}" ] || die "pin '$pin' has more than nine tab-separated fields"
+  [ -z "${extra:-}" ] || die "pin '$pin' has more than ten tab-separated fields"
   [[ "$pin" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die "invalid pin id '$pin'"
   [ -z "${tool_name[$pin]+x}" ] || die "duplicate pin id '$pin'"
   [[ "$command" =~ ^[A-Za-z0-9._+-]+$ ]] || die "pin '$pin' has an unsafe tool name"
@@ -41,6 +41,8 @@ while IFS=$'\t' read -r pin command local_path jenkins_path sha expected_image e
   [ "$port_number" -le 65535 ] || die "pin '$pin' has an invalid Jenkins container port"
   [[ "$expected_host_binding" =~ ^(0\.0\.0\.0|\[::\]):[1-9][0-9]{0,4}$ ]] \
     || die "pin '$pin' has an invalid Jenkins host binding"
+  [[ "$expected_node" =~ ^[A-Za-z0-9._-]+$ ]] \
+    || die "pin '$pin' has an invalid Jenkins node"
   binding_port=${expected_host_binding##*:}
   [ "$binding_port" -le 65535 ] || die "pin '$pin' has an invalid Jenkins host binding"
   tool_name[$pin]=$command
@@ -51,6 +53,7 @@ while IFS=$'\t' read -r pin command local_path jenkins_path sha expected_image e
   image_digest[$pin]=$expected_digest
   container_port[$pin]=$expected_container_port
   host_binding[$pin]=$expected_host_binding
+  jenkins_node[$pin]=$expected_node
 done < "$pins_file"
 
 declare -A requested=()
@@ -135,6 +138,6 @@ for pin in "$@"; do
   [ "$observed_binding" = "${host_binding[$pin]}" ] \
     || die "pin '$pin' Jenkins port binding is ${observed_binding:-nothing}, expected ${host_binding[$pin]}"
 
-  printf 'corpus runtime pin: %s verified (tool %s; image %s; digest %s; endpoint %s)\n' \
-    "$pin" "${tool_sha[$pin]}" "${image_id[$pin]}" "${image_digest[$pin]}" "$FOGELL_JENKINS_URL"
+  printf 'corpus runtime pin: %s verified (tool %s; image %s; digest %s; endpoint %s; node %s)\n' \
+    "$pin" "${tool_sha[$pin]}" "${image_id[$pin]}" "${image_digest[$pin]}" "$FOGELL_JENKINS_URL" "${jenkins_node[$pin]}"
 done

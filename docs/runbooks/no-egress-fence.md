@@ -22,7 +22,14 @@ regenerate the ledger with
 An allowlist row may name a fourth-field runtime-pin ID from
 `differential/corpus-runtime-pins.tsv`. Under the cross-host lease and before
 any corpus execution, the lane verifies the command resolves to the pinned
-path on each engine, both resolved files have the pinned SHA-256, the live
+path on each engine, both resolved files have the pinned SHA-256, and injects
+Fogell's fixed compatibility `PATH` as an explicit Jenkins build parameter on
+the disposable job. A real Pipeline `sh` guard build immediately before and
+after the corpus build requires that effective PATH, the pinned `command -v`
+result, and the manifest's Jenkins node; the corpus build between them must
+report the same node. The case digest binds the reviewed absence of a Pipeline
+PATH overlay. Those checks bind command resolution inside the actual Jenkins
+launcher rather than merely in a neighboring `podman exec`. The live
 Jenkins container uses the pinned image ID and digest, and the differential's
 HTTP URL names that same SSH host at the exact port published from the pinned
 container port. The lane then carries all Jenkins REST traffic over a
@@ -31,7 +38,8 @@ the configured cross-host HTTP URL is never given to the differential. It
 repeats the complete identity check before promotion. Any missing, malformed,
 unavailable, or changed value, or a lost tunnel, discards the run's private
 receipts. Rows with no fourth field keep the
-historical no-tool behavior. The runner names that committed pin file
+historical no-tool behavior. A runtime-backed invocation is one case and one
+pin so the two guard builds unambiguously bracket its build. The runner names that committed pin file
 literally; there is no caller override for the expected tuple.
 
 It refuses a file that is not under the pinned corpus, a corpus that does

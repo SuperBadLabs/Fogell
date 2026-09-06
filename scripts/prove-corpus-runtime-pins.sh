@@ -14,10 +14,11 @@ image_id=$(printf 'a%.0s' {1..64})
 image_digest="sha256:$(printf 'b%.0s' {1..64})"
 container_port=8080/tcp
 host_binding=0.0.0.0:18083
+expected_node=Jenkins
 
 apply_fixture() {
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    make-pin make "$local_path" /usr/local/bin/make "$local_sha" "$image_id" "$image_digest" "$container_port" "$host_binding" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    make-pin make "$local_path" /usr/local/bin/make "$local_sha" "$image_id" "$image_digest" "$container_port" "$host_binding" "$expected_node" \
     > "$scratch/pins.tsv"
   export FAKE_REMOTE_PATH=/usr/local/bin/make
   export FAKE_REMOTE_TOOL_SHA=$local_sha
@@ -121,8 +122,12 @@ sed -i "s#\t$host_binding#\t127.0.0.1:18083#" "$scratch/pins.tsv"
 must_refuse "malformed host binding" "invalid Jenkins host binding"
 apply_fixture
 
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  make-pin make "$local_path" /usr/local/bin/make "$local_sha" "$image_id" "$image_digest" "$container_port" "$host_binding" \
+sed -i "s#\t$expected_node#\tbad node#" "$scratch/pins.tsv"
+must_refuse "malformed Jenkins node" "invalid Jenkins node"
+apply_fixture
+
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  make-pin make "$local_path" /usr/local/bin/make "$local_sha" "$image_id" "$image_digest" "$container_port" "$host_binding" "$expected_node" \
   >> "$scratch/pins.tsv"
 must_refuse "duplicate pin id" "duplicate pin id"
 apply_fixture
@@ -153,12 +158,89 @@ audit_runner() {
   [ "$(rg -c '^tail --pid=\$\$ -f /dev/null 9>&- \| ssh -o BatchMode=yes -o ExitOnForwardFailure=yes ' "$runner")" = 1 ] || return 1
   [ "$(rg -c 'FOGELL_JENKINS_HOST.*echo tunneled; exec cat >/dev/null.*tunnel_fifo' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^FOGELL_JENKINS_URL="\$tunnel_url" \./scripts/no-egress-fence\.sh fogell run -- \\$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^  FOGELL_JENKINS_BUILD_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^  export FOGELL_JENKINS_BUILD_PATH$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^  FOGELL_RUNTIME_GUARD_CASE_SHA=\$\{file_digests\[0\]\}$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^  FOGELL_RUNTIME_GUARD_NODE=\$guard_node$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^  FOGELL_RUNTIME_GUARD_COMMAND=\$guard_command$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^  FOGELL_RUNTIME_GUARD_TOOL_PATH=\$guard_tool_path$' "$runner")" = 1 ] || return 1
   [ "$pre" -lt "$tunnel" ] && [ "$tunnel" -lt "$busy" ] && [ "$busy" -lt "$run" ] \
     && [ "$run" -lt "$post" ] && [ "$post" -lt "$promote" ]
 }
 
+audit_build_path_sources() {
+  jenkins=$1 cli_source=$2
+  [ "$(rg -c '<hudson\.model\.StringParameterDefinition><name>PATH</name>' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -c 'buildWithParameters\?PATH=\{Uri\.EscapeDataString path\}' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -c 'FOGELL_JENKINS_BUILD_PATH' "$cli_source")" = 2 ] || return 1
+  [ "$(rg -c 'path when path = expected -> Some path' "$cli_source")" = 1 ] || return 1
+  [ "$(rg -c 'FOGELL_RUNTIME_GUARD_CASE_SHA' "$cli_source")" = 1 ] || return 1
+  [ "$(rg -c 'runtimeGuardCaseSha' "$cli_source")" -ge 2 ] || return 1
+  [ "$(rg -c 'runtimeGuardScript guard' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -c "runtime guard required Jenkins node" "$jenkins")" = 1 ] || return 1
+  [ "$(rg -c 'FOGELL_RUNTIME_GUARD_OK' "$jenkins")" -ge 2 ] || return 1
+  [ "$(rg -F -c '[ true, probe ] @ (builds |> List.map (fun definition -> false, definition)) @ [ true, probe ]' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'let scheduledResults = executeScheduled runOne scheduled' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'match validateRuntimeGuardNode guard.RequiredNode rawLines with' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c '| Inline script -> jobXml cfg.BuildPath script' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'match post (buildTriggerPath jobName cfg.BuildPath) None with' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'runtimeGuardResultFailure result' "$jenkins")" = 2 ] || return 1
+}
+
 audit_runner scripts/run-corpus-differential.sh \
   || { echo "RUNTIME-PIN PROOF FAILED: runner pin boundary markers are missing or misordered" >&2; exit 1; }
+audit_build_path_sources src/Fogell.Differential/Jenkins.fs tools/Fogell.Differential.Cli/Program.fs \
+  || { echo "RUNTIME-PIN PROOF FAILED: Jenkins build-context PATH pin is missing" >&2; exit 1; }
+cp scripts/run-corpus-differential.sh "$scratch/runner"
+sed -i '/^  FOGELL_JENKINS_BUILD_PATH=\/usr\/local\/sbin:/d' "$scratch/runner"
+if audit_runner "$scratch/runner"; then
+  echo "RUNTIME-PIN PROOF FAILED: build-PATH lane-wiring mutant was accepted" >&2; exit 1
+fi
+cp scripts/run-corpus-differential.sh "$scratch/runner"
+sed -i '/^  FOGELL_RUNTIME_GUARD_NODE=\$guard_node$/d' "$scratch/runner"
+if audit_runner "$scratch/runner"; then
+  echo "RUNTIME-PIN PROOF FAILED: Jenkins-node guard-wiring mutant was accepted" >&2; exit 1
+fi
+cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
+sed -i 's#buildWithParameters?PATH={Uri.EscapeDataString path}#build#' "$scratch/Jenkins.fs"
+if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
+  echo "RUNTIME-PIN PROOF FAILED: non-parameterized build-trigger mutant was accepted" >&2; exit 1
+fi
+cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
+sed -i 's#<hudson.model.StringParameterDefinition><name>PATH</name>#<hudson.model.StringParameterDefinition><name>NOT_PATH</name>#' "$scratch/Jenkins.fs"
+if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
+  echo "RUNTIME-PIN PROOF FAILED: wrong Jenkins parameter-name mutant was accepted" >&2; exit 1
+fi
+cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
+sed -i 's#\[ true, probe \] @ (builds |> List.map (fun definition -> false, definition)) @ \[ true, probe \]#(builds |> List.map (fun definition -> false, definition)) @ [ true, probe ]#' "$scratch/Jenkins.fs"
+if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
+  echo "RUNTIME-PIN PROOF FAILED: removed pre-guard mutant was accepted" >&2; exit 1
+fi
+cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
+sed -i 's#\[ true, probe \] @ (builds |> List.map (fun definition -> false, definition)) @ \[ true, probe \]#[ true, probe ] @ (builds |> List.map (fun definition -> false, definition))#' "$scratch/Jenkins.fs"
+if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
+  echo "RUNTIME-PIN PROOF FAILED: removed post-guard mutant was accepted" >&2; exit 1
+fi
+cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
+sed -i 's/match validateRuntimeGuardNode guard.RequiredNode rawLines with/match Ok() with/' "$scratch/Jenkins.fs"
+if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
+  echo "RUNTIME-PIN PROOF FAILED: removed per-build node validation mutant was accepted" >&2; exit 1
+fi
+cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
+sed -i 's/jobXml cfg.BuildPath script/jobXml None script/' "$scratch/Jenkins.fs"
+if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
+  echo "RUNTIME-PIN PROOF FAILED: job-config PATH propagation mutant was accepted" >&2; exit 1
+fi
+cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
+sed -i 's/buildTriggerPath jobName cfg.BuildPath/buildTriggerPath jobName None/' "$scratch/Jenkins.fs"
+if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
+  echo "RUNTIME-PIN PROOF FAILED: build-trigger PATH propagation mutant was accepted" >&2; exit 1
+fi
+cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
+sed -i '0,/runtimeGuardResultFailure result/s//None/' "$scratch/Jenkins.fs"
+if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
+  echo "RUNTIME-PIN PROOF FAILED: semantic pre-guard halt mutant was accepted" >&2; exit 1
+fi
 cp scripts/run-corpus-differential.sh "$scratch/runner"
 sed -i '0,/^verify_runtime_pins || die /{/^verify_runtime_pins || die /d;}' "$scratch/runner"
 if audit_runner "$scratch/runner"; then
@@ -189,5 +271,5 @@ sed -i 's/127.0.0.1:$remote_port/attacker.invalid:$remote_port/' "$scratch/runne
 if audit_runner "$scratch/runner"; then
   echo "RUNTIME-PIN PROOF FAILED: uninspected tunnel-target mutant was accepted" >&2; exit 1
 fi
-echo "=== corpus runtime pin: both pin checks, authenticated REST tunnel, and removal mutants proven ==="
+echo "=== corpus runtime pin: both checks, build PATH, authenticated REST tunnel, and removal mutants proven ==="
 echo "CORPUS RUNTIME PIN: ALL ASSERTIONS PASSED"

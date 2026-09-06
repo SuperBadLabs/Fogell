@@ -354,7 +354,10 @@ Read with the two sections above; this is the second addendum.
   separate hand-written population remains 308 of 308 proven.
 - **The runtime pin is executable policy, not prose.** Before execution and
   again before promotion the lane checks both resolved Make paths and hashes,
-  the container image ID/digest, and that the HTTP oracle URL names the same
+  injects Fogell's exact compatibility PATH as a Jenkins build parameter so
+  real `sh` guard builds bracketing the corpus build verify that PATH and
+  `command -v make`; all three builds must report the manifest's same built-in
+  node. It also checks the container image ID/digest and requires that the HTTP oracle URL names the same
   SSH host and exact published `8080/tcp -> 0.0.0.0:18083` binding. Its
   REST traffic then uses a lane-life-bound authenticated SSH tunnel to that
   host's loopback listener; the service-free hostile proof kills every identity,

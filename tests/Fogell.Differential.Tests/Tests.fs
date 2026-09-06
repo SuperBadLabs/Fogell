@@ -9709,6 +9709,98 @@ let compileRefusalDisposition =
                   if IO.Directory.Exists outside then IO.Directory.Delete(outside, true)
           }
 
+          test "runtime-pinned Jenkins jobs inject the exact build PATH" {
+              let path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+              let pinned = Jenkins.jobXml (Some path) "pipeline { agent any; stages {} }"
+              let ordinary = Jenkins.jobXml None "pipeline { agent any; stages {} }"
+
+              Expect.stringContains
+                  pinned
+                  "<hudson.model.StringParameterDefinition><name>PATH</name>"
+                  "the job declares PATH as a real Jenkins build parameter"
+              Expect.stringContains
+                  pinned
+                  $"<defaultValue>{path}</defaultValue>"
+                  "the job default is the exact compatibility path"
+              Expect.isFalse
+                  (ordinary.Contains "<name>PATH</name>")
+                  "ordinary differentials do not silently gain a PATH parameter"
+              Expect.stringContains
+                  (Jenkins.buildTriggerPath "diff-pinned" (Some path))
+                  "/buildWithParameters?PATH="
+                  "the build is explicitly triggered with the pinned parameter"
+              Expect.equal
+                  (Jenkins.buildTriggerPath "diff-ordinary" None)
+                  "/job/diff-ordinary/build"
+                  "ordinary builds retain the non-parameterized endpoint"
+
+              let guard =
+                  { RequiredNode = "Jenkins"
+                    BuildPath = path
+                    Tools = [ "make", "/usr/local/bin/make" ] }
+              let probe = Jenkins.runtimeGuardScript guard
+              Expect.stringContains probe "[ \"$PATH\" = \"/usr/local/sbin:" "the real sh checks effective PATH"
+              Expect.stringContains probe "actual=$(command -v make)" "the real sh resolves the selected command"
+              Expect.stringContains probe "[ \"$actual\" = \"/usr/local/bin/make\" ]" "the resolved path is exact"
+
+              Expect.isOk
+                  (Jenkins.validateRuntimeGuardNode
+                      "Jenkins"
+                      [| "Running on Jenkins in /var/jenkins_home/workspace/diff-case" |])
+                  "the pinned allocation is accepted"
+              Expect.isError
+                  (Jenkins.validateRuntimeGuardNode
+                      "Jenkins"
+                      [| "Running on attacker in /tmp/workspace" |])
+                  "an alternate agent allocation is refused"
+              Expect.isError
+                  (Jenkins.validateRuntimeGuardNode
+                      "Jenkins"
+                      [| "Running on Jenkins in /one"; "Running on attacker in /two" |])
+                  "ambiguous allocation evidence is refused"
+              Expect.isError
+                  (Jenkins.validateRuntimeGuardNode "Jenkins" [| "no allocation banner" |])
+                  "missing allocation evidence is refused"
+
+              let trace result output =
+                  { Disposition = ExecutedOrRuntime
+                    Result = result
+                    Output = output
+                    WorkspaceHash = "empty"
+                    WorkspaceFiles = []
+                    Concurrent = false
+                    EngineNotes = []
+                    Timestamps = 0, 0
+                    ReportedFailureReason = result <> "success" }
+
+              let mutable invoked = []
+              let fakeRun buildNumber definition =
+                  invoked <- (buildNumber, definition) :: invoked
+                  Ok(trace "failure" [])
+
+              let scheduled =
+                  [ true, Inline "pre-guard"
+                    false, Inline "corpus"
+                    true, Inline "post-guard" ]
+
+              let failed = Jenkins.executeScheduled fakeRun scheduled
+              Expect.equal invoked.Length 1 "a semantic pre-guard failure prevents the corpus trigger"
+              Expect.equal failed.Length 3 "every requested schedule slot receives a result"
+
+              let mutable passedInvocations = 0
+              let passingRun _ definition =
+                  passedInvocations <- passedInvocations + 1
+                  match definition with
+                  | Inline "corpus" -> Ok(trace "failure" [ "expected corpus failure" ])
+                  | _ -> Ok(trace "success" [ "FOGELL_RUNTIME_GUARD_OK" ])
+
+              Jenkins.executeScheduled passingRun scheduled |> ignore
+              Expect.equal
+                  passedInvocations
+                  3
+                  "a successful pre-guard allows the corpus and post-guard despite the corpus's ordinary failure result"
+          }
+
           test "Fogell input rejection returns a refusal trace without touching a fresh workspace" {
               let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-fresh-{Guid.NewGuid():N}")
               let workspace = IO.Path.Combine(root, "job")

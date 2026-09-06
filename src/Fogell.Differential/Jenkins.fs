@@ -37,6 +37,16 @@ type JenkinsConfig =
       /// deleted. A configured write failure fails that build rather than leaving
       /// a stale or partial evidence artifact.
       RawConsoleExport: RawConsoleExport option
+      /// Optional exact PATH injected as a Jenkins string parameter on every
+      /// disposable build. Runtime-pinned corpus cases use this to bind command
+      /// resolution in the real Jenkins `sh` launcher rather than merely in an
+      /// out-of-band `podman exec` inspection.
+      BuildPath: string option
+      /// Optional build-context guard for a runtime-pinned corpus case. The
+      /// guard is executed as real Pipeline `sh` builds immediately before and
+      /// after the requested build on the same disposable Jenkins job. Every
+      /// allocation, including the corpus build itself, must name RequiredNode.
+      RuntimeGuard: RuntimeGuard option
       /// FG-053. Whether the SCRIPT declares `options { timestamps() }`.
       ///
       /// Jenkins cannot be asked, and its console cannot be inspected for it
@@ -54,6 +64,11 @@ and RawConsoleExport =
       /// The CLI checks this after every requested case, so a selector that
       /// matched no executed build cannot silently report success.
       mutable Observed: bool }
+
+and RuntimeGuard =
+    { RequiredNode: string
+      BuildPath: string
+      Tools: (string * string) list }
 
 /// FG-052. What defines a build's pipeline on the Jenkins side: an inline
 /// script (CpsFlowDefinition) or an SCM the Jenkinsfile is obtained from
@@ -300,7 +315,92 @@ module Jenkins =
     let private xmlEscape (s: string) =
         s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;")
 
-    let private jobXml (script: string) =
+    let private buildPathProperty (buildPath: string option) =
+        match buildPath with
+        | None -> ""
+        | Some path ->
+            "<hudson.model.ParametersDefinitionProperty><parameterDefinitions>"
+            + "<hudson.model.StringParameterDefinition><name>PATH</name>"
+            + "<description>Fogell exact build command-resolution path</description>"
+            + $"<defaultValue>{xmlEscape path}</defaultValue><trim>false</trim>"
+            + "</hudson.model.StringParameterDefinition></parameterDefinitions>"
+            + "</hudson.model.ParametersDefinitionProperty>"
+
+    let internal buildTriggerPath (jobName: string) (buildPath: string option) =
+        match buildPath with
+        | None -> $"/job/{jobName}/build"
+        | Some path -> $"/job/{jobName}/buildWithParameters?PATH={Uri.EscapeDataString path}"
+
+    let internal runtimeGuardScript (guard: RuntimeGuard) =
+        let checks =
+            guard.Tools
+            |> List.map (fun (command, path) ->
+                $"actual=$(command -v {command}) || exit 91\n"
+                + $"[ \"$actual\" = \"{path}\" ] || exit 92\n")
+            |> String.concat ""
+
+        "pipeline {\n"
+        + "  agent any\n"
+        + "  stages {\n"
+        + "    stage('Fogell runtime guard') {\n"
+        + "      steps {\n"
+        + "        sh '''set +x\n"
+        + $"[ \"$PATH\" = \"{guard.BuildPath}\" ] || exit 90\n"
+        + checks
+        + "printf 'FOGELL_RUNTIME_GUARD_OK\\n'\n"
+        + "'''\n"
+        + "      }\n"
+        + "    }\n"
+        + "  }\n"
+        + "}\n"
+
+    let internal validateRuntimeGuardNode (requiredNode: string) (rawLines: string array) =
+        let allocations =
+            rawLines
+            |> Array.choose (fun line ->
+                let m = Regex.Match(line.Trim(), "^Running on (.+) in /.+$")
+                if m.Success then Some m.Groups[1].Value else None)
+            |> Array.distinct
+
+        match allocations with
+        | [| node |] when node = requiredNode -> Ok()
+        | [| node |] -> Error $"runtime guard required Jenkins node '{requiredNode}', build ran on '{node}'"
+        | _ -> Error "runtime guard could not bind the Jenkins build to one reported node"
+
+    let internal runtimeGuardResultFailure (result: Result<Trace, string>) =
+        match result with
+        | Error why -> Some why
+        | Ok trace when trace.Result <> "success" -> Some $"guard build ended {trace.Result}"
+        | Ok trace when trace.Output |> List.filter ((=) "FOGELL_RUNTIME_GUARD_OK") |> List.length <> 1 ->
+            Some "guard build did not emit exactly one success marker"
+        | Ok _ -> None
+
+    let internal executeScheduled
+        (runOne: int -> JobDefinition -> Result<Trace, string>)
+        (scheduled: (bool * JobDefinition) list)
+        =
+        scheduled
+        |> List.fold
+            (fun (acc, halted) (isGuard, definition) ->
+                match halted with
+                | Some why -> ((isGuard, Error $"sequence halted: {why}") :: acc, halted)
+                | None ->
+                    let result = runOne (List.length acc + 1) definition
+
+                    let nextHalt =
+                        if isGuard then
+                            runtimeGuardResultFailure result
+                            |> Option.map (fun why -> $"runtime guard failed ({why})")
+                        else
+                            match result with
+                            | Error why -> Some $"a prior build failed to run ({why})"
+                            | Ok _ -> None
+
+                    ((isGuard, result) :: acc, nextHalt))
+            ([], None)
+        |> fun (acc, _) -> List.rev acc
+
+    let internal jobXml (buildPath: string option) (script: string) =
         "<flow-definition plugin=\"workflow-job\"><description/><keepDependencies>false</keepDependencies>"
         + "<properties>"
         // PERFORMANCE_OPTIMIZED deliberately: the differential compares SEMANTICS,
@@ -309,6 +409,7 @@ module Jenkins =
         + "<org.jenkinsci.plugins.workflow.job.properties.DurabilityHintJobProperty>"
         + "<hint>PERFORMANCE_OPTIMIZED</hint>"
         + "</org.jenkinsci.plugins.workflow.job.properties.DurabilityHintJobProperty>"
+        + buildPathProperty buildPath
         + "</properties>"
         + "<definition class=\"org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition\" plugin=\"workflow-cps\">"
         + $"<script>{xmlEscape script}</script><sandbox>true</sandbox></definition>"
@@ -316,13 +417,14 @@ module Jenkins =
 
     /// CpsScmFlowDefinition: the job POINTS AT the SCM; Jenkins obtains the
     /// Jenkinsfile from it (lightweight) and Declarative auto-checks-out.
-    let scmJobXml (attestDefinition: bool) (spec: ScmSpec) =
+    let private scmJobXmlWithBuildPath (buildPath: string option) (attestDefinition: bool) (spec: ScmSpec) =
         let lightweight = if attestDefinition then "false" else "true"
         "<flow-definition plugin=\"workflow-job\"><description/><keepDependencies>false</keepDependencies>"
         + "<properties>"
         + "<org.jenkinsci.plugins.workflow.job.properties.DurabilityHintJobProperty>"
         + "<hint>PERFORMANCE_OPTIMIZED</hint>"
         + "</org.jenkinsci.plugins.workflow.job.properties.DurabilityHintJobProperty>"
+        + buildPathProperty buildPath
         + "</properties>"
         + "<definition class=\"org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition\" plugin=\"workflow-cps\">"
         + "<scm class=\"hudson.plugins.git.GitSCM\" plugin=\"git\"><configVersion>2</configVersion>"
@@ -336,6 +438,9 @@ module Jenkins =
         + "<submoduleCfg class=\"empty-list\"/><extensions/></scm>"
         + $"<scriptPath>Jenkinsfile</scriptPath><lightweight>{lightweight}</lightweight>"
         + "</definition><triggers/><disabled>false</disabled></flow-definition>"
+
+    let scmJobXml (attestDefinition: bool) (spec: ScmSpec) =
+        scmJobXmlWithBuildPath None attestDefinition spec
 
     /// FG-110. Run a SEQUENCE of builds of ONE job and return a trace per
     /// build. The job is created once, its definition UPDATED between builds
@@ -366,9 +471,10 @@ module Jenkins =
                 let xml () =
                     let body =
                         match definition with
-                        | Inline script -> jobXml script
+                        | Inline script -> jobXml cfg.BuildPath script
                         | FromScm spec ->
-                            scmJobXml
+                            scmJobXmlWithBuildPath
+                                cfg.BuildPath
                                 (Environment.GetEnvironmentVariable "FOGELL_SCM_ATTESTATION" = "fg177-probes-v1")
                                 spec
 
@@ -394,7 +500,7 @@ module Jenkins =
                 // FG-103: the trigger's status propagates — a stale crumb or a 409
                 // otherwise means five minutes of blind polling for a build that
                 // never exists, blamed on "did not reach a terminal state".
-                match post $"/job/{jobName}/build" None with
+                match post (buildTriggerPath jobName cfg.BuildPath) None with
                 | 200
                 | 201 -> ()
                 | other -> failwith $"build trigger returned HTTP {other}"
@@ -426,6 +532,13 @@ module Jenkins =
                     exportRawConsole cfg.RawConsoleExport jobName buildNumber console
 
                     let rawLines = console.Replace("\r\n", "\n").Split '\n'
+
+                    cfg.RuntimeGuard
+                    |> Option.iter (fun guard ->
+                        match validateRuntimeGuardNode guard.RequiredNode rawLines with
+                        | Ok() -> ()
+                        | Error why -> failwith why)
+
                     let disposition = classifyExecutionDisposition terminal rawLines
 
                     let scmEngineNotes =
@@ -509,20 +622,28 @@ module Jenkins =
                 with ex ->
                     Error ex.Message
 
-            let results =
-                builds
-                |> List.fold
-                    (fun (acc, halted) definition ->
-                        match halted with
-                        | Some why -> (Error $"sequence halted: {why}" :: acc, halted)
-                        | None ->
-                            let r = runOne (List.length acc + 1) definition
+            let scheduled =
+                match cfg.RuntimeGuard with
+                | None -> builds |> List.map (fun definition -> false, definition)
+                | Some guard ->
+                    let probe = Inline(runtimeGuardScript guard)
+                    [ true, probe ] @ (builds |> List.map (fun definition -> false, definition)) @ [ true, probe ]
 
-                            match r with
-                            | Ok _ -> (r :: acc, None)
-                            | Error why -> (r :: acc, Some $"a prior build failed to run ({why})"))
-                    ([], None)
-                |> fun (acc, _) -> List.rev acc
+            let scheduledResults = executeScheduled runOne scheduled
+
+            let guardFailure =
+                scheduledResults
+                |> List.tryPick (fun (isGuard, result) ->
+                    if not isGuard then None
+                    else
+                        runtimeGuardResultFailure result)
+
+            let results =
+                match guardFailure with
+                | Some why -> builds |> List.map (fun _ -> Error $"Jenkins runtime guard failed: {why}")
+                | None ->
+                    scheduledResults
+                    |> List.choose (fun (isGuard, result) -> if isGuard then None else Some result)
 
             // Best-effort cleanup AFTER the evidence is safe: a delete failure
             // must not replace collected traces (the next run of this case

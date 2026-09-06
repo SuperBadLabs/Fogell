@@ -36,7 +36,7 @@ die() { printf 'corpus lane: REFUSED: %s\n' "$*" >&2; exit 2; }
 [ $# -gt 0 ] || die "name at least one corpus file"
 
 corpus_dir=$(realpath -e "$FOGELL_CORPUS/jenkinsfiles" 2>/dev/null) || die "corpus not found at $FOGELL_CORPUS/jenkinsfiles"
-files=()
+files=(); file_digests=()
 for f in "$@"; do
   r=$(realpath -e "$f" 2>/dev/null) || die "$f does not exist"
   case "$r" in "$corpus_dir"/*.Jenkinsfile) files+=("$r") ;; *) die "$f is not a pinned corpus file under $corpus_dir — this lane executes corpus files only" ;; esac
@@ -57,6 +57,7 @@ allowlist=differential/corpus-allowlist.tsv
 pin_ids=()
 for r in "${files[@]}"; do
   digest=$(sha256sum "$r" | cut -d' ' -f1); stem=$(basename "$r" .Jenkinsfile)
+  file_digests+=("$digest")
   if ! row=$(awk -F'\t' -v d="$digest" -v s="$stem" \
       '$1==d && $2==s {n++; row=$0} END {if(n==1) print row; else exit 1}' "$allowlist"); then
     die "$(basename "$r") (sha256 $digest) is not uniquely present on the executed-surface allowlist — read it, record its surface in $allowlist, then run"
@@ -67,6 +68,20 @@ for r in "${files[@]}"; do
   fi
 done
 echo "corpus lane: every file's digest and stem are on the executed-surface allowlist"
+
+# Runtime-backed rows execute under the SAME fixed command-resolution PATH on
+# Jenkins that ProcessGroup.fs gives Fogell. This is set here, not inherited:
+# an ambient caller value cannot select a different build environment. Jenkins
+# installs it as an explicit PATH build parameter on the disposable job, so a
+# global/node PATH prefix cannot steer the real corpus `sh` to shadow bytes.
+if [ "${#pin_ids[@]}" -gt 0 ]; then
+  FOGELL_JENKINS_BUILD_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  export FOGELL_JENKINS_BUILD_PATH
+else
+  unset FOGELL_JENKINS_BUILD_PATH
+fi
+unset FOGELL_RUNTIME_GUARD_CASE_SHA FOGELL_RUNTIME_GUARD_NODE \
+  FOGELL_RUNTIME_GUARD_COMMAND FOGELL_RUNTIME_GUARD_TOOL_PATH
 
 # THE BYTES THAT WERE CHECKED ARE THE BYTES THAT RUN. The corpus lives on a
 # shared mount; a refresh between the hash check and the CLI's own read would
@@ -210,6 +225,26 @@ verify_runtime_pins || die "a selected corpus runtime pin did not match"
 pinned_at=$(./scripts/no-egress-fence.sh jenkins started-at) || die "could not re-read the pinned container's start instant"
 [ "$pinned_at" = "$started_at" ] \
   || die "the Jenkins container restarted while its runtime pins were checked ($started_at -> $pinned_at)"
+
+# A guarded runtime claim is deliberately one case / one pin per lane. The
+# case digest binds the reviewed absence of a Pipeline PATH overlay; Jenkins.fs
+# brackets that exact case with real `sh` guard builds on the SAME disposable
+# job and requires all three allocations to report the manifest's node.
+if [ "${#pin_ids[@]}" -gt 0 ]; then
+  [ "${#files[@]}" -eq 1 ] && [ "${#pin_ids[@]}" -eq 1 ] \
+    || die "runtime-pinned execution requires exactly one corpus file and one runtime pin"
+  guard_row=$(awk -F'\t' -v p="${pin_ids[0]}" '$1==p {n++; row=$0} END {if(n==1) print row; else exit 1}' \
+    differential/corpus-runtime-pins.tsv) || die "could not recover the verified runtime pin row"
+  IFS=$'\t' read -r guard_pin guard_command _ guard_tool_path _ _ _ _ _ guard_node guard_extra <<< "$guard_row"
+  [ -z "${guard_extra:-}" ] || die "verified runtime pin row changed shape"
+  [ "$guard_pin" = "${pin_ids[0]}" ] || die "verified runtime pin identity changed"
+  FOGELL_RUNTIME_GUARD_CASE_SHA=${file_digests[0]}
+  FOGELL_RUNTIME_GUARD_NODE=$guard_node
+  FOGELL_RUNTIME_GUARD_COMMAND=$guard_command
+  FOGELL_RUNTIME_GUARD_TOOL_PATH=$guard_tool_path
+  export FOGELL_RUNTIME_GUARD_CASE_SHA FOGELL_RUNTIME_GUARD_NODE \
+    FOGELL_RUNTIME_GUARD_COMMAND FOGELL_RUNTIME_GUARD_TOOL_PATH
+fi
 
 # REST AUTHENTICATION. The configured HTTP endpoint above is still checked
 # against the inspected host/container port mapping, but HTTP across the LAN

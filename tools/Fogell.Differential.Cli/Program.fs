@@ -121,6 +121,69 @@ let main argv =
                 exit 2
                 None
 
+        // FG-254. A runtime pin must govern the environment that launches the
+        // corpus `sh`, not only a standalone container inspection. The corpus
+        // lane supplies exactly Fogell's fixed compatibility PATH; any other
+        // spelling is a harness error rather than a caller-selected policy.
+        let jenkinsBuildPath =
+            let expected =
+                LaunchEnvironment.buildBaseline ""
+                |> List.find (fun (name, _) -> name = "PATH")
+                |> snd
+
+            match Environment.GetEnvironmentVariable "FOGELL_JENKINS_BUILD_PATH" with
+            | null
+            | "" -> None
+            | path when path = expected -> Some path
+            | path ->
+                eprintfn
+                    $"Jenkins build PATH refused: configured '{path}', expected exact compatibility PATH '{expected}'"
+                exit 2
+                None
+
+        let runtimeGuardCaseSha, runtimeGuard =
+            let caseSha = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_CASE_SHA"
+            let node = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_NODE"
+            let command = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_COMMAND"
+            let toolPath = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_TOOL_PATH"
+            let values = [ caseSha; node; command; toolPath ]
+            let present value = not (String.IsNullOrEmpty value)
+
+            match values |> List.filter present |> List.length with
+            | 0 -> None, None
+            | 4 ->
+                let safe (pattern: string) (value: string) =
+                    Text.RegularExpressions.Regex.IsMatch(value, pattern)
+                let valid =
+                    safe "^[0-9a-f]{64}$" caseSha
+                    && safe "^[A-Za-z0-9._-]+$" node
+                    && safe "^[A-Za-z0-9._+-]+$" command
+                    && safe "^/[A-Za-z0-9._/+:-]+$" toolPath
+
+                match valid, jenkinsBuildPath with
+                | true, Some buildPath when files.Length = 1 ->
+                    Some caseSha,
+                    Some
+                        { RequiredNode = node
+                          BuildPath = buildPath
+                          Tools = [ command, toolPath ] }
+                | true, Some _ ->
+                    eprintfn "Jenkins runtime guard refused: exactly one corpus case is required"
+                    exit 2
+                    None, None
+                | true, None ->
+                    eprintfn "Jenkins runtime guard refused: FOGELL_JENKINS_BUILD_PATH is required"
+                    exit 2
+                    None, None
+                | _ ->
+                    eprintfn "Jenkins runtime guard refused: malformed case SHA, node, command, or tool path"
+                    exit 2
+                    None, None
+            | _ ->
+                eprintfn "Jenkins runtime guard refused: all four FOGELL_RUNTIME_GUARD_* values are required"
+                exit 2
+                None, None
+
         // ONE coordinated canonicalisation set for BOTH traces: the union of each
         // engine's inherited values for the curated names, so a literal equal to
         // either engine's value rewrites identically on both sides.
@@ -310,10 +373,14 @@ let main argv =
               WorkspaceRoot = jenkinsWorkspace
               WorkspaceCollector = collector
               RawConsoleExport = rawConsoleExport
+              BuildPath = jenkinsBuildPath
+              RuntimeGuard = runtimeGuard
               // per-case; replaced at each call site from that case's script
               DeclaresTimestamps = false }
 
         printfn "jenkins:   %s (core %s)" baseUrl core
+        jenkinsBuildPath
+        |> Option.iter (fun path -> printfn "build PATH: %s (injected into Jenkins job)" path)
         printfn
             "workspace: %s"
             (match jenkinsWorkspace, collector with
@@ -352,6 +419,17 @@ let main argv =
                 // seal must move when the file does; `Compare.receipt` hashes them itself,
                 // so this cannot pass a wrong digest.
                 let caseBytes, script = Compare.readCaseSnapshot file
+
+                runtimeGuardCaseSha
+                |> Option.iter (fun expected ->
+                    let observed =
+                        Security.Cryptography.SHA256.HashData caseBytes
+                        |> Convert.ToHexString
+                        |> fun value -> value.ToLowerInvariant()
+
+                    if observed <> expected then
+                        failwith
+                            $"runtime guard case digest mismatch: observed {observed}, expected {expected}")
 
                 // FG-053. Read off the SCRIPT and given to BOTH engines. Nothing
                 // in a line's shape distinguishes the engine's timestamp prefix
