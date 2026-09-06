@@ -1,0 +1,28 @@
+=== round 1  fogell: launching all 6 simultaneously ===
+   ALL SIX DONE in 326853 ms   (slowest single build 326848 ms)
+=== round 1  jenkins: launching all 6 simultaneously ===
+   ALL SIX DONE in 343602 ms   (slowest single build 342812 ms)
+=== round 1  mcloving: launching all 6 simultaneously ===
+   ALL SIX DONE in 350901 ms   (slowest single build 350702 ms)
+=== round 1  bare: launching all 6 simultaneously ===
+   ALL SIX DONE in 335749 ms   (slowest single build 335741 ms)
+=== round 2  jenkins: launching all 6 simultaneously ===
+   ALL SIX DONE in 345548 ms   (slowest single build 345334 ms)
+=== round 2  mcloving: launching all 6 simultaneously ===
+   ALL SIX DONE in 356217 ms   (slowest single build 356078 ms)
+=== round 2  bare: launching all 6 simultaneously ===
+   ALL SIX DONE in 349001 ms   (slowest single build 348997 ms)
+=== round 2  fogell: launching all 6 simultaneously ===
+   ALL SIX DONE in 352179 ms   (slowest single build 352172 ms)
+
+=== wall clock to finish ALL SIX builds launched at once ===
+  fogell    median   339516 ms   raw [326853, 352179]
+  bare      median   342375 ms   raw [335749, 349001]
+  jenkins   median   344575 ms   raw [343602, 345548]
+  mcloving  median   353559 ms   raw [350901, 356217]
+
+=== engine cost above the no-engine floor (342375 ms) ===
+  fogell    +  -2859 ms   0.99x the floor   engine = -1% of wall clock
+  jenkins   +   2200 ms   1.01x the floor   engine = 1% of wall clock
+  mcloving  +  11184 ms   1.03x the floor   engine = 3% of wall clock
+EXIT=0
