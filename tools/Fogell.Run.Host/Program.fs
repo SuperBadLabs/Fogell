@@ -640,10 +640,11 @@ let main argv =
 
         // FG-253. An unsupported agent must be refused before even the recovery
         // write below. Read only enough journal state to preserve the established
-        // terminal no-op: a complete BuildFinished record means the Jenkinsfile
-        // may already have been rotated and must not be required. For every
-        // non-terminal journal, including one with a torn tail, run the same
-        // persisted preflight while the journal bytes are still untouched.
+        // terminal no-op: a complete, newline-terminated BuildFinished record
+        // means the Jenkinsfile may already have been rotated and must not be
+        // required. For every non-terminal journal, including one with a torn
+        // tail, run the same persisted preflight while the journal bytes are
+        // still untouched.
         let readAndPreflightScript () =
             let candidate = File.ReadAllText jenkinsfile
 
@@ -653,22 +654,58 @@ let main argv =
                 exit 2
             | Ok _ -> candidate
 
-        let scriptBeforeRepair =
-            Journal.read journalPath
-            |> List.exists (function
-                | BuildFinished _ -> true
-                | _ -> false)
-            |> function
-                | true -> None
-                | false -> Some(readAndPreflightScript ())
+        let terminalPlan, scriptBeforeRepair =
+            if not (File.Exists journalPath) then
+                None, Some(readAndPreflightScript ())
+            else
+                // Bind the framing byte and decoded records to one immutable byte
+                // snapshot. FileShare is only advisory on the supported Linux
+                // runtime, so neither a lock flag nor two pathname reads can
+                // prevent an old newline from being associated with a newly
+                // appended, unterminated BuildFinished record.
+                let snapshotBytes = File.ReadAllBytes journalPath
 
-        // Repair a torn tail BEFORE the plan is built: an operator's appended
-        // fix would otherwise land invisibly behind the fragment. The unsupported-
-        // agent refusal above exits before this mutation; Journal.openAt repeats
-        // the repair before its first append as the deepest durability guard.
-        Journal.repairTail journalPath
+                let endsWithNewline =
+                    snapshotBytes.Length > 0
+                    && snapshotBytes[snapshotBytes.Length - 1] = byte '\n'
 
-        let plan = Resume.plan (Journal.read journalPath)
+                let records =
+                    use snapshot = new MemoryStream(snapshotBytes, false)
+                    use reader = new StreamReader(snapshot, Encoding.UTF8, true)
+                    let decoded = ResizeArray<Record>()
+                    let mutable keepReading = true
+
+                    while keepReading && not reader.EndOfStream do
+                        match Record.decode (reader.ReadLine()) with
+                        | Some record -> decoded.Add record
+                        | None -> keepReading <- false
+
+                    decoded |> Seq.toList
+
+                let hasDurableTerminal =
+                    endsWithNewline
+                    && (records
+                        |> List.exists (function
+                            | BuildFinished _ -> true
+                            | _ -> false))
+
+                if hasDurableTerminal then
+                    Some(Resume.plan records), None
+                else
+                    None, Some(readAndPreflightScript ())
+
+        // Repair a torn tail BEFORE the non-terminal plan is built: an
+        // operator's appended fix would otherwise land invisibly behind the
+        // fragment. The unsupported-agent refusal above exits before this
+        // mutation; Journal.openAt repeats the repair before its first append as
+        // the deepest durability guard. A durable terminal plan is carried from
+        // the locked snapshot and needs neither a repair nor a second read.
+        let plan =
+            match terminalPlan with
+            | Some completed -> completed
+            | None ->
+                Journal.repairTail journalPath
+                Resume.plan (Journal.read journalPath)
         buildIdentity <- defaultArg plan.BuildIdentity ""
 
         // what the journal already says is written down — see consumeAnswer
@@ -700,9 +737,9 @@ let main argv =
             0
         | None ->
 
-        // Normally populated by the read-only pre-repair guard. The fallback is
-        // for a complete-looking, non-newline-terminated BuildFinished record:
-        // repairTail correctly discards it, making this an active attempt again.
+        // Populated by the read-only pre-repair guard on every non-terminal
+        // journal. Only a parsed BuildFinished record whose line is durably
+        // terminated can leave it empty, and that record survives repairTail.
         let script =
             match scriptBeforeRepair with
             | Some candidate -> candidate

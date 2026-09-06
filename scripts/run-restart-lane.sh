@@ -81,6 +81,21 @@ grep -q 'unsupported_agent:' "$A_LANE/run.log" || { echo "FAIL: unsupported agen
 [ ! -f "$A_LANE/ws/fg253-agent/ran.txt" ] || { echo "FAIL: unsupported-agent body ran"; exit 1; }
 echo "unsupported agent named, torn journal byte-identical, workspace and user effects untouched"
 
+printf '%s\n' $'build-identity\tfg253-torn-terminal' > "$A_LANE/torn-terminal.journal"
+printf '%s' $'build-finished\tsuccess' >> "$A_LANE/torn-terminal.journal"
+A_TORN_TERMINAL_BEFORE=$(sha256sum "$A_LANE/torn-terminal.journal")
+set +e
+"${HOST[@]}" "$A_LANE/Jenkinsfile" "$A_LANE/ws" fg253-agent "$A_LANE/torn-terminal.journal" > "$A_LANE/torn-terminal.log" 2>&1
+A_TORN_TERMINAL_RC=$?
+set -e
+[ "$A_TORN_TERMINAL_RC" -eq 2 ] \
+  || { echo "FAIL: unsupported agent beside torn terminal exited $A_TORN_TERMINAL_RC, expected 2"; cat "$A_LANE/torn-terminal.log"; exit 1; }
+grep -q 'unsupported_agent:' "$A_LANE/torn-terminal.log" \
+  || { echo "FAIL: unsupported agent beside torn terminal was not named"; cat "$A_LANE/torn-terminal.log"; exit 1; }
+[ "$(sha256sum "$A_LANE/torn-terminal.journal")" = "$A_TORN_TERMINAL_BEFORE" ] \
+  || { echo "FAIL: unsupported-agent preflight repaired a non-newline terminal fragment"; exit 1; }
+echo "non-newline terminal fragment is not trusted and remains byte-identical on refusal"
+
 echo "=== attempt 1: SIGKILL mid-step ==="
 "${HOST[@]}" "$LANE/Jenkinsfile" "$WSROOT" "$JOB" "$JOURNAL" > "$LANE/run1.log" 2>&1 &
 PID=$!

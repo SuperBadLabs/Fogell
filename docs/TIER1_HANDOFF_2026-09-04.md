@@ -307,9 +307,11 @@ Read with the two sections above; this is the second addendum.
   controller; every other label and every docker, dockerfile, or plugin-defined
   agent refuses with `unsupported_agent`, naming its kind or label and scope,
   before workspace, SCM, persistence, or user effects.
-  `Run.Host` takes that decision from a read-only journal snapshot before torn-
-  tail repair; the restart lane pins the production path with a byte-identical
-  torn journal, retained workspace sentinel, and absent user effect.
+  `Run.Host` takes that decision from one immutable byte snapshot that binds
+  framing and decoded records before torn-tail repair; the restart lane pins the
+  production path with byte-identical undecodable and parseable-non-newline
+  terminal fragments, a retained workspace sentinel, and an absent user effect.
+  Only a newline-terminated terminal record takes the no-Jenkinsfile fast path.
 - **One positive hand-written Tier-1 receipt.**
   `agent-label-built-in` is PROVEN against Jenkins 2.568.1 with the same
   result, output, file bytes, and workspace hash. The hand-written population
