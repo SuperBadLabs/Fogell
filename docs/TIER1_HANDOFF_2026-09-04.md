@@ -301,7 +301,7 @@ Read with the two sections above; this is the second addendum.
 
 ## 2026-09-05 custodian addendum — FG-253 candidate
 
-- **Implemented locally, PARTIAL until publication: FG-253.** The chosen
+- **Merged, PARTIAL only for substantive Copilot coverage: FG-253.** The chosen
   execution rule is conservative preflight refusal. Exact
   `label 'built-in'` remains executable on the explicitly single-node
   controller; every other label and every docker, dockerfile, or plugin-defined
@@ -328,6 +328,10 @@ Read with the two sections above; this is the second addendum.
 - **Corpus accounting does not move.** The thirteen files FG-247 sized are now
   guarded against silent execution, not unlocked or receipted. Generated
   counts remain `tier1=12`, `admitted=188`, `tier3=28`.
-- **Publication remains.** Run the exact-head HeMan gate and independent
-  review, publish through protected GitHub, then account the merge before
-  calling FG-253 DONE.
+- **Publication record.** Signed source `665b7bac` passed the complete local
+  gate (1,135 tests, 320 seals, zero compatibility losses), hosted run
+  `34013237910` including protected aggregate `gate`, and clean exact-head Codex
+  correctness/security review. PR #430 merged as `32bb3e6f` with the exact
+  source tree. Copilot review `5124265373` is an error artifact, not a review;
+  FG-253 remains PARTIAL until a substantive review of `665b7bac` exists or the
+  owner explicitly records a reviewer exception.
