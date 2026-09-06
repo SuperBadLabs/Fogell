@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # FG-112. The restart lane: a REAL Jenkinsfile through the REAL walker with the
 # FG-025 journal, killed with a genuine SIGKILL and resumed. Proves, in order:
+#  0. FG-253's unsupported-agent preflight leaves even a torn journal byte-
+#     identical and runs before workspace or user effects, while a terminal
+#     journal remains a no-op without its Jenkinsfile;
 #  1. a mid-step SIGKILL leaves the step Interrupted, and the resume REFUSES by
 #     name (exit 3) — the engine does not guess whether the effect landed;
 #  2. operator reconciliation is a text append (the journal is cat-able by
@@ -48,6 +51,35 @@ dotnet build -c Release --nologo >/dev/null
 HOST_BIN=$(find tools/Fogell.Run.Host/bin/Release -name Fogell.Run.Host -type f | head -1)
 [ -x "$HOST_BIN" ] || { echo "FAIL: host binary not found"; exit 1; }
 HOST=("$HOST_BIN")
+
+echo "=== FG-253: unsupported agent refuses before torn-journal repair ==="
+A_LANE="$LANE/fg253-agent"
+mkdir -p "$A_LANE/ws/fg253-agent"
+printf 'keep\n' > "$A_LANE/ws/fg253-agent/sentinel.txt"
+cat > "$A_LANE/Jenkinsfile" <<'JF'
+pipeline {
+    agent { label 'fg253-not-offered' }
+    stages {
+        stage('must-not-run') {
+            steps { sh 'echo ran > ran.txt' }
+        }
+    }
+}
+JF
+printf 'build-identity\tfg253-read-only-preflight\nstep-star' > "$A_LANE/build.journal"
+A_JOURNAL_BEFORE=$(sha256sum "$A_LANE/build.journal")
+set +e
+"${HOST[@]}" "$A_LANE/Jenkinsfile" "$A_LANE/ws" fg253-agent "$A_LANE/build.journal" > "$A_LANE/run.log" 2>&1
+A_RC=$?
+set -e
+[ "$A_RC" -eq 2 ] || { echo "FAIL: unsupported agent exit was $A_RC, expected 2"; cat "$A_LANE/run.log"; exit 1; }
+grep -q 'unsupported_agent:' "$A_LANE/run.log" || { echo "FAIL: unsupported agent reason absent"; cat "$A_LANE/run.log"; exit 1; }
+[ "$(sha256sum "$A_LANE/build.journal")" = "$A_JOURNAL_BEFORE" ] \
+  || { echo "FAIL: unsupported-agent preflight repaired or changed the journal"; exit 1; }
+[ "$(cat "$A_LANE/ws/fg253-agent/sentinel.txt")" = keep ] \
+  || { echo "FAIL: unsupported-agent preflight changed the existing workspace"; exit 1; }
+[ ! -f "$A_LANE/ws/fg253-agent/ran.txt" ] || { echo "FAIL: unsupported-agent body ran"; exit 1; }
+echo "unsupported agent named, torn journal byte-identical, workspace and user effects untouched"
 
 echo "=== attempt 1: SIGKILL mid-step ==="
 "${HOST[@]}" "$LANE/Jenkinsfile" "$WSROOT" "$JOB" "$JOURNAL" > "$LANE/run1.log" 2>&1 &
@@ -121,6 +153,12 @@ done
 echo "=== attempt 4: terminal journal is a no-op ==="
 "${HOST[@]}" "$LANE/Jenkinsfile" "$WSROOT" "$JOB" "$JOURNAL" > "$LANE/run4.log" 2>&1
 grep -q 'already-terminal: success' "$LANE/run4.log" || { echo "FAIL: not already-terminal"; exit 1; }
+mv "$LANE/Jenkinsfile" "$LANE/Jenkinsfile.rotated"
+"${HOST[@]}" "$LANE/Jenkinsfile" "$WSROOT" "$JOB" "$JOURNAL" > "$LANE/run4-rotated.log" 2>&1
+grep -q 'already-terminal: success' "$LANE/run4-rotated.log" \
+  || { echo "FAIL: terminal no-op required the rotated Jenkinsfile"; exit 1; }
+mv "$LANE/Jenkinsfile.rotated" "$LANE/Jenkinsfile"
+echo "terminal no-op still does not require the Jenkinsfile"
 
 echo "=== FG-171: a SIGKILL between two script{} children — the BLOCK is the unit ==="
 # The FG-171 row claimed a crash inside script{} RE-RUNS the whole block on

@@ -6430,7 +6430,7 @@ let unsupportedDeclarativeAgents =
                   Expect.isFalse (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt"))) "no effect")
           }
 
-          test "persisted execution refuses the agent before journal or workspace effects" {
+          test "runPersisted refuses the agent before persistence callbacks or workspace effects" {
               let _, source, scope = cases |> List.find (fun (label, _, _) -> label = "unavailable label pipeline")
 
               withWorkspace (fun root workspace ->

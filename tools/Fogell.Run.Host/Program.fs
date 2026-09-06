@@ -638,9 +638,34 @@ let main argv =
             eprintfn "workspace path or job-name contains tab/newline/carriage-return (after symlink resolution) — unjournalable; refusing"
             exit 2
 
-        // repair a torn tail BEFORE the plan is built: the reconciliation
-        // refusal exits before any journal open, and an operator's appended
-        // fix would otherwise land invisibly behind the fragment
+        // FG-253. An unsupported agent must be refused before even the recovery
+        // write below. Read only enough journal state to preserve the established
+        // terminal no-op: a complete BuildFinished record means the Jenkinsfile
+        // may already have been rotated and must not be required. For every
+        // non-terminal journal, including one with a torn tail, run the same
+        // persisted preflight while the journal bytes are still untouched.
+        let readAndPreflightScript () =
+            let candidate = File.ReadAllText jenkinsfile
+
+            match FogellSide.preflightPersistedExecution candidate with
+            | Error why ->
+                eprintfn $"{why}"
+                exit 2
+            | Ok _ -> candidate
+
+        let scriptBeforeRepair =
+            Journal.read journalPath
+            |> List.exists (function
+                | BuildFinished _ -> true
+                | _ -> false)
+            |> function
+                | true -> None
+                | false -> Some(readAndPreflightScript ())
+
+        // Repair a torn tail BEFORE the plan is built: an operator's appended
+        // fix would otherwise land invisibly behind the fragment. The unsupported-
+        // agent refusal above exits before this mutation; Journal.openAt repeats
+        // the repair before its first append as the deepest durability guard.
         Journal.repairTail journalPath
 
         let plan = Resume.plan (Journal.read journalPath)
@@ -675,18 +700,13 @@ let main argv =
             0
         | None ->
 
-        let script = File.ReadAllText jenkinsfile
-
-        // The durable host owns fresh-workspace preparation, so runWith's shared
-        // preflight would otherwise be too late to preserve the old tree. Use the same
-        // preflight here before a build identity, journal record, answer adoption or
-        // workspace wipe. runPersisted applies the same durable guard again before
-        // entering runWith's generic execution preflight.
-        match FogellSide.preflightPersistedExecution script with
-        | Error why ->
-            eprintfn $"{why}"
-            exit 2
-        | Ok _ -> ()
+        // Normally populated by the read-only pre-repair guard. The fallback is
+        // for a complete-looking, non-newline-terminated BuildFinished record:
+        // repairTail correctly discards it, making this an active attempt again.
+        let script =
+            match scriptBeforeRepair with
+            | Some candidate -> candidate
+            | None -> readAndPreflightScript ()
 
         let digest =
             use h = Security.Cryptography.SHA256.Create()
