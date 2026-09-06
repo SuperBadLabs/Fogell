@@ -6430,6 +6430,42 @@ let unsupportedDeclarativeAgents =
                   Expect.isFalse (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt"))) "no effect")
           }
 
+          test "shared execution entry points refuse before creating a missing workspace root" {
+              let _, source, _ = cases.Head
+              let parent = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-agent-root-preflight-" + Guid.NewGuid().ToString("N"))
+              IO.Directory.CreateDirectory(parent) |> ignore
+
+              let unreachable =
+                  { Url = "file:///definitely/not/a/repository"
+                    Branch = "main" }
+
+              let runners: (string * (string -> Result<Trace, string>)) list =
+                  [ "run", fun root -> FogellSide.run [] root "job" source
+                    "runWithCredentials", fun root -> FogellSide.runWithCredentials Map.empty [] root "job" source
+                    "runWithCredentialFactory",
+                    fun root ->
+                        FogellSide.runWithCredentialFactory
+                            (fun () -> failwith "credential factory reached")
+                            root
+                            "job"
+                            source
+                    "runPersisted", fun root -> FogellSide.runPersisted [] root "job" 2 false inertHooks source
+                    "runScm", fun root -> FogellSide.runScm [] root "job" unreachable source ]
+
+              try
+                  for label, run in runners do
+                      let root = IO.Path.Combine(parent, label)
+
+                      match run root with
+                      | Ok trace -> failtestf "%s agent unexpectedly executed: %A" label trace
+                      | Error why -> Expect.stringStarts why "unsupported_agent:" $"{label}: stable refusal"
+
+                      Expect.isFalse (IO.Directory.Exists root) $"{label}: workspace root was not created"
+              finally
+                  if IO.Directory.Exists parent then
+                      IO.Directory.Delete(parent, true)
+          }
+
           test "runPersisted refuses the agent before persistence callbacks or workspace effects" {
               let _, source, scope = cases |> List.find (fun (label, _, _) -> label = "unavailable label pipeline")
 

@@ -610,11 +610,15 @@ module FogellSide =
         // repeated lexical bindings share it instead of multiplying full encoded
         // strings in WalkerCtx's run-scoped protection history.
         let credentialsForRun = lazy (credentials ())
-        // The execution root belongs to the caller and may intentionally be a
-        // shared/mounted parent.  Create it when absent, but never chmod or
-        // otherwise reinterpret an existing root; only Fogell's child HOME is
-        // private agent state.
-        Directory.CreateDirectory workspaceRoot |> ignore
+        let prepareWorkspaceRoot () =
+            // The execution root belongs to the caller and may intentionally be a
+            // shared/mounted parent. Create it when absent, but never chmod or
+            // otherwise reinterpret an existing root; only Fogell's child HOME is
+            // private agent state. This helper is deliberately invoked only after
+            // executionPreflight has admitted the script: an engine-unavailable
+            // refusal must remain free of filesystem effects.
+            Directory.CreateDirectory workspaceRoot |> ignore
+
         let workspace = Path.Combine(workspaceRoot, jobName)
         // Artifacts and SCM history live outside the workspace hash.
         let artifactRoot = Path.Combine(workspaceRoot, "_artifacts")
@@ -660,6 +664,7 @@ module FogellSide =
         match executionPreflight script with
         | EngineUnavailable why -> Result.Error why
         | ReferenceRejected _ ->
+            prepareWorkspaceRoot ()
             let scmPreflightNotes = verifyScmDefinition ()
             prepareFreshJob ()
             // After the fresh-job reset above, do not create a workspace. A new
@@ -678,6 +683,7 @@ module FogellSide =
                   Timestamps = (0, 0)
                   ReportedFailureReason = true }
         | Ready pipeline ->
+            prepareWorkspaceRoot ()
             let scmPreflightNotes = verifyScmDefinition ()
             prepareFreshJob ()
             let buildHomeRoot = Path.Combine(workspaceRoot, "_agent_home")

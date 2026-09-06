@@ -306,7 +306,9 @@ Read with the two sections above; this is the second addendum.
   `label 'built-in'` remains executable on the explicitly single-node
   controller; every other label and every docker, dockerfile, or plugin-defined
   agent refuses with `unsupported_agent`, naming its kind or label and scope,
-  before workspace, SCM, persistence, or user effects.
+  before workspace-root creation, SCM, persistence, credential resolution, or
+  user effects. Direct, credential-backed, persisted, and SCM entry points are
+  pinned by a missing-root matrix.
   `Run.Host` takes that decision from one immutable byte snapshot's newline-
   terminated decoded prefix before torn-tail repair; the restart lane pins the
   production path with byte-identical undecodable and parseable-non-newline
