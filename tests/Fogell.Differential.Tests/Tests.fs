@@ -6337,24 +6337,50 @@ let unsupportedNamedCollections =
                           $"{label}: the existing executor path ran")
           } ]
 
-/// FG-014. Plugin-defined agents are admitted structurally, but Fogell has no
-/// Kubernetes provisioning, workspace placement or environment semantics. Every run
-/// entry converges on the same preflight before WalkerCtx and workspace preparation.
+/// FG-014/FG-253. Agents are admitted structurally, but execution must reject any
+/// label the single-node executor does not offer and every agent that needs
+/// provisioning. Every run entry converges on the same preflight before WalkerCtx and
+/// workspace preparation.
 let unsupportedDeclarativeAgents =
     let args = "   /* retained leading trivia */ label: 'docker', yaml: 'apiVersion: v1' /* retained tail */  "
 
     let cases =
-        [ "pipeline", $"pipeline {{ agent {{ kubernetes {args} }} stages {{ stage('a') {{ steps {{ sh 'echo ran > ran.txt' }} }} }} }}", "pipeline (`kubernetes`)"
-          "stage", $"pipeline {{ agent any stages {{ stage('a') {{ agent {{ kubernetes {args} }} steps {{ sh 'echo ran > ran.txt' }} }} }} }}", "stage 'a' (`kubernetes`)"
-          "nested sequential", $"pipeline {{ agent any stages {{ stage('outer') {{ stages {{ stage('inner') {{ agent {{ kubernetes {args} }} steps {{ sh 'echo ran > ran.txt' }} }} }} }} }} }}", "stage 'inner' (`kubernetes`)"
-          "nested parallel", $"pipeline {{ agent any stages {{ stage('outer') {{ parallel {{ stage('branch') {{ agent {{ kubernetes {args} }} steps {{ sh 'echo ran > ran.txt' }} }} }} }} }} }}", "stage 'branch' (`kubernetes`)" ]
+        [ "plugin pipeline", $"pipeline {{ agent {{ kubernetes {args} }} stages {{ stage('a') {{ steps {{ sh 'echo ran > ran.txt' }} }} }} }}", "pipeline (`kubernetes`)"
+          "plugin stage", $"pipeline {{ agent any stages {{ stage('a') {{ agent {{ kubernetes {args} }} steps {{ sh 'echo ran > ran.txt' }} }} }} }}", "stage 'a' (`kubernetes`)"
+          "unavailable label pipeline", "pipeline { agent { label 'not-offered' } stages { stage('a') { steps { sh 'echo ran > ran.txt' } } } }", "pipeline (`label`: `not-offered`)"
+          "docker pipeline", "pipeline { agent { docker { image 'alpine:3.22' } } stages { stage('a') { steps { sh 'echo ran > ran.txt' } } } }", "pipeline (`docker`)"
+          "docker stage", "pipeline { agent none stages { stage('a') { agent { docker 'alpine:3.22' } steps { sh 'echo ran > ran.txt' } } } }", "stage 'a' (`docker`)"
+          "dockerfile pipeline", "pipeline { agent { dockerfile } stages { stage('a') { steps { sh 'echo ran > ran.txt' } } } }", "pipeline (`dockerfile`)"
+          "dockerfile stage", "pipeline { agent any stages { stage('a') { agent { dockerfile { filename 'Dockerfile' } } steps { sh 'echo ran > ran.txt' } } } }", "stage 'a' (`dockerfile`)"
+          "nested sequential label", "pipeline { agent any stages { stage('outer') { stages { stage('inner') { agent { label 'not-offered' } steps { sh 'echo ran > ran.txt' } } } } } }", "stage 'inner' (`label`: `not-offered`)"
+          "later stage label", "pipeline { agent any stages { stage('earlier') { steps { sh 'echo ran > ran.txt' } } stage('later') { agent { label 'not-offered' } steps { echo 'unreachable' } } } }", "stage 'later' (`label`: `not-offered`)"
+          "nested parallel plugin", $"pipeline {{ agent any stages {{ stage('outer') {{ parallel {{ stage('branch') {{ agent {{ kubernetes {args} }} steps {{ sh 'echo ran > ran.txt' }} }} }} }} }} }}", "stage 'branch' (`kubernetes`)" ]
 
-    let control =
-        "pipeline { agent any stages { stage('a') { agent any steps { sh 'echo ran > ran.txt' } } } }"
+    let controls =
+        [ "any", "pipeline { agent any stages { stage('a') { agent any steps { sh 'echo ran > ran.txt' } } } }"
+          "built-in pipeline", "pipeline { agent { label 'built-in' } stages { stage('a') { steps { sh 'echo ran > ran.txt' } } } }"
+          "built-in stage", "pipeline { agent none stages { stage('a') { agent { label 'built-in' } steps { sh 'echo ran > ran.txt' } } } }" ]
 
     let duplicates =
         [ "pipeline", "pipeline { agent any agent { kubernetes label: 'docker', yaml: 'apiVersion: v1' } stages { stage('a') { steps { sh 'echo ran > ran.txt' } } } }"
           "stage", "pipeline { agent any stages { stage('a') { agent any agent { kubernetes label: 'docker', yaml: 'apiVersion: v1' } steps { sh 'echo ran > ran.txt' } } } }" ]
+
+    let inertHooks =
+        { OnOutput = ignore
+          IsRestartedRun = false
+          ShouldExecute = fun _ _ -> true
+          StageWasCommitted = fun _ -> false
+          SkippedStatus = fun _ _ -> None
+          SkippedStageWarning = fun _ _ -> None
+          OnStepStarted = fun _ _ _ -> ()
+          OnStepStageWarning = fun _ _ _ -> ()
+          OnStepFinished = fun _ _ _ _ -> ()
+          OnStageCommitted = ignore
+          OnRetryAttempt = fun _ _ -> ()
+          RetryAttemptsSoFar = fun _ -> 1
+          PollInputAnswer = None
+          OnInputClosed = fun _ _ _ -> ()
+          OnInputAnswerVoided = fun _ _ _ -> () }
 
     let withWorkspace (f: string -> string -> unit) =
         let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-agent-preflight-" + Guid.NewGuid().ToString("N"))
@@ -6371,7 +6397,7 @@ let unsupportedDeclarativeAgents =
                 IO.Directory.Delete(root, true)
 
     testList
-        "FG-014 plugin-defined agents fail closed before execution"
+        "FG-014/FG-253 unsupported Declarative agents fail closed"
         [ test "pipeline and every flattened stage form refuse before effects or workspace wipe" {
               for label, source, scope in cases do
                   withWorkspace (fun root workspace ->
@@ -6404,6 +6430,20 @@ let unsupportedDeclarativeAgents =
                   Expect.isFalse (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt"))) "no effect")
           }
 
+          test "persisted execution refuses the agent before journal or workspace effects" {
+              let _, source, scope = cases |> List.find (fun (label, _, _) -> label = "unavailable label pipeline")
+
+              withWorkspace (fun root workspace ->
+                  match FogellSide.runPersisted [] root "job" 2 false inertHooks source with
+                  | Ok trace -> failtestf "persisted agent unexpectedly executed: %A" trace
+                  | Error why ->
+                      Expect.stringStarts why "unsupported_agent:" "persisted preflight uses the stable reason"
+                      Expect.stringContains why scope "persisted preflight names the unavailable label"
+
+                  Expect.isTrue (IO.File.Exists(IO.Path.Combine(workspace, "sentinel.txt"))) "workspace retained"
+                  Expect.isFalse (IO.File.Exists(IO.Path.Combine(workspace, "ran.txt"))) "no effect")
+          }
+
           test "duplicate agent sections refuse before first-match loss or effects" {
               for label, source in duplicates do
                   withWorkspace (fun root workspace ->
@@ -6416,15 +6456,16 @@ let unsupportedDeclarativeAgents =
           }
 
           test "modelled pipeline and stage agents remain executable" {
-              withWorkspace (fun root workspace ->
-                  match FogellSide.run [] root "job" control with
-                  | Error why -> failtestf "control was refused: %s" why
-                  | Ok trace -> Expect.equal trace.Result "success" "existing agent path is unchanged"
+              for label, control in controls do
+                  withWorkspace (fun root workspace ->
+                      match FogellSide.run [] root "job" control with
+                      | Error why -> failtestf "%s control was refused: %s" label why
+                      | Ok trace -> Expect.equal trace.Result "success" $"{label}: existing agent path is unchanged"
 
-                  Expect.equal
-                      (IO.File.ReadAllText(IO.Path.Combine(workspace, "ran.txt")).Trim())
-                      "ran"
-                      "control effect ran")
+                      Expect.equal
+                          (IO.File.ReadAllText(IO.Path.Combine(workspace, "ran.txt")).Trim())
+                          "ran"
+                          $"{label}: control effect ran")
           } ]
 
 /// FG-014. Admission may retain tools syntax for the parse-only corpus metric, but

@@ -298,3 +298,28 @@ Read with the two sections above; this is the second addendum.
   capability from FG-242's inventory, an execution rule for unallocatable
   stage agents (refuse or model `label`/`docker`/`dockerfile`, which gates
   thirteen files), or `make` pinned in the container for `charlires`.
+
+## 2026-09-05 custodian addendum — FG-253 candidate
+
+- **Implemented locally, PARTIAL until publication: FG-253.** The chosen
+  execution rule is conservative preflight refusal. Exact
+  `label 'built-in'` remains executable on the explicitly single-node
+  controller; every other label and every docker, dockerfile, or plugin-defined
+  agent refuses with `unsupported_agent`, naming its kind or label and scope,
+  before workspace, SCM, persistence, or user effects.
+- **One positive hand-written Tier-1 receipt.**
+  `agent-label-built-in` is PROVEN against Jenkins 2.568.1 with the same
+  result, output, file bytes, and workspace hash. The hand-written population
+  is now 308 of 308 proven.
+- **The unavailable-label arm is evidence, not parity.** The bounded
+  `fg253-not-offered` probe records Jenkins remaining queued with
+  `‘Jenkins’ doesn’t have label ‘fg253-not-offered’`, while Fogell refuses
+  before creating a workspace or journal. Cleanup deleted the job and left
+  zero matching queue items. This does not model Jenkins scheduling and is not
+  called Tier 1.
+- **Corpus accounting does not move.** The thirteen files FG-247 sized are now
+  guarded against silent execution, not unlocked or receipted. Generated
+  counts remain `tier1=12`, `admitted=188`, `tier3=28`.
+- **Publication remains.** Run the exact-head HeMan gate and independent
+  review, publish through protected GitHub, then account the merge before
+  calling FG-253 DONE.

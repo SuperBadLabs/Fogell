@@ -1,0 +1,6 @@
+command: dotnet tools/Fogell.Run.Host/bin/Release/net10.0/Fogell.Run.Host.dll differential/probes/agent-label-unavailable.Jenkinsfile /tmp/fogell-fg253-local.EJYgk9/workspace fg253-local /tmp/fogell-fg253-local.EJYgk9/journal
+exit: 2
+stderr:
+unsupported_agent: Declarative agents not offered by the single-node executor are parsed for admission but execution is refused until label matching, provisioning, workspace placement and agent environment semantics are implemented; scopes: stage 'unavailable' (`label`: `fg253-not-offered`)
+post-run inventory:
+/tmp/fogell-fg253-local.EJYgk9

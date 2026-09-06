@@ -1,0 +1,15 @@
+jenkins-url: http://luigi:18083
+jenkins-core: 2.568.1
+job: fg253-codex-01a0744d
+poll-bound: 30 seconds
+queue: 101656	‘Jenkins’ doesn’t have label ‘fg253-not-offered’
+build: {"_class":"org.jenkinsci.plugins.workflow.job.WorkflowRun","building":true,"result":null}
+workspace-effect-http: 404
+console:
+Started by user unknown or anonymous
+[Pipeline] Start of Pipeline
+[Pipeline] stage
+[Pipeline] { (unavailable)
+[Pipeline] node
+FG-253 JENKINS QUEUE PROBE PASS
+cleanup: job-http=404 matching-queue-items=0
