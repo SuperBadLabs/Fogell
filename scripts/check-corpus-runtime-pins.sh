@@ -22,11 +22,11 @@ build_path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # shellcheck source=scripts/jenkins-workspace-v2.sh disable=SC1091
 source scripts/jenkins-workspace-v2.sh || die "Jenkins command quoting helpers could not be loaded"
 
-declare -A tool_name=() local_tool=() jenkins_tool=() tool_sha=() image_id=() image_digest=() container_port=() host_binding=() jenkins_node=()
-while IFS=$'\t' read -r pin command local_path jenkins_path sha expected_image expected_digest expected_container_port expected_host_binding expected_node extra; do
+declare -A tool_name=() local_tool=() jenkins_tool=() tool_sha=() image_id=() image_digest=() container_port=() host_binding=() jenkins_node=() plugin_count=() plugin_sha=()
+while IFS=$'\t' read -r pin command local_path jenkins_path sha expected_image expected_digest expected_container_port expected_host_binding expected_node expected_plugin_count expected_plugin_sha extra; do
   [ -n "$pin" ] || continue
   case "$pin" in \#*) continue ;; esac
-  [ -z "${extra:-}" ] || die "pin '$pin' has more than ten tab-separated fields"
+  [ -z "${extra:-}" ] || die "pin '$pin' has more than twelve tab-separated fields"
   [[ "$pin" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die "invalid pin id '$pin'"
   [ -z "${tool_name[$pin]+x}" ] || die "duplicate pin id '$pin'"
   [[ "$command" =~ ^[A-Za-z0-9._+-]+$ ]] || die "pin '$pin' has an unsafe tool name"
@@ -43,6 +43,10 @@ while IFS=$'\t' read -r pin command local_path jenkins_path sha expected_image e
     || die "pin '$pin' has an invalid Jenkins host binding"
   [[ "$expected_node" =~ ^[A-Za-z0-9._-]+$ ]] \
     || die "pin '$pin' has an invalid Jenkins node"
+  [[ "$expected_plugin_count" =~ ^[1-9][0-9]*$ ]] \
+    || die "pin '$pin' has an invalid Jenkins plugin count"
+  [[ "$expected_plugin_sha" =~ ^[0-9a-f]{64}$ ]] \
+    || die "pin '$pin' has an invalid Jenkins plugin digest"
   binding_port=${expected_host_binding##*:}
   [ "$binding_port" -le 65535 ] || die "pin '$pin' has an invalid Jenkins host binding"
   tool_name[$pin]=$command
@@ -54,6 +58,8 @@ while IFS=$'\t' read -r pin command local_path jenkins_path sha expected_image e
   container_port[$pin]=$expected_container_port
   host_binding[$pin]=$expected_host_binding
   jenkins_node[$pin]=$expected_node
+  plugin_count[$pin]=$expected_plugin_count
+  plugin_sha[$pin]=$expected_plugin_sha
 done < "$pins_file"
 
 declare -A requested=()
@@ -112,6 +118,16 @@ for pin in "$@"; do
   [ "$observed_digest" = "${image_digest[$pin]}" ] \
     || die "pin '$pin' Jenkins image digest is $observed_digest, expected ${image_digest[$pin]}"
 
+  plugin_json=$(ssh -o BatchMode=yes -- "$FOGELL_JENKINS_HOST" \
+    "curl --globoff -sS 'http://127.0.0.1:${host_binding[$pin]##*:}/pluginManager/api/json?tree=plugins[shortName,version,active,enabled]'" 2>/dev/null) \
+    || die "pin '$pin' could not read the Jenkins plugin inventory"
+  observed_plugin_count=$(printf '%s' "$plugin_json" | jq -r '.plugins | length')
+  observed_plugin_sha=$(printf '%s' "$plugin_json" | jq -cS '.plugins | sort_by(.shortName)' | sha256sum | cut -d' ' -f1)
+  [ "$observed_plugin_count" = "${plugin_count[$pin]}" ] \
+    || die "pin '$pin' Jenkins plugin count is $observed_plugin_count, expected ${plugin_count[$pin]}"
+  [ "$observed_plugin_sha" = "${plugin_sha[$pin]}" ] \
+    || die "pin '$pin' Jenkins plugin digest is $observed_plugin_sha, expected ${plugin_sha[$pin]}"
+
   # The URL used by the differential must name the same SSH host whose
   # container was inspected, and its port must be the exact published binding
   # of that container's pinned Jenkins port. This prevents an independently
@@ -138,6 +154,7 @@ for pin in "$@"; do
   [ "$observed_binding" = "${host_binding[$pin]}" ] \
     || die "pin '$pin' Jenkins port binding is ${observed_binding:-nothing}, expected ${host_binding[$pin]}"
 
-  printf 'corpus runtime pin: %s verified (tool %s; image %s; digest %s; endpoint %s; node %s)\n' \
-    "$pin" "${tool_sha[$pin]}" "${image_id[$pin]}" "${image_digest[$pin]}" "$FOGELL_JENKINS_URL" "${jenkins_node[$pin]}"
+  printf 'corpus runtime pin: %s verified (tool %s; image %s; digest %s; plugins %s/%s; endpoint %s; node %s)\n' \
+    "$pin" "${tool_sha[$pin]}" "${image_id[$pin]}" "${image_digest[$pin]}" \
+    "${plugin_count[$pin]}" "${plugin_sha[$pin]}" "$FOGELL_JENKINS_URL" "${jenkins_node[$pin]}"
 done

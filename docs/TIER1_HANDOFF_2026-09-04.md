@@ -353,16 +353,18 @@ Read with the two sections above; this is the second addendum.
 - **Generated accounting:** `tier1=13`, `admitted=187`, `tier3=28`; the
   separate hand-written population remains 308 of 308 proven.
 - **The runtime pin is executable policy, not prose.** Before execution and
-  again before promotion the lane checks both resolved Make paths and hashes,
-  injects Fogell's exact compatibility PATH as a Jenkins build parameter so
-  real `sh` guard builds bracketing the corpus build verify that PATH and
-  `command -v make`; the guards use a separate disposable job so the tested
-  job's history stays pristine, and all three builds report the manifest's
-  node. It also checks the container image ID/digest and requires that the HTTP oracle URL names the same
-  SSH host and exact published `8080/tcp -> 0.0.0.0:18083` binding. Its
-  REST traffic then uses a lane-life-bound authenticated SSH tunnel to that
-  host's loopback listener; the service-free hostile proof kills every identity,
-  endpoint, direct-HTTP, or tunnel-lifecycle substitution.
+  promotion the lane checks both resolved Make paths/hashes, the image and
+  exact 154-plugin closure. The executing runner must match its archived HEAD
+  copy, and every repository helper/policy input plus the freshly built CLI is
+  consumed from that private committed tree. It starts a fresh random-ID
+  controller and home
+  only after Luigi's owner-UID fence stands, then installs the namespace fence;
+  it never inherits the persistent lab JVM. HeMan's owner-UID fence precedes
+  the SSH listener. The target build is bound to the returned queue item,
+  `queueId`, cryptographic token, Replay definition, PATH, tool resolution and
+  case/nonce marker; separate outer guards preserve corpus history and all
+  three builds report the manifest node. The tunnel dies and the exact
+  container/home are proven absent before access reopens.
 - **Publication remains.** The ticket is
   [`tickets/FG-254.md`](tickets/FG-254.md). Exact-head local gate, final review,
   hosted gate, protected merge, and accounting are still required before DONE.

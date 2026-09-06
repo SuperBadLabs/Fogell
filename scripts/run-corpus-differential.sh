@@ -8,27 +8,27 @@
 #   scripts/run-corpus-differential.sh <corpus-file.Jenkinsfile>...
 #
 # Refuses, in order: a file outside the pinned corpus; a corpus whose manifest
-# does not verify; a missing differential CLI build; a Jenkins-side fence that
+# does not verify; a non-HEAD or unbuildable differential CLI closure; a Jenkins-side fence that
 # cannot be applied or proven; a Fogell-side fence that cannot be proven. The
-# Jenkins fence is removed on exit whatever happens short of ssh itself
-# failing, so the hand-written lane (whose git-step cases reach the SCM
-# daemon) finds the lab as it was; the runbook says how to remove a leftover.
+# The disposable controller is destroyed and its access fences are removed on
+# exit only after their absence checks succeed. A failed cleanup stays closed
+# and the runbook says how to recover it.
 #
 # Environment (the same names run-differential.sh uses):
 #   FOGELL_CORPUS            pinned corpus root   (default /sn8100/work/exchange/crucible-gate/corpus)
-#   FOGELL_JENKINS_URL       oracle               (default http://luigi:18083)
+#   FOGELL_JENKINS_URL       oracle               (default http://luigi:18086)
 #   FOGELL_JENKINS_CORE      pinned core          (default 2.568.1)
 #   FOGELL_JENKINS_HOST      ssh host             (default luigi)
-#   FOGELL_JENKINS_CONTAINER container            (default jenkins-lab)
+#   FOGELL_JENKINS_CONTAINER container            (set internally to the fresh full ID)
 #   FOGELL_RECEIPT_DIR       where receipts land  (default differential/receipts)
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 
 : "${FOGELL_CORPUS:=/sn8100/work/exchange/crucible-gate/corpus}"
-: "${FOGELL_JENKINS_URL:=http://luigi:18083}"
+: "${FOGELL_JENKINS_URL:=http://luigi:18086}"
 : "${FOGELL_JENKINS_CORE:=2.568.1}"
 : "${FOGELL_JENKINS_HOST:=luigi}"
-: "${FOGELL_JENKINS_CONTAINER:=jenkins-lab}"
+: "${FOGELL_JENKINS_CONTAINER:=fogell-corpus-jenkins-unprovisioned}"
 : "${FOGELL_RECEIPT_DIR:=differential/receipts}"
 export FOGELL_CORPUS FOGELL_JENKINS_URL FOGELL_JENKINS_CORE FOGELL_JENKINS_HOST FOGELL_JENKINS_CONTAINER
 
@@ -42,8 +42,33 @@ for f in "$@"; do
   case "$r" in "$corpus_dir"/*.Jenkinsfile) files+=("$r") ;; *) die "$f is not a pinned corpus file under $corpus_dir — this lane executes corpus files only" ;; esac
 done
 
+# Materialize every evidence-control byte from the signed commit before any
+# repository helper or policy input is consumed. The currently executing
+# runner must itself match that archive; every later helper, manifest,
+# allowlist, runtime pin and compiled CLI is read only from the private HEAD
+# tree, so untracked/ignored working-tree files cannot enter the receipt lane.
+snap_dir=$(mktemp -d); cli_private=$(mktemp -d); cli_source="$cli_private/source"; cli_build="$cli_private/output"; snaps=()
+mkdir -p "$cli_source" "$cli_build"
+trap 'rm -rf "$snap_dir" "$cli_private"' EXIT   # until the full cleanup replaces it
+source_head=$(git rev-parse --verify 'HEAD^{commit}') \
+  || die "could not resolve the evidence-control commit"
+[[ "$source_head" =~ ^[0-9a-f]{40,64}$ ]] \
+  || die "git returned a malformed evidence-control commit identity"
+git archive --format=tar "$source_head" | tar -xf - -C "$cli_source" \
+  || die "could not materialize the exact HEAD evidence-control snapshot"
+echo "corpus lane: evidence-control commit $source_head"
+runner_path=$(realpath -e "$0") || die "could not resolve the executing corpus runner"
+cmp -s -- "$runner_path" "$cli_source/scripts/run-corpus-differential.sh" \
+  || die "the executing corpus runner differs from HEAD — commit it before collecting evidence"
+fence_script="$cli_source/scripts/no-egress-fence.sh"
+runtime_pin_checker="$cli_source/scripts/check-corpus-runtime-pins.sh"
+workspace_helper="$cli_source/scripts/jenkins-workspace-v2.sh"
+verify_corpus="$cli_source/scripts/verify-corpus.sh"
+allowlist="$cli_source/differential/corpus-allowlist.tsv"
+runtime_pins="$cli_source/differential/corpus-runtime-pins.tsv"
+
 echo "corpus lane: verifying the pinned manifest"
-./scripts/verify-corpus.sh >/dev/null || die "corpus manifest did not verify — nothing executes against a drifted corpus"
+"$verify_corpus" >/dev/null || die "corpus manifest did not verify — nothing executes against a drifted corpus"
 
 # THE ALLOWLIST. Membership in the pinned corpus is not permission to execute:
 # the corpus is untrusted, the Fogell fence does not contain a hostile file,
@@ -52,7 +77,6 @@ echo "corpus lane: verifying the pinned manifest"
 # stem to the surface a person read; a file whose digest is not there is
 # refused before the lease, before either fence, before anything runs
 # (Codex on PR #392).
-allowlist=differential/corpus-allowlist.tsv
 [ -f "$allowlist" ] || die "$allowlist is missing — nothing is allowlisted"
 pin_ids=()
 for r in "${files[@]}"; do
@@ -89,8 +113,6 @@ unset FOGELL_RUNTIME_GUARD_CASE_SHA FOGELL_RUNTIME_GUARD_NODE \
 # copied into a private snapshot, the copy is re-hashed against the allowlist,
 # and the CLI is given the copies — same basename, so the receipt stem and the
 # sealed case-digest are unchanged.
-snap_dir=$(mktemp -d); snaps=()
-trap 'rm -rf "$snap_dir"' EXIT   # until the full cleanup replaces it
 for r in "${files[@]}"; do
   b=$(basename "$r"); cp -- "$r" "$snap_dir/$b"; chmod 0400 "$snap_dir/$b"
   d=$(sha256sum "$snap_dir/$b" | cut -d' ' -f1)
@@ -98,16 +120,23 @@ for r in "${files[@]}"; do
   snaps+=("$snap_dir/$b")
 done
 
-cli=tools/Fogell.Differential.Cli/bin/Release/net10.0/fogell-diff.dll
-[ -f "$cli" ] || die "$cli is missing — build it first: dotnet build tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj -c Release"
-
-# shellcheck source=scripts/jenkins-workspace-v2.sh disable=SC1091
-source scripts/jenkins-workspace-v2.sh || die "workspace collector could not be loaded"
-fogell_configure_jenkins_workspace_v2 "$FOGELL_JENKINS_HOST" "$FOGELL_JENKINS_CONTAINER" || die "workspace collector could not be configured"
-container_q=$(fogell_quote_posix_shell_v2 "$FOGELL_JENKINS_CONTAINER")
-FOGELL_JENKINS_ENV_CMD=$(fogell_jenkins_ssh_command_v2 "$FOGELL_JENKINS_HOST" "podman exec $container_q env")
-FOGELL_JENKINS_GIT_VERSION_CMD=$(fogell_jenkins_ssh_command_v2 "$FOGELL_JENKINS_HOST" "podman exec $container_q git --version")
-export FOGELL_JENKINS_ENV_CMD FOGELL_JENKINS_GIT_VERSION_CMD
+# Compile the archived committed source closure into fresh private obj and
+# output directories on every lane. A gitignored DLL or project.assets.json
+# from the checkout can therefore never survive a revision/SDK switch into the
+# evidence binary.
+cli_project="$cli_source/tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj"
+dotnet restore "$cli_project" --locked-mode --nologo >/dev/null \
+  || die "the exact HEAD differential CLI source closure did not restore in its private workspace"
+dotnet build "$cli_project" -c Release --no-restore --no-incremental --nologo -o "$cli_build" >/dev/null \
+  || die "the exact HEAD differential CLI source closure did not build privately"
+cli="$cli_build/fogell-diff.dll"
+[ -f "$cli" ] || die "the fresh differential CLI build did not produce $cli"
+cli_closure_sha=$(find "$cli_build" -type f -printf '%P\0' | sort -z | while IFS= read -r -d '' p; do sha256sum "$cli_build/$p" | sed "s#  $cli_build/#  #"; done | sha256sum | cut -d' ' -f1)
+echo "corpus lane: fresh exact-HEAD differential CLI closure sha256 $cli_closure_sha"
+capability=$(dotnet "$cli" --runtime-guard-capability 2>/dev/null) \
+  || die "the fresh differential CLI did not answer the runtime-guard capability probe"
+[ "$capability" = fogell-runtime-guard-v3 ] \
+  || die "the fresh differential CLI reported an unexpected runtime-guard capability: ${capability:-no output}"
 
 # One lane per user on this host: a second lane's exit trap would remove this
 # lane's Jenkins fence (measured, fixed). The lock lives in the user's runtime
@@ -157,16 +186,14 @@ echo "corpus lane: holding the lane lease on $FOGELL_JENKINS_HOST (released when
 # between here and the fence cannot leave a watcher alive to signal a reused
 # pid later (Copilot on PR #398). Every variable the trap reads is
 # initialised first.
-fence_applied=; poller=; run_pid=; completed=; lease_watch=; run_receipts=
+fence_applied=; access_applied=; local_access_applied=; poller=; run_pid=; completed=; lease_watch=; run_receipts=
 tunnel_pid=; tunnel_watch=; tunnel_dir=
+oracle_id=; oracle_name=; oracle_home_volume=; oracle_launch_attempted=; oracle_removed=; oracle_run_output=
 started=$(date -u +%FT%TZ)
-# The trap goes in BEFORE apply so a partially applied fence is never left
-# behind. Teardown policy: quiesce first; if the quiesce FAILS the fence is
-# LEFT UP and reported — an open namespace with a survivor in it is the one
-# state this lane exists to prevent, and the runbook says how to recover
-# (Codex on PR #394). A pre-apply failure quiesces nothing and removes
-# nothing: `apply` is one atomic nft load, and a fence that exists without
-# this lane having applied it is somebody else's to recover.
+# The trap goes in BEFORE either access boundary or the controller. Teardown
+# closes the tunnel, destroys the exact lane-labelled controller and its fresh
+# anonymous home, proves both are absent, and only then reopens host access.
+# A failed destruction leaves the host access fence up and reports recovery.
 # The run writes its receipts into a PRIVATE directory and they are PROMOTED
 # into $FOGELL_RECEIPT_DIR only after the post-run check passes. A run that
 # lost its fence or its lease simply discards that directory: nothing that
@@ -185,28 +212,89 @@ cleanup() {
   [ -n "$lease_watch" ] && kill -KILL "$lease_watch" 2>/dev/null
   [ -n "$tunnel_watch" ] && kill -KILL "$tunnel_watch" 2>/dev/null
   # Stop the fenced run FIRST, and wait for its own teardown, so nothing of
-  # ours is still executing when the namespace is quiesced and unfenced.
+  # ours is still executing when the disposable namespace is destroyed.
   if [ -n "$run_pid" ] && kill -0 "$run_pid" 2>/dev/null; then kill -TERM "$run_pid" 2>/dev/null; wait "$run_pid" 2>/dev/null || true; fi
   if [ -n "$fence_applied" ] && [ -z "$completed" ]; then
     echo "corpus lane: the run did not complete under a standing fence — its receipts are discarded, the receipt directory is untouched" >&2
   fi
   [ -n "$run_receipts" ] && rm -rf "$run_receipts"
   rm -f -- "$FOGELL_RECEIPT_DIR"/.*.tmp.$$ 2>/dev/null   # a promotion temp orphaned by a signal between cp and mv
-  # Only a fence THIS lane applied is ever removed: a fence found already in
-  # place belongs to a previous lane's recovery and stays (measured: a first
-  # version removed the leftover it had just refused to replace).
-  if [ -n "$fence_applied" ]; then
-    if ./scripts/no-egress-fence.sh jenkins quiesce; then
-      ./scripts/no-egress-fence.sh jenkins remove || true
-    else
-      echo "corpus lane: QUIESCE FAILED — the Jenkins fence is LEFT UP on purpose; recover per docs/runbooks/no-egress-fence.md" >&2
+  # The SSH listener dies before either host access fence. A different local
+  # principal can therefore never inherit a still-forwarding socket.
+  tunnel_dead=1
+  [ -n "$tunnel_pid" ] && kill "$tunnel_pid" 2>/dev/null
+  for _ in 1 2 3 4 5; do
+    if [ -z "$tunnel_pid" ] || ! kill -0 "$tunnel_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+  [ -n "$tunnel_pid" ] && kill -KILL "$tunnel_pid" 2>/dev/null
+  if [ -n "$tunnel_pid" ]; then
+    sleep 1
+    kill -0 "$tunnel_pid" 2>/dev/null && tunnel_dead=
+  fi
+  tunnel_pid=
+
+  # The oracle has no inherited home: remove the exact returned container ID
+  # and its exact anonymous JENKINS_HOME volume before reopening the port.
+  # A label check prevents a stale/name-raced object from being destroyed.
+  cleanup_oracle_id=$oracle_id
+  if [ -n "$oracle_launch_attempted" ] && [ -z "$cleanup_oracle_id" ]; then
+    cleanup_oracle_id=$(ssh -n "$FOGELL_JENKINS_HOST" \
+      "podman inspect --format '{{.ID}}' $oracle_name" 2>/dev/null)
+    if [ -z "$cleanup_oracle_id" ] && ssh -n "$FOGELL_JENKINS_HOST" \
+      "podman container exists $oracle_name; rc=\$?; [ \$rc -eq 1 ]" 2>/dev/null; then
+      oracle_removed=1
     fi
   fi
-  [ -n "$tunnel_pid" ] && kill "$tunnel_pid" 2>/dev/null
+  if [ -n "$cleanup_oracle_id" ]; then
+    if [[ ! "$cleanup_oracle_id" =~ ^[0-9a-f]{64}$ ]]; then
+      echo "corpus lane: ORACLE ID RECOVERY FAILED — host access fence is LEFT UP; recover per docs/runbooks/no-egress-fence.md" >&2
+      cleanup_oracle_id=
+    elif [ -z "$oracle_home_volume" ]; then
+      oracle_home_volume=$(ssh -n "$FOGELL_JENKINS_HOST" \
+        "podman inspect $cleanup_oracle_id | jq -er '.[0] | (.Mounts | map(select(.Destination == \"/var/jenkins_home\"))) as \$h | if (\$h|length) == 1 and \$h[0].Type == \"volume\" and (\$h[0].Name|test(\"^[0-9a-f]{64}\$\")) then \$h[0].Name else error(\"JENKINS_HOME is not one fresh anonymous volume\") end'" 2>/dev/null)
+      [ -n "$oracle_home_volume" ] || { echo "corpus lane: ORACLE HOME RECOVERY FAILED — host access fence is LEFT UP; recover per docs/runbooks/no-egress-fence.md" >&2; cleanup_oracle_id=; }
+    fi
+  fi
+  if [ -n "$cleanup_oracle_id" ]; then
+    owned=$(ssh -n "$FOGELL_JENKINS_HOST" \
+      "podman inspect --format '{{index .Config.Labels \"fogell.lane-token\"}}' $cleanup_oracle_id" 2>/dev/null)
+    if [ "$owned" = "${FOGELL_JENKINS_ACCESS_TOKEN:-}" ] \
+       && ssh -n "$FOGELL_JENKINS_HOST" "podman rm -fv $cleanup_oracle_id" >/dev/null 2>&1 \
+       && ssh -n "$FOGELL_JENKINS_HOST" "podman container exists $cleanup_oracle_id; rc=\$?; [ \$rc -eq 1 ]" \
+       && { [ -z "$oracle_home_volume" ] || ssh -n "$FOGELL_JENKINS_HOST" "podman volume exists $oracle_home_volume; rc=\$?; [ \$rc -eq 1 ]"; }; then
+      oracle_removed=1
+      echo "corpus lane: disposable Jenkins controller and fresh home removed"
+    else
+      echo "corpus lane: ORACLE REMOVE FAILED — host access fence is LEFT UP; recover per docs/runbooks/no-egress-fence.md" >&2
+    fi
+  elif [ -z "$oracle_launch_attempted" ]; then
+    oracle_removed=1
+  fi
+
+  if [ -n "$access_applied" ]; then
+    if [ -n "$oracle_launch_attempted" ] && [ -z "$oracle_removed" ]; then
+      echo "corpus lane: ACCESS FENCE LEFT UP because the disposable oracle may remain" >&2
+    else
+      "$fence_script" jenkins access-remove || \
+        echo "corpus lane: ACCESS FENCE REMOVE FAILED — recover per docs/runbooks/no-egress-fence.md" >&2
+    fi
+  fi
+  if [ -n "$local_access_applied" ]; then
+    if [ -z "$tunnel_dead" ]; then
+      echo "corpus lane: LOCAL ACCESS FENCE LEFT UP because the SSH tunnel may remain" >&2
+    else
+      "$fence_script" local access-remove || \
+        echo "corpus lane: LOCAL ACCESS FENCE REMOVE FAILED — recover per docs/runbooks/no-egress-fence.md" >&2
+    fi
+  fi
   [ -n "$tunnel_dir" ] && rm -rf "$tunnel_dir"
   kill "$lease_pid" 2>/dev/null || true
   [ -n "$lease_dir" ] && rm -rf "$lease_dir"
   [ -n "$snap_dir" ] && rm -rf "$snap_dir"
+  [ -n "$cli_private" ] && rm -rf "$cli_private"
   return 0
 }
 trap cleanup EXIT
@@ -216,15 +304,10 @@ trap 'exit 143' TERM INT HUP
 # underneath this one, so the lane terminates and tears down (Codex on PR #394).
 ( tail --pid="$lease_pid" -f /dev/null; echo "corpus lane: LEASE LOST — the remote holder exited; aborting" >&2; kill -TERM $$ 2>/dev/null ) 9>&- &
 lease_watch=$!; disown "$lease_watch"
-started_at=$(./scripts/no-egress-fence.sh jenkins started-at) || die "could not read the container's start instant"
 verify_runtime_pins() {
   [ "${#pin_ids[@]}" -eq 0 ] && return 0
-  ./scripts/check-corpus-runtime-pins.sh differential/corpus-runtime-pins.tsv "${pin_ids[@]}"
+  "$runtime_pin_checker" "$runtime_pins" "${pin_ids[@]}"
 }
-verify_runtime_pins || die "a selected corpus runtime pin did not match"
-pinned_at=$(./scripts/no-egress-fence.sh jenkins started-at) || die "could not re-read the pinned container's start instant"
-[ "$pinned_at" = "$started_at" ] \
-  || die "the Jenkins container restarted while its runtime pins were checked ($started_at -> $pinned_at)"
 
 # A guarded runtime claim is deliberately one case / one pin per lane. The
 # case digest binds the reviewed absence of a Pipeline PATH overlay; Jenkins.fs
@@ -234,8 +317,8 @@ if [ "${#pin_ids[@]}" -gt 0 ]; then
   [ "${#files[@]}" -eq 1 ] && [ "${#pin_ids[@]}" -eq 1 ] \
     || die "runtime-pinned execution requires exactly one corpus file and one runtime pin"
   guard_row=$(awk -F'\t' -v p="${pin_ids[0]}" '$1==p {n++; row=$0} END {if(n==1) print row; else exit 1}' \
-    differential/corpus-runtime-pins.tsv) || die "could not recover the verified runtime pin row"
-  IFS=$'\t' read -r guard_pin guard_command _ guard_tool_path _ _ _ _ _ guard_node guard_extra <<< "$guard_row"
+    "$runtime_pins") || die "could not recover the verified runtime pin row"
+  IFS=$'\t' read -r guard_pin guard_command _ guard_tool_path _ guard_image guard_digest guard_container_port guard_host_binding guard_node guard_plugin_count guard_plugin_sha guard_extra <<< "$guard_row"
   [ -z "${guard_extra:-}" ] || die "verified runtime pin row changed shape"
   [ "$guard_pin" = "${pin_ids[0]}" ] || die "verified runtime pin identity changed"
   FOGELL_RUNTIME_GUARD_CASE_SHA=${file_digests[0]}
@@ -244,6 +327,28 @@ if [ "${#pin_ids[@]}" -gt 0 ]; then
   FOGELL_RUNTIME_GUARD_TOOL_PATH=$guard_tool_path
   export FOGELL_RUNTIME_GUARD_CASE_SHA FOGELL_RUNTIME_GUARD_NODE \
     FOGELL_RUNTIME_GUARD_COMMAND FOGELL_RUNTIME_GUARD_TOOL_PATH
+fi
+
+# A receipt never shares the long-lived lab JVM or its mutable home. The lane
+# provisions a new controller from the exact pinned image only after both host
+# access boundaries stand, and removes its anonymous JENKINS_HOME volume before
+# either boundary comes down. The image seeds the same 154-plugin closure into
+# that empty home; its canonical active inventory is checked below.
+oracle_image=ddc4e247ca53c13baab8df6d13ab6646a4663ce2e843187661c74b8860a163f3
+oracle_image_digest=sha256:dfdd9ae5effae9bc2484e25944437a23cf06949074de7c56cd5cd42981843990
+oracle_container_port=8080
+oracle_host_port=18086
+oracle_plugin_count=154
+oracle_plugin_sha=3b31a5bf08550cfa0155f99dd22dd61a17934ba49e474f11252ec40dd854783b
+[ "$FOGELL_JENKINS_URL" = "http://$FOGELL_JENKINS_HOST:$oracle_host_port" ] \
+  || die "disposable oracle URL must be exactly http://$FOGELL_JENKINS_HOST:$oracle_host_port"
+if [ "${#pin_ids[@]}" -gt 0 ]; then
+  [ "$guard_image" = "$oracle_image" ] && [ "$guard_digest" = "$oracle_image_digest" ] \
+    && [ "$guard_container_port" = "$oracle_container_port/tcp" ] \
+    && [ "$guard_host_binding" = "0.0.0.0:$oracle_host_port" ] \
+    && [ "$guard_plugin_count" = "$oracle_plugin_count" ] \
+    && [ "$guard_plugin_sha" = "$oracle_plugin_sha" ] \
+    || die "runtime pin does not name the disposable oracle's exact image/digest/ports"
 fi
 
 # REST AUTHENTICATION. The configured HTTP endpoint above is still checked
@@ -257,6 +362,90 @@ fi
 remote_port=${FOGELL_JENKINS_URL##*:}
 tunnel_url=http://127.0.0.1:18084
 tunnel_forward=127.0.0.1:18084:127.0.0.1:$remote_port
+FOGELL_JENKINS_TUNNEL_PORT=18084
+FOGELL_JENKINS_ACCESS_TOKEN=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+FOGELL_JENKINS_ACCESS_UID=$(ssh -n -o BatchMode=yes "$FOGELL_JENKINS_HOST" 'id -u') \
+  || die "could not bind the Jenkins access fence to the authenticated remote uid"
+export FOGELL_JENKINS_EVIDENCE_URL="$tunnel_url"
+export FOGELL_JENKINS_TUNNEL_PORT FOGELL_JENKINS_ACCESS_TOKEN FOGELL_JENKINS_ACCESS_UID
+
+# The TCP listener must never exist before its owner-uid rule: otherwise a
+# different HeMan principal could pre-open a connection and make ssh relay its
+# anonymous Jenkins calls as the trusted Luigi uid.
+"$fence_script" local access-apply
+local_access_applied=1
+
+# Fence Luigi before the controller port exists. This closes both the startup
+# window and the long-lived-controller problem: no pre-lane JVM, listener, job,
+# timer or workspace is reused.
+"$fence_script" jenkins access-apply
+access_applied=1
+oracle_name="fogell-corpus-jenkins-$FOGELL_JENKINS_ACCESS_TOKEN"
+oracle_launch_attempted=1
+oracle_run_output=$(ssh -n -o BatchMode=yes "$FOGELL_JENKINS_HOST" \
+  "podman run --pull=never -d --name $oracle_name --label fogell.lane-token=$FOGELL_JENKINS_ACCESS_TOKEN -p $oracle_host_port:$oracle_container_port $oracle_image") \
+  || die "could not start the fresh disposable Jenkins controller"
+[[ "$oracle_run_output" =~ ^[0-9a-f]{64}$ ]] \
+  || die "podman did not return one full container identity for the disposable oracle"
+oracle_id=$oracle_run_output
+FOGELL_JENKINS_CONTAINER=$oracle_id
+export FOGELL_JENKINS_CONTAINER
+
+oracle_home_volume=$(ssh -n -o BatchMode=yes "$FOGELL_JENKINS_HOST" \
+  "podman inspect $oracle_id | jq -er '.[0] | (.Mounts | map(select(.Destination == \"/var/jenkins_home\"))) as \$h | if (\$h|length) == 1 and \$h[0].Type == \"volume\" and (\$h[0].Name|test(\"^[0-9a-f]{64}\$\")) then \$h[0].Name else error(\"JENKINS_HOME is not one fresh anonymous volume\") end'") \
+  || die "disposable oracle did not receive exactly one fresh anonymous JENKINS_HOME volume"
+
+# The namespace egress fence is loaded as soon as the fresh container has a
+# PID, before readiness, plugins, tools or any corpus endpoint is queried.
+"$fence_script" jenkins apply
+fence_applied=1
+started_at=$("$fence_script" jenkins started-at) \
+  || die "could not read the disposable controller's start instant"
+
+ready=
+for _ in $(seq 1 120); do
+  code=$(ssh -n -o BatchMode=yes "$FOGELL_JENKINS_HOST" \
+    "curl -sS -m 2 -o /dev/null -w '%{http_code}' http://127.0.0.1:$oracle_host_port/api/json" 2>/dev/null || true)
+  if [ "$code" = 200 ]; then ready=1; break; fi
+  sleep 1
+done
+[ -n "$ready" ] || die "fresh disposable Jenkins did not become ready in 120 seconds"
+
+observed_core=$(ssh -n -o BatchMode=yes "$FOGELL_JENKINS_HOST" \
+  "curl -sS -D - -o /dev/null http://127.0.0.1:$oracle_host_port/api/json" \
+  | sed -n 's/^[Xx]-Jenkins: *\([^[:space:]\r]*\).*/\1/p' | tr -d '\r')
+[ "$observed_core" = "$FOGELL_JENKINS_CORE" ] \
+  || die "fresh disposable Jenkins core is ${observed_core:-unknown}, expected $FOGELL_JENKINS_CORE"
+plugin_json=$(ssh -n -o BatchMode=yes "$FOGELL_JENKINS_HOST" \
+  "curl --globoff -sS 'http://127.0.0.1:$oracle_host_port/pluginManager/api/json?tree=plugins[shortName,version,active,enabled]'") \
+  || die "could not read the fresh controller plugin inventory"
+plugin_count=$(printf '%s' "$plugin_json" | jq -r '.plugins | length')
+plugin_sha=$(printf '%s' "$plugin_json" | jq -cS '.plugins | sort_by(.shortName)' | sha256sum | cut -d' ' -f1)
+[ "$plugin_count" = "$oracle_plugin_count" ] && [ "$plugin_sha" = "$oracle_plugin_sha" ] \
+  || die "fresh controller plugin closure changed (count $plugin_count/$oracle_plugin_count, sha $plugin_sha/$oracle_plugin_sha)"
+initial_json=$(ssh -n -o BatchMode=yes "$FOGELL_JENKINS_HOST" \
+  "curl --globoff -sS 'http://127.0.0.1:$oracle_host_port/api/json?tree=jobs[name],quietingDown'; printf '\\n'; curl --globoff -sS 'http://127.0.0.1:$oracle_host_port/queue/api/json?tree=items[id]'; printf '\\n'; curl --globoff -sS 'http://127.0.0.1:$oracle_host_port/computer/api/json?tree=busyExecutors,computer[displayName,offline,numExecutors]'" ) \
+  || die "could not attest the fresh controller's empty state"
+printf '%s' "$initial_json" | jq -se \
+  'length == 3 and (.[0].jobs|length)==0 and .[0].quietingDown==false and (.[1].items|length)==0 and .[2].busyExecutors==0 and (.[2].computer|length)==1 and .[2].computer[0].offline==false' >/dev/null \
+  || die "fresh controller was not empty, idle, unqueued and one-node online"
+
+# Configure every collector only after the random full container identity is
+# known; no command may fall back to the persistent lab controller by name.
+# shellcheck source=scripts/jenkins-workspace-v2.sh disable=SC1091
+source "$workspace_helper" || die "workspace collector could not be loaded"
+fogell_configure_jenkins_workspace_v2 "$FOGELL_JENKINS_HOST" "$FOGELL_JENKINS_CONTAINER" \
+  || die "workspace collector could not be configured"
+container_q=$(fogell_quote_posix_shell_v2 "$FOGELL_JENKINS_CONTAINER")
+FOGELL_JENKINS_ENV_CMD=$(fogell_jenkins_ssh_command_v2 "$FOGELL_JENKINS_HOST" "podman exec $container_q env")
+FOGELL_JENKINS_GIT_VERSION_CMD=$(fogell_jenkins_ssh_command_v2 "$FOGELL_JENKINS_HOST" "podman exec $container_q git --version")
+export FOGELL_JENKINS_ENV_CMD FOGELL_JENKINS_GIT_VERSION_CMD
+verify_runtime_pins || die "a selected corpus runtime pin did not match the disposable oracle"
+pinned_at=$("$fence_script" jenkins started-at) \
+  || die "could not re-read the disposable controller's start instant"
+[ "$pinned_at" = "$started_at" ] \
+  || die "the disposable Jenkins controller restarted during attestation ($started_at -> $pinned_at)"
+
 tunnel_dir=$(mktemp -d); tunnel_fifo="$tunnel_dir/ready"; mkfifo "$tunnel_fifo"
 tail --pid=$$ -f /dev/null 9>&- | ssh -o BatchMode=yes -o ExitOnForwardFailure=yes \
   -o ServerAliveInterval=5 -o ServerAliveCountMax=1 -T -L "$tunnel_forward" \
@@ -270,27 +459,37 @@ rm -rf "$tunnel_dir"; tunnel_dir=
 echo "corpus lane: Jenkins REST is tunneled over SSH to $FOGELL_JENKINS_HOST loopback port $remote_port"
 ( tail --pid="$tunnel_pid" -f /dev/null; echo "corpus lane: REST TUNNEL LOST — aborting" >&2; kill -TERM $$ 2>/dev/null ) 9>&- &
 tunnel_watch=$!; disown "$tunnel_watch"
+"$fence_script" local access-verify
+
+# The remote fence was present before this fresh listener existed; now prove
+# the authenticated uid path, other-uid refusal, LAN refusal and exact rules.
+"$fence_script" jenkins access-verify
 
 if ! busy_json=$(curl -sS -m 10 "$tunnel_url/computer/api/json?tree=busyExecutors" 2>&1); then
   die "the authenticated oracle tunnel at $tunnel_url did not answer the busy check: ${busy_json:-no output}"
 fi
 busy=$(printf '%s' "$busy_json" | sed -n 's/.*"busyExecutors":\([0-9]*\).*/\1/p')
 [ "${busy:-x}" = "0" ] || die "oracle reports busyExecutors=${busy:-unknown}; the lane is single-tenant"
+if ! queue_json=$(curl -sS -m 10 "$tunnel_url/queue/api/json?tree=items[id]" 2>&1); then
+  die "the authenticated oracle tunnel did not answer the queue check: ${queue_json:-no output}"
+fi
+printf '%s' "$queue_json" | jq -e '.items | type == "array" and length == 0' >/dev/null \
+  || die "oracle queue was not empty after access isolation; the lane will not inherit pre-isolation work"
 run_receipts=$(mktemp -d)
-# QUIESCE BEFORE APPLY: a leftover of an earlier build holding a connection it
-# opened before the fence would otherwise keep it (the rule now rejects the
-# original direction of every flow, measured, but the process is killed too).
-echo "corpus lane: quiescing the container, then applying and proving the Jenkins-side fence"
-./scripts/no-egress-fence.sh jenkins quiesce
-./scripts/no-egress-fence.sh jenkins apply
-fence_applied=1
-./scripts/no-egress-fence.sh jenkins verify
+echo "corpus lane: proving the fresh controller's pre-applied Jenkins-side egress fence"
+"$fence_script" jenkins verify
 
 # The namespace fence evaporates if the container restarts; a run is proven
 # only while it stands. A poller re-checks presence every few seconds and
 # aborts the run if it is gone (Codex on PR #394); the post-run check below
 # refuses the run's receipts if the container restarted at any point.
-( while sleep 5; do ./scripts/no-egress-fence.sh jenkins present >/dev/null 2>&1 || { echo "corpus lane: FENCE LOST in the Jenkins namespace — aborting" >&2; kill -TERM $$ 2>/dev/null; break; }; done ) 9>&- &
+( while sleep 5; do
+    "$fence_script" jenkins present >/dev/null 2>&1 \
+      && "$fence_script" jenkins access-present >/dev/null 2>&1 \
+      && "$fence_script" local access-present >/dev/null 2>&1 \
+      && [ "$("$fence_script" jenkins started-at 2>/dev/null)" = "$started_at" ] \
+      || { echo "corpus lane: NETWORK OR ACCESS FENCE LOST — aborting" >&2; kill -TERM $$ 2>/dev/null; break; }
+  done ) 9>&- &
 poller=$!; disown "$poller"
 
 echo "corpus lane: proving the Fogell-side fence, then running ${#files[@]} corpus file(s) from the snapshot"
@@ -300,7 +499,7 @@ echo "corpus lane: proving the Fogell-side fence, then running ${#files[@]} corp
 # in the background under `wait` so a TERM from the watchers is not deferred
 # behind it.
 export FOGELL_FENCE_OWNER_PID=$$
-FOGELL_JENKINS_URL="$tunnel_url" ./scripts/no-egress-fence.sh fogell run -- \
+FOGELL_JENKINS_URL="$tunnel_url" "$fence_script" fogell run -- \
   dotnet "$cli" "$tunnel_url" "$FOGELL_JENKINS_CORE" "$run_receipts" "${snaps[@]}" 9>&- & run_pid=$!
 wait "$run_pid" && rc=0 || rc=$?
 kill -KILL "$poller" 2>/dev/null || true; poller=
@@ -308,9 +507,12 @@ kill -KILL "$poller" 2>/dev/null || true; poller=
 # Post-run: the fence must still stand and the container must not have
 # restarted; otherwise every receipt this run wrote is reverted, because a
 # receipt from a run that lost its fence is not evidence under the contract.
-ended_at=$(./scripts/no-egress-fence.sh jenkins started-at 2>/dev/null || echo unknown)
-if [ "$ended_at" != "$started_at" ] || ! ./scripts/no-egress-fence.sh jenkins present >/dev/null 2>&1; then
-  echo "corpus lane: the Jenkins fence did not stand for the whole run (container start $started_at -> $ended_at) — this run's receipts are discarded" >&2
+ended_at=$("$fence_script" jenkins started-at 2>/dev/null || echo unknown)
+if [ "$ended_at" != "$started_at" ] \
+   || ! "$fence_script" jenkins present >/dev/null 2>&1 \
+   || ! "$fence_script" jenkins access-present >/dev/null 2>&1 \
+   || ! "$fence_script" local access-present >/dev/null 2>&1; then
+  echo "corpus lane: the Jenkins network/access fences did not stand for the whole run (container start $started_at -> $ended_at) — this run's receipts are discarded" >&2
   rc=2
 elif ! verify_runtime_pins; then
   echo "corpus lane: a runtime pin changed before promotion — this run's receipts are discarded" >&2

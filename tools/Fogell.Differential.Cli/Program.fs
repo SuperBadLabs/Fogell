@@ -23,6 +23,10 @@ open Fogell.Execution
 [<EntryPoint>]
 let main argv =
     match Array.toList argv with
+    | [ "--runtime-guard-capability" ] ->
+        printfn "fogell-runtime-guard-v3"
+        0
+
     // FG-161. Recompute every receipt's seal from the receipt itself.
     //
     // A MODE ON THIS CLI, not a reimplementation in the scorecard generator: the hash
@@ -164,7 +168,8 @@ let main argv =
                 | true, Some buildPath when files.Length = 1 ->
                     Some caseSha,
                     Some
-                        { RequiredNode = node
+                        { CaseSha = caseSha
+                          RequiredNode = node
                           BuildPath = buildPath
                           Tools = [ command, toolPath ] }
                 | true, Some _ ->

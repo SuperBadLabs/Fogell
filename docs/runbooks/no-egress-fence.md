@@ -6,11 +6,16 @@ as it is; this page is how to run it.
 ## Run a corpus file on both engines under the fence
 
 ```bash
-dotnet build tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj -c Release
 scripts/run-corpus-differential.sh /sn8100/work/exchange/crucible-gate/corpus/jenkinsfiles/<stem>.Jenkinsfile
 ```
 
-The lane verifies the pinned manifest, applies and PROVES the Jenkins fence,
+The lane archives `HEAD` into a private directory before consuming repository
+policy. The executing runner must be byte-identical to its archived copy; the
+corpus verifier and manifest, allowlist, runtime pins and checker, workspace
+helper, no-egress fence, and CLI sources are then consumed only from that
+private committed tree. It restores the CLI in locked mode, builds it into a
+private output, hashes the complete output closure, and requires the CLI's
+runtime-guard capability handshake. It then applies and PROVES the Jenkins fence,
 proves the Fogell fence from inside the run's own scope, runs the
 differential into a private directory, and removes the Jenkins fence on
 exit. Receipts are promoted into `differential/receipts/` under the corpus
@@ -23,21 +28,32 @@ An allowlist row may name a fourth-field runtime-pin ID from
 `differential/corpus-runtime-pins.tsv`. Under the cross-host lease and before
 any corpus execution, the lane verifies the command resolves to the pinned
 path on each engine, both resolved files have the pinned SHA-256, and injects
-Fogell's fixed compatibility `PATH` as an explicit Jenkins build parameter on
-the disposable job. A real Pipeline `sh` guard build immediately before and
-after the corpus build requires that effective PATH, the pinned `command -v`
-result, and the manifest's Jenkins node; the corpus build between them must
-report the same node. The case digest binds the reviewed absence of a Pipeline
-PATH overlay. Those checks bind command resolution inside the actual Jenkins
-launcher rather than merely in a neighboring `podman exec`. The live
-Jenkins container uses the pinned image ID and digest, and the differential's
-HTTP URL names that same SSH host at the exact port published from the pinned
-container port. The lane then carries all Jenkins REST traffic over a
-life-bound authenticated SSH local forward to that host's loopback listener;
-the configured cross-host HTTP URL is never given to the differential. It
-repeats the complete identity check before promotion. Any missing, malformed,
-unavailable, or changed value, or a lost tunnel, discards the run's private
-receipts. Rows with no fourth field keep the
+Fogell's fixed compatibility `PATH` and a cryptographic per-trigger ownership
+token as explicit Jenkins build parameters. The trigger's returned queue item,
+the build API's `queueId`, both parameters, and the exact Replay definition must
+all agree. The corpus definition is augmented with a first stage that checks
+the token, effective PATH, and pinned `command -v` result before emitting one
+case- and nonce-bound marker; only that exact marker is removed from comparison.
+Separate real Pipeline guard builds remain immediately before and after the
+corpus history, and every allocation must report the pinned node.
+
+The lane never executes on the long-lived `jenkins-lab` JVM or its mutable
+home. Under the cross-host lease it installs a token-bound Luigi access fence
+before any listener, starts a random-named controller with `--pull=never` from
+the exact image ID, and captures the returned full container ID. Jenkins gets
+one fresh anonymous home volume; readiness is accepted only with the pinned
+core, exact 154-plugin closure, zero jobs, empty queue, idle executor set, exact
+image/digest/tool/port tuple, and one online node. The namespace egress fence
+is installed as soon as the new container has a PID. Every collector uses the
+full random container ID. The lane carries all Jenkins REST traffic over a
+life-bound SSH local forward; an exact owner-UID nftables rule exists on HeMan
+before that TCP listener, while Luigi permits the authenticated SSH uid and
+rejects every other local uid and lab-network client. All three rulesets and
+the controller start instant are heartbeated. On exit the tunnel dies first,
+then the exact token-labeled container and its fresh home volume are removed
+and proven absent before either access fence is removed. Any missing,
+malformed, unavailable, or changed value discards the private receipts and
+leaves the relevant fence standing if cleanup cannot be proved. Rows with no fourth field keep the
 historical no-tool behavior. A runtime-backed invocation is one case and one
 pin so the two guard builds unambiguously bracket its build. The runner names that committed pin file
 literally; there is no caller override for the expected tuple.
@@ -47,19 +63,19 @@ not verify, a file whose sha256 and stem are not on
 `differential/corpus-allowlist.tsv` (read the file, record its executed
 surface there in one line, then run — the corpus is untrusted and the list
 is the permission), a missing or mismatching runtime pin selected by that row,
-a missing CLI build, a second lane of this user on this host (a lock in
+a runner different from HEAD, a private archive/restore/build/capability
+failure, a second lane of this user on this host (a lock in
 `$XDG_RUNTIME_DIR`), an oracle with busy executors, a lane lease it
 cannot take (a `flock` on `~/.fogell-corpus-lane.lock` ON THE JENKINS HOST,
 held for exactly as long as the lane's pid exists — one corpus lane at a
-time across every user and host), and a fence it cannot prove. A refusal
+time across every user and host), a stale disposable oracle, and a fence it cannot prove. A refusal
 before the differential runs has executed nothing. On exit it kills every
-process the run left in its scope, quiesces the container (kills
-everything that is not init, the JVM that runs `jenkins.war`, or the exec),
-and removes the Jenkins fence, reporting loudly if the removal fails or
-cannot be confirmed. If the lane itself is killed, the fenced run notices
-the lane's pid is gone and tears itself down; the Jenkins fence stays
-(see below). If the quiesce fails, the fence is left UP on purpose and the
-lane says so — recover as below. A run that loses its fence (the container
+process the run left in its scope, kills the SSH tunnel, removes the exact
+token-labeled disposable container with `podman rm -fv`, proves both its ID and
+home-volume ID absent, and only then removes the access fences. If the lane itself is killed, the fenced run notices
+the lane's pid is gone and tears itself down. Any unconfirmed oracle, volume,
+tunnel, ruleset, nft/jq inspection, or post-delete result leaves the relevant
+access fence UP and names the recovery path below. A run that loses its fence (the container
 restarted, the table gone) or its lease is aborted and its receipts are
 reverted; rerun it.
 
@@ -81,7 +97,8 @@ eighth check to the seven each side runs).
 
 ## What it is not
 
-The Jenkins side is a network boundary. The Fogell side is not: it fences a
+The disposable Jenkins controller plus both owner-UID access fences are the
+oracle boundary. The Fogell side is not: it fences a
 cgroup of the operator's own UID, and that UID can hop off it by
 `ssh <host> curl …`, by `systemd-run --user`, by passwordless sudo, or via
 any loopback listener (all measured, FG-244). It stops accidental egress
@@ -90,9 +107,11 @@ between a hostile corpus file and the operator's account.
 
 ## Requirements
 
-- luigi: rootless podman, `nft` and `nsenter` on the host (present), the
-  container running. No root. Nothing about the container is changed.
-- HeMan: `systemd-run`, `nft`, and passwordless `sudo` for the one rule.
+- luigi: rootless podman, `nft`, `nsenter`, `jq`, `curl`, and passwordless
+  `sudo -n nft` plus `sudo -n -u nobody curl`. The pinned image must already be
+  local; `--pull=never` forbids registry fallback.
+- HeMan: `systemd-run`, `jq`, `curl`, `nft`, and passwordless `sudo` for the
+  Fogell cgroup rule and local tunnel owner-UID rule.
 - The oracle host must be in `/etc/hosts` (it is): inside the scope names do
   not resolve.
 
@@ -101,12 +120,17 @@ between a hostile corpus file and the operator's account.
 ```bash
 scripts/no-egress-fence.sh jenkins status   # PRESENT/ABSENT plus a live egress probe (a PRESENT fence with no lane running is a leftover: recover below — `apply` and the lane refuse to replace it)
 scripts/no-egress-fence.sh fogell status    # any fogell_fence_* table (a live run, or a stale one)
-scripts/no-egress-fence.sh jenkins quiesce  # if a lane died before its trap ran: FIRST kill what it left …
-scripts/no-egress-fence.sh jenkins remove   # … THEN open the network again
+ssh luigi 'sudo -n nft list table inet fogell_jenkins_access; podman ps -a --filter label=fogell.lane-token --no-trunc'
+# Verify the label/token/full ID and home-volume identity, then:
+ssh luigi 'podman rm -fv <full-container-id>; podman container exists <full-container-id>; podman volume exists <home-volume-id>'
+ssh luigi 'sudo -n nft delete table inet fogell_jenkins_access' # only after both exists commands return 1
+sudo nft list table inet fogell_jenkins_tunnel_access
+sudo nft delete table inet fogell_jenkins_tunnel_access        # only after the SSH listener is absent
 ssh <host> 'flock -n ~/.fogell-corpus-lane.lock -c true || pkill -f "flock -n .*fogell-corpus-lane.lock"'   # a stuck lease (should not happen: the holder dies with the lane's pid)
 ```
 
-The Jenkins ruleset vanishes on container restart. The Fogell rule is
+The namespace egress ruleset vanishes with the disposable container, but both
+host access tables persist until verified cleanup. The Fogell rule is
 deleted by the run's exit trap after the scope is killed; a stale one
 (its scope cgroup gone) is swept by the next `fogell run`, and a live one
 belonging to another run is left alone.

@@ -9726,21 +9726,68 @@ let compileRefusalDisposition =
                   (ordinary.Contains "<name>PATH</name>")
                   "ordinary differentials do not silently gain a PATH parameter"
               Expect.stringContains
-                  (Jenkins.buildTriggerPath "diff-pinned" (Some path))
+                  (Jenkins.buildTriggerPath "diff-pinned" (Some path) (Some "nonce"))
                   "/buildWithParameters?PATH="
                   "the build is explicitly triggered with the pinned parameter"
+              Expect.stringContains
+                  (Jenkins.buildTriggerPath "diff-pinned" (Some path) (Some "nonce"))
+                  "&FOGELL_BUILD_TOKEN=nonce"
+                  "the owned build is explicitly triggered with its per-run token"
               Expect.equal
-                  (Jenkins.buildTriggerPath "diff-ordinary" None)
+                  (Jenkins.buildTriggerPath "diff-ordinary" None None)
                   "/job/diff-ordinary/build"
                   "ordinary builds retain the non-parameterized endpoint"
               let guard =
-                  { RequiredNode = "Jenkins"
+                  { CaseSha = String.replicate 64 "a"
+                    RequiredNode = "Jenkins"
                     BuildPath = path
                     Tools = [ "make", "/usr/local/bin/make" ] }
               let probe = Jenkins.runtimeGuardScript guard
               Expect.stringContains probe "[ \"$PATH\" = \"/usr/local/sbin:" "the real sh checks effective PATH"
               Expect.stringContains probe "actual=$(command -v make)" "the real sh resolves the selected command"
               Expect.stringContains probe "[ \"$actual\" = \"/usr/local/bin/make\" ]" "the resolved path is exact"
+
+              let marker = Jenkins.targetRuntimeMarker guard.CaseSha "0123456789abcdef"
+              let target =
+                  Jenkins.injectTargetRuntimeGuard
+                      guard
+                      "0123456789abcdef"
+                      marker
+                      "pipeline {\n  agent any\n  stages {\n    stage('Build') { steps { sh 'make build-base' } }\n  }\n}\n"
+              Expect.isOk target "one exact top-level stages anchor accepts target attestation"
+              let targetScript = target |> Result.defaultValue ""
+              Expect.stringContains targetScript marker "the unpredictable case-bound marker runs in the target build"
+              Expect.stringContains
+                  targetScript
+                  "[ \"$FOGELL_BUILD_TOKEN\" = \"0123456789abcdef\" ]"
+                  "the target build checks the owned trigger token before its marker"
+              Expect.stringContains targetScript "actual=$(command -v make)" "the target build resolves the pinned tool"
+              Expect.stringContains targetScript $"[ \"$PATH\" = \"{path}\" ]" "the target build checks effective PATH"
+              Expect.isError
+                  (Jenkins.injectTargetRuntimeGuard guard "0123456789abcdef" marker "pipeline { agent any; stages {} }")
+                  "a non-canonical insertion point is refused"
+              Expect.isError
+                  (Jenkins.injectTargetRuntimeGuard
+                      guard
+                      "0123456789abcdef"
+                      marker
+                      "pipeline {\n  stages {\n  }\n  stages {\n  }\n}\n")
+                  "ambiguous insertion points are refused"
+
+              let stampedMarker = $"[2026-09-06T01:02:03.004Z] {marker}"
+              Expect.equal
+                  (Jenkins.validateAndRemoveTargetRuntimeMarker
+                      true
+                      marker
+                      [| "before"; stampedMarker; marker + "-lookalike"; "after" |])
+                  (Ok [| "before"; marker + "-lookalike"; "after" |])
+                  "exact target evidence is removed before semantic comparison while lookalikes remain"
+              Expect.isError
+                  (Jenkins.validateAndRemoveTargetRuntimeMarker false marker [| "missing" |])
+                  "missing target evidence is refused"
+              Expect.isError
+                  (Jenkins.validateAndRemoveTargetRuntimeMarker false marker [| marker; marker |])
+                  "duplicate target evidence is refused"
 
               Expect.isOk
                   (Jenkins.validateRuntimeGuardNode
@@ -9760,6 +9807,71 @@ let compileRefusalDisposition =
               Expect.isError
                   (Jenkins.validateRuntimeGuardNode "Jenkins" [| "no allocation banner" |])
                   "missing allocation evidence is refused"
+              Expect.equal
+                  (Jenkins.replayMainScript
+                      "<html><textarea class=\"jenkins-input\" name=\"_.mainScript\">pipeline { echo &apos;a&amp;b&apos; }</textarea></html>")
+                  (Ok "pipeline { echo 'a&b' }")
+                  "Replay returns the exact HTML-decoded definition Jenkins executed"
+              Expect.isError
+                  (Jenkins.replayMainScript "<html>no replay script</html>")
+                  "missing executed-definition evidence is refused"
+              Expect.isError
+                  (Jenkins.replayMainScript
+                      "<textarea name=\"_.mainScript\">first</textarea><textarea name=\"_.mainScript\">second</textarea>")
+                  "ambiguous Replay definition evidence is refused"
+
+              let pathEvidence value =
+                  $"{{\"actions\":[{{}},{{\"parameters\":[{{\"name\":\"PATH\",\"value\":\"{value}\"}}]}}]}}"
+              Expect.isOk
+                  (Jenkins.validateBuildPathParameter path (pathEvidence path))
+                  "the target build's recorded exact PATH parameter is accepted"
+              Expect.isError
+                  (Jenkins.validateBuildPathParameter path (pathEvidence "/attacker/bin"))
+                  "a substituted target-build PATH is refused"
+              Expect.isError
+                  (Jenkins.validateBuildPathParameter path "{\"actions\":[{}]}")
+                  "missing target-build PATH evidence is refused"
+              Expect.isError
+                  (Jenkins.validateBuildPathParameter
+                      path
+                      $"{{\"actions\":[{{\"parameters\":[{{\"name\":\"PATH\",\"value\":\"{path}\"}},{{\"name\":\"PATH\",\"value\":\"{path}\"}}]}}]}}")
+                  "ambiguous target-build PATH evidence is refused"
+              Expect.equal
+                  (Jenkins.queueItemId "http://127.0.0.1:18084/queue/item/73/")
+                  (Ok 73L)
+                  "the trigger Location binds the scheduled queue item"
+              Expect.isError (Jenkins.queueItemId "/job/diff/build/1/") "a non-queue Location is refused"
+              Expect.equal
+                  (Jenkins.queueExecutableNumber "{\"cancelled\":false,\"executable\":{\"number\":9}}")
+                  (Ok(Some 9))
+                  "the owned queue item yields its exact executable build number"
+              Expect.equal
+                  (Jenkins.queueExecutableNumber "{\"cancelled\":false}")
+                  (Ok None)
+                  "a waiting owned queue item has no build number yet"
+              Expect.isError
+                  (Jenkins.queueExecutableNumber "{\"cancelled\":true}")
+                  "a cancelled owned queue item is refused"
+              let ownershipJson token queueId =
+                  $"{{\"queueId\":{queueId},\"actions\":[{{\"parameters\":[{{\"name\":\"FOGELL_BUILD_TOKEN\",\"value\":\"{token}\"}}]}}]}}"
+              Expect.isOk
+                  (Jenkins.validateBuildOwnership 73L "nonce" (ownershipJson "nonce" 73))
+                  "the build API confirms the queue item and unpredictable token"
+              Expect.isError
+                  (Jenkins.validateBuildOwnership 73L "nonce" (ownershipJson "nonce" 74))
+                  "a build from another queue item is refused"
+              Expect.isError
+                  (Jenkins.validateBuildOwnership 73L "nonce" (ownershipJson "attacker" 73))
+                  "a build without the per-trigger token is refused"
+              Expect.isError
+                  (Jenkins.validateBuildOwnership 73L "nonce" "{\"queueId\":73,\"actions\":[{}]}")
+                  "a missing build ownership token is refused"
+              Expect.isError
+                  (Jenkins.validateBuildOwnership
+                      73L
+                      "nonce"
+                      "{\"queueId\":73,\"actions\":[{\"parameters\":[{\"name\":\"FOGELL_BUILD_TOKEN\",\"value\":\"nonce\"},{\"name\":\"FOGELL_BUILD_TOKEN\",\"value\":\"nonce\"}]}]}")
+                  "duplicate build ownership tokens are refused"
 
               let corpusJob = Jenkins.jobNameForCase "/cases/foo.Jenkinsfile"
               let ordinaryLookalike = Jenkins.jobNameForCase "/cases/foo-runtime-guard.Jenkinsfile"
@@ -9793,29 +9905,38 @@ let compileRefusalDisposition =
                       "diff-corpus"
                       "diff-guard"
                       (Some(Inline "guard"))
+                      (Some marker)
+                      (Some "nonce")
                       [ Inline "first"; Inline "second" ]
               let scheduleIdentity (item: Jenkins.ScheduledBuild) =
-                  item.IsGuard, item.JobName, item.BuildNumber, item.Definition
+                  item.IsGuard,
+                  item.JobName,
+                  item.BuildNumber,
+                  item.Definition,
+                  item.ExpectedTargetMarker,
+                  item.ExpectedBuildToken
               Expect.equal
                   (guardedSchedule |> List.map scheduleIdentity)
-                  [ true, "diff-guard", 1, Inline "guard"
-                    false, "diff-corpus", 1, Inline "first"
-                    false, "diff-corpus", 2, Inline "second"
-                    true, "diff-guard", 2, Inline "guard" ]
+                  [ true, "diff-guard", 1, Inline "guard", None, Some "fogell:nonce:guard:diff-guard:1"
+                    false, "diff-corpus", 1, Inline "first", Some marker, Some "nonce"
+                    false, "diff-corpus", 2, Inline "second", Some marker, Some "nonce"
+                    true, "diff-guard", 2, Inline "guard", None, Some "fogell:nonce:guard:diff-guard:2" ]
                   "guards have their own job/history while requested builds remain corpus #1..#N"
               Expect.equal
                   (Jenkins.scheduleBuilds
                       "diff-corpus"
                       "diff-guard"
                       None
+                      None
+                      None
                       [ Inline "first"; Inline "second" ]
                    |> List.map scheduleIdentity)
-                  [ false, "diff-corpus", 1, Inline "first"
-                    false, "diff-corpus", 2, Inline "second" ]
+                  [ false, "diff-corpus", 1, Inline "first", None, None
+                    false, "diff-corpus", 2, Inline "second", None, None ]
                   "ordinary sequences preserve their exact history"
 
               let mutable invoked = []
-              let fakeRun jobName buildNumber definition =
+              let fakeRun jobName buildNumber definition _ _ =
                   invoked <- (jobName, buildNumber, definition) :: invoked
                   Ok(trace "failure" [])
 
@@ -9824,6 +9945,8 @@ let compileRefusalDisposition =
                       "diff-corpus"
                       "diff-guard"
                       (Some(Inline "guard"))
+                      (Some marker)
+                      (Some "nonce")
                       [ Inline "corpus" ]
 
               let failed = Jenkins.executeScheduled fakeRun scheduled
@@ -9836,7 +9959,7 @@ let compileRefusalDisposition =
 
               let mutable passedInvocations = 0
               let mutable passedIdentities = []
-              let passingRun jobName buildNumber definition =
+              let passingRun jobName buildNumber definition _ _ =
                   passedInvocations <- passedInvocations + 1
                   passedIdentities <- (jobName, buildNumber) :: passedIdentities
                   match definition with
