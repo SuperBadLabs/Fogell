@@ -1,0 +1,107 @@
+# THE GATE'S SLOW TIER. scripts/build-and-test.sh declares which lanes are slow
+# (GATE_SLOW_LANES); this workflow asks it rather than naming them, so the two
+# cannot drift — the same argument gate.yml's `plan` job makes for the lane list.
+#
+# WHY IT IS NOT IN gate.yml. The `mutants` lane compiles and runs one hostile
+# candidate per mutant: 1810 s of the build lane's 2103 s on run 34046992371,
+# FG-236 alone 1495 s over 44 mutants. On the pull-request path that was the
+# entire wall clock — eight other jobs finished inside 4m30s and waited. Here it
+# is a cost nobody waits on.
+#
+# WHAT THIS COSTS, stated rather than papered over: a pull request no longer
+# proves these mutants before merge. Two deliberate mitigations — `push` runs
+# this on every merge to the default branch, so a regression is red within
+# minutes rather than at the next cron; and an unset FOGELL_GATE_LANES still
+# runs the `mutants` lane locally, so the HeMan gate is unchanged and remains
+# the full one.
+#
+# WHY `push` AND NOT ONLY `schedule`. A scheduled workflow only ever runs the
+# DEFAULT BRANCH's copy of this file, and `workflow_dispatch` is unavailable on a
+# branch until the file exists on the default branch. A nightly-only workflow
+# therefore cannot be exercised before it is merged, and its first real run would
+# be the night after. `push` makes the merge itself the first run.
+#
+# TWO OPERATIONAL FACTS about `schedule`, so a red nightly is not silently
+# ignored: GitHub DISABLES scheduled workflows after 60 days without repository
+# activity, and a scheduled run's failure notifies only the user who last edited
+# the cron — not the author of the commit that broke it.
+#
+# NOT A REQUIRED CHECK, AND NO JOB HERE MAY BE NAMED `gate`. Branch protection on
+# the default branch requires exactly one context, and that context is the `gate`
+# job in gate.yml. Status contexts are matched by JOB NAME regardless of which
+# workflow produced them, so a second job called `gate` would report into the
+# required context and could satisfy or block a merge on the strength of a
+# nightly run.
+#
+# NO CONCURRENCY GROUP. Every head that reaches the default branch gets its own
+# verdict, for the reason gate.yml gives for its own main-branch runs.
+name: gate (mutants)
+on:
+  schedule:
+    # 07:00 UTC — 02:00 America/Chicago in CDT, 01:00 in CST. UTC is named
+    # because GitHub's cron has no time zone and would otherwise drift an hour
+    # against the intent twice a year.
+    - cron: '0 7 * * *'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  # FG-233. The owner's container runtime is explicit here for the same reason
+  # it is in gate.yml: GitHub service containers silently select Docker and
+  # require a shared host-port number. scripts/prove-fg233-podman-gate.sh checks
+  # every workflow under .github/workflows, this one included.
+  FOGELL_CONTAINER_RUNTIME: podman
+
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    # 1810 s measured inside the script, plus a cold restore this tier pays
+    # alone: nothing here fills the run-scoped package cache that
+    # prove-dependency-locks.sh fills for gate.yml's build lane. Sixty bounds a
+    # hang without cutting a slow runner off mid-proof.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        # No fetch-depth: 0. Every proof in this lane exports tracked worktree
+        # bytes with `git ls-files -z | tar` — the INDEX, never history — and
+        # nothing here reads FOGELL_STALE_REF_BASE.
+
+      - name: start PostgreSQL under Podman
+        # FOR FG-251, WHICH WOULD OTHERWISE FAIL EVERY NIGHT. Its proof runs
+        # tests/Fogell.Controller.Api.Tests, whose entry point prints
+        # "skipped: no PostgreSQL" and returns 0 when no database answers. The
+        # proof's baseline would then pass vacuously and every mutant would read
+        # as a survivor — a loud failure, but on every run and for the wrong
+        # reason. The other three proofs in this lane need no database.
+        run: ./scripts/ci-postgres.sh start
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: install ripgrep
+        # Every proof in this lane asserts its mutation landed, and matches the
+        # expected refusal text, with `rg`. The runner image does not ship it.
+        run: sudo apt-get update -q && sudo apt-get install -y -q ripgrep
+
+      - id: lanes
+        name: read the slow lane list from the script
+        run: |
+          set -euo pipefail
+          lanes=$(./scripts/build-and-test.sh --list-lanes slow | tr '\n' ' ')
+          echo "slow lanes: $lanes"
+          # An empty slow tier would run nothing and report success, which is the
+          # false green this split could most easily introduce.
+          [ -n "${lanes// /}" ] \
+            || { echo "::error::the script lists no slow lanes; this workflow would prove nothing"; exit 1; }
+          echo "lanes=$lanes" >> "$GITHUB_OUTPUT"
+
+      - name: gate slow lanes
+        env:
+          FOGELL_GATE_LANES: ${{ steps.lanes.outputs.lanes }}
+        run: ./scripts/build-and-test.sh
+
+      - name: stop PostgreSQL
+        if: always() && env.FOGELL_PG_CONTAINER != ''
+        run: ./scripts/ci-postgres.sh stop

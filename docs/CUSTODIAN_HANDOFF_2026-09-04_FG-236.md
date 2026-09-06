@@ -203,6 +203,15 @@ their planted-bad-state proofs passed before publication.
 - The gate's build lane now has a finite 45-minute timeout because the complete
   proof takes more than 30 minutes on hosted runners. Do not reduce it without
   first making the same blocking evidence reliably faster.
+  - **SATISFIED by FG-256 (2026-09-06), and the timeout is now 20 minutes.** The
+    condition was met by moving the evidence rather than by speeding it up: the
+    four mutation proofs — 1810 s of the build lane's 2103 s on run
+    34046992371, FG-236 1495 s of it — are now the `mutants` lane, run by
+    .github/workflows/gate-mutants.yml nightly and on every merge to the default
+    branch. The build lane's remaining work measures 293 s on that same run, so
+    20 minutes leaves roughly 4x headroom. The proofs themselves are not faster
+    and still block a merge to the default branch; they no longer block a pull
+    request. Read FG-256 before reducing this further.
 
 ## Current repository and queue snapshot
 
