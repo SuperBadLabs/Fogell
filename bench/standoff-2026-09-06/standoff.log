@@ -1,0 +1,63 @@
+=== round 1  jenkinsci_git-plugin  (order: jenkins mcloving fogell) ===
+  jenkins     77909 ms
+  mcloving    51389 ms
+  fogell      67260 ms
+=== round 1  apache_activemq  (order: mcloving fogell jenkins) ===
+  mcloving    31565 ms
+  fogell      37066 ms
+  jenkins     39306 ms
+=== round 1  apache_cxf  (order: fogell jenkins mcloving) ===
+  fogell      80928 ms
+  jenkins     79782 ms
+  mcloving    64960 ms
+=== round 1  apache_dubbo  (order: jenkins mcloving fogell) ===
+  jenkins     74510 ms
+  mcloving    61094 ms
+  fogell      73289 ms
+=== round 1  apache_maven  (order: mcloving fogell jenkins) ===
+  mcloving    56672 ms
+  fogell      68357 ms
+  jenkins     71495 ms
+=== round 1  apache_camel  (order: fogell jenkins mcloving) ===
+  fogell     125191 ms
+  jenkins    124834 ms
+  mcloving    96479 ms
+=== round 2  jenkinsci_git-plugin  (order: mcloving fogell jenkins) ===
+  mcloving    51324 ms
+  fogell      64974 ms
+  jenkins     68456 ms
+=== round 2  apache_activemq  (order: fogell jenkins mcloving) ===
+  fogell      37495 ms
+  jenkins     40269 ms
+  mcloving    29534 ms
+=== round 2  apache_cxf  (order: jenkins mcloving fogell) ===
+  jenkins     78667 ms
+  mcloving    64887 ms
+  fogell      78451 ms
+=== round 2  apache_dubbo  (order: mcloving fogell jenkins) ===
+  mcloving    58625 ms
+  fogell      72693 ms
+  jenkins     74452 ms
+=== round 2  apache_maven  (order: fogell jenkins mcloving) ===
+  fogell      66501 ms
+  jenkins     72471 ms
+  mcloving    55681 ms
+=== round 2  apache_camel  (order: jenkins mcloving fogell) ===
+  jenkins    117712 ms
+  mcloving    95376 ms
+  fogell     119176 ms
+
+=== per-project medians (ms) ===
+project                     fogell   jenkins  mcloving
+jenkinsci_git-plugin         66117     73182     51356
+apache_activemq              37280     39787     30549
+apache_cxf                   79689     79224     64923
+apache_dubbo                 72991     74481     59859
+apache_maven                 67429     71983     56176
+apache_camel                122183    121273     95927
+
+=== totals across all six projects (sum of medians) ===
+  mcloving    358790 ms   1.28x vs Jenkins
+  fogell      445689 ms   1.03x vs Jenkins
+  jenkins     459930 ms   1.00x vs Jenkins
+EXIT=0

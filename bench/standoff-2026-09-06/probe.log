@@ -1,0 +1,7 @@
+jenkinsci_git-plugin OK jdk21 24s  target='<all>'
+apache_maven OK jdk21 108s  target=':maven-core'
+apache_dubbo OK jdk21 90s  target=':dubbo-common'
+apache_cxf OK jdk21 87s  target=':cxf-core'
+apache_activemq OK jdk25 44s  target=':activemq-client'
+apache_camel OK jdk21 140s  target=':camel-api'
+EXIT=0

@@ -1,0 +1,10 @@
+=== per-project medians (ms) ===
+project                     fogell   jenkins  mcloving
+quiet_git-plugin             64009     48776     70066
+jenkinsci_git-plugin         62715     66927     53586
+
+=== totals across all six projects (sum of medians) ===
+  jenkins     115703 ms   1.00x vs Jenkins
+  mcloving    123652 ms   0.94x vs Jenkins
+  fogell      126724 ms   0.91x vs Jenkins
+EXIT=0

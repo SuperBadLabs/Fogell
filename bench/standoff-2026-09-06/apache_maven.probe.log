@@ -1,0 +1,1192 @@
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] Apache Maven                                                       [pom]
+[INFO] Maven Model                                                        [jar]
+[INFO] Maven Artifact                                                     [jar]
+[INFO] Maven Plugin API                                                   [jar]
+[INFO] Maven Builder Support                                              [jar]
+[INFO] Maven Model Builder                                                [jar]
+[INFO] Maven Settings                                                     [jar]
+[INFO] Maven Settings Builder                                             [jar]
+[INFO] Maven Repository Metadata Model                                    [jar]
+[INFO] Maven Artifact Resolver Provider                                   [jar]
+[INFO] Maven Core                                                         [jar]
+[INFO] 
+[INFO] -----------------------< org.apache.maven:maven >-----------------------
+[INFO] Building Apache Maven 3.10.0-rc-1                                 [1/11]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ maven ---
+[INFO] Deleting /home/srikanth/standoff/apache_maven/target
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-bytecode-version) @ maven ---
+[INFO] Rule 0: org.codehaus.mojo.extraenforcer.dependencies.EnforceBytecodeVersion passed
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-maven-version) @ maven ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-java-version) @ maven ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (ensure-no-banned-dependencies) @ maven ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ maven ---
+[INFO] 
+[INFO] --- spotless:3.7.0:apply (default) @ maven ---
+[INFO] Index file does not exist. Fallback to an empty index
+[INFO] Spotless.Pom is keeping 1 files clean - 0 were changed to be clean, 1 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- remote-resources:3.3.0:process (process-resource-bundles) @ maven ---
+[INFO] Preparing remote bundle org.apache.apache.resources:apache-jar-resource-bundle:1.8
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] --- apache-rat:0.16.1:check (rat-check) @ maven ---
+[INFO] RAT will not execute since it is configured to be skipped via system property 'rat.skip'.
+[INFO] 
+[INFO] --- animal-sniffer:1.27:check (check-java-compat) @ maven ---
+[INFO] Checking unresolved references to org.codehaus.mojo.signature:java18:1.0
+[INFO] 
+[INFO] --------------------< org.apache.maven:maven-model >--------------------
+[INFO] Building Maven Model 3.10.0-rc-1                                  [2/11]
+[INFO]   from maven-model/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ maven-model ---
+[INFO] Deleting /home/srikanth/standoff/apache_maven/maven-model/target
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-bytecode-version) @ maven-model ---
+[INFO] Rule 0: org.codehaus.mojo.extraenforcer.dependencies.EnforceBytecodeVersion passed
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-maven-version) @ maven-model ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-java-version) @ maven-model ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (ensure-no-banned-dependencies) @ maven-model ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- modello:2.7.0:java (modello) @ maven-model ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-model/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/maven.mdo
+[INFO] Generating current version: 4.0.0
+[INFO] 
+[INFO] --- modello:2.7.0:xpp3-reader (modello) @ maven-model ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-model/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/maven.mdo
+[INFO] Generating current version: 4.0.0
+[INFO] 
+[INFO] --- modello:2.7.0:xpp3-extended-reader (modello) @ maven-model ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-model/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/maven.mdo
+[INFO] Generating current version: 4.0.0
+[INFO] 
+[INFO] --- modello:2.7.0:xpp3-writer (modello) @ maven-model ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-model/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/maven.mdo
+[INFO] Generating current version: 4.0.0
+[INFO] 
+[INFO] --- modello:2.7.0:xpp3-extended-writer (modello) @ maven-model ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-model/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/maven.mdo
+[INFO] Generating current version: 4.0.0
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ maven-model ---
+[INFO] 
+[INFO] --- spotless:3.7.0:apply (default) @ maven-model ---
+[INFO] Index file does not exist. Fallback to an empty index
+[INFO] Spotless.Java is keeping 42 files clean - 0 were changed to be clean, 42 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] Spotless.Pom is keeping 1 files clean - 0 were changed to be clean, 1 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- remote-resources:3.3.0:process (process-resource-bundles) @ maven-model ---
+[INFO] Preparing remote bundle org.apache.apache.resources:apache-jar-resource-bundle:1.8
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ maven-model ---
+[INFO] skip non existing resourceDirectory /home/srikanth/standoff/apache_maven/maven-model/src/main/resources
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/classes
+[INFO] 
+[INFO] --- apache-rat:0.16.1:check (rat-check) @ maven-model ---
+[INFO] RAT will not execute since it is configured to be skipped via system property 'rat.skip'.
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ maven-model ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 54 source files with javac [debug deprecation release 8] to target/classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[INFO] /home/srikanth/standoff/apache_maven/maven-model/target/generated-sources/modello/org/apache/maven/model/ModelBase.java: Some input files use unchecked or unsafe operations.
+[INFO] /home/srikanth/standoff/apache_maven/maven-model/target/generated-sources/modello/org/apache/maven/model/ModelBase.java: Recompile with -Xlint:unchecked for details.
+[INFO] 
+[INFO] --- animal-sniffer:1.27:check (check-java-compat) @ maven-model ---
+[INFO] Checking unresolved references to org.codehaus.mojo.signature:java18:1.0
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ maven-model ---
+[INFO] skip non existing resourceDirectory /home/srikanth/standoff/apache_maven/maven-model/src/test/resources
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/test-classes
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ maven-model ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 38 source files with javac [debug deprecation release 8] to target/test-classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ maven-model ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- jar:3.5.0:jar (default-jar) @ maven-model ---
+[INFO] Building jar: /home/srikanth/standoff/apache_maven/maven-model/target/maven-model-3.10.0-rc-1.jar
+[INFO] 
+[INFO] ------------------< org.apache.maven:maven-artifact >-------------------
+[INFO] Building Maven Artifact 3.10.0-rc-1                               [3/11]
+[INFO]   from maven-artifact/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ maven-artifact ---
+[INFO] Deleting /home/srikanth/standoff/apache_maven/maven-artifact/target
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-bytecode-version) @ maven-artifact ---
+[INFO] Rule 0: org.codehaus.mojo.extraenforcer.dependencies.EnforceBytecodeVersion passed
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-maven-version) @ maven-artifact ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-java-version) @ maven-artifact ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (ensure-no-banned-dependencies) @ maven-artifact ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ maven-artifact ---
+[INFO] 
+[INFO] --- spotless:3.7.0:apply (default) @ maven-artifact ---
+[INFO] Index file does not exist. Fallback to an empty index
+[INFO] Spotless.Java is keeping 34 files clean - 0 were changed to be clean, 34 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] Spotless.Pom is keeping 1 files clean - 0 were changed to be clean, 1 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- remote-resources:3.3.0:process (process-resource-bundles) @ maven-artifact ---
+[INFO] Preparing remote bundle org.apache.apache.resources:apache-jar-resource-bundle:1.8
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ maven-artifact ---
+[INFO] skip non existing resourceDirectory /home/srikanth/standoff/apache_maven/maven-artifact/src/main/resources
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/classes
+[INFO] 
+[INFO] --- apache-rat:0.16.1:check (rat-check) @ maven-artifact ---
+[INFO] RAT will not execute since it is configured to be skipped via system property 'rat.skip'.
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ maven-artifact ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 27 source files with javac [debug deprecation release 8] to target/classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/Artifact.java:[28,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/repository/legacy/metadata/ArtifactMetadata.java:[21,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/repository/ArtifactRepository.java:[24,42] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/repository/ArtifactRepository.java:[25,51] org.apache.maven.artifact.repository.layout.ArtifactRepositoryLayout in org.apache.maven.artifact.repository.layout has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/versioning/OverConstrainedVersionException.java:[24,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/ArtifactResolutionException.java:[24,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/AbstractArtifactResolutionException.java:[25,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/AbstractArtifactResolutionException.java:[26,44] org.apache.maven.artifact.repository.ArtifactRepositoryPolicy in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/repository/layout/ArtifactRepositoryLayout.java:[22,42] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/repository/layout/ArtifactRepositoryLayout.java:[23,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/DefaultArtifact.java:[29,42] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/DefaultArtifact.java:[30,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/repository/layout/ArtifactRepositoryLayout2.java:[21,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/repository/layout/ArtifactRepositoryLayout2.java:[22,44] org.apache.maven.artifact.repository.ArtifactRepositoryPolicy in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/ArtifactNotFoundException.java:[24,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/MultipleArtifactsNotFoundException.java:[25,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/Artifact.java:[94,22] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/Artifact.java:[96,16] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/Artifact.java:[98,24] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/Artifact.java:[100,5] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/Artifact.java:[102,40] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/repository/legacy/metadata/ArtifactMetadata.java:[52,29] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/repository/legacy/metadata/ArtifactMetadata.java:[77,33] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/repository/legacy/metadata/ArtifactMetadata.java:[77,69] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/AbstractArtifactResolutionException.java:[46,18] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/AbstractArtifactResolutionException.java:[62,18] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/AbstractArtifactResolutionException.java:[75,18] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/AbstractArtifactResolutionException.java:[95,53] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/AbstractArtifactResolutionException.java:[100,53] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/AbstractArtifactResolutionException.java:[144,17] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/AbstractArtifactResolutionException.java:[180,18] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/AbstractArtifactResolutionException.java:[206,31] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/AbstractArtifactResolutionException.java:[207,21] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/AbstractArtifactResolutionException.java:[213,21] org.apache.maven.artifact.repository.ArtifactRepositoryPolicy in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/AbstractArtifactResolutionException.java:[218,21] org.apache.maven.artifact.repository.ArtifactRepositoryPolicy in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/ArtifactResolutionException.java:[38,18] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/ArtifactResolutionException.java:[59,80] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/ArtifactResolutionException.java:[68,53] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/versioning/OverConstrainedVersionException.java:[37,80] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/DefaultArtifact.java:[56,13] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/DefaultArtifact.java:[76,25] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/DefaultArtifact.java:[212,12] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/DefaultArtifact.java:[216,31] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/DefaultArtifact.java:[246,29] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/DefaultArtifact.java:[251,9] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/DefaultArtifact.java:[259,23] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/DefaultArtifact.java:[386,47] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/repository/layout/ArtifactRepositoryLayout2.java:[27,52] org.apache.maven.artifact.repository.layout.ArtifactRepositoryLayout in org.apache.maven.artifact.repository.layout has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/repository/layout/ArtifactRepositoryLayout2.java:[29,5] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/repository/layout/ArtifactRepositoryLayout2.java:[30,36] org.apache.maven.artifact.repository.ArtifactRepositoryPolicy in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/repository/layout/ArtifactRepositoryLayout2.java:[30,72] org.apache.maven.artifact.repository.ArtifactRepositoryPolicy in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/ArtifactNotFoundException.java:[33,53] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/ArtifactNotFoundException.java:[51,53] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/ArtifactNotFoundException.java:[73,18] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/ArtifactNotFoundException.java:[100,18] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-artifact/src/main/java/org/apache/maven/artifact/resolver/MultipleArtifactsNotFoundException.java:[56,18] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[INFO] 
+[INFO] --- animal-sniffer:1.27:check (check-java-compat) @ maven-artifact ---
+[INFO] Checking unresolved references to org.codehaus.mojo.signature:java18:1.0
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ maven-artifact ---
+[INFO] skip non existing resourceDirectory /home/srikanth/standoff/apache_maven/maven-artifact/src/test/resources
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/test-classes
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ maven-artifact ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 7 source files with javac [debug deprecation release 8] to target/test-classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ maven-artifact ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- jar:3.5.0:jar (default-jar) @ maven-artifact ---
+[INFO] Building jar: /home/srikanth/standoff/apache_maven/maven-artifact/target/maven-artifact-3.10.0-rc-1.jar
+[INFO] 
+[INFO] -----------------< org.apache.maven:maven-plugin-api >------------------
+[INFO] Building Maven Plugin API 3.10.0-rc-1                             [4/11]
+[INFO]   from maven-plugin-api/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ maven-plugin-api ---
+[INFO] Deleting /home/srikanth/standoff/apache_maven/maven-plugin-api/target
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-bytecode-version) @ maven-plugin-api ---
+[INFO] Rule 0: org.codehaus.mojo.extraenforcer.dependencies.EnforceBytecodeVersion passed
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-maven-version) @ maven-plugin-api ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-java-version) @ maven-plugin-api ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (ensure-no-banned-dependencies) @ maven-plugin-api ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- modello:2.7.0:java (modello) @ maven-plugin-api ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-plugin-api/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/lifecycle.mdo
+[INFO] Generating current version: 1.0.0
+[INFO] 
+[INFO] --- modello:2.7.0:xpp3-reader (modello) @ maven-plugin-api ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-plugin-api/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/lifecycle.mdo
+[INFO] Generating current version: 1.0.0
+[INFO] 
+[INFO] --- modello:2.7.0:xpp3-writer (modello) @ maven-plugin-api ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-plugin-api/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/lifecycle.mdo
+[INFO] Generating current version: 1.0.0
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ maven-plugin-api ---
+[INFO] 
+[INFO] --- spotless:3.7.0:apply (default) @ maven-plugin-api ---
+[INFO] Index file does not exist. Fallback to an empty index
+[INFO] Spotless.Java is keeping 22 files clean - 0 were changed to be clean, 22 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] Spotless.Pom is keeping 1 files clean - 0 were changed to be clean, 1 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- remote-resources:3.3.0:process (process-resource-bundles) @ maven-plugin-api ---
+[INFO] Preparing remote bundle org.apache.apache.resources:apache-jar-resource-bundle:1.8
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ maven-plugin-api ---
+[INFO] skip non existing resourceDirectory /home/srikanth/standoff/apache_maven/maven-plugin-api/src/main/resources
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/classes
+[INFO] 
+[INFO] --- apache-rat:0.16.1:check (rat-check) @ maven-plugin-api ---
+[INFO] RAT will not execute since it is configured to be skipped via system property 'rat.skip'.
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ maven-plugin-api ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 25 source files with javac [debug deprecation release 8] to target/classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[INFO] 
+[INFO] --- animal-sniffer:1.27:check (check-java-compat) @ maven-plugin-api ---
+[INFO] Checking unresolved references to org.codehaus.mojo.signature:java18:1.0
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ maven-plugin-api ---
+[INFO] Copying 2 resources from src/test/resources to target/test-classes
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/test-classes
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ maven-plugin-api ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 3 source files with javac [debug deprecation release 8] to target/test-classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ maven-plugin-api ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- jar:3.5.0:jar (default-jar) @ maven-plugin-api ---
+[INFO] Building jar: /home/srikanth/standoff/apache_maven/maven-plugin-api/target/maven-plugin-api-3.10.0-rc-1.jar
+[INFO] 
+[INFO] ---------------< org.apache.maven:maven-builder-support >---------------
+[INFO] Building Maven Builder Support 3.10.0-rc-1                        [5/11]
+[INFO]   from maven-builder-support/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ maven-builder-support ---
+[INFO] Deleting /home/srikanth/standoff/apache_maven/maven-builder-support/target
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-bytecode-version) @ maven-builder-support ---
+[INFO] Rule 0: org.codehaus.mojo.extraenforcer.dependencies.EnforceBytecodeVersion passed
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-maven-version) @ maven-builder-support ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-java-version) @ maven-builder-support ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (ensure-no-banned-dependencies) @ maven-builder-support ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ maven-builder-support ---
+[INFO] 
+[INFO] --- spotless:3.7.0:apply (default) @ maven-builder-support ---
+[INFO] Index file does not exist. Fallback to an empty index
+[INFO] Spotless.Java is keeping 15 files clean - 0 were changed to be clean, 15 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] Spotless.Pom is keeping 1 files clean - 0 were changed to be clean, 1 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- remote-resources:3.3.0:process (process-resource-bundles) @ maven-builder-support ---
+[INFO] Preparing remote bundle org.apache.apache.resources:apache-jar-resource-bundle:1.8
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ maven-builder-support ---
+[INFO] skip non existing resourceDirectory /home/srikanth/standoff/apache_maven/maven-builder-support/src/main/resources
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/classes
+[INFO] 
+[INFO] --- apache-rat:0.16.1:check (rat-check) @ maven-builder-support ---
+[INFO] RAT will not execute since it is configured to be skipped via system property 'rat.skip'.
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ maven-builder-support ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 9 source files with javac [debug deprecation release 8] to target/classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[INFO] 
+[INFO] --- animal-sniffer:1.27:check (check-java-compat) @ maven-builder-support ---
+[INFO] Checking unresolved references to org.codehaus.mojo.signature:java18:1.0
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ maven-builder-support ---
+[INFO] Copying 1 resource from src/test/resources to target/test-classes
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/test-classes
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ maven-builder-support ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 6 source files with javac [debug deprecation release 8] to target/test-classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ maven-builder-support ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- jar:3.5.0:jar (default-jar) @ maven-builder-support ---
+[INFO] Building jar: /home/srikanth/standoff/apache_maven/maven-builder-support/target/maven-builder-support-3.10.0-rc-1.jar
+[INFO] 
+[INFO] ----------------< org.apache.maven:maven-model-builder >----------------
+[INFO] Building Maven Model Builder 3.10.0-rc-1                          [6/11]
+[INFO]   from maven-model-builder/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ maven-model-builder ---
+[INFO] Deleting /home/srikanth/standoff/apache_maven/maven-model-builder/target
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-bytecode-version) @ maven-model-builder ---
+[INFO] Rule 0: org.codehaus.mojo.extraenforcer.dependencies.EnforceBytecodeVersion passed
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-maven-version) @ maven-model-builder ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-java-version) @ maven-model-builder ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (ensure-no-banned-dependencies) @ maven-model-builder ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ maven-model-builder ---
+[INFO] 
+[INFO] --- spotless:3.7.0:apply (default) @ maven-model-builder ---
+[INFO] Index file does not exist. Fallback to an empty index
+[INFO] Spotless.Java is keeping 118 files clean - 0 were changed to be clean, 118 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] Spotless.Pom is keeping 1 files clean - 0 were changed to be clean, 1 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- remote-resources:3.3.0:process (process-resource-bundles) @ maven-model-builder ---
+[INFO] Preparing remote bundle org.apache.apache.resources:apache-jar-resource-bundle:1.8
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ maven-model-builder ---
+[INFO] Copying 2 resources from src/main/resources to target/classes
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/classes
+[INFO] 
+[INFO] --- apache-rat:0.16.1:check (rat-check) @ maven-model-builder ---
+[INFO] RAT will not execute since it is configured to be skipped via system property 'rat.skip'.
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ maven-model-builder ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 99 source files with javac [debug deprecation release 8] to target/classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/resolution/ModelResolver.java:[24,39] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/ModelBuildingRequest.java:[84,5] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/ModelBuildingRequest.java:[93,41] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/resolution/ModelResolver.java:[44,5] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/resolution/ModelResolver.java:[64,5] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/resolution/ModelResolver.java:[84,5] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/DefaultModelBuilder.java:[572,13] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/DefaultModelBuilder.java:[808,13] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/DefaultModelBuilder.java:[842,21] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/DefaultModelBuilder.java:[869,13] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/DefaultModelBuilder.java:[874,15] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/DefaultModelBuilder.java:[886,62] getPomFile() in org.apache.maven.model.building.FileModelSource has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/DefaultModelBuilder.java:[1000,13] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/DefaultModelBuilder.java:[1000,60] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/DefaultModelBuilder.java:[1033,9] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/FilterModelBuildingRequest.java:[58,12] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/FilterModelBuildingRequest.java:[63,54] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/DefaultModelBuilder.java:[1202,27] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/ModelData.java:[33,19] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/ModelData.java:[52,15] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/ModelData.java:[65,15] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/ModelData.java:[73,12] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/DefaultModelBuildingRequest.java:[43,13] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/DefaultModelBuildingRequest.java:[114,25] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/DefaultModelBuildingRequest.java:[122,55] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/main/java/org/apache/maven/model/building/ModelSource2.java:[33,39] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[INFO] 
+[INFO] --- animal-sniffer:1.27:check (check-java-compat) @ maven-model-builder ---
+[INFO] Checking unresolved references to org.codehaus.mojo.signature:java18:1.0
+[INFO] 
+[INFO] --- sisu:1.0.1:main-index (index-project) @ maven-model-builder ---
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ maven-model-builder ---
+[INFO] Copying 105 resources from src/test/resources to target/test-classes
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/test-classes
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ maven-model-builder ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 19 source files with javac [debug deprecation release 8] to target/test-classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/building/DefaultModelBuilderTest.java:[85,36] org.apache.maven.model.building.StringModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/building/DefaultModelBuilderTest.java:[109,16] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/building/DefaultModelBuilderTest.java:[113,32] org.apache.maven.model.building.StringModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/building/DefaultModelBuilderTest.java:[115,32] org.apache.maven.model.building.StringModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/building/DefaultModelBuilderTest.java:[122,16] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/building/DefaultModelBuilderTest.java:[127,16] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/building/DefaultModelBuilderTest.java:[95,16] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/building/DefaultModelBuilderTest.java:[98,32] org.apache.maven.model.building.StringModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/building/DefaultModelBuilderTest.java:[100,32] org.apache.maven.model.building.StringModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[62,21] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[84,9] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[84,55] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[114,9] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[114,55] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[140,9] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[140,55] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[166,9] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[166,55] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[190,9] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[190,55] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[217,9] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[217,55] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[245,9] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[245,55] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[271,9] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[271,55] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[295,9] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[295,55] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[322,9] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[322,55] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[349,9] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[349,55] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[377,9] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[377,55] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[387,26] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[407,9] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[407,55] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[417,26] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[437,15] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[437,61] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[547,9] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[547,58] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[572,9] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java:[572,58] org.apache.maven.model.interpolation.StringSearchModelInterpolator in org.apache.maven.model.interpolation has been deprecated
+[INFO] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java: /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java uses unchecked or unsafe operations.
+[INFO] /home/srikanth/standoff/apache_maven/maven-model-builder/src/test/java/org/apache/maven/model/interpolation/StringSearchModelInterpolatorTest.java: Recompile with -Xlint:unchecked for details.
+[INFO] 
+[INFO] --- sisu:1.0.1:test-index (index-project) @ maven-model-builder ---
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ maven-model-builder ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- jar:3.5.0:jar (default-jar) @ maven-model-builder ---
+[INFO] Building jar: /home/srikanth/standoff/apache_maven/maven-model-builder/target/maven-model-builder-3.10.0-rc-1.jar
+[INFO] 
+[INFO] ------------------< org.apache.maven:maven-settings >-------------------
+[INFO] Building Maven Settings 3.10.0-rc-1                               [7/11]
+[INFO]   from maven-settings/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ maven-settings ---
+[INFO] Deleting /home/srikanth/standoff/apache_maven/maven-settings/target
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-bytecode-version) @ maven-settings ---
+[INFO] Rule 0: org.codehaus.mojo.extraenforcer.dependencies.EnforceBytecodeVersion passed
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-maven-version) @ maven-settings ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-java-version) @ maven-settings ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (ensure-no-banned-dependencies) @ maven-settings ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- modello:2.7.0:java (modello) @ maven-settings ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-settings/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/settings.mdo
+[INFO] Generating current version: 1.2.0
+[INFO] 
+[INFO] --- modello:2.7.0:xpp3-reader (modello) @ maven-settings ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-settings/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/settings.mdo
+[INFO] Generating current version: 1.2.0
+[INFO] 
+[INFO] --- modello:2.7.0:xpp3-writer (modello) @ maven-settings ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-settings/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/settings.mdo
+[INFO] Generating current version: 1.2.0
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ maven-settings ---
+[INFO] 
+[INFO] --- spotless:3.7.0:apply (default) @ maven-settings ---
+[INFO] Index file does not exist. Fallback to an empty index
+[INFO] Spotless.Java is keeping 1 files clean - 0 were changed to be clean, 1 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] Spotless.Pom is keeping 1 files clean - 0 were changed to be clean, 1 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- remote-resources:3.3.0:process (process-resource-bundles) @ maven-settings ---
+[INFO] Preparing remote bundle org.apache.apache.resources:apache-jar-resource-bundle:1.8
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ maven-settings ---
+[INFO] skip non existing resourceDirectory /home/srikanth/standoff/apache_maven/maven-settings/src/main/resources
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/classes
+[INFO] 
+[INFO] --- apache-rat:0.16.1:check (rat-check) @ maven-settings ---
+[INFO] RAT will not execute since it is configured to be skipped via system property 'rat.skip'.
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ maven-settings ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 17 source files with javac [debug deprecation release 8] to target/classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[INFO] 
+[INFO] --- animal-sniffer:1.27:check (check-java-compat) @ maven-settings ---
+[INFO] Checking unresolved references to org.codehaus.mojo.signature:java18:1.0
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ maven-settings ---
+[INFO] skip non existing resourceDirectory /home/srikanth/standoff/apache_maven/maven-settings/src/test/resources
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/test-classes
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ maven-settings ---
+[INFO] No sources to compile
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ maven-settings ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- jar:3.5.0:jar (default-jar) @ maven-settings ---
+[INFO] Building jar: /home/srikanth/standoff/apache_maven/maven-settings/target/maven-settings-3.10.0-rc-1.jar
+[INFO] 
+[INFO] --------------< org.apache.maven:maven-settings-builder >---------------
+[INFO] Building Maven Settings Builder 3.10.0-rc-1                       [8/11]
+[INFO]   from maven-settings-builder/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ maven-settings-builder ---
+[INFO] Deleting /home/srikanth/standoff/apache_maven/maven-settings-builder/target
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-bytecode-version) @ maven-settings-builder ---
+[INFO] Rule 0: org.codehaus.mojo.extraenforcer.dependencies.EnforceBytecodeVersion passed
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-maven-version) @ maven-settings-builder ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-java-version) @ maven-settings-builder ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (ensure-no-banned-dependencies) @ maven-settings-builder ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ maven-settings-builder ---
+[INFO] 
+[INFO] --- spotless:3.7.0:apply (default) @ maven-settings-builder ---
+[INFO] Index file does not exist. Fallback to an empty index
+[INFO] Spotless.Java is keeping 32 files clean - 0 were changed to be clean, 32 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] Spotless.Pom is keeping 1 files clean - 0 were changed to be clean, 1 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- remote-resources:3.3.0:process (process-resource-bundles) @ maven-settings-builder ---
+[INFO] Preparing remote bundle org.apache.apache.resources:apache-jar-resource-bundle:1.8
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ maven-settings-builder ---
+[INFO] skip non existing resourceDirectory /home/srikanth/standoff/apache_maven/maven-settings-builder/src/main/resources
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/classes
+[INFO] 
+[INFO] --- apache-rat:0.16.1:check (rat-check) @ maven-settings-builder ---
+[INFO] RAT will not execute since it is configured to be skipped via system property 'rat.skip'.
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ maven-settings-builder ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 30 source files with javac [debug deprecation release 8] to target/classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[WARNING] /home/srikanth/standoff/apache_maven/maven-settings-builder/src/main/java/org/apache/maven/settings/building/SettingsBuildingRequest.java:[52,5] org.apache.maven.settings.building.SettingsSource in org.apache.maven.settings.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-settings-builder/src/main/java/org/apache/maven/settings/building/SettingsBuildingRequest.java:[61,53] org.apache.maven.settings.building.SettingsSource in org.apache.maven.settings.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-settings-builder/src/main/java/org/apache/maven/settings/building/SettingsBuildingRequest.java:[84,5] org.apache.maven.settings.building.SettingsSource in org.apache.maven.settings.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-settings-builder/src/main/java/org/apache/maven/settings/building/SettingsBuildingRequest.java:[93,51] org.apache.maven.settings.building.SettingsSource in org.apache.maven.settings.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-settings-builder/src/main/java/org/apache/maven/settings/building/DefaultSettingsBuildingRequest.java:[35,13] org.apache.maven.settings.building.SettingsSource in org.apache.maven.settings.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-settings-builder/src/main/java/org/apache/maven/settings/building/DefaultSettingsBuildingRequest.java:[37,13] org.apache.maven.settings.building.SettingsSource in org.apache.maven.settings.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-settings-builder/src/main/java/org/apache/maven/settings/building/DefaultSettingsBuildingRequest.java:[56,12] org.apache.maven.settings.building.SettingsSource in org.apache.maven.settings.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-settings-builder/src/main/java/org/apache/maven/settings/building/DefaultSettingsBuildingRequest.java:[61,67] org.apache.maven.settings.building.SettingsSource in org.apache.maven.settings.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-settings-builder/src/main/java/org/apache/maven/settings/building/DefaultSettingsBuildingRequest.java:[80,12] org.apache.maven.settings.building.SettingsSource in org.apache.maven.settings.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-settings-builder/src/main/java/org/apache/maven/settings/building/DefaultSettingsBuildingRequest.java:[85,65] org.apache.maven.settings.building.SettingsSource in org.apache.maven.settings.building has been deprecated
+[INFO] 
+[INFO] --- animal-sniffer:1.27:check (check-java-compat) @ maven-settings-builder ---
+[INFO] Checking unresolved references to org.codehaus.mojo.signature:java18:1.0
+[INFO] 
+[INFO] --- sisu:1.0.1:main-index (index-project) @ maven-settings-builder ---
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ maven-settings-builder ---
+[INFO] Copying 2 resources from src/test/resources to target/test-classes
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/test-classes
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ maven-settings-builder ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 2 source files with javac [debug deprecation release 8] to target/test-classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[INFO] 
+[INFO] --- sisu:1.0.1:test-index (index-project) @ maven-settings-builder ---
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ maven-settings-builder ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- jar:3.5.0:jar (default-jar) @ maven-settings-builder ---
+[INFO] Building jar: /home/srikanth/standoff/apache_maven/maven-settings-builder/target/maven-settings-builder-3.10.0-rc-1.jar
+[INFO] 
+[INFO] -------------< org.apache.maven:maven-repository-metadata >-------------
+[INFO] Building Maven Repository Metadata Model 3.10.0-rc-1              [9/11]
+[INFO]   from maven-repository-metadata/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ maven-repository-metadata ---
+[INFO] Deleting /home/srikanth/standoff/apache_maven/maven-repository-metadata/target
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-bytecode-version) @ maven-repository-metadata ---
+[INFO] Rule 0: org.codehaus.mojo.extraenforcer.dependencies.EnforceBytecodeVersion passed
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-maven-version) @ maven-repository-metadata ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-java-version) @ maven-repository-metadata ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (ensure-no-banned-dependencies) @ maven-repository-metadata ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- modello:2.7.0:java (modello) @ maven-repository-metadata ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-repository-metadata/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/metadata.mdo
+[INFO] Generating current version: 1.1.0
+[INFO] 
+[INFO] --- modello:2.7.0:xpp3-reader (modello) @ maven-repository-metadata ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-repository-metadata/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/metadata.mdo
+[INFO] Generating current version: 1.1.0
+[INFO] 
+[INFO] --- modello:2.7.0:xpp3-writer (modello) @ maven-repository-metadata ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-repository-metadata/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/metadata.mdo
+[INFO] Generating current version: 1.1.0
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ maven-repository-metadata ---
+[INFO] 
+[INFO] --- spotless:3.7.0:apply (default) @ maven-repository-metadata ---
+[INFO] Index file does not exist. Fallback to an empty index
+[INFO] Spotless.Java is keeping 1 files clean - 0 were changed to be clean, 1 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] Spotless.Pom is keeping 1 files clean - 0 were changed to be clean, 1 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- remote-resources:3.3.0:process (process-resource-bundles) @ maven-repository-metadata ---
+[INFO] Preparing remote bundle org.apache.apache.resources:apache-jar-resource-bundle:1.8
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ maven-repository-metadata ---
+[INFO] skip non existing resourceDirectory /home/srikanth/standoff/apache_maven/maven-repository-metadata/src/main/resources
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/classes
+[INFO] 
+[INFO] --- apache-rat:0.16.1:check (rat-check) @ maven-repository-metadata ---
+[INFO] RAT will not execute since it is configured to be skipped via system property 'rat.skip'.
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ maven-repository-metadata ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 7 source files with javac [debug deprecation release 8] to target/classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[INFO] 
+[INFO] --- animal-sniffer:1.27:check (check-java-compat) @ maven-repository-metadata ---
+[INFO] Checking unresolved references to org.codehaus.mojo.signature:java18:1.0
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ maven-repository-metadata ---
+[INFO] skip non existing resourceDirectory /home/srikanth/standoff/apache_maven/maven-repository-metadata/src/test/resources
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/test-classes
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ maven-repository-metadata ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 1 source file with javac [debug deprecation release 8] to target/test-classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ maven-repository-metadata ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- jar:3.5.0:jar (default-jar) @ maven-repository-metadata ---
+[INFO] Building jar: /home/srikanth/standoff/apache_maven/maven-repository-metadata/target/maven-repository-metadata-3.10.0-rc-1.jar
+[INFO] 
+[INFO] --------------< org.apache.maven:maven-resolver-provider >--------------
+[INFO] Building Maven Artifact Resolver Provider 3.10.0-rc-1            [10/11]
+[INFO]   from maven-resolver-provider/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ maven-resolver-provider ---
+[INFO] Deleting /home/srikanth/standoff/apache_maven/maven-resolver-provider/target
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-bytecode-version) @ maven-resolver-provider ---
+[INFO] Rule 0: org.codehaus.mojo.extraenforcer.dependencies.EnforceBytecodeVersion passed
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-maven-version) @ maven-resolver-provider ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-java-version) @ maven-resolver-provider ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (ensure-no-banned-dependencies) @ maven-resolver-provider ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ maven-resolver-provider ---
+[INFO] 
+[INFO] --- spotless:3.7.0:apply (default) @ maven-resolver-provider ---
+[INFO] Index file does not exist. Fallback to an empty index
+[INFO] Spotless.Java is keeping 40 files clean - 0 were changed to be clean, 40 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] Spotless.Pom is keeping 1 files clean - 0 were changed to be clean, 1 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- remote-resources:3.3.0:process (process-resource-bundles) @ maven-resolver-provider ---
+[INFO] Preparing remote bundle org.apache.apache.resources:apache-jar-resource-bundle:1.8
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ maven-resolver-provider ---
+[INFO] skip non existing resourceDirectory /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/resources
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/classes
+[INFO] 
+[INFO] --- apache-rat:0.16.1:check (rat-check) @ maven-resolver-provider ---
+[INFO] RAT will not execute since it is configured to be skipped via system property 'rat.skip'.
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ maven-resolver-provider ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 31 source files with javac [debug deprecation release 8] to target/classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultArtifactDescriptorReader.java:[73,38] org.eclipse.aether.spi.locator.Service in org.eclipse.aether.spi.locator has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultArtifactDescriptorReader.java:[74,38] org.eclipse.aether.spi.locator.ServiceLocator in org.eclipse.aether.spi.locator has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultModelResolver.java:[33,39] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultVersionRangeResolver.java:[56,38] org.eclipse.aether.spi.locator.Service in org.eclipse.aether.spi.locator has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultVersionRangeResolver.java:[57,38] org.eclipse.aether.spi.locator.ServiceLocator in org.eclipse.aether.spi.locator has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultVersionResolver.java:[63,38] org.eclipse.aether.spi.locator.Service in org.eclipse.aether.spi.locator has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultVersionResolver.java:[64,38] org.eclipse.aether.spi.locator.ServiceLocator in org.eclipse.aether.spi.locator has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/MavenRepositorySystemUtils.java:[31,46] org.eclipse.aether.util.graph.selector.OptionalDependencySelector in org.eclipse.aether.util.graph.selector has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/MavenRepositorySystemUtils.java:[32,46] org.eclipse.aether.util.graph.selector.ScopeDependencySelector in org.eclipse.aether.util.graph.selector has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/MavenRepositorySystemUtils.java:[38,49] org.eclipse.aether.util.graph.transformer.NearestVersionSelector in org.eclipse.aether.util.graph.transformer has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultArtifactDescriptorReader.java:[84,83] org.eclipse.aether.spi.locator.Service in org.eclipse.aether.spi.locator has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultArtifactDescriptorReader.java:[372,56] getFile() in org.eclipse.aether.artifact.Artifact has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultArtifactDescriptorReader.java:[374,80] getFile() in org.eclipse.aether.artifact.Artifact has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultModelResolver.java:[151,12] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultModelResolver.java:[163,35] getFile() in org.eclipse.aether.artifact.Artifact has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultModelResolver.java:[169,12] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultModelResolver.java:[212,12] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultVersionRangeResolver.java:[72,75] org.eclipse.aether.spi.locator.Service in org.eclipse.aether.spi.locator has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultVersionRangeResolver.java:[275,33] getFile() in org.eclipse.aether.metadata.Metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultVersionRangeResolver.java:[275,63] getFile() in org.eclipse.aether.metadata.Metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultVersionRangeResolver.java:[276,75] getFile() in org.eclipse.aether.metadata.Metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultVersionResolver.java:[73,65] org.eclipse.aether.spi.locator.Service in org.eclipse.aether.spi.locator has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultVersionResolver.java:[279,33] getFile() in org.eclipse.aether.metadata.Metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultVersionResolver.java:[279,63] getFile() in org.eclipse.aether.metadata.Metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultVersionResolver.java:[280,75] getFile() in org.eclipse.aether.metadata.Metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/DefaultVersionResolver.java:[472,53] getBasedir() in org.eclipse.aether.repository.LocalRepository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/MavenMetadata.java:[79,17] merge(java.io.File,java.io.File) in org.eclipse.aether.metadata.MergeableMetadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/MavenMetadata.java:[67,17] getFile() in org.eclipse.aether.metadata.Metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/LocalSnapshotMetadata.java:[77,26] setFile(java.io.File) in org.eclipse.aether.metadata.AbstractMetadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/PluginsMetadata.java:[90,26] setFile(java.io.File) in org.eclipse.aether.metadata.AbstractMetadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/PluginsMetadataGenerator.java:[124,28] getFile() in org.eclipse.aether.artifact.Artifact has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/PluginsMetadataGenerator.java:[125,41] getFile() in org.eclipse.aether.artifact.Artifact has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/RelocatedArtifact.java:[140,17] getFile() in org.eclipse.aether.artifact.Artifact has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/RelocatedArtifact.java:[120,21] setFile(java.io.File) in org.eclipse.aether.artifact.AbstractArtifact has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/RelocatedArtifact.java:[126,25] setFile(java.io.File) in org.eclipse.aether.artifact.Artifact has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/RelocatedArtifact.java:[141,24] getFile() in org.eclipse.aether.artifact.Artifact has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/RemoteSnapshotMetadata.java:[61,26] setFile(java.io.File) in org.eclipse.aether.metadata.AbstractMetadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/main/java/org/apache/maven/repository/internal/VersionsMetadata.java:[101,26] setFile(java.io.File) in org.eclipse.aether.metadata.AbstractMetadata has been deprecated
+[INFO] 
+[INFO] --- animal-sniffer:1.27:check (check-java-compat) @ maven-resolver-provider ---
+[INFO] Checking unresolved references to org.codehaus.mojo.signature:java18:1.0
+[INFO] 
+[INFO] --- sisu:1.0.1:main-index (index-project) @ maven-resolver-provider ---
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ maven-resolver-provider ---
+[INFO] Copying 13 resources from src/test/resources to target/test-classes
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/test-classes
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ maven-resolver-provider ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 9 source files with javac [debug deprecation release 8] to target/test-classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/test/java/org/apache/maven/repository/internal/AbstractRepositoryTest.java:[49,50] org.apache.maven.repository.internal.MavenRepositorySystemUtils in org.apache.maven.repository.internal has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/test/java/org/apache/maven/repository/internal/AbstractRepositoryTest.java:[49,76] newSession() in org.apache.maven.repository.internal.MavenRepositorySystemUtils has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/test/java/org/apache/maven/repository/internal/AbstractRepositoryTest.java:[51,37] LocalRepository(java.lang.String) in org.eclipse.aether.repository.LocalRepository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/test/java/org/apache/maven/repository/internal/RepositorySystemTest.java:[84,31] getFile() in org.eclipse.aether.artifact.Artifact has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/test/java/org/apache/maven/repository/internal/RepositorySystemTest.java:[102,31] getFile() in org.eclipse.aether.artifact.Artifact has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/test/java/org/apache/maven/repository/internal/RepositorySystemTest.java:[159,31] getFile() in org.eclipse.aether.artifact.Artifact has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/test/java/org/apache/maven/repository/internal/RepositorySystemTest.java:[160,40] getFile() in org.eclipse.aether.artifact.Artifact has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/test/java/org/apache/maven/repository/internal/util/ConsoleRepositoryListener.java:[57,74] getFile() in org.eclipse.aether.RepositoryEvent has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/test/java/org/apache/maven/repository/internal/util/ConsoleRepositoryListener.java:[61,75] getFile() in org.eclipse.aether.RepositoryEvent has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/test/java/org/apache/maven/repository/internal/util/ConsoleRepositoryListener.java:[89,74] getFile() in org.eclipse.aether.RepositoryEvent has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/test/java/org/apache/maven/repository/internal/util/ConsoleRepositoryListener.java:[93,75] getFile() in org.eclipse.aether.RepositoryEvent has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-resolver-provider/src/test/java/org/apache/maven/repository/internal/util/ConsoleTransferListener.java:[112,66] getTransferStartTime() in org.eclipse.aether.transfer.TransferResource has been deprecated
+[INFO] 
+[INFO] --- sisu:1.0.1:test-index (index-project) @ maven-resolver-provider ---
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ maven-resolver-provider ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- jar:3.5.0:jar (default-jar) @ maven-resolver-provider ---
+[INFO] Building jar: /home/srikanth/standoff/apache_maven/maven-resolver-provider/target/maven-resolver-provider-3.10.0-rc-1.jar
+[INFO] 
+[INFO] --------------------< org.apache.maven:maven-core >---------------------
+[INFO] Building Maven Core 3.10.0-rc-1                                  [11/11]
+[INFO]   from maven-core/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ maven-core ---
+[INFO] Deleting /home/srikanth/standoff/apache_maven/maven-core/target
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-bytecode-version) @ maven-core ---
+[INFO] Rule 0: org.codehaus.mojo.extraenforcer.dependencies.EnforceBytecodeVersion passed
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-maven-version) @ maven-core ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-java-version) @ maven-core ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (ensure-no-banned-dependencies) @ maven-core ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- buildnumber:3.3.0:create (create-buildnumber) @ maven-core ---
+[INFO] Storing buildNumber: 1f7f1a5410f32c4eef075ae18a562f328174d49b at timestamp: 1788659930724
+[WARNING] Cannot get the branch information from the git repository: 
+Detecting the current branch failed: fatal: ref HEAD is not a symbolic ref
+
+[INFO] Storing scmBranch: UNKNOWN
+[INFO] 
+[INFO] --- modello:2.7.0:java (modello) @ maven-core ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-core/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/toolchains.mdo
+[INFO] Generating current version: 1.1.0
+[INFO] 
+[INFO] --- modello:2.7.0:xpp3-reader (modello) @ maven-core ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-core/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/toolchains.mdo
+[INFO] Generating current version: 1.1.0
+[INFO] 
+[INFO] --- modello:2.7.0:xpp3-writer (modello) @ maven-core ---
+[INFO] outputDirectory: /home/srikanth/standoff/apache_maven/maven-core/target/generated-sources/modello
+[INFO] Working on model: src/main/mdo/toolchains.mdo
+[INFO] Generating current version: 1.1.0
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ maven-core ---
+[INFO] 
+[INFO] --- spotless:3.7.0:apply (default) @ maven-core ---
+[INFO] Index file does not exist. Fallback to an empty index
+[INFO] Spotless.Java is keeping 485 files clean - 0 were changed to be clean, 485 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] Spotless.Pom is keeping 1 files clean - 0 were changed to be clean, 1 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- remote-resources:3.3.0:process (process-resource-bundles) @ maven-core ---
+[INFO] Preparing remote bundle org.apache.apache.resources:apache-jar-resource-bundle:1.8
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ maven-core ---
+[INFO] Copying 4 resources from src/main/resources to target/classes
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/classes
+[INFO] The encoding used to copy filtered properties files has not been set. This means that the same encoding will be used to copy filtered properties files as when copying other filtered resources. This might not be what you want! Run your build with --debug to see which files might be affected. Read more at https://maven.apache.org/plugins/maven-resources-plugin/examples/filtering-properties-files.html
+[INFO] 
+[INFO] --- apache-rat:0.16.1:check (rat-check) @ maven-core ---
+[INFO] RAT will not execute since it is configured to be skipped via system property 'rat.skip'.
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ maven-core ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 398 source files with javac [debug deprecation release 8] to target/classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/execution/MavenSession.java:[30,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/MavenProject.java:[45,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/ProjectBuildingRequest.java:[25,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/execution/MavenExecutionRequest.java:[28,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/execution/MavenExecutionRequest.java:[29,44] org.apache.maven.artifact.repository.ArtifactRepositoryPolicy in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/ProjectBuilder.java:[25,39] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/plugin/PluginNotFoundException.java:[23,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/DefaultProjectDependenciesResolver.java:[44,35] org.apache.maven.repository.RepositorySystem in org.apache.maven.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/repository/RepositorySystem.java:[26,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/repository/RepositorySystem.java:[27,44] org.apache.maven.artifact.repository.ArtifactRepositoryPolicy in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/repository/RepositorySystem.java:[28,51] org.apache.maven.artifact.repository.layout.ArtifactRepositoryLayout in org.apache.maven.artifact.repository.layout has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/resolver/ArtifactResolutionRequest.java:[27,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/resolver/ArtifactResolutionRequest.java:[28,44] org.apache.maven.artifact.repository.RepositoryCache in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/resolver/ArtifactResolutionResult.java:[28,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/resolver/ResolutionNode.java:[29,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/RepositoryUtils.java:[34,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/RepositoryUtils.java:[35,44] org.apache.maven.artifact.repository.ArtifactRepositoryPolicy in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/metadata/ArtifactMetadataSource.java:[24,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/repository/legacy/metadata/ArtifactMetadataSource.java:[24,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/repository/legacy/metadata/MetadataResolutionRequest.java:[24,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/metadata/ResolutionGroup.java:[26,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/repository/legacy/metadata/ResolutionGroup.java:[26,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/repository/LegacyLocalRepositoryManager.java:[27,42] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/repository/LegacyLocalRepositoryManager.java:[28,51] org.apache.maven.artifact.repository.layout.ArtifactRepositoryLayout in org.apache.maven.artifact.repository.layout has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/repository/MavenArtifactRepository.java:[27,42] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/repository/MavenArtifactRepository.java:[28,51] org.apache.maven.artifact.repository.layout.ArtifactRepositoryLayout in org.apache.maven.artifact.repository.layout has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/repository/layout/DefaultRepositoryLayout.java:[26,42] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/repository/layout/DefaultRepositoryLayout.java:[27,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/repository/metadata/AbstractRepositoryMetadata.java:[27,42] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/repository/metadata/AbstractRepositoryMetadata.java:[28,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/repository/metadata/AbstractRepositoryMetadata.java:[29,44] org.apache.maven.artifact.repository.ArtifactRepositoryPolicy in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/repository/metadata/RepositoryMetadata.java:[21,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/repository/metadata/RepositoryMetadata.java:[22,44] org.apache.maven.artifact.repository.ArtifactRepositoryPolicy in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/repository/metadata/ArtifactRepositoryMetadata.java:[23,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/repository/metadata/RepositoryMetadataManager.java:[23,42] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/artifact/repository/metadata/RepositoryMetadataManager.java:[24,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/bridge/MavenRepositorySystem.java:[44,42] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/bridge/MavenRepositorySystem.java:[45,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/bridge/MavenRepositorySystem.java:[46,44] org.apache.maven.artifact.repository.ArtifactRepositoryPolicy in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/bridge/MavenRepositorySystem.java:[49,51] org.apache.maven.artifact.repository.layout.ArtifactRepositoryLayout in org.apache.maven.artifact.repository.layout has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/bridge/MavenRepositorySystem.java:[60,35] org.apache.maven.repository.RepositorySystem in org.apache.maven.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/execution/DefaultMavenExecutionRequest.java:[31,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/execution/DefaultMavenExecutionRequestPopulator.java:[32,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/execution/DefaultMavenExecutionRequestPopulator.java:[34,35] org.apache.maven.repository.RepositorySystem in org.apache.maven.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/execution/SettingsAdapter.java:[28,33] org.apache.maven.settings.RuntimeInfo in org.apache.maven.settings has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/graph/DefaultGraphBuilder.java:[47,39] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/graph/DefaultGraphBuilder.java:[49,39] org.apache.maven.model.building.UrlModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/lifecycle/internal/DefaultProjectArtifactFactory.java:[27,41] org.apache.maven.artifact.factory.ArtifactFactory in org.apache.maven.artifact.factory has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/plugin/PluginManager.java:[23,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/plugin/internal/DefaultMavenPluginManager.java:[51,31] org.apache.maven.plugin.DebugConfigurationListener in org.apache.maven.plugin has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/plugin/internal/DefaultPluginManager.java:[27,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/plugin/internal/DefaultPluginManager.java:[42,31] org.apache.maven.plugin.PluginManager in org.apache.maven.plugin has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/DefaultModelBuildingListener.java:[24,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/ProjectBuildingHelper.java:[24,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/DefaultProjectBuilder.java:[43,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/DefaultProjectBuilder.java:[65,39] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/DefaultProjectBuilder.java:[66,39] org.apache.maven.model.building.StringModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/DefaultProjectBuildingHelper.java:[38,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/DefaultProjectBuildingRequest.java:[27,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/ProjectModelResolver.java:[33,39] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/ActiveProjectArtifact.java:[27,42] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/ActiveProjectArtifact.java:[28,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/AttachedArtifact.java:[29,42] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/AttachedArtifact.java:[30,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/DefaultMavenMetadataCache.java:[37,42] org.apache.maven.artifact.metadata.ResolutionGroup in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/DefaultMavenMetadataCache.java:[38,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/DefaultMavenMetadataCache.java:[39,44] org.apache.maven.artifact.repository.ArtifactRepositoryPolicy in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/MavenMetadataCache.java:[24,42] org.apache.maven.artifact.metadata.ResolutionGroup in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/MavenMetadataCache.java:[25,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/MavenMetadataSource.java:[43,41] org.apache.maven.artifact.factory.ArtifactFactory in org.apache.maven.artifact.factory has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/MavenMetadataSource.java:[44,42] org.apache.maven.artifact.metadata.ArtifactMetadataRetrievalException in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/MavenMetadataSource.java:[45,42] org.apache.maven.artifact.metadata.ArtifactMetadataSource in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/MavenMetadataSource.java:[46,42] org.apache.maven.artifact.metadata.ResolutionGroup in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/MavenMetadataSource.java:[47,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/ProjectArtifactMetadata.java:[25,42] org.apache.maven.artifact.metadata.AbstractArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/ProjectArtifactMetadata.java:[26,42] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/artifact/ProjectArtifactMetadata.java:[27,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/repository/DelegatingLocalArtifactRepository.java:[28,42] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/repository/DelegatingLocalArtifactRepository.java:[29,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/repository/DelegatingLocalArtifactRepository.java:[30,44] org.apache.maven.artifact.repository.ArtifactRepositoryPolicy in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/repository/DelegatingLocalArtifactRepository.java:[32,51] org.apache.maven.artifact.repository.layout.ArtifactRepositoryLayout in org.apache.maven.artifact.repository.layout has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/repository/legacy/metadata/DefaultMetadataResolutionRequest.java:[24,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/execution/MavenSession.java:[94,12] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/MavenProject.java:[124,18] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/MavenProject.java:[126,18] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/MavenProject.java:[144,13] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/MavenProject.java:[146,13] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/MavenProject.java:[773,52] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/MavenProject.java:[778,17] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/MavenProject.java:[786,52] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/MavenProject.java:[795,17] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/MavenProject.java:[803,12] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/MavenProject.java:[949,46] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/MavenProject.java:[953,47] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/MavenProject.java:[1091,15] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/MavenProject.java:[1095,15] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/ProjectBuildingRequest.java:[34,47] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[INFO] /home/srikanth/standoff/apache_maven/maven-core/src/main/java/org/apache/maven/project/ProjectBuildingRequest.java: Some input files additionally use or override a deprecated API.
+[INFO] 
+[INFO] --- animal-sniffer:1.27:check (check-java-compat) @ maven-core ---
+[INFO] Checking unresolved references to org.codehaus.mojo.signature:java18:1.0
+[INFO] 
+[INFO] --- sisu:1.0.1:main-index (index-project) @ maven-core ---
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ maven-core ---
+[INFO] Copying 247 resources from src/test/resources to target/test-classes
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/test-classes
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ maven-core ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 92 source files with javac [debug deprecation release 8] to target/test-classes
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/AbstractCoreMavenComponentTestCase.java:[31,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/AbstractCoreMavenComponentTestCase.java:[47,35] org.apache.maven.repository.RepositorySystem in org.apache.maven.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/AbstractCoreMavenComponentTestCase.java:[48,44] org.apache.maven.repository.internal.MavenRepositorySystemUtils in org.apache.maven.repository.internal has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/execution/DefaultMavenExecutionRequestPopulatorTest.java:[25,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/lifecycle/internal/stub/ProjectDependenciesResolverStub.java:[27,24] org.apache.maven.ProjectDependenciesResolver in org.apache.maven has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/plugin/PluginParameterExpressionEvaluatorTest.java:[33,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/plugin/PluginParameterExpressionEvaluatorTest.java:[46,35] org.apache.maven.repository.RepositorySystem in org.apache.maven.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/AbstractMavenProjectTestCase.java:[29,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/AbstractMavenProjectTestCase.java:[30,51] org.apache.maven.artifact.repository.layout.ArtifactRepositoryLayout in org.apache.maven.artifact.repository.layout has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/AbstractMavenProjectTestCase.java:[33,35] org.apache.maven.repository.RepositorySystem in org.apache.maven.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/AbstractMavenProjectTestCase.java:[34,44] org.apache.maven.repository.internal.MavenRepositorySystemUtils in org.apache.maven.repository.internal has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/DefaultMavenProjectBuilderTest.java:[25,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/EmptyProjectBuildingHelper.java:[24,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/PomConstructionTest.java:[40,35] org.apache.maven.repository.RepositorySystem in org.apache.maven.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/PomConstructionTest.java:[41,44] org.apache.maven.repository.internal.MavenRepositorySystemUtils in org.apache.maven.repository.internal has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/ProjectBuilderTest.java:[39,39] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/ProjectModelResolverTest.java:[32,44] org.apache.maven.repository.internal.MavenRepositorySystemUtils in org.apache.maven.repository.internal has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/TestMetadataSource.java:[27,42] org.apache.maven.artifact.metadata.ArtifactMetadataRetrievalException in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/TestMetadataSource.java:[28,42] org.apache.maven.artifact.metadata.ResolutionGroup in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/TestMetadataSource.java:[29,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/artifact/DefaultMavenMetadataCacheTest.java:[25,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/artifact/DefaultMavenMetadataCacheTest.java:[28,35] org.apache.maven.repository.DelegatingLocalArtifactRepository in org.apache.maven.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/artifact/DefaultMavenMetadataCacheTest.java:[29,35] org.apache.maven.repository.RepositorySystem in org.apache.maven.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/repository/LegacyRepositoryLayout.java:[26,42] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/repository/LegacyRepositoryLayout.java:[27,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/repository/LegacyRepositoryLayout.java:[28,51] org.apache.maven.artifact.repository.layout.ArtifactRepositoryLayout in org.apache.maven.artifact.repository.layout has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/repository/TestRepositorySystem.java:[35,41] org.apache.maven.artifact.factory.ArtifactFactory in org.apache.maven.artifact.factory has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/repository/TestRepositorySystem.java:[36,44] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/repository/TestRepositorySystem.java:[37,44] org.apache.maven.artifact.repository.ArtifactRepositoryPolicy in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/repository/TestRepositorySystem.java:[39,51] org.apache.maven.artifact.repository.layout.ArtifactRepositoryLayout in org.apache.maven.artifact.repository.layout has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/settings/PomConstructionWithSettingsTest.java:[34,44] org.apache.maven.repository.internal.MavenRepositorySystemUtils in org.apache.maven.repository.internal has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/toolchain/DefaultToolchainTest.java:[24,39] org.apache.maven.toolchain.java.DefaultJavaToolChain in org.apache.maven.toolchain.java has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/AbstractCoreMavenComponentTestCase.java:[152,32] MavenSession(org.codehaus.plexus.PlexusContainer,org.eclipse.aether.RepositorySystemSession,org.apache.maven.execution.MavenExecutionRequest,org.apache.maven.execution.MavenExecutionResult) in org.apache.maven.execution.MavenSession has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/AbstractCoreMavenComponentTestCase.java:[162,37] LocalRepository(java.io.File) in org.eclipse.aether.repository.LocalRepository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/AbstractCoreMavenComponentTestCase.java:[163,50] org.apache.maven.repository.internal.MavenRepositorySystemUtils in org.apache.maven.repository.internal has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/AbstractCoreMavenComponentTestCase.java:[163,76] newSession() in org.apache.maven.repository.internal.MavenRepositorySystemUtils has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/AbstractCoreMavenComponentTestCase.java:[176,20] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/AbstractCoreMavenComponentTestCase.java:[185,26] org.apache.maven.repository.RepositorySystem in org.apache.maven.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/AbstractCoreMavenComponentTestCase.java:[193,20] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/AbstractCoreMavenComponentTestCase.java:[197,15] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/ProjectDependenciesResolverTest.java:[43,13] org.apache.maven.ProjectDependenciesResolver in org.apache.maven has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/execution/DefaultMavenExecutionRequestPopulatorTest.java:[57,15] populateFromSettings(org.apache.maven.execution.MavenExecutionRequest,org.apache.maven.settings.Settings) in org.apache.maven.execution.MavenExecutionRequestPopulator has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/execution/DefaultMavenExecutionRequestPopulatorTest.java:[59,14] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/internal/aether/ReverseTreeRepositoryListenerTest.java:[44,43] LocalRepository(java.io.File) in org.eclipse.aether.repository.LocalRepository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/internal/aether/ReverseTreeRepositoryListenerTest.java:[49,37] getFile() in org.eclipse.aether.artifact.Artifact has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/internal/aether/ReverseTreeRepositoryListenerTest.java:[52,39] getFile() in org.eclipse.aether.artifact.Artifact has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/internal/aether/ReverseTreeRepositoryListenerTest.java:[65,43] LocalRepository(java.io.File) in org.eclipse.aether.repository.LocalRepository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/internal/aether/ReverseTreeRepositoryListenerTest.java:[70,37] getFile() in org.eclipse.aether.artifact.Artifact has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/lifecycle/internal/stub/ProjectDependencyGraphStub.java:[204,38] MavenSession(org.codehaus.plexus.PlexusContainer,org.eclipse.aether.RepositorySystemSession,org.apache.maven.execution.MavenExecutionRequest,org.apache.maven.execution.MavenExecutionResult) in org.apache.maven.execution.MavenSession has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/lifecycle/internal/LifecycleModuleBuilderTest.java:[69,38] MavenSession(org.codehaus.plexus.PlexusContainer,org.eclipse.aether.RepositorySystemSession,org.apache.maven.execution.MavenExecutionRequest,org.apache.maven.execution.MavenExecutionResult) in org.apache.maven.execution.MavenSession has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/lifecycle/internal/stub/DefaultLifecyclesStub.java:[74,42] STANDARD_LIFECYCLES in org.apache.maven.lifecycle.DefaultLifecycles has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/lifecycle/internal/stub/ProjectDependenciesResolverStub.java:[44,20] org.apache.maven.ProjectDependenciesResolver in org.apache.maven has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/plugin/PluginParameterExpressionEvaluatorTest.java:[362,33] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/plugin/PluginParameterExpressionEvaluatorTest.java:[412,9] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/plugin/PluginParameterExpressionEvaluatorTest.java:[412,71] org.apache.maven.repository.RepositorySystem in org.apache.maven.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/plugin/internal/DefaultLegacySupportTest.java:[41,27] MavenSession(org.codehaus.plexus.PlexusContainer,org.eclipse.aether.RepositorySystemSession,org.apache.maven.execution.MavenExecutionRequest,org.apache.maven.execution.MavenExecutionResult) in org.apache.maven.execution.MavenSession has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/plugin/internal/DefaultLegacySupportTest.java:[48,27] MavenSession(org.codehaus.plexus.PlexusContainer,org.eclipse.aether.RepositorySystemSession,org.apache.maven.execution.MavenExecutionRequest,org.apache.maven.execution.MavenExecutionResult) in org.apache.maven.execution.MavenSession has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/AbstractMavenProjectTestCase.java:[52,15] org.apache.maven.repository.RepositorySystem in org.apache.maven.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/AbstractMavenProjectTestCase.java:[55,15] org.apache.maven.artifact.repository.layout.ArtifactRepositoryLayout in org.apache.maven.artifact.repository.layout has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/AbstractMavenProjectTestCase.java:[101,15] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/AbstractMavenProjectTestCase.java:[103,9] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/AbstractMavenProjectTestCase.java:[115,63] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/AbstractMavenProjectTestCase.java:[159,54] org.apache.maven.repository.internal.MavenRepositorySystemUtils in org.apache.maven.repository.internal has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/AbstractMavenProjectTestCase.java:[159,80] newSession() in org.apache.maven.repository.internal.MavenRepositorySystemUtils has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/DefaultMavenProjectBuilderTest.java:[154,15] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/DefaultMavenProjectBuilderTest.java:[155,9] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/EmptyProjectBuildingHelper.java:[35,17] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/EmptyProjectBuildingHelper.java:[37,18] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/LegacyLocalRepositoryManager.java:[77,19] getPathForRemoteMetadata(org.eclipse.aether.metadata.Metadata,org.eclipse.aether.repository.RemoteRepository,java.lang.String) in org.eclipse.aether.repository.LocalRepositoryManager has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/LegacyLocalRepositoryManager.java:[73,19] getPathForLocalMetadata(org.eclipse.aether.metadata.Metadata) in org.eclipse.aether.repository.LocalRepositoryManager has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/LegacyLocalRepositoryManager.java:[69,19] getPathForRemoteArtifact(org.eclipse.aether.artifact.Artifact,org.eclipse.aether.repository.RemoteRepository,java.lang.String) in org.eclipse.aether.repository.LocalRepositoryManager has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/LegacyLocalRepositoryManager.java:[51,19] getPathForLocalArtifact(org.eclipse.aether.artifact.Artifact) in org.eclipse.aether.repository.LocalRepositoryManager has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/LegacyLocalRepositoryManager.java:[44,27] LocalRepository(java.io.File,java.lang.String) in org.eclipse.aether.repository.LocalRepository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/LegacyLocalRepositoryManager.java:[118,45] getBasedir() in org.eclipse.aether.repository.LocalRepository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/LegacyLocalRepositoryManager.java:[122,19] setFile(java.io.File) in org.eclipse.aether.repository.LocalArtifactResult has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/LegacyLocalRepositoryManager.java:[148,45] getBasedir() in org.eclipse.aether.repository.LocalRepository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/LegacyLocalRepositoryManager.java:[150,19] setFile(java.io.File) in org.eclipse.aether.repository.LocalMetadataResult has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/MavenProjectTest.java:[60,42] getModulePathAdjustment(org.apache.maven.project.MavenProject) in org.apache.maven.project.MavenProject has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/MavenProjectTest.java:[147,39] getModulePathAdjustment(org.apache.maven.project.MavenProject) in org.apache.maven.project.MavenProject has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/MavenProjectTest.java:[199,24] getSystemClasspathElements() in org.apache.maven.project.MavenProject has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/PomConstructionTest.java:[1401,22] org.apache.maven.repository.RepositorySystem in org.apache.maven.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/PomConstructionTest.java:[1402,22] org.apache.maven.repository.RepositorySystem in org.apache.maven.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/PomConstructionTest.java:[1928,54] org.apache.maven.repository.internal.MavenRepositorySystemUtils in org.apache.maven.repository.internal has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/PomConstructionTest.java:[1928,80] newSession() in org.apache.maven.repository.internal.MavenRepositorySystemUtils has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/PomConstructionTest.java:[1930,17] LocalRepository(java.lang.String) in org.eclipse.aether.repository.LocalRepository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/ProjectBuilderTest.java:[83,9] org.apache.maven.model.building.ModelSource in org.apache.maven.model.building has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/ProjectModelResolverTest.java:[214,60] org.apache.maven.repository.internal.MavenRepositorySystemUtils in org.apache.maven.repository.internal has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/ProjectModelResolverTest.java:[214,86] newSession() in org.apache.maven.repository.internal.MavenRepositorySystemUtils has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/ProjectModelResolverTest.java:[216,73] LocalRepository(java.io.File) in org.eclipse.aether.repository.LocalRepository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/ProjectModelResolverTest.java:[232,52] org.apache.maven.repository.RepositorySystem in org.apache.maven.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/artifact/DefaultMavenMetadataCacheTest.java:[41,13] org.apache.maven.repository.RepositorySystem in org.apache.maven.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/artifact/DefaultMavenMetadataCacheTest.java:[53,9] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/project/artifact/DefaultMavenMetadataCacheTest.java:[59,9] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/repository/LegacyRepositoryLayout.java:[35,48] org.apache.maven.artifact.repository.layout.ArtifactRepositoryLayout in org.apache.maven.artifact.repository.layout has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/repository/LegacyRepositoryLayout.java:[63,49] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/repository/LegacyRepositoryLayout.java:[63,76] org.apache.maven.artifact.repository.ArtifactRepository in org.apache.maven.artifact.repository has been deprecated
+[WARNING] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/repository/LegacyRepositoryLayout.java:[67,45] org.apache.maven.artifact.metadata.ArtifactMetadata in org.apache.maven.artifact.metadata has been deprecated
+[INFO] /home/srikanth/standoff/apache_maven/maven-core/src/test/java/org/apache/maven/repository/LegacyRepositoryLayout.java: Some input files additionally use or override a deprecated API.
+[INFO] 
+[INFO] --- sisu:1.0.1:test-index (index-project) @ maven-core ---
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ maven-core ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- jar:3.5.0:jar (default-jar) @ maven-core ---
+[INFO] Building jar: /home/srikanth/standoff/apache_maven/maven-core/target/maven-core-3.10.0-rc-1.jar
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for Apache Maven 3.10.0-rc-1:
+[INFO] 
+[INFO] Apache Maven ....................................... SUCCESS [ 20.771 s]
+[INFO] Maven Model ........................................ SUCCESS [ 38.461 s]
+[INFO] Maven Artifact ..................................... SUCCESS [  7.099 s]
+[INFO] Maven Plugin API ................................... SUCCESS [  2.591 s]
+[INFO] Maven Builder Support .............................. SUCCESS [  1.118 s]
+[INFO] Maven Model Builder ................................ SUCCESS [  6.000 s]
+[INFO] Maven Settings ..................................... SUCCESS [  0.463 s]
+[INFO] Maven Settings Builder ............................. SUCCESS [  1.392 s]
+[INFO] Maven Repository Metadata Model .................... SUCCESS [  0.697 s]
+[INFO] Maven Artifact Resolver Provider ................... SUCCESS [  4.859 s]
+[INFO] Maven Core ......................................... SUCCESS [ 18.138 s]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  01:42 min
+[INFO] Finished at: 2026-09-06T01:59:08Z
+[INFO] ------------------------------------------------------------------------

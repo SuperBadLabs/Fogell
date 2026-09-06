@@ -1,0 +1,21 @@
+version: 1
+name: "standoff-apache_dubbo"
+stages:
+  - id: "s0"
+    name: "Toolchain"
+    steps:
+      - process:
+          program: "/bin/sh"
+          args: ["-c", "JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 /home/srikanth/fogell-build-jenkins/maven/bin/mvn --version"]
+  - id: "s1"
+    name: "Build"
+    steps:
+      - process:
+          program: "/bin/sh"
+          args: ["-c", "cd /home/srikanth/standoff/apache_dubbo && JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 /home/srikanth/fogell-build-jenkins/maven/bin/mvn -B -o -DskipTests -Dspotbugs.skip=true -Dcheckstyle.skip=true -Dmaven.javadoc.skip=true -Drat.skip=true -Dmaven.source.skip=true -Ddevelocity.cache.local.enabled=false -pl :dubbo-common -am clean package"]
+  - id: "s2"
+    name: "Verify artifact"
+    steps:
+      - process:
+          program: "/bin/sh"
+          args: ["-c", "find /home/srikanth/standoff/apache_dubbo -path '*/target/*.jar' -print -quit | grep -q ."]

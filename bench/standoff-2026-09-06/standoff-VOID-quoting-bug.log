@@ -1,0 +1,145 @@
+=== round 1  jenkinsci_git-plugin  (order: jenkins mcloving fogell) ===
+  jenkins   FAILED: jenkins FAILURE
+  mcloving    23627 ms
+  fogell    FAILED: exit 1: ---
+| [INFO] Total time:  01:33 min
+| [INFO] Finished at: 2026-09-06T02:09:41Z
+| [INFO] ------------------------------------------------------------------------
+=== round 1  apache_activemq  (order: mcloving fogell jenkins) ===
+  mcloving    31576 ms
+  fogell    FAILED: exit 1: ----
+| [INFO] Total time:  32.915 s
+| [INFO] Finished at: 2026-09-06T02:10:51Z
+| [INFO] ------------------------------------------------------------------------
+  jenkins   FAILED: jenkins FAILURE
+=== round 1  apache_cxf  (order: fogell jenkins mcloving) ===
+  fogell    FAILED: exit 1: ---
+| [INFO] Total time:  01:14 min
+| [INFO] Finished at: 2026-09-06T02:12:12Z
+| [INFO] ------------------------------------------------------------------------
+  jenkins   FAILED: jenkins FAILURE
+  mcloving    66077 ms
+=== round 1  apache_dubbo  (order: jenkins mcloving fogell) ===
+  jenkins   FAILED: jenkins FAILURE
+  mcloving    59810 ms
+  fogell    FAILED: exit 1: ---
+| [INFO] Total time:  01:12 min
+| [INFO] Finished at: 2026-09-06T02:15:37Z
+| [INFO] ------------------------------------------------------------------------
+=== round 1  apache_maven  (order: mcloving fogell jenkins) ===
+  mcloving    58764 ms
+  fogell    FAILED: exit 1: ---
+| [INFO] Total time:  01:07 min
+| [INFO] Finished at: 2026-09-06T02:17:49Z
+| [INFO] ------------------------------------------------------------------------
+  jenkins   FAILED: jenkins FAILURE
+=== round 1  apache_camel  (order: fogell jenkins mcloving) ===
+  fogell    FAILED: exit 1: ot be published at this time, but it can be published if you run the 'com.gradle:develocity-maven-extension:build-scan-publish-previous' goal in the next build.
+  jenkins   FAILED: jenkins FAILURE
+  mcloving    95436 ms
+=== round 2  jenkinsci_git-plugin  (order: mcloving fogell jenkins) ===
+  mcloving    55697 ms
+  fogell    FAILED: exit 1: ---
+| [INFO] Total time:  01:00 min
+| [INFO] Finished at: 2026-09-06T02:23:31Z
+| [INFO] ------------------------------------------------------------------------
+  jenkins   FAILED: jenkins FAILURE
+=== round 2  apache_activemq  (order: fogell jenkins mcloving) ===
+  fogell    FAILED: exit 1: ----
+| [INFO] Total time:  33.192 s
+| [INFO] Finished at: 2026-09-06T02:24:10Z
+| [INFO] ------------------------------------------------------------------------
+  jenkins   FAILED: jenkins FAILURE
+  mcloving    31491 ms
+=== round 2  apache_cxf  (order: jenkins mcloving fogell) ===
+  jenkins   FAILED: jenkins FAILURE
+  mcloving    67005 ms
+  fogell    FAILED: exit 1: ---
+| [INFO] Total time:  01:14 min
+| [INFO] Finished at: 2026-09-06T02:27:09Z
+| [INFO] ------------------------------------------------------------------------
+=== round 2  apache_dubbo  (order: mcloving fogell jenkins) ===
+  mcloving    62093 ms
+  fogell    FAILED: exit 1: ---
+| [INFO] Total time:  01:12 min
+| [INFO] Finished at: 2026-09-06T02:29:28Z
+| [INFO] ------------------------------------------------------------------------
+  jenkins   FAILED: jenkins FAILURE
+=== round 2  apache_maven  (order: fogell jenkins mcloving) ===
+  fogell    FAILED: exit 1: ---
+| [INFO] Total time:  01:06 min
+| [INFO] Finished at: 2026-09-06T02:30:40Z
+| [INFO] ------------------------------------------------------------------------
+  jenkins   FAILED: jenkins FAILURE
+  mcloving    57826 ms
+=== round 2  apache_camel  (order: jenkins mcloving fogell) ===
+  jenkins   FAILED: jenkins FAILURE
+  mcloving    94478 ms
+  fogell    FAILED: exit 1: ot be published at this time, but it can be published if you run the 'com.gradle:develocity-maven-extension:build-scan-publish-previous' goal in the next build.
+
+=== per-project medians (ms) ===
+project                     fogell   jenkins  mcloving
+jenkinsci_git-plugin            --        --     39662
+apache_activemq                 --        --     31533
+apache_cxf                      --        --     66541
+apache_dubbo                    --        --     60951
+apache_maven                    --        --     58295
+apache_camel                    --        --     94957
+
+!! 24 FAILED RUN(S) -- refusing an overall ratio; a fast failure
+   is indistinguishable from a fast win.
+   jenkins jenkinsci_git-plugin r1: jenkins FAILURE
+   fogell jenkinsci_git-plugin r1: exit 1: ---
+| [INFO] Total time:  01:33 min
+| [INFO] Finished at: 2026-09-06T02:09:41Z
+| [INFO] ------------------------------------------------------------------------
+   fogell apache_activemq r1: exit 1: ----
+| [INFO] Total time:  32.915 s
+| [INFO] Finished at: 2026-09-06T02:10:51Z
+| [INFO] ------------------------------------------------------------------------
+   jenkins apache_activemq r1: jenkins FAILURE
+   fogell apache_cxf r1: exit 1: ---
+| [INFO] Total time:  01:14 min
+| [INFO] Finished at: 2026-09-06T02:12:12Z
+| [INFO] ------------------------------------------------------------------------
+   jenkins apache_cxf r1: jenkins FAILURE
+   jenkins apache_dubbo r1: jenkins FAILURE
+   fogell apache_dubbo r1: exit 1: ---
+| [INFO] Total time:  01:12 min
+| [INFO] Finished at: 2026-09-06T02:15:37Z
+| [INFO] ------------------------------------------------------------------------
+   fogell apache_maven r1: exit 1: ---
+| [INFO] Total time:  01:07 min
+| [INFO] Finished at: 2026-09-06T02:17:49Z
+| [INFO] ------------------------------------------------------------------------
+   jenkins apache_maven r1: jenkins FAILURE
+   fogell apache_camel r1: exit 1: ot be published at this time, but it can be published if you run the 'com.gradle:develocity-maven-extension:build-scan-publish-previous' goal in the next build.
+   jenkins apache_camel r1: jenkins FAILURE
+   fogell jenkinsci_git-plugin r2: exit 1: ---
+| [INFO] Total time:  01:00 min
+| [INFO] Finished at: 2026-09-06T02:23:31Z
+| [INFO] ------------------------------------------------------------------------
+   jenkins jenkinsci_git-plugin r2: jenkins FAILURE
+   fogell apache_activemq r2: exit 1: ----
+| [INFO] Total time:  33.192 s
+| [INFO] Finished at: 2026-09-06T02:24:10Z
+| [INFO] ------------------------------------------------------------------------
+   jenkins apache_activemq r2: jenkins FAILURE
+   jenkins apache_cxf r2: jenkins FAILURE
+   fogell apache_cxf r2: exit 1: ---
+| [INFO] Total time:  01:14 min
+| [INFO] Finished at: 2026-09-06T02:27:09Z
+| [INFO] ------------------------------------------------------------------------
+   fogell apache_dubbo r2: exit 1: ---
+| [INFO] Total time:  01:12 min
+| [INFO] Finished at: 2026-09-06T02:29:28Z
+| [INFO] ------------------------------------------------------------------------
+   jenkins apache_dubbo r2: jenkins FAILURE
+   fogell apache_maven r2: exit 1: ---
+| [INFO] Total time:  01:06 min
+| [INFO] Finished at: 2026-09-06T02:30:40Z
+| [INFO] ------------------------------------------------------------------------
+   jenkins apache_maven r2: jenkins FAILURE
+   jenkins apache_camel r2: jenkins FAILURE
+   fogell apache_camel r2: exit 1: ot be published at this time, but it can be published if you run the 'com.gradle:develocity-maven-extension:build-scan-publish-previous' goal in the next build.
+EXIT=0

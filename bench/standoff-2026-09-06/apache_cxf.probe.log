@@ -1,0 +1,820 @@
+[INFO] Scanning for projects...
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/felix/maven-bundle-plugin/6.0.2/maven-bundle-plugin-6.0.2.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/felix/maven-bundle-plugin/6.0.2/maven-bundle-plugin-6.0.2.pom (11 kB at 17 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/felix/felix-parent/9/felix-parent-9.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/felix/felix-parent/9/felix-parent-9.pom (21 kB at 625 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.core/6.0.0/org.osgi.core-6.0.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.core/6.0.0/org.osgi.core-6.0.0.pom (1.1 kB at 40 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/biz/aQute/bnd/biz.aQute.bndlib/7.0.0/biz.aQute.bndlib-7.0.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/biz/aQute/bnd/biz.aQute.bndlib/7.0.0/biz.aQute.bndlib-7.0.0.pom (5.2 kB at 146 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.dto/1.0.0/org.osgi.dto-1.0.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.dto/1.0.0/org.osgi.dto-1.0.0.pom (1.3 kB at 41 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.resource/1.0.0/org.osgi.resource-1.0.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.resource/1.0.0/org.osgi.resource-1.0.0.pom (1.3 kB at 13 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.framework/1.8.0/org.osgi.framework-1.8.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.framework/1.8.0/org.osgi.framework-1.8.0.pom (1.3 kB at 15 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.util.tracker/1.5.4/org.osgi.util.tracker-1.5.4.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.util.tracker/1.5.4/org.osgi.util.tracker-1.5.4.pom (1.9 kB at 28 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/osgi.annotation/8.0.1/osgi.annotation-8.0.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/osgi.annotation/8.0.1/osgi.annotation-8.0.1.pom (1.5 kB at 26 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.service.log/1.3.0/org.osgi.service.log-1.3.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.service.log/1.3.0/org.osgi.service.log-1.3.0.pom (1.3 kB at 13 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.service.repository/1.1.0/org.osgi.service.repository-1.1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.service.repository/1.1.0/org.osgi.service.repository-1.1.0.pom (1.3 kB at 24 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.util.function/1.2.0/org.osgi.util.function-1.2.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.util.function/1.2.0/org.osgi.util.function-1.2.0.pom (1.7 kB at 45 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.util.promise/1.2.0/org.osgi.util.promise-1.2.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.util.promise/1.2.0/org.osgi.util.promise-1.2.0.pom (1.9 kB at 65 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.util.function/1.1.0/org.osgi.util.function-1.1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.util.function/1.1.0/org.osgi.util.function-1.1.0.pom (1.4 kB at 49 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/biz/aQute/bnd/biz.aQute.bnd.util/7.0.0/biz.aQute.bnd.util-7.0.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/biz/aQute/bnd/biz.aQute.bnd.util/7.0.0/biz.aQute.bnd.util-7.0.0.pom (2.7 kB at 95 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/1.7.25/slf4j-api-1.7.25.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/1.7.25/slf4j-api-1.7.25.pom (3.8 kB at 128 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/slf4j/slf4j-parent/1.7.25/slf4j-parent-1.7.25.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/slf4j/slf4j-parent/1.7.25/slf4j-parent-1.7.25.pom (14 kB at 409 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/felix/org.apache.felix.bundlerepository/1.6.6/org.apache.felix.bundlerepository-1.6.6.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/felix/org.apache.felix.bundlerepository/1.6.6/org.apache.felix.bundlerepository-1.6.6.pom (5.9 kB at 203 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/felix/felix-parent/2.1/felix-parent-2.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/felix/felix-parent/2.1/felix-parent-2.1.pom (9.7 kB at 358 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.core/4.1.0/org.osgi.core-4.1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.core/4.1.0/org.osgi.core-4.1.0.pom (193 B at 6.7 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/easymock/easymock/2.4/easymock-2.4.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/easymock/easymock/2.4/easymock-2.4.pom (5.3 kB at 172 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/felix/org.apache.felix.utils/1.6.0/org.apache.felix.utils-1.6.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/felix/org.apache.felix.utils/1.6.0/org.apache.felix.utils-1.6.0.pom (3.3 kB at 121 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.compendium/4.2.0/org.osgi.compendium-4.2.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.compendium/4.2.0/org.osgi.compendium-4.2.0.pom (463 B at 17 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-utils/3.0.15/plexus-utils-3.0.15.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-utils/3.0.15/plexus-utils-3.0.15.pom (3.1 kB at 105 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/eclipse/sisu/org.eclipse.sisu.plexus/0.0.0.M5/org.eclipse.sisu.plexus-0.0.0.M5.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/eclipse/sisu/org.eclipse.sisu.plexus/0.0.0.M5/org.eclipse.sisu.plexus-0.0.0.M5.pom (4.8 kB at 186 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/eclipse/sisu/sisu-plexus/0.0.0.M5/sisu-plexus-0.0.0.M5.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/eclipse/sisu/sisu-plexus/0.0.0.M5/sisu-plexus-0.0.0.M5.pom (13 kB at 472 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/google/guava/guava/10.0.1/guava-10.0.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/google/guava/guava/10.0.1/guava-10.0.1.pom (5.4 kB at 215 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/google/guava/guava-parent/10.0.1/guava-parent-10.0.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/google/guava/guava-parent/10.0.1/guava-parent-10.0.1.pom (2.0 kB at 89 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/sonatype/sisu/sisu-guice/3.1.0/sisu-guice-3.1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/sonatype/sisu/sisu-guice/3.1.0/sisu-guice-3.1.0.pom (10 kB at 327 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/sonatype/sisu/inject/guice-parent/3.1.0/guice-parent-3.1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/sonatype/sisu/inject/guice-parent/3.1.0/guice-parent-3.1.0.pom (11 kB at 377 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/eclipse/sisu/org.eclipse.sisu.inject/0.0.0.M5/org.eclipse.sisu.inject-0.0.0.M5.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/eclipse/sisu/org.eclipse.sisu.inject/0.0.0.M5/org.eclipse.sisu.inject-0.0.0.M5.pom (2.5 kB at 84 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/eclipse/sisu/sisu-inject/0.0.0.M5/sisu-inject-0.0.0.M5.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/eclipse/sisu/sisu-inject/0.0.0.M5/sisu-inject-0.0.0.M5.pom (14 kB at 424 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-classworlds/2.4/plexus-classworlds-2.4.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-classworlds/2.4/plexus-classworlds-2.4.pom (3.9 kB at 144 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-utils/2.1/plexus-utils-2.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-utils/2.1/plexus-utils-2.1.pom (4.0 kB at 139 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/sonatype/spice/spice-parent/16/spice-parent-16.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/sonatype/spice/spice-parent/16/spice-parent-16.pom (8.4 kB at 310 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/shared/maven-dependency-tree/3.0/maven-dependency-tree-3.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/shared/maven-dependency-tree/3.0/maven-dependency-tree-3.0.pom (7.4 kB at 254 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/shared/maven-shared-components/21/maven-shared-components-21.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/shared/maven-shared-components/21/maven-shared-components-21.pom (5.1 kB at 91 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-component-annotations/1.6/plexus-component-annotations-1.6.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-component-annotations/1.6/plexus-component-annotations-1.6.pom (748 B at 21 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-containers/1.6/plexus-containers-1.6.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-containers/1.6/plexus-containers-1.6.pom (3.8 kB at 151 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus/3.3.2/plexus-3.3.2.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus/3.3.2/plexus-3.3.2.pom (22 kB at 828 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-site-renderer/1.0/doxia-site-renderer-1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-site-renderer/1.0/doxia-site-renderer-1.0.pom (4.4 kB at 184 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-sitetools/1.0/doxia-sitetools-1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-sitetools/1.0/doxia-sitetools-1.0.pom (9.6 kB at 383 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-core/1.0/doxia-core-1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-core/1.0/doxia-core-1.0.pom (2.4 kB at 86 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-utils/1.5.7/plexus-utils-1.5.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-utils/1.5.7/plexus-utils-1.5.7.pom (8.1 kB at 299 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-i18n/1.0-beta-7/plexus-i18n-1.0-beta-7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-i18n/1.0-beta-7/plexus-i18n-1.0-beta-7.pom (1.1 kB at 37 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-utils/1.4.1/plexus-utils-1.4.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-utils/1.4.1/plexus-utils-1.4.1.pom (1.9 kB at 83 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-velocity/1.1.7/plexus-velocity-1.1.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-velocity/1.1.7/plexus-velocity-1.1.7.pom (2.0 kB at 70 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-container-default/1.0-alpha-20/plexus-container-default-1.0-alpha-20.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-container-default/1.0-alpha-20/plexus-container-default-1.0-alpha-20.pom (3.0 kB at 111 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-containers/1.0-alpha-20/plexus-containers-1.0-alpha-20.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-containers/1.0-alpha-20/plexus-containers-1.0-alpha-20.pom (1.9 kB at 79 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-utils/1.3/plexus-utils-1.3.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-utils/1.3/plexus-utils-1.3.pom (1.0 kB at 41 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus/1.0.8/plexus-1.0.8.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus/1.0.8/plexus-1.0.8.pom (7.2 kB at 289 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-classworlds/1.2-alpha-7/plexus-classworlds-1.2-alpha-7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-classworlds/1.2-alpha-7/plexus-classworlds-1.2-alpha-7.pom (2.4 kB at 99 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus/1.0.9/plexus-1.0.9.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus/1.0.9/plexus-1.0.9.pom (7.7 kB at 274 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/velocity/velocity/1.5/velocity-1.5.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/velocity/velocity/1.5/velocity-1.5.pom (7.8 kB at 222 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/commons-lang/commons-lang/2.1/commons-lang-2.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/commons-lang/commons-lang/2.1/commons-lang-2.1.pom (9.9 kB at 320 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-decoration-model/1.0/doxia-decoration-model-1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-decoration-model/1.0/doxia-decoration-model-1.0.pom (3.2 kB at 117 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-module-apt/1.0/doxia-module-apt-1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-module-apt/1.0/doxia-module-apt-1.0.pom (2.3 kB at 90 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-modules/1.0/doxia-modules-1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-modules/1.0/doxia-modules-1.0.pom (2.4 kB at 83 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-module-fml/1.0/doxia-module-fml-1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-module-fml/1.0/doxia-module-fml-1.0.pom (2.7 kB at 46 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-module-xdoc/1.0/doxia-module-xdoc-1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-module-xdoc/1.0/doxia-module-xdoc-1.0.pom (2.2 kB at 39 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-module-xhtml/1.0/doxia-module-xhtml-1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-module-xhtml/1.0/doxia-module-xhtml-1.0.pom (1.6 kB at 30 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/felix/maven-bundle-plugin/6.0.2/maven-bundle-plugin-6.0.2.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/felix/maven-bundle-plugin/6.0.2/maven-bundle-plugin-6.0.2.jar (213 kB at 3.3 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.core/6.0.0/org.osgi.core-6.0.0.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/biz/aQute/bnd/biz.aQute.bndlib/7.0.0/biz.aQute.bndlib-7.0.0.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.dto/1.0.0/org.osgi.dto-1.0.0.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.resource/1.0.0/org.osgi.resource-1.0.0.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.framework/1.8.0/org.osgi.framework-1.8.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.core/6.0.0/org.osgi.core-6.0.0.jar (475 kB at 2.7 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.util.tracker/1.5.4/org.osgi.util.tracker-1.5.4.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.dto/1.0.0/org.osgi.dto-1.0.0.jar (15 kB at 86 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/osgi.annotation/8.0.1/osgi.annotation-8.0.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.resource/1.0.0/org.osgi.resource-1.0.0.jar (33 kB at 160 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.service.log/1.3.0/org.osgi.service.log-1.3.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/osgi.annotation/8.0.1/osgi.annotation-8.0.1.jar (37 kB at 179 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.service.repository/1.1.0/org.osgi.service.repository-1.1.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.util.tracker/1.5.4/org.osgi.util.tracker-1.5.4.jar (44 kB at 205 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.util.function/1.2.0/org.osgi.util.function-1.2.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.service.log/1.3.0/org.osgi.service.log-1.3.0.jar (17 kB at 72 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.util.promise/1.2.0/org.osgi.util.promise-1.2.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.util.function/1.2.0/org.osgi.util.function-1.2.0.jar (24 kB at 98 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/biz/aQute/bnd/biz.aQute.bnd.util/7.0.0/biz.aQute.bnd.util-7.0.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.framework/1.8.0/org.osgi.framework-1.8.0.jar (345 kB at 1.4 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/1.7.25/slf4j-api-1.7.25.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.service.repository/1.1.0/org.osgi.service.repository-1.1.0.jar (25 kB at 101 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/felix/org.apache.felix.bundlerepository/1.6.6/org.apache.felix.bundlerepository-1.6.6.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.util.promise/1.2.0/org.osgi.util.promise-1.2.0.jar (83 kB at 320 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/easymock/easymock/2.4/easymock-2.4.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/1.7.25/slf4j-api-1.7.25.jar (41 kB at 144 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/felix/org.apache.felix.utils/1.6.0/org.apache.felix.utils-1.6.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/easymock/easymock/2.4/easymock-2.4.jar (81 kB at 273 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.compendium/4.2.0/org.osgi.compendium-4.2.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/felix/org.apache.felix.bundlerepository/1.6.6/org.apache.felix.bundlerepository-1.6.6.jar (168 kB at 543 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-artifact/3.1.1/maven-artifact-3.1.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/biz/aQute/bnd/biz.aQute.bnd.util/7.0.0/biz.aQute.bnd.util-7.0.0.jar (442 kB at 1.4 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-model/3.1.1/maven-model-3.1.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/felix/org.apache.felix.utils/1.6.0/org.apache.felix.utils-1.6.0.jar (68 kB at 206 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-core/3.1.1/maven-core-3.1.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-artifact/3.1.1/maven-artifact-3.1.1.jar (52 kB at 151 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-settings/3.1.1/maven-settings-3.1.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-model/3.1.1/maven-model-3.1.1.jar (154 kB at 412 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-settings-builder/3.1.1/maven-settings-builder-3.1.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-settings/3.1.1/maven-settings-3.1.1.jar (42 kB at 110 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-repository-metadata/3.1.1/maven-repository-metadata-3.1.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/osgi/org.osgi.compendium/4.2.0/org.osgi.compendium-4.2.0.jar (614 kB at 1.6 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-plugin-api/3.1.1/maven-plugin-api-3.1.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-settings-builder/3.1.1/maven-settings-builder-3.1.1.jar (42 kB at 103 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-model-builder/3.1.1/maven-model-builder-3.1.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-repository-metadata/3.1.1/maven-repository-metadata-3.1.1.jar (25 kB at 61 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-aether-provider/3.1.1/maven-aether-provider-3.1.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-core/3.1.1/maven-core-3.1.1.jar (557 kB at 1.3 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/eclipse/aether/aether-spi/0.9.0.M2/aether-spi-0.9.0.M2.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-plugin-api/3.1.1/maven-plugin-api-3.1.1.jar (45 kB at 108 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/eclipse/aether/aether-impl/0.9.0.M2/aether-impl-0.9.0.M2.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-model-builder/3.1.1/maven-model-builder-3.1.1.jar (160 kB at 361 kB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/maven-aether-provider/3.1.1/maven-aether-provider-3.1.1.jar (60 kB at 135 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/eclipse/aether/aether-api/0.9.0.M2/aether-api-0.9.0.M2.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/eclipse/sisu/org.eclipse.sisu.plexus/0.0.0.M5/org.eclipse.sisu.plexus-0.0.0.M5.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/eclipse/aether/aether-spi/0.9.0.M2/aether-spi-0.9.0.M2.jar (18 kB at 39 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/google/guava/guava/10.0.1/guava-10.0.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/eclipse/aether/aether-impl/0.9.0.M2/aether-impl-0.9.0.M2.jar (145 kB at 314 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/google/code/findbugs/jsr305/1.3.9/jsr305-1.3.9.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/eclipse/aether/aether-api/0.9.0.M2/aether-api-0.9.0.M2.jar (134 kB at 276 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/sonatype/sisu/sisu-guice/3.1.0/sisu-guice-3.1.0-no_aop.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/eclipse/sisu/org.eclipse.sisu.plexus/0.0.0.M5/org.eclipse.sisu.plexus-0.0.0.M5.jar (197 kB at 403 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/eclipse/sisu/org.eclipse.sisu.inject/0.0.0.M5/org.eclipse.sisu.inject-0.0.0.M5.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/google/code/findbugs/jsr305/1.3.9/jsr305-1.3.9.jar (33 kB at 67 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-classworlds/2.5.1/plexus-classworlds-2.5.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/biz/aQute/bnd/biz.aQute.bndlib/7.0.0/biz.aQute.bndlib-7.0.0.jar (3.2 MB at 6.2 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/shared/maven-shared-utils/3.3.3/maven-shared-utils-3.3.3.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/sonatype/sisu/sisu-guice/3.1.0/sisu-guice-3.1.0-no_aop.jar (357 kB at 678 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/shared/maven-dependency-tree/3.0/maven-dependency-tree-3.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-classworlds/2.5.1/plexus-classworlds-2.5.1.jar (50 kB at 115 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-component-annotations/1.6/plexus-component-annotations-1.6.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/eclipse/sisu/org.eclipse.sisu.inject/0.0.0.M5/org.eclipse.sisu.inject-0.0.0.M5.jar (291 kB at 545 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/eclipse/aether/aether-util/0.9.0.M2/aether-util-0.9.0.M2.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/shared/maven-shared-utils/3.3.3/maven-shared-utils-3.3.3.jar (154 kB at 341 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-site-renderer/1.0/doxia-site-renderer-1.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/shared/maven-dependency-tree/3.0/maven-dependency-tree-3.0.jar (37 kB at 80 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-core/1.0/doxia-core-1.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-component-annotations/1.6/plexus-component-annotations-1.6.jar (4.3 kB at 9.2 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-i18n/1.0-beta-7/plexus-i18n-1.0-beta-7.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/google/guava/guava/10.0.1/guava-10.0.1.jar (1.5 MB at 2.6 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-container-default/1.0-alpha-30/plexus-container-default-1.0-alpha-30.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/eclipse/aether/aether-util/0.9.0.M2/aether-util-0.9.0.M2.jar (134 kB at 282 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/junit/junit/3.8.1/junit-3.8.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-core/1.0/doxia-core-1.0.jar (55 kB at 114 kB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-site-renderer/1.0/doxia-site-renderer-1.0.jar (47 kB at 97 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-velocity/1.1.7/plexus-velocity-1.1.7.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/velocity/velocity/1.5/velocity-1.5.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-i18n/1.0-beta-7/plexus-i18n-1.0-beta-7.jar (11 kB at 22 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/commons-lang/commons-lang/2.1/commons-lang-2.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-velocity/1.1.7/plexus-velocity-1.1.7.jar (7.7 kB at 15 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-decoration-model/1.0/doxia-decoration-model-1.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/junit/junit/3.8.1/junit-3.8.1.jar (121 kB at 236 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/commons-collections/commons-collections/3.2/commons-collections-3.2.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-container-default/1.0-alpha-30/plexus-container-default-1.0-alpha-30.jar (237 kB at 463 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-module-apt/1.0/doxia-module-apt-1.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/velocity/velocity/1.5/velocity-1.5.jar (392 kB at 751 kB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/commons-lang/commons-lang/2.1/commons-lang-2.1.jar (208 kB at 397 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-module-fml/1.0/doxia-module-fml-1.0.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-module-xdoc/1.0/doxia-module-xdoc-1.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-decoration-model/1.0/doxia-decoration-model-1.0.jar (49 kB at 92 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-module-xhtml/1.0/doxia-module-xhtml-1.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-module-apt/1.0/doxia-module-apt-1.0.jar (47 kB at 87 kB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-module-xdoc/1.0/doxia-module-xdoc-1.0.jar (28 kB at 51 kB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-module-xhtml/1.0/doxia-module-xhtml-1.0.jar (22 kB at 39 kB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/doxia/doxia-module-fml/1.0/doxia-module-fml-1.0.jar (19 kB at 34 kB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/commons-collections/commons-collections/3.2/commons-collections-3.2.jar (571 kB at 1.0 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/io/opentelemetry/opentelemetry-bom/1.64.0/opentelemetry-bom-1.64.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/io/opentelemetry/opentelemetry-bom/1.64.0/opentelemetry-bom-1.64.0.pom (6.0 kB at 159 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/archetype/archetype-packaging/3.4.1/archetype-packaging-3.4.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/archetype/archetype-packaging/3.4.1/archetype-packaging-3.4.1.pom (1.6 kB at 48 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/archetype/maven-archetype/3.4.1/maven-archetype-3.4.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/archetype/maven-archetype/3.4.1/maven-archetype-3.4.1.pom (9.8 kB at 317 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/groovy/groovy-bom/4.0.28/groovy-bom-4.0.28.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/groovy/groovy-bom/4.0.28/groovy-bom-4.0.28.pom (27 kB at 758 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/archetype/archetype-packaging/3.4.1/archetype-packaging-3.4.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/archetype/archetype-packaging/3.4.1/archetype-packaging-3.4.1.jar (7.8 kB at 253 kB/s)
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] Apache CXF                                                         [pom]
+[INFO] Apache CXF Parent                                                  [pom]
+[INFO] Apache CXF Core                                                 [bundle]
+[INFO] 
+[INFO] -------------------------< org.apache.cxf:cxf >-------------------------
+[INFO] Building Apache CXF 4.2.3                                          [1/3]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ cxf ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-maven) @ cxf ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[INFO] Rule 2: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] ---------------------< org.apache.cxf:cxf-parent >----------------------
+[INFO] Building Apache CXF Parent 4.2.3                                   [2/3]
+[INFO]   from parent/pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/plugins/maven-pmd-plugin/3.28.0/maven-pmd-plugin-3.28.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/plugins/maven-pmd-plugin/3.28.0/maven-pmd-plugin-3.28.0.pom (14 kB at 294 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/plugins/maven-pmd-plugin/3.28.0/maven-pmd-plugin-3.28.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/plugins/maven-pmd-plugin/3.28.0/maven-pmd-plugin-3.28.0.jar (159 kB at 4.2 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/cxf/build-utils/cxf-xml2fastinfoset-plugin/4.1.4/cxf-xml2fastinfoset-plugin-4.1.4.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/cxf/build-utils/cxf-xml2fastinfoset-plugin/4.1.4/cxf-xml2fastinfoset-plugin-4.1.4.pom (3.5 kB at 11 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/cxf/build-utils/cxf-build-utils/4.1.4/cxf-build-utils-4.1.4.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/cxf/build-utils/cxf-build-utils/4.1.4/cxf-build-utils-4.1.4.pom (11 kB at 52 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/cxf/build-utils/cxf-xml2fastinfoset-plugin/4.1.4/cxf-xml2fastinfoset-plugin-4.1.4.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/cxf/build-utils/cxf-xml2fastinfoset-plugin/4.1.4/cxf-xml2fastinfoset-plugin-4.1.4.jar (15 kB at 67 kB/s)
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ cxf-parent ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-maven) @ cxf-parent ---
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[INFO] Rule 1: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[INFO] Rule 2: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- checkstyle:3.6.0:checkstyle (validate) @ cxf-parent ---
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/cxf/build-utils/cxf-buildtools/4.1.4/cxf-buildtools-4.1.4.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/cxf/build-utils/cxf-buildtools/4.1.4/cxf-buildtools-4.1.4.pom (3.1 kB at 19 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/puppycrawl/tools/checkstyle/13.8.0/checkstyle-13.8.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/puppycrawl/tools/checkstyle/13.8.0/checkstyle-13.8.0.pom (259 kB at 4.6 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/junit/junit-bom/6.1.1/junit-bom-6.1.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/junit/junit-bom/6.1.1/junit-bom-6.1.1.pom (5.4 kB at 139 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/cxf/build-utils/cxf-buildtools/4.1.4/cxf-buildtools-4.1.4.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/cxf/build-utils/cxf-buildtools/4.1.4/cxf-buildtools-4.1.4.jar (28 kB at 130 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/puppycrawl/tools/checkstyle/13.8.0/checkstyle-13.8.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/puppycrawl/tools/checkstyle/13.8.0/checkstyle-13.8.0.jar (2.2 MB at 24 MB/s)
+[INFO] Skipping org.apache.maven.plugins:maven-checkstyle-plugin:3.6.0:checkstyle report goal
+[INFO] 
+[INFO] >>> pmd:3.28.0:check (validate) > :pmd @ cxf-parent >>>
+[INFO] 
+[INFO] --- pmd:3.28.0:pmd (pmd) @ cxf-parent ---
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-core/7.26.0/pmd-core-7.26.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-core/7.26.0/pmd-core-7.26.0.pom (7.6 kB at 161 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd/7.26.0/pmd-7.26.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd/7.26.0/pmd-7.26.0.pom (67 kB at 1.6 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/junit/junit-bom/6.1.0/junit-bom-6.1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/junit/junit-bom/6.1.0/junit-bom-6.1.0.pom (5.4 kB at 126 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/slf4j/jul-to-slf4j/1.7.36/jul-to-slf4j-1.7.36.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/slf4j/jul-to-slf4j/1.7.36/jul-to-slf4j-1.7.36.pom (991 B at 24 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/checkerframework/checker-qual/4.2.0/checker-qual-4.2.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/checkerframework/checker-qual/4.2.0/checker-qual-4.2.0.pom (2.1 kB at 49 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/pcollections/pcollections/4.0.2/pcollections-4.0.2.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/pcollections/pcollections/4.0.2/pcollections-4.0.2.pom (1.5 kB at 22 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/github/oowekyala/ooxml/nice-xml-messages/3.1/nice-xml-messages-3.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/github/oowekyala/ooxml/nice-xml-messages/3.1/nice-xml-messages-3.1.pom (11 kB at 262 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-java/7.25.0/pmd-java-7.25.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-java/7.25.0/pmd-java-7.25.0.pom (14 kB at 395 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd/7.25.0/pmd-7.25.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd/7.25.0/pmd-7.25.0.pom (67 kB at 1.4 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-core/7.25.0/pmd-core-7.25.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-core/7.25.0/pmd-core-7.25.0.pom (7.4 kB at 217 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/checkerframework/checker-qual/4.1.0/checker-qual-4.1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/checkerframework/checker-qual/4.1.0/checker-qual-4.1.0.pom (2.1 kB at 62 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-javascript/7.17.0/pmd-javascript-7.17.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-javascript/7.17.0/pmd-javascript-7.17.0.pom (5.4 kB at 132 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd/7.17.0/pmd-7.17.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd/7.17.0/pmd-7.17.0.pom (66 kB at 1.6 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-core/7.17.0/pmd-core-7.17.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-core/7.17.0/pmd-core-7.17.0.pom (7.4 kB at 217 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/sf/saxon/Saxon-HE/12.5/Saxon-HE-12.5.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/sf/saxon/Saxon-HE/12.5/Saxon-HE-12.5.pom (4.2 kB at 91 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/xmlresolver/xmlresolver/5.2.2/xmlresolver-5.2.2.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/xmlresolver/xmlresolver/5.2.2/xmlresolver-5.2.2.pom (2.6 kB at 57 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/httpcomponents/client5/httpclient5/5.1.3/httpclient5-5.1.3.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/httpcomponents/client5/httpclient5/5.1.3/httpclient5-5.1.3.pom (5.8 kB at 156 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/httpcomponents/client5/httpclient5-parent/5.1.3/httpclient5-parent-5.1.3.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/httpcomponents/client5/httpclient5-parent/5.1.3/httpclient5-parent-5.1.3.pom (14 kB at 337 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/httpcomponents/httpcomponents-parent/12/httpcomponents-parent-12.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/httpcomponents/httpcomponents-parent/12/httpcomponents-parent-12.pom (32 kB at 797 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/httpcomponents/core5/httpcore5/5.1.3/httpcore5-5.1.3.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/httpcomponents/core5/httpcore5/5.1.3/httpcore5-5.1.3.pom (3.8 kB at 111 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/httpcomponents/core5/httpcore5-parent/5.1.3/httpcore5-parent-5.1.3.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/httpcomponents/core5/httpcore5-parent/5.1.3/httpcore5-parent-5.1.3.pom (10 kB at 321 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/httpcomponents/core5/httpcore5-h2/5.1.3/httpcore5-h2-5.1.3.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/httpcomponents/core5/httpcore5-h2/5.1.3/httpcore5-h2-5.1.3.pom (3.5 kB at 117 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/commons-codec/commons-codec/1.15/commons-codec-1.15.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/commons-codec/commons-codec/1.15/commons-codec-1.15.pom (15 kB at 386 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/google/code/gson/gson/2.13.1/gson-2.13.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/google/code/gson/gson/2.13.1/gson-2.13.1.pom (13 kB at 422 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/google/code/gson/gson-parent/2.13.1/gson-parent-2.13.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/google/code/gson/gson-parent/2.13.1/gson-parent-2.13.1.pom (27 kB at 894 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/google/errorprone/error_prone_annotations/2.38.0/error_prone_annotations-2.38.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/google/errorprone/error_prone_annotations/2.38.0/error_prone_annotations-2.38.0.pom (4.3 kB at 129 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/google/errorprone/error_prone_parent/2.38.0/error_prone_parent-2.38.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/google/errorprone/error_prone_parent/2.38.0/error_prone_parent-2.38.0.pom (16 kB at 497 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/checkerframework/checker-qual/3.49.5/checker-qual-3.49.5.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/checkerframework/checker-qual/3.49.5/checker-qual-3.49.5.pom (2.1 kB at 75 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/mozilla/rhino/1.7.15/rhino-1.7.15.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/mozilla/rhino/1.7.15/rhino-1.7.15.pom (1.3 kB at 46 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-jsp/7.17.0/pmd-jsp-7.17.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-jsp/7.17.0/pmd-jsp-7.17.0.pom (3.7 kB at 123 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-i18n/1.0.0/plexus-i18n-1.0.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-i18n/1.0.0/plexus-i18n-1.0.0.pom (2.8 kB at 99 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-core/7.26.0/pmd-core-7.26.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-core/7.26.0/pmd-core-7.26.0.jar (1.0 MB at 18 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/slf4j/jul-to-slf4j/1.7.36/jul-to-slf4j-1.7.36.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/checkerframework/checker-qual/4.2.0/checker-qual-4.2.0.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/pcollections/pcollections/4.0.2/pcollections-4.0.2.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/github/oowekyala/ooxml/nice-xml-messages/3.1/nice-xml-messages-3.1.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-java/7.25.0/pmd-java-7.25.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/pcollections/pcollections/4.0.2/pcollections-4.0.2.jar (74 kB at 2.5 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-javascript/7.17.0/pmd-javascript-7.17.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/github/oowekyala/ooxml/nice-xml-messages/3.1/nice-xml-messages-3.1.jar (49 kB at 1.7 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/mozilla/rhino/1.7.15/rhino-1.7.15.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/slf4j/jul-to-slf4j/1.7.36/jul-to-slf4j-1.7.36.jar (4.5 kB at 133 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-jsp/7.17.0/pmd-jsp-7.17.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/checkerframework/checker-qual/4.2.0/checker-qual-4.2.0.jar (243 kB at 5.8 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/eclipse/sisu/org.eclipse.sisu.inject/0.9.0.M4/org.eclipse.sisu.inject-0.9.0.M4.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-javascript/7.17.0/pmd-javascript-7.17.0.jar (160 kB at 3.0 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-i18n/1.0.0/plexus-i18n-1.0.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-jsp/7.17.0/pmd-jsp-7.17.0.jar (85 kB at 1.3 MB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/eclipse/sisu/org.eclipse.sisu.inject/0.9.0.M4/org.eclipse.sisu.inject-0.9.0.M4.jar (305 kB at 4.0 MB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/plexus/plexus-i18n/1.0.0/plexus-i18n-1.0.0.jar (10 kB at 126 kB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/sourceforge/pmd/pmd-java/7.25.0/pmd-java-7.25.0.jar (1.8 MB at 16 MB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/mozilla/rhino/1.7.15/rhino-1.7.15.jar (1.4 MB at 13 MB/s)
+[INFO] Skipping org.apache.maven.plugins:maven-pmd-plugin:3.28.0:pmd report goal
+[INFO] 
+[INFO] <<< pmd:3.28.0:check (validate) < :pmd @ cxf-parent <<<
+[INFO] 
+[INFO] 
+[INFO] --- pmd:3.28.0:check (validate) @ cxf-parent ---
+[INFO] 
+[INFO] --- bundle:6.0.2:cleanVersions (versions) @ cxf-parent ---
+[INFO] 
+[INFO] --- cxf-xml2fastinfoset:4.1.4:xml2fastinfoset (xml2fastinfoset) @ cxf-parent ---
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/xml/fastinfoset/FastInfoset/2.1.1/FastInfoset-2.1.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/xml/fastinfoset/FastInfoset/2.1.1/FastInfoset-2.1.1.pom (3.4 kB at 105 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/xml/fastinfoset/fastinfoset-project/2.1.1/fastinfoset-project-2.1.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/xml/fastinfoset/fastinfoset-project/2.1.1/fastinfoset-project-2.1.1.pom (19 kB at 624 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/xml/fastinfoset/FastInfoset/2.1.1/FastInfoset-2.1.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/xml/fastinfoset/FastInfoset/2.1.1/FastInfoset-2.1.1.jar (318 kB at 8.8 MB/s)
+[INFO] 
+[INFO] --- remote-resources:3.3.0:process (default) @ cxf-parent ---
+[INFO] Preparing remote bundle org.apache:apache-jar-resource-bundle:1.4
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/apache-jar-resource-bundle/1.4/apache-jar-resource-bundle-1.4.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/apache-jar-resource-bundle/1.4/apache-jar-resource-bundle-1.4.jar (12 kB at 440 kB/s)
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] ----------------------< org.apache.cxf:cxf-core >-----------------------
+[INFO] Building Apache CXF Core 4.2.3                                     [3/3]
+[INFO]   from core/pom.xml
+[INFO] -------------------------------[ bundle ]-------------------------------
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/cxf/cxf-xjc-plugin/4.2.0/cxf-xjc-plugin-4.2.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/cxf/cxf-xjc-plugin/4.2.0/cxf-xjc-plugin-4.2.0.pom (6.8 kB at 219 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/cxf/xjc-utils/xjc-utils/4.2.0/xjc-utils-4.2.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/cxf/xjc-utils/xjc-utils/4.2.0/xjc-utils-4.2.0.pom (26 kB at 864 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/cxf/cxf-xjc-plugin/4.2.0/cxf-xjc-plugin-4.2.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/cxf/cxf-xjc-plugin/4.2.0/cxf-xjc-plugin-4.2.0.jar (50 kB at 1.8 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/jakarta/xml/ws/jakarta.xml.ws-api/4.0.3/jakarta.xml.ws-api-4.0.3.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/jakarta/xml/ws/jakarta.xml.ws-api/4.0.3/jakarta.xml.ws-api-4.0.3.pom (19 kB at 622 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/jakarta/xml/bind/jakarta.xml.bind-api/4.0.5/jakarta.xml.bind-api-4.0.5.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/jakarta/xml/bind/jakarta.xml.bind-api/4.0.5/jakarta.xml.bind-api-4.0.5.pom (13 kB at 454 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/jakarta/xml/bind/jakarta.xml.bind-api-parent/4.0.5/jakarta.xml.bind-api-parent-4.0.5.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/jakarta/xml/bind/jakarta.xml.bind-api-parent/4.0.5/jakarta.xml.bind-api-parent-4.0.5.pom (9.1 kB at 352 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/jakarta/xml/soap/jakarta.xml.soap-api/3.0.2/jakarta.xml.soap-api-3.0.2.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/jakarta/xml/soap/jakarta.xml.soap-api/3.0.2/jakarta.xml.soap-api-3.0.2.pom (22 kB at 818 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/mockito/mockito-subclass/5.23.0/mockito-subclass-5.23.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/mockito/mockito-subclass/5.23.0/mockito-subclass-5.23.0.pom (2.1 kB at 73 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/jakarta/validation/jakarta.validation-api/3.1.1/jakarta.validation-api-3.1.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/jakarta/validation/jakarta.validation-api/3.1.1/jakarta.validation-api-3.1.1.pom (11 kB at 268 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/xml-resolver/xml-resolver/1.2/xml-resolver-1.2.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/xml-resolver/xml-resolver/1.2/xml-resolver-1.2.pom (1.6 kB at 48 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/apache/3/apache-3.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/apache/3/apache-3.pom (3.4 kB at 114 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-runtime/4.0.9/jaxb-runtime-4.0.9.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-runtime/4.0.9/jaxb-runtime-4.0.9.pom (11 kB at 364 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-runtime-parent/4.0.9/jaxb-runtime-parent-4.0.9.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-runtime-parent/4.0.9/jaxb-runtime-parent-4.0.9.pom (1.3 kB at 53 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-parent/4.0.9/jaxb-parent-4.0.9.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-parent/4.0.9/jaxb-parent-4.0.9.pom (35 kB at 1.1 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-bom-ext/4.0.9/jaxb-bom-ext-4.0.9.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-bom-ext/4.0.9/jaxb-bom-ext-4.0.9.pom (3.6 kB at 132 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-bom/4.0.9/jaxb-bom-4.0.9.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-bom/4.0.9/jaxb-bom-4.0.9.pom (13 kB at 533 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/eclipse/ee4j/project/2.0.4/project-2.0.4.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/eclipse/ee4j/project/2.0.4/project-2.0.4.pom (27 kB at 1.0 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-core/4.0.9/jaxb-core-4.0.9.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-core/4.0.9/jaxb-core-4.0.9.pom (3.8 kB at 159 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/txw2/4.0.9/txw2-4.0.9.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/txw2/4.0.9/txw2-4.0.9.pom (1.9 kB at 78 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-txw-parent/4.0.9/jaxb-txw-parent-4.0.9.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-txw-parent/4.0.9/jaxb-txw-parent-4.0.9.pom (1.3 kB at 51 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/istack/istack-commons-runtime/4.1.2/istack-commons-runtime-4.1.2.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/istack/istack-commons-runtime/4.1.2/istack-commons-runtime-4.1.2.pom (1.6 kB at 62 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/istack/istack-commons/4.1.2/istack-commons-4.1.2.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/istack/istack-commons/4.1.2/istack-commons-4.1.2.pom (26 kB at 1.1 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/fasterxml/woodstox/woodstox-core/7.2.1/woodstox-core-7.2.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/fasterxml/woodstox/woodstox-core/7.2.1/woodstox-core-7.2.1.pom (10 kB at 364 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/fasterxml/oss-parent/79/oss-parent-79.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/fasterxml/oss-parent/79/oss-parent-79.pom (24 kB at 977 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/woodstox/stax2-api/4.3.0/stax2-api-4.3.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/woodstox/stax2-api/4.3.0/stax2-api-4.3.0.pom (5.1 kB at 213 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/io/micrometer/micrometer-observation/1.17.0/micrometer-observation-1.17.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/io/micrometer/micrometer-observation/1.17.0/micrometer-observation-1.17.0.pom (4.0 kB at 158 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/io/micrometer/micrometer-commons/1.17.0/micrometer-commons-1.17.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/io/micrometer/micrometer-commons/1.17.0/micrometer-commons-1.17.0.pom (3.7 kB at 163 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/ws/xmlschema/xmlschema-core/2.3.2/xmlschema-core-2.3.2.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/ws/xmlschema/xmlschema-core/2.3.2/xmlschema-core-2.3.2.pom (6.9 kB at 190 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/ws/xmlschema/xmlschema/2.3.2/xmlschema-2.3.2.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/ws/xmlschema/xmlschema/2.3.2/xmlschema-2.3.2.pom (30 kB at 1.0 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/java/dev/msv/msv-core/2022.7/msv-core-2022.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/java/dev/msv/msv-core/2022.7/msv-core-2022.7.pom (10 kB at 375 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/java/dev/msv/msv/2022.7/msv-2022.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/java/dev/msv/msv/2022.7/msv-2022.7.pom (17 kB at 656 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/java/dev/msv/xsdlib/2022.7/xsdlib-2022.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/java/dev/msv/xsdlib/2022.7/xsdlib-2022.7.pom (8.6 kB at 360 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/xerces/xercesImpl/2.12.2/xercesImpl-2.12.2.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/xerces/xercesImpl/2.12.2/xercesImpl-2.12.2.pom (3.3 kB at 122 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/isorelax/isorelax/20030108/isorelax-20030108.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/isorelax/isorelax/20030108/isorelax-20030108.pom (153 B at 5.3 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/xml/messaging/saaj/saaj-impl/3.0.6/saaj-impl-3.0.6.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/xml/messaging/saaj/saaj-impl/3.0.6/saaj-impl-3.0.6.pom (11 kB at 358 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/xml/messaging/saaj/metro-saaj/3.0.6/metro-saaj-3.0.6.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/xml/messaging/saaj/metro-saaj/3.0.6/metro-saaj-3.0.6.pom (20 kB at 762 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/eclipse/ee4j/project/2.0.2/project-2.0.2.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/eclipse/ee4j/project/2.0.2/project-2.0.2.pom (27 kB at 1.2 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/jvnet/staxex/stax-ex/2.1.0/stax-ex-2.1.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/jvnet/staxex/stax-ex/2.1.0/stax-ex-2.1.0.pom (16 kB at 679 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/awaitility/awaitility/4.3.0/awaitility-4.3.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/awaitility/awaitility/4.3.0/awaitility-4.3.0.pom (3.7 kB at 149 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/awaitility/awaitility-parent/4.3.0/awaitility-parent-4.3.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/awaitility/awaitility-parent/4.3.0/awaitility-parent-4.3.0.pom (11 kB at 571 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/jakarta/xml/ws/jakarta.xml.ws-api/4.0.3/jakarta.xml.ws-api-4.0.3.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/jakarta/xml/ws/jakarta.xml.ws-api/4.0.3/jakarta.xml.ws-api-4.0.3.jar (78 kB at 3.4 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/jakarta/xml/soap/jakarta.xml.soap-api/3.0.2/jakarta.xml.soap-api-3.0.2.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/mockito/mockito-subclass/5.23.0/mockito-subclass-5.23.0.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/jakarta/validation/jakarta.validation-api/3.1.1/jakarta.validation-api-3.1.1.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/xml-resolver/xml-resolver/1.2/xml-resolver-1.2.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-runtime/4.0.9/jaxb-runtime-4.0.9.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/jakarta/xml/soap/jakarta.xml.soap-api/3.0.2/jakarta.xml.soap-api-3.0.2.jar (38 kB at 1.7 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-core/4.0.9/jaxb-core-4.0.9.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/xml-resolver/xml-resolver/1.2/xml-resolver-1.2.jar (84 kB at 3.1 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/txw2/4.0.9/txw2-4.0.9.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/jakarta/validation/jakarta.validation-api/3.1.1/jakarta.validation-api-3.1.1.jar (106 kB at 3.5 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/istack/istack-commons-runtime/4.1.2/istack-commons-runtime-4.1.2.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/mockito/mockito-subclass/5.23.0/mockito-subclass-5.23.0.jar (1.7 kB at 47 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/fasterxml/woodstox/woodstox-core/7.2.1/woodstox-core-7.2.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-core/4.0.9/jaxb-core-4.0.9.jar (139 kB at 2.9 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/codehaus/woodstox/stax2-api/4.3.0/stax2-api-4.3.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/txw2/4.0.9/txw2-4.0.9.jar (73 kB at 1.3 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/io/micrometer/micrometer-observation/1.17.0/micrometer-observation-1.17.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/istack/istack-commons-runtime/4.1.2/istack-commons-runtime-4.1.2.jar (26 kB at 416 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/io/micrometer/micrometer-commons/1.17.0/micrometer-commons-1.17.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-runtime/4.0.9/jaxb-runtime-4.0.9.jar (922 kB at 14 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/ws/xmlschema/xmlschema-core/2.3.2/xmlschema-core-2.3.2.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/codehaus/woodstox/stax2-api/4.3.0/stax2-api-4.3.0.jar (194 kB at 2.6 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/java/dev/msv/msv-core/2022.7/msv-core-2022.7.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/io/micrometer/micrometer-commons/1.17.0/micrometer-commons-1.17.0.jar (52 kB at 589 kB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/io/micrometer/micrometer-observation/1.17.0/micrometer-observation-1.17.0.jar (84 kB at 958 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/net/java/dev/msv/xsdlib/2022.7/xsdlib-2022.7.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/xerces/xercesImpl/2.12.2/xercesImpl-2.12.2.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/ws/xmlschema/xmlschema-core/2.3.2/xmlschema-core-2.3.2.jar (174 kB at 1.7 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/isorelax/isorelax/20030108/isorelax-20030108.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/fasterxml/woodstox/woodstox-core/7.2.1/woodstox-core-7.2.1.jar (1.6 MB at 15 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/jakarta/xml/bind/jakarta.xml.bind-api/4.0.5/jakarta.xml.bind-api-4.0.5.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/java/dev/msv/msv-core/2022.7/msv-core-2022.7.jar (732 kB at 6.3 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/xml/messaging/saaj/saaj-impl/3.0.6/saaj-impl-3.0.6.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/net/java/dev/msv/xsdlib/2022.7/xsdlib-2022.7.jar (243 kB at 1.9 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/jvnet/staxex/stax-ex/2.1.0/stax-ex-2.1.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/isorelax/isorelax/20030108/isorelax-20030108.jar (193 kB at 1.4 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/awaitility/awaitility/4.3.0/awaitility-4.3.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/xml/messaging/saaj/saaj-impl/3.0.6/saaj-impl-3.0.6.jar (472 kB at 3.0 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/hamcrest/hamcrest/2.1/hamcrest-2.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/xerces/xercesImpl/2.12.2/xercesImpl-2.12.2.jar (1.4 MB at 9.0 MB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/jakarta/xml/bind/jakarta.xml.bind-api/4.0.5/jakarta.xml.bind-api-4.0.5.jar (131 kB at 790 kB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/jvnet/staxex/stax-ex/2.1.0/stax-ex-2.1.0.jar (39 kB at 233 kB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/awaitility/awaitility/4.3.0/awaitility-4.3.0.jar (98 kB at 584 kB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/hamcrest/hamcrest/2.1/hamcrest-2.1.jar (123 kB at 616 kB/s)
+[INFO] 
+[INFO] --- clean:3.5.0:clean (default-clean) @ cxf-core ---
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-maven) @ cxf-core ---
+[INFO] Rule 2: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[INFO] 
+[INFO] --- checkstyle:3.6.0:checkstyle (validate) @ cxf-core ---
+[INFO] Skipping org.apache.maven.plugins:maven-checkstyle-plugin:3.6.0:checkstyle report goal
+[INFO] 
+[INFO] >>> pmd:3.28.0:check (validate) > :pmd @ cxf-core >>>
+[INFO] 
+[INFO] --- pmd:3.28.0:pmd (pmd) @ cxf-core ---
+[INFO] PMD version: 7.26.0
+[WARNING] Warning at /home/srikanth/standoff/apache_cxf/core/target/pmd/rulesets/001-cxf-pmd-ruleset.xml:52:9
+ 50|         <exclude name="GuardLogStatement" />
+ 51|         <exclude name="JUnitUseExpected"/>
+ 52|         <exclude name="JUnit5TestShouldBePackagePrivate" />
+             ^^^^^^^^ Exclude pattern 'JUnit5TestShouldBePackagePrivate' did not match any rule in ruleset 'category/java/bestpractices.xml'
+
+ 53|         <exclude name="LooseCoupling" />
+ 54|         <exclude name="MethodReturnsInternalArray" />
+[WARNING] Warning at /home/srikanth/standoff/apache_cxf/core/target/pmd/rulesets/001-cxf-pmd-ruleset.xml:52:9
+ 50|         <exclude name="GuardLogStatement" />
+ 51|         <exclude name="JUnitUseExpected"/>
+ 52|         <exclude name="JUnit5TestShouldBePackagePrivate" />
+             ^^^^^^^^ Exclude pattern 'JUnit5TestShouldBePackagePrivate' did not match any rule in ruleset 'category/java/bestpractices.xml'
+
+ 53|         <exclude name="LooseCoupling" />
+ 54|         <exclude name="MethodReturnsInternalArray" />
+[WARNING] Site model of 'org.apache.cxf:cxf:pom:4.2.3' for default locale is still using the old pre-version 2.0.0 model. You MUST migrate to the new model as soon as possible otherwise your build will break in the future!
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/skins/maven-fluido-skin/2.1.0/maven-fluido-skin-2.1.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/skins/maven-fluido-skin/2.1.0/maven-fluido-skin-2.1.0.jar (348 kB at 6.6 MB/s)
+[INFO] Rendering content with org.apache.maven.skins:maven-fluido-skin:jar:2.1.0 skin
+[INFO] 
+[INFO] <<< pmd:3.28.0:check (validate) < :pmd @ cxf-core <<<
+[INFO] 
+[INFO] 
+[INFO] --- pmd:3.28.0:check (validate) @ cxf-core ---
+[INFO] 
+[INFO] --- bundle:6.0.2:cleanVersions (versions) @ cxf-core ---
+[INFO] 
+[INFO] --- buildnumber:3.3.0:create-timestamp (create-noncanonicalrev) @ cxf-core ---
+[INFO] 
+[INFO] --- buildnumber:3.3.0:create (create-buildnumber) @ cxf-core ---
+[INFO] Storing buildNumber: 33259395b45b4ff69b8df6a153630721fdd489fa at timestamp: 1788660083932
+[WARNING] Cannot get the branch information from the git repository: 
+Detecting the current branch failed: fatal: ref HEAD is not a symbolic ref
+
+[INFO] Storing scmBranch: UNKNOWN
+[INFO] 
+[INFO] --- cxf-xml2fastinfoset:4.1.4:xml2fastinfoset (xml2fastinfoset) @ cxf-core ---
+[INFO] 
+[INFO] --- cxf-xjc:4.2.0:xsdtojava (generate-sources) @ cxf-core ---
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-xjc/4.0.7/jaxb-xjc-4.0.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-xjc/4.0.7/jaxb-xjc-4.0.7.pom (12 kB at 307 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-parent/4.0.7/jaxb-parent-4.0.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-parent/4.0.7/jaxb-parent-4.0.7.pom (35 kB at 1.2 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-bom-ext/4.0.7/jaxb-bom-ext-4.0.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-bom-ext/4.0.7/jaxb-bom-ext-4.0.7.pom (3.6 kB at 137 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-bom/4.0.7/jaxb-bom-4.0.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-bom/4.0.7/jaxb-bom-4.0.7.pom (13 kB at 457 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/eclipse/ee4j/project/2.0.0-M1/project-2.0.0-M1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/eclipse/ee4j/project/2.0.0-M1/project-2.0.0-M1.pom (15 kB at 546 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-core/4.0.7/jaxb-core-4.0.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-core/4.0.7/jaxb-core-4.0.7.pom (3.8 kB at 119 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/txw2/4.0.7/txw2-4.0.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/txw2/4.0.7/txw2-4.0.7.pom (1.9 kB at 69 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-txw-parent/4.0.7/jaxb-txw-parent-4.0.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-txw-parent/4.0.7/jaxb-txw-parent-4.0.7.pom (1.3 kB at 44 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/xsom/4.0.7/xsom-4.0.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/xsom/4.0.7/xsom-4.0.7.pom (25 kB at 896 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/xml/bind/external/relaxng-datatype/4.0.7/relaxng-datatype-4.0.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/xml/bind/external/relaxng-datatype/4.0.7/relaxng-datatype-4.0.7.pom (2.6 kB at 80 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-external-parent/4.0.7/jaxb-external-parent-4.0.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-external-parent/4.0.7/jaxb-external-parent-4.0.7.pom (23 kB at 841 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/codemodel/4.0.7/codemodel-4.0.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/codemodel/4.0.7/codemodel-4.0.7.pom (1.8 kB at 59 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-codemodel-parent/4.0.7/jaxb-codemodel-parent-4.0.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-codemodel-parent/4.0.7/jaxb-codemodel-parent-4.0.7.pom (22 kB at 697 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/xml/bind/external/rngom/4.0.7/rngom-4.0.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/xml/bind/external/rngom/4.0.7/rngom-4.0.7.pom (2.4 kB at 87 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/xml/dtd-parser/dtd-parser/1.5.1/dtd-parser-1.5.1.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/xml/dtd-parser/dtd-parser/1.5.1/dtd-parser-1.5.1.pom (14 kB at 430 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/eclipse/ee4j/project/1.0.8/project-1.0.8.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/eclipse/ee4j/project/1.0.8/project-1.0.8.pom (15 kB at 540 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/istack/istack-commons-tools/4.1.2/istack-commons-tools-4.1.2.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/istack/istack-commons-tools/4.1.2/istack-commons-tools-4.1.2.pom (3.9 kB at 157 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-runtime/4.0.7/jaxb-runtime-4.0.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-runtime/4.0.7/jaxb-runtime-4.0.7.pom (11 kB at 437 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-runtime-parent/4.0.7/jaxb-runtime-parent-4.0.7.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-runtime-parent/4.0.7/jaxb-runtime-parent-4.0.7.pom (1.3 kB at 53 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/javassist/javassist/3.31.0-GA/javassist-3.31.0-GA.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/javassist/javassist/3.31.0-GA/javassist-3.31.0-GA.pom (11 kB at 385 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/jakarta/activation/jakarta.activation-api/2.1.3/jakarta.activation-api-2.1.3.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/jakarta/activation/jakarta.activation-api/2.1.3/jakarta.activation-api-2.1.3.pom (19 kB at 597 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-xjc/4.0.7/jaxb-xjc-4.0.7.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-xjc/4.0.7/jaxb-xjc-4.0.7.jar (920 kB at 15 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-core/4.0.7/jaxb-core-4.0.7.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/txw2/4.0.7/txw2-4.0.7.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/xsom/4.0.7/xsom-4.0.7.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/xml/bind/external/relaxng-datatype/4.0.7/relaxng-datatype-4.0.7.jar
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/codemodel/4.0.7/codemodel-4.0.7.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-core/4.0.7/jaxb-core-4.0.7.jar (139 kB at 4.3 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/xml/bind/external/rngom/4.0.7/rngom-4.0.7.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/codemodel/4.0.7/codemodel-4.0.7.jar (172 kB at 5.1 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/xml/dtd-parser/dtd-parser/1.5.1/dtd-parser-1.5.1.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/xsom/4.0.7/xsom-4.0.7.jar (426 kB at 9.9 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/sun/istack/istack-commons-tools/4.1.2/istack-commons-tools-4.1.2.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/xml/bind/external/relaxng-datatype/4.0.7/relaxng-datatype-4.0.7.jar (20 kB at 415 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-runtime/4.0.7/jaxb-runtime-4.0.7.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/txw2/4.0.7/txw2-4.0.7.jar (73 kB at 1.3 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/javassist/javassist/3.31.0-GA/javassist-3.31.0-GA.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/xml/dtd-parser/dtd-parser/1.5.1/dtd-parser-1.5.1.jar (64 kB at 1.1 MB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/xml/bind/external/rngom/4.0.7/rngom-4.0.7.jar (315 kB at 4.6 MB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/com/sun/istack/istack-commons-tools/4.1.2/istack-commons-tools-4.1.2.jar (23 kB at 324 kB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/javassist/javassist/3.31.0-GA/javassist-3.31.0-GA.jar (813 kB at 6.7 MB/s)
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-runtime/4.0.7/jaxb-runtime-4.0.7.jar (922 kB at 7.6 MB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/cxf/xjcplugins/cxf-xjc-javadoc/4.2.0/cxf-xjc-javadoc-4.2.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/cxf/xjcplugins/cxf-xjc-javadoc/4.2.0/cxf-xjc-javadoc-4.2.0.pom (3.0 kB at 77 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/cxf/xjcplugins/cxf-xjc-javadoc/4.2.0/cxf-xjc-javadoc-4.2.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/cxf/xjcplugins/cxf-xjc-javadoc/4.2.0/cxf-xjc-javadoc-4.2.0.jar (17 kB at 629 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/cxf/xjcplugins/cxf-xjc-dv/4.2.0/cxf-xjc-dv-4.2.0.pom
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/cxf/xjcplugins/cxf-xjc-dv/4.2.0/cxf-xjc-dv-4.2.0.pom (1.8 kB at 53 kB/s)
+[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/cxf/xjcplugins/cxf-xjc-dv/4.2.0/cxf-xjc-dv-4.2.0.jar
+[INFO] Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/cxf/xjcplugins/cxf-xjc-dv/4.2.0/cxf-xjc-dv-4.2.0.jar (19 kB at 696 kB/s)
+[INFO] Building jar: /tmp/cxf-xjc-plugin2904833933589098951.jar
+[INFO] Building jar: /tmp/cxf-xjc-plugin10768307705235391591.jar
+[INFO] Building jar: /tmp/cxf-xjc-plugin2214682933683466614.jar
+[INFO] Building jar: /tmp/cxf-xjc-plugin3238805855482797145.jar
+[INFO] Building jar: /tmp/cxf-xjc-plugin5756566266830951387.jar
+[INFO] Building jar: /tmp/cxf-xjc-plugin11919918173670778669.jar
+[INFO] 
+[INFO] --- remote-resources:3.3.0:process (default) @ cxf-core ---
+[INFO] Preparing remote bundle org.apache:apache-jar-resource-bundle:1.4
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ cxf-core ---
+[INFO] Copying 27 resources from src/main/java to target/classes
+[INFO] Copying 32 resources from src/main/resources to target/classes
+[INFO] Copying 1 resource from src/main/resources-filtered to target/classes
+[INFO] Copying 1 resource from target/generated/src/main/resources to target/classes
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/classes
+[INFO] The encoding used to copy filtered properties files has not been set. This means that the same encoding will be used to copy filtered properties files as when copying other filtered resources. This might not be what you want! Run your build with --debug to see which files might be affected. Read more at https://maven.apache.org/plugins/maven-resources-plugin/examples/filtering-properties-files.html
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ cxf-core ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 597 source files with javac [debug deprecation release 17] to target/classes
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/attachment/AttachmentUtil.java:[403,30] deprecated item is not annotated with @Deprecated
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/bus/extension/ExtensionManagerImpl.java:[165,35] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/classloader/ClassLoaderUtils.java:[39,50] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/classloader/ClassLoaderUtils.java:[57,17] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/classloader/ClassLoaderUtils.java:[73,16] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/classloader/ClassLoaderUtils.java:[86,16] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/classloader/ClassLoaderUtils.java:[328,15] java.lang.SecurityManager in java.lang has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/classloader/ClassLoaderUtils.java:[328,42] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/classloader/ClassLoaderUtils.java:[330,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/classloader/ClassLoaderUtils.java:[342,15] java.lang.SecurityManager in java.lang has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/classloader/ClassLoaderUtils.java:[342,42] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/classloader/ClassLoaderUtils.java:[344,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/workqueue/AutomaticWorkQueueImpl.java:[233,21] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/workqueue/AutomaticWorkQueueImpl.java:[341,22] isDestroyed() in java.lang.ThreadGroup has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/workqueue/AutomaticWorkQueueImpl.java:[358,13] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/workqueue/AutomaticWorkQueueImpl.java:[374,23] isDestroyed() in java.lang.ThreadGroup has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/workqueue/AutomaticWorkQueueImpl.java:[376,26] destroy() in java.lang.ThreadGroup has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/workqueue/AutomaticWorkQueueImpl.java:[377,26] setDaemon(boolean) in java.lang.ThreadGroup has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/bus/spring/BusApplicationContext.java:[105,13] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/bus/spring/BusApplicationContext.java:[131,13] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/bus/spring/BusApplicationContext.java:[189,30] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/bus/spring/BusApplicationContext.java:[246,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/bus/spring/BusApplicationContext.java:[277,18] java.security.AccessControlException in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/bus/spring/BusApplicationContext.java:[303,16] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/bus/spring/ControlledValidationXmlBeanDefinitionReader.java:[138,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/bus/spring/SpringBusFactory.java:[137,26] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/resource/URIResolver.java:[155,37] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/resource/URIResolver.java:[280,19] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/catalog/OASISCatalogManager.java:[156,23] java.lang.SecurityManager in java.lang has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/catalog/OASISCatalogManager.java:[156,50] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/catalog/OASISCatalogManager.java:[161,25] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/catalog/OASISCatalogManager.java:[251,15] java.lang.SecurityManager in java.lang has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/catalog/OASISCatalogManager.java:[251,42] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/catalog/OASISCatalogManager.java:[253,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/i18n/BundleUtils.java:[143,15] java.lang.SecurityManager in java.lang has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/i18n/BundleUtils.java:[143,42] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/i18n/BundleUtils.java:[145,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/i18n/BundleUtils.java:[155,15] java.lang.SecurityManager in java.lang has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/i18n/BundleUtils.java:[155,42] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/i18n/BundleUtils.java:[157,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/injection/ResourceInjector.java:[320,35] isAccessible() in java.lang.reflect.AccessibleObject has been deprecated
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/jaxb/JAXBUtils.java:[936,15] java.lang.SecurityManager in java.lang has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/jaxb/JAXBUtils.java:[936,42] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/jaxb/JAXBUtils.java:[938,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/logging/JDKBugHacks.java:[59,21] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/logging/LogUtils.java:[74,25] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/logging/LogUtils.java:[305,15] java.lang.SecurityManager in java.lang has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/logging/LogUtils.java:[305,42] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/logging/LogUtils.java:[307,13] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/logging/LogUtils.java:[319,15] java.lang.SecurityManager in java.lang has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/logging/LogUtils.java:[319,42] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/logging/LogUtils.java:[321,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/logging/LogUtils.java:[331,15] java.lang.SecurityManager in java.lang has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/logging/LogUtils.java:[331,42] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/logging/LogUtils.java:[333,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/spi/ClassGeneratorClassLoader.java:[134,34] getPackage(java.lang.String) in java.lang.ClassLoader has been deprecated
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/spi/GeneratedClassClassLoader.java:[96,34] getPackage(java.lang.String) in java.lang.ClassLoader has been deprecated
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ProxyClassLoaderCache.java:[50,15] java.lang.SecurityManager in java.lang has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ProxyClassLoaderCache.java:[50,42] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ProxyClassLoaderCache.java:[55,19] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ProxyClassLoaderCache.java:[109,15] java.lang.SecurityManager in java.lang has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ProxyClassLoaderCache.java:[109,42] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ProxyClassLoaderCache.java:[111,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ReflectionUtil.java:[51,30] isAccessible() in java.lang.reflect.AccessibleObject has been deprecated
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ReflectionUtil.java:[49,16] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ReflectionUtil.java:[70,30] isAccessible() in java.lang.reflect.AccessibleObject has been deprecated
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ReflectionUtil.java:[67,16] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ReflectionUtil.java:[84,16] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ReflectionUtil.java:[96,16] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ReflectionUtil.java:[108,16] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ReflectionUtil.java:[120,16] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ReflectionUtil.java:[133,16] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ReflectionUtil.java:[143,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ReflectionUtil.java:[159,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ReflectionUtil.java:[174,16] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ReflectionUtil.java:[182,16] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/ReflectionUtil.java:[190,16] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/SpringClassUnwrapper.java:[39,23] isCglibProxyClass(java.lang.Class<?>) in org.springframework.util.ClassUtils has been deprecated
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/SpringClassUnwrapper.java:[94,30] isCglibProxyClass(java.lang.Class<?>) in org.springframework.util.ClassUtils has been deprecated
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/SystemPropertyAction.java:[56,16] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/SystemPropertyAction.java:[61,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/SystemPropertyAction.java:[75,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/common/util/SystemPropertyAction.java:[90,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/helpers/DOMUtils.java:[153,15] java.lang.SecurityManager in java.lang has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/helpers/DOMUtils.java:[153,42] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/helpers/DOMUtils.java:[155,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/helpers/DOMUtils.java:[165,15] java.lang.SecurityManager in java.lang has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/helpers/DOMUtils.java:[165,42] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/helpers/DOMUtils.java:[167,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/helpers/FileUtils.java:[327,19] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/helpers/FileUtils.java:[330,16] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/helpers/XPathUtils.java:[101,15] java.lang.SecurityManager in java.lang has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/helpers/XPathUtils.java:[101,42] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/helpers/XPathUtils.java:[103,20] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/interceptor/security/callback/CallbackHandlerTlsCert.java:[39,47] getSubjectDN() in java.security.cert.X509Certificate has been deprecated
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/interceptor/security/callback/CertKeyToUserNameMapper.java:[40,32] getSubjectDN() in java.security.cert.X509Certificate has been deprecated
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/resource/SecurityActions.java:[32,9] java.lang.SecurityManager in java.lang has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/resource/SecurityActions.java:[32,36] getSecurityManager() in java.lang.System has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/resource/SecurityActions.java:[37,16] java.security.AccessController in java.security has been deprecated and marked for removal
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/staxutils/validation/Stax2ValidationUtils.java:[75,17] org.apache.cxf.staxutils.validation.W3CMultiSchemaFactory in org.apache.cxf.staxutils.validation has been deprecated and marked for removal
+[INFO] /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/ws/addressing/EndpointReferenceUtils.java: /home/srikanth/standoff/apache_cxf/core/src/main/java/org/apache/cxf/ws/addressing/EndpointReferenceUtils.java uses or overrides a deprecated API that is marked for removal.
+[INFO] 
+[INFO] --- dependency:3.11.0:properties (default) @ cxf-core ---
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ cxf-core ---
+[INFO] Copying 85 resources from src/test/java to target/test-classes
+[INFO] Copying 8 resources from src/test/resources to target/test-classes
+[INFO] skip non existing resourceDirectory /home/srikanth/standoff/apache_cxf/core/target/generated/src/test/resources
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/test-classes
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ cxf-core ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 126 source files with javac [debug deprecation release 17] to target/test-classes
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/test/java/org/apache/cxf/attachment/AttachmentDeserializerTest.java:[984,9] <T>assertThat(T,org.hamcrest.Matcher<? super T>) in org.junit.Assert has been deprecated
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/test/java/org/apache/cxf/attachment/AttachmentDeserializerTest.java:[993,13] <T>assertThat(T,org.hamcrest.Matcher<? super T>) in org.junit.Assert has been deprecated
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/test/java/org/apache/cxf/attachment/AttachmentSerializerTest.java:[305,9] assertEquals(java.lang.Object[],java.lang.Object[]) in org.junit.Assert has been deprecated
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/test/java/org/apache/cxf/common/annotation/AnnotatedGreeterImpl.java:[38,15] name() in jakarta.jws.HandlerChain has been deprecated
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/test/java/org/apache/cxf/common/gzip/GZIPInInterceptorTest.java:[60,9] <T>assertThat(T,org.hamcrest.Matcher<? super T>) in org.junit.Assert has been deprecated
+[WARNING] /home/srikanth/standoff/apache_cxf/core/src/test/java/org/apache/cxf/interceptor/security/JAASLoginInterceptorTest.java:[122,18] getSubjectDN() in java.security.cert.X509Certificate has been deprecated
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ cxf-core ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- bundle:6.0.2:bundle (default-bundle) @ cxf-core ---
+[INFO] Building bundle: /home/srikanth/standoff/apache_cxf/core/target/cxf-core-4.2.3.jar
+[INFO] Writing manifest: /home/srikanth/standoff/apache_cxf/core/target/classes/META-INF/MANIFEST.MF
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for Apache CXF 4.2.3:
+[INFO] 
+[INFO] Apache CXF ......................................... SUCCESS [  0.647 s]
+[INFO] Apache CXF Parent .................................. SUCCESS [  6.565 s]
+[INFO] Apache CXF Core .................................... SUCCESS [01:07 min]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  01:23 min
+[INFO] Finished at: 2026-09-06T02:02:05Z
+[INFO] ------------------------------------------------------------------------
