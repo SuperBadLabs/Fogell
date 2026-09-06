@@ -35,6 +35,8 @@ dotnet run --project "$differential_project" -c Release --no-build -- \
 
 kill_mutant() {
   local label=$1 expected=$2
+  # The mutation has been applied; exactly one file may differ from pristine.
+  assert_isolated "$label"
   set +e
   bash -ic "dotnet build '$project' -c Release --no-restore -m:1" >/dev/null
   local build_rc=$?
@@ -48,10 +50,14 @@ kill_mutant() {
   (( test_rc != 0 )) || { echo "FG-236 proof: $label mutant survived" >&2; exit 1; }
   printf '%s\n' "$output" | rg -F "$expected" >/dev/null \
     || { printf '%s\n' "$output" >&2; echo "FG-236 proof: $label mutant failed elsewhere" >&2; exit 1; }
+  # Hand the next mutant a pristine tree, so this mutation cannot outlive it.
+  reset_tree
 }
 
 kill_differential_mutant() {
   local label=$1 expected=$2
+  # The mutation has been applied; exactly one file may differ from pristine.
+  assert_isolated "$label"
   set +e
   bash -ic "dotnet build '$differential_project' -c Release --no-restore -m:1" >/dev/null
   local build_rc=$?
@@ -65,13 +71,76 @@ kill_differential_mutant() {
   (( test_rc != 0 )) || { echo "FG-236 proof: $label mutant survived" >&2; exit 1; }
   printf '%s\n' "$output" | rg -F "$expected" >/dev/null \
     || { printf '%s\n' "$output" >&2; echo "FG-236 proof: $label mutant failed elsewhere" >&2; exit 1; }
+  # Hand the next mutant a pristine tree, so this mutation cannot outlive it.
+  reset_tree
 }
 
+# PRISTINE SNAPSHOTS OF EVERY MUTATED FILE, TAKEN TOGETHER AND BEFORE THE FIRST
+# MUTATION. Two of these used to be taken later, immediately before the file's
+# own first mutant. That was correct but it made a total reset impossible: there
+# was no point at which every pristine copy existed, so isolation had to be
+# maintained by hand, one restore per mutant, and one of those restores was
+# missing (see reset_tree below).
 cp "$redaction" "$scratch/redaction.clean"
+cp "$executor" "$scratch/executor.clean"
+cp "$process_group" "$scratch/process-group.clean"
 cp "$secrets" "$scratch/secrets.clean"
 cp "$walker_step" "$scratch/walker-step.clean"
 cp "$walker_ctx" "$scratch/walker-ctx.clean"
 cp "$fogell" "$scratch/fogell.clean"
+
+declare -A clean_of=(
+  ["$redaction"]="$scratch/redaction.clean"
+  ["$executor"]="$scratch/executor.clean"
+  ["$process_group"]="$scratch/process-group.clean"
+  ["$secrets"]="$scratch/secrets.clean"
+  ["$walker_step"]="$scratch/walker-step.clean"
+  ["$walker_ctx"]="$scratch/walker-ctx.clean"
+  ["$fogell"]="$scratch/fogell.clean"
+)
+
+# EVERY MUTANT STARTS FROM THE PRISTINE TREE. Called at the end of each kill
+# helper, so a mutation cannot outlive the mutant that made it.
+#
+# THE DEFECT THIS REPLACES. Each mutant used to restore its own file by hand,
+# and the restore after the `live-policy` mutant named walker_ctx while the
+# mutation had been made to walker_step. WalkerStep.fs therefore kept
+# `MaskingSecrets = None` from that mutant until the next walker_step restore
+# 197 lines later, and the twenty mutants in between were each evaluated against
+# a program carrying two mutations rather than their own one. The proof still
+# passed, which is the point: `kill_*` only requires the suite to fail and the
+# expected string to appear SOMEWHERE in its output, and the residual mutation
+# produces failures of its own. A mutant whose own edit was inert would have
+# been recorded as killed.
+#
+# CONTENT-COMPARED, NOT UNCONDITIONAL: rewriting an already-pristine file bumps
+# its mtime and makes MSBuild recompile that file's whole project chain for a
+# change that is not there. `cp -p` would be the wrong fix in the other
+# direction — preserving the pristine mtime would leave the previous mutant's
+# compiled output looking up to date, and the next mutant would be tested
+# against the previous mutant's binary.
+reset_tree() {
+  local file
+  for file in "${!clean_of[@]}"; do
+    cmp -s "${clean_of[$file]}" "$file" || cp "${clean_of[$file]}" "$file"
+  done
+}
+
+# Fail closed on the class of defect described above. Every one of the 44
+# mutants edits exactly one file, so more than one file differing from pristine
+# at the moment a mutant is judged means a restore went missing again. Checked
+# rather than trusted, because the symptom of the original defect was a proof
+# that stayed green.
+assert_isolated() {
+  local label=$1 file dirty=()
+  for file in "${!clean_of[@]}"; do
+    cmp -s "${clean_of[$file]}" "$file" || dirty+=("$(basename "$file")")
+  done
+  (( ${#dirty[@]} <= 1 )) || {
+    echo "FG-236 proof: $label runs with ${#dirty[@]} mutated files (${dirty[*]}); a restore is missing" >&2
+    exit 1
+  }
+}
 
 # An incomplete whole-buffer prefix can still end in another complete form.
 # Publishing pending characters wholesale at EOF recreates that credential leak.
@@ -103,7 +172,6 @@ kill_mutant progressive 'a safe line is delivered while the credential-bearing p
 # The pure matcher is insufficient if Executor fails to hand the opaque policy
 # to ProcessGroup: this recreates the original line-local leak.
 cp "$scratch/redaction.clean" "$redaction"
-cp "$executor" "$scratch/executor.clean"
 target='                        OutputRedaction = outputRedaction'
 [[ $(rg -F -c "$target" "$executor") == 1 ]] \
   || { echo 'FG-236 proof: wiring mutation target is not unique' >&2; exit 1; }
@@ -113,7 +181,6 @@ kill_mutant wiring 'masks wrapped base64 in progressive and buffered shell outpu
 # Redacting the bootstrap frame before parsing it lets a credential overlapping
 # the marker erase the process-group identity and disable containment.
 cp "$scratch/executor.clean" "$executor"
-cp "$process_group" "$scratch/process-group.clean"
 target='                        true)'
 [[ $(rg -F -c "$target" "$process_group") == 1 ]] \
   || { echo 'FG-236 proof: control-frame mutation target is not unique' >&2; exit 1; }
