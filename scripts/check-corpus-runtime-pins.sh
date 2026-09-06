@@ -6,12 +6,13 @@ set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 
 die() { printf 'corpus runtime pin: REFUSED: %s\n' "$*" >&2; exit 2; }
-[ "$#" -gt 0 ] || die "name at least one runtime pin"
+[ "$#" -gt 1 ] || die "usage: check-corpus-runtime-pins.sh <pins.tsv> <pin-id>..."
 
-: "${FOGELL_CORPUS_RUNTIME_PINS:=differential/corpus-runtime-pins.tsv}"
+pins_file=$1
+shift
 : "${FOGELL_JENKINS_HOST:=luigi}"
 : "${FOGELL_JENKINS_CONTAINER:=jenkins-lab}"
-[ -f "$FOGELL_CORPUS_RUNTIME_PINS" ] || die "$FOGELL_CORPUS_RUNTIME_PINS is missing"
+[ -f "$pins_file" ] || die "$pins_file is missing"
 
 # This is the fixed build PATH in ProcessGroup.fs. Resolving under the same
 # value catches a later /usr/local/bin tool shadowing the pinned /usr/bin byte.
@@ -39,13 +40,13 @@ while IFS=$'\t' read -r pin command local_path jenkins_path sha expected_image e
   tool_sha[$pin]=$sha
   image_id[$pin]=$expected_image
   image_digest[$pin]=$expected_digest
-done < "$FOGELL_CORPUS_RUNTIME_PINS"
+done < "$pins_file"
 
 declare -A requested=()
 for pin in "$@"; do
   [ -z "${requested[$pin]+x}" ] || continue
   requested[$pin]=1
-  [ -n "${tool_name[$pin]+x}" ] || die "pin '$pin' is not defined in $FOGELL_CORPUS_RUNTIME_PINS"
+  [ -n "${tool_name[$pin]+x}" ] || die "pin '$pin' is not defined in $pins_file"
 
   observed_local_path=$(PATH="$build_path" command -v "${tool_name[$pin]}" 2>/dev/null || true)
   [ "$observed_local_path" = "${local_tool[$pin]}" ] \

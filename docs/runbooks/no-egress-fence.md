@@ -26,7 +26,8 @@ path on each engine, both resolved files have the pinned SHA-256, and the live
 Jenkins container uses the pinned image ID and digest. It repeats the complete
 check before promotion. Any missing, malformed, unavailable, or changed value
 discards the run's private receipts. Rows with no fourth field keep the
-historical no-tool behavior.
+historical no-tool behavior. The runner names that committed pin file
+literally; there is no caller override for the expected tuple.
 
 It refuses a file that is not under the pinned corpus, a corpus that does
 not verify, a file whose sha256 and stem are not on

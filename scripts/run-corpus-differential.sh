@@ -21,7 +21,6 @@
 #   FOGELL_JENKINS_HOST      ssh host             (default luigi)
 #   FOGELL_JENKINS_CONTAINER container            (default jenkins-lab)
 #   FOGELL_RECEIPT_DIR       where receipts land  (default differential/receipts)
-#   FOGELL_CORPUS_RUNTIME_PINS structured tool/image pins (default differential/corpus-runtime-pins.tsv)
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 
@@ -31,9 +30,7 @@ cd "$(dirname "$0")/.."
 : "${FOGELL_JENKINS_HOST:=luigi}"
 : "${FOGELL_JENKINS_CONTAINER:=jenkins-lab}"
 : "${FOGELL_RECEIPT_DIR:=differential/receipts}"
-: "${FOGELL_CORPUS_RUNTIME_PINS:=differential/corpus-runtime-pins.tsv}"
 export FOGELL_CORPUS FOGELL_JENKINS_URL FOGELL_JENKINS_CORE FOGELL_JENKINS_HOST FOGELL_JENKINS_CONTAINER
-export FOGELL_CORPUS_RUNTIME_PINS
 
 die() { printf 'corpus lane: REFUSED: %s\n' "$*" >&2; exit 2; }
 [ $# -gt 0 ] || die "name at least one corpus file"
@@ -209,7 +206,7 @@ lease_watch=$!; disown "$lease_watch"
 started_at=$(./scripts/no-egress-fence.sh jenkins started-at) || die "could not read the container's start instant"
 verify_runtime_pins() {
   [ "${#pin_ids[@]}" -eq 0 ] && return 0
-  ./scripts/check-corpus-runtime-pins.sh "${pin_ids[@]}"
+  ./scripts/check-corpus-runtime-pins.sh differential/corpus-runtime-pins.tsv "${pin_ids[@]}"
 }
 verify_runtime_pins || die "a selected corpus runtime pin did not match"
 pinned_at=$(./scripts/no-egress-fence.sh jenkins started-at) || die "could not re-read the pinned container's start instant"

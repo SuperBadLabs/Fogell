@@ -41,9 +41,8 @@ chmod +x "$scratch/bin/ssh"
 
 check() {
   PATH="$scratch/bin:$PATH" \
-  FOGELL_CORPUS_RUNTIME_PINS="$scratch/pins.tsv" \
   FOGELL_JENKINS_HOST=fake FOGELL_JENKINS_CONTAINER=jenkins-lab \
-    ./scripts/check-corpus-runtime-pins.sh make-pin
+    ./scripts/check-corpus-runtime-pins.sh "$scratch/pins.tsv" make-pin
 }
 
 must_refuse() {
@@ -100,9 +99,9 @@ must_refuse "duplicate pin id" "duplicate pin id"
 apply_fixture
 
 set +e
-missing_out=$(PATH="$scratch/bin:$PATH" FOGELL_CORPUS_RUNTIME_PINS="$scratch/pins.tsv" \
+missing_out=$(PATH="$scratch/bin:$PATH" \
   FOGELL_JENKINS_HOST=fake FOGELL_JENKINS_CONTAINER=jenkins-lab \
-  ./scripts/check-corpus-runtime-pins.sh absent-pin 2>&1); missing_rc=$?
+  ./scripts/check-corpus-runtime-pins.sh "$scratch/pins.tsv" absent-pin 2>&1); missing_rc=$?
 set -e
 if [ "$missing_rc" -eq 0 ] || [[ "$missing_out" != *"is not defined"* ]]; then
   echo "RUNTIME-PIN PROOF FAILED: missing pin was accepted or misreported" >&2; exit 1
@@ -116,6 +115,7 @@ audit_runner() {
   post=$(rg -n '^elif ! verify_runtime_pins; then$' "$runner" | sed -n '1s/:.*//p')
   promote=$(rg -n '^[[:space:]]*mkdir -p "\$FOGELL_RECEIPT_DIR"' "$runner" | sed -n '1s/:.*//p')
   [[ "$pre" =~ ^[0-9]+$ && "$run" =~ ^[0-9]+$ && "$post" =~ ^[0-9]+$ && "$promote" =~ ^[0-9]+$ ]] || return 1
+  [ "$(rg -c '^  \./scripts/check-corpus-runtime-pins\.sh differential/corpus-runtime-pins\.tsv "\$\{pin_ids\[@\]\}"$' "$runner")" -eq 1 ] || return 1
   [ "$pre" -lt "$run" ] && [ "$run" -lt "$post" ] && [ "$post" -lt "$promote" ]
 }
 
