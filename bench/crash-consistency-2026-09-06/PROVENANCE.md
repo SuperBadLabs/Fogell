@@ -90,3 +90,61 @@ appearing perfectly healthy.** The crash test found it by accident.
 binding **in place, with 30-day validity**, and restarts controller and agent
 without touching the database — `mc-up.sh` would `podman rm -f` the postgres
 container and destroy McLoving's state.
+
+---
+
+# Addendum — the same test against `Fogell.Controller.Host`
+
+The limit stated above ("Fogell was tested as `Run.Host`… a fair test needs the
+controller") is now closed. A persistent `Controller.Host` was provisioned
+following the order in `prove-runnable-controller.sh` — database and NOLOGIN
+runtime role, migrations, the runtime GRANT surface, seeded org/project, token
+file at mode 0400 — and driven over its authenticated HTTP API. Scripts:
+`ctrl-up.sh`, `ctrl-start.sh`, `ctrl-crash.sh`.
+
+## Result — reproduced twice
+
+| | run 1 | run 2 |
+|---|---|---|
+| markers at kill | s1×1, s2×1 | s1×1, s2×1 |
+| markers at end | s1×1, s2×1 | s1×1, s2×1 |
+| orphaned `Run.Host` after controller SIGKILL | **0** | **0** |
+| controller verdict | `reconciliation_required` | `reconciliation_required` |
+
+**Three things are established.**
+
+1. **No duplicate side effect**, same as `Run.Host`. The killed step did not
+   re-run.
+2. **The controller does not auto-resolve.** It marks the build
+   `reconciliation_required` — a named status over the API rather than
+   `Run.Host`'s bare exit code, but the same underlying decision: a started step
+   with no recorded outcome will not be guessed at. Fogell deliberately declines
+   to close the build.
+3. **FG-224's supervision works.** SIGKILLing the controller left **zero**
+   orphaned `Run.Host` processes. The controller-lifetime binding and EOF
+   watchdog reaped the child and its process group — the machinery whose cost
+   was measured earlier today as three extra process spawns per step. This is
+   what that cost buys.
+
+## The three engines, on the same crash
+
+| engine | duplicate effect | verdict | resolves without a human |
+|---|---|---|---|
+| Fogell `Controller.Host` | no | `reconciliation_required` | **no** — by design |
+| McLoving | no | `aborted` | **yes** |
+| Jenkins 2.568.1 | no | none in 420 s | no |
+
+None duplicated. None resumed to completion — s3 never ran anywhere, so
+exactly-once *resume* across a crash remains undemonstrated by any of them.
+
+The difference is **who decides**. Fogell preserves the ambiguity and demands an
+operator decision; it never claims to know what it does not. McLoving closes the
+build as `aborted` under fenced authority while preserving terminal evidence in
+its journal. Both are defensible: Fogell's is more precise for an auditor,
+McLoving's is more usable for an operator. Jenkins simply leaves it open.
+
+**This does not rescue the earlier conclusion.** Tested properly — server against
+server — Fogell matches McLoving on the safety property and gives up the
+automatic resolution, while being 1.28× slower on real builds. The reading that
+McLoving's speed is bought with weaker guarantees remains unsupported after the
+fairest test available.

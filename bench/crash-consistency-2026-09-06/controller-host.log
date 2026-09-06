@@ -1,0 +1,14 @@
+=== run 1: submit=201 build=79a4da1c-0c95-426b-8f84-62ee1e2aa986 ===
+  killed controller pid=65312   markers at kill:       1 s1       1 s2 
+  orphaned Run.Host procs after kill: 0
+  markers at end :       1 s1       1 s2 
+  controller verdict: reconciliation_required
+  -> one effect across the crash
+
+=== run 2: submit=201 build=0d5a3806-8502-4a8a-b699-115ab33b4e8b ===
+  killed controller pid=67067   markers at kill:       1 s1       1 s2 
+  orphaned Run.Host procs after kill: 0
+  markers at end :       1 s1       1 s2 
+  controller verdict: reconciliation_required
+  -> one effect across the crash
+
