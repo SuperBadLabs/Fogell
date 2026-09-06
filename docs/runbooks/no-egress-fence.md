@@ -19,12 +19,22 @@ nothing already in that directory is ever modified by an aborted run;
 regenerate the ledger with
 `FOGELL_CORPUS=/sn8100/work/exchange/crucible-gate/corpus scripts/bin/generate-scorecard`.
 
+An allowlist row may name a fourth-field runtime-pin ID from
+`differential/corpus-runtime-pins.tsv`. Under the cross-host lease and before
+any corpus execution, the lane verifies the command resolves to the pinned
+path on each engine, both resolved files have the pinned SHA-256, and the live
+Jenkins container uses the pinned image ID and digest. It repeats the complete
+check before promotion. Any missing, malformed, unavailable, or changed value
+discards the run's private receipts. Rows with no fourth field keep the
+historical no-tool behavior.
+
 It refuses a file that is not under the pinned corpus, a corpus that does
 not verify, a file whose sha256 and stem are not on
 `differential/corpus-allowlist.tsv` (read the file, record its executed
 surface there in one line, then run — the corpus is untrusted and the list
-is the permission), a missing CLI build, a second lane of this user on this host (a
-lock in `$XDG_RUNTIME_DIR`), an oracle with busy executors, a lane lease it
+is the permission), a missing or mismatching runtime pin selected by that row,
+a missing CLI build, a second lane of this user on this host (a lock in
+`$XDG_RUNTIME_DIR`), an oracle with busy executors, a lane lease it
 cannot take (a `flock` on `~/.fogell-corpus-lane.lock` ON THE JENKINS HOST,
 held for exactly as long as the lane's pid exists — one corpus lane at a
 time across every user and host), and a fence it cannot prove. A refusal

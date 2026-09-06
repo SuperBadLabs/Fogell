@@ -21,6 +21,7 @@
 #   FOGELL_JENKINS_HOST      ssh host             (default luigi)
 #   FOGELL_JENKINS_CONTAINER container            (default jenkins-lab)
 #   FOGELL_RECEIPT_DIR       where receipts land  (default differential/receipts)
+#   FOGELL_CORPUS_RUNTIME_PINS structured tool/image pins (default differential/corpus-runtime-pins.tsv)
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 
@@ -30,7 +31,9 @@ cd "$(dirname "$0")/.."
 : "${FOGELL_JENKINS_HOST:=luigi}"
 : "${FOGELL_JENKINS_CONTAINER:=jenkins-lab}"
 : "${FOGELL_RECEIPT_DIR:=differential/receipts}"
+: "${FOGELL_CORPUS_RUNTIME_PINS:=differential/corpus-runtime-pins.tsv}"
 export FOGELL_CORPUS FOGELL_JENKINS_URL FOGELL_JENKINS_CORE FOGELL_JENKINS_HOST FOGELL_JENKINS_CONTAINER
+export FOGELL_CORPUS_RUNTIME_PINS
 
 die() { printf 'corpus lane: REFUSED: %s\n' "$*" >&2; exit 2; }
 [ $# -gt 0 ] || die "name at least one corpus file"
@@ -54,10 +57,17 @@ echo "corpus lane: verifying the pinned manifest"
 # (Codex on PR #392).
 allowlist=differential/corpus-allowlist.tsv
 [ -f "$allowlist" ] || die "$allowlist is missing — nothing is allowlisted"
+pin_ids=()
 for r in "${files[@]}"; do
   digest=$(sha256sum "$r" | cut -d' ' -f1); stem=$(basename "$r" .Jenkinsfile)
-  awk -F'\t' -v d="$digest" -v s="$stem" '$1==d && $2==s {f=1} END {exit !f}' "$allowlist" \
-    || die "$(basename "$r") (sha256 $digest) is not on the executed-surface allowlist — read it, record its surface in $allowlist, then run"
+  if ! row=$(awk -F'\t' -v d="$digest" -v s="$stem" \
+      '$1==d && $2==s {n++; row=$0} END {if(n==1) print row; else exit 1}' "$allowlist"); then
+    die "$(basename "$r") (sha256 $digest) is not uniquely present on the executed-surface allowlist — read it, record its surface in $allowlist, then run"
+  fi
+  pin_id=$(printf '%s\n' "$row" | awk -F'\t' '{print $4}')
+  if [ -n "$pin_id" ]; then
+    case " ${pin_ids[*]} " in *" $pin_id "*) ;; *) pin_ids+=("$pin_id") ;; esac
+  fi
 done
 echo "corpus lane: every file's digest and stem are on the executed-surface allowlist"
 
@@ -197,6 +207,14 @@ trap 'exit 143' TERM INT HUP
 ( tail --pid="$lease_pid" -f /dev/null; echo "corpus lane: LEASE LOST — the remote holder exited; aborting" >&2; kill -TERM $$ 2>/dev/null ) 9>&- &
 lease_watch=$!; disown "$lease_watch"
 started_at=$(./scripts/no-egress-fence.sh jenkins started-at) || die "could not read the container's start instant"
+verify_runtime_pins() {
+  [ "${#pin_ids[@]}" -eq 0 ] && return 0
+  ./scripts/check-corpus-runtime-pins.sh "${pin_ids[@]}"
+}
+verify_runtime_pins || die "a selected corpus runtime pin did not match"
+pinned_at=$(./scripts/no-egress-fence.sh jenkins started-at) || die "could not re-read the pinned container's start instant"
+[ "$pinned_at" = "$started_at" ] \
+  || die "the Jenkins container restarted while its runtime pins were checked ($started_at -> $pinned_at)"
 run_receipts=$(mktemp -d)
 # QUIESCE BEFORE APPLY: a leftover of an earlier build holding a connection it
 # opened before the fence would otherwise keep it (the rule now rejects the
@@ -232,6 +250,9 @@ kill -KILL "$poller" 2>/dev/null || true; poller=
 ended_at=$(./scripts/no-egress-fence.sh jenkins started-at 2>/dev/null || echo unknown)
 if [ "$ended_at" != "$started_at" ] || ! ./scripts/no-egress-fence.sh jenkins present >/dev/null 2>&1; then
   echo "corpus lane: the Jenkins fence did not stand for the whole run (container start $started_at -> $ended_at) — this run's receipts are discarded" >&2
+  rc=2
+elif ! verify_runtime_pins; then
+  echo "corpus lane: a runtime pin changed before promotion — this run's receipts are discarded" >&2
   rc=2
 elif [ "$rc" = 0 ]; then
   completed=1

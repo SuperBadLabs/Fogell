@@ -407,6 +407,14 @@ if lane_active build; then
   ./scripts/prove-compatibility-regression.sh \
     || { echo "COMPATIBILITY-REGRESSION PROOF FAILED"; exit 1; }
 
+  # FG-254. A tool-backed corpus receipt is publishable only when its allowlist
+  # row selects a structured runtime pin and the runner verifies command
+  # resolution, both tool hashes, the Jenkins image ID and its digest before
+  # execution and again before promotion. Prove every identity mismatch and
+  # both call sites without the private corpus or Jenkins lab.
+  ./scripts/prove-corpus-runtime-pins.sh \
+    || { echo "CORPUS RUNTIME-PIN PROOF FAILED"; exit 1; }
+
   # FG-161. Every committed receipt's seal, RECOMPUTED from the receipt's own content.
   # The scorecard classifies a receipt as proven by reading its VERDICT LINE, and nothing
   # re-derived the hash that claim rests on — a receipt edited with that line left intact
