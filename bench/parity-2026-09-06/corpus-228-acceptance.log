@@ -1,0 +1,70 @@
+corpus files: 228   Fogell-declarative: 93   Fogell-scripted: 135
+
+=== DECLARATIVE SUBSET: Fogell verdict vs Jenkins declarative linter ===
+               jenkins=valid   jenkins=invalid   jenkins=ERROR
+fogell=ok                 68                10               0
+fogell=err                12                 3               0
+
+agreement on the declarative subset: 71 / 93  (76.3%)
+
+=== DISAGREEMENTS (the interesting rows) ===
+  DeekshithSN_Jenkinsfile.Jenkinsfile
+      fogell=err (malformed_syntax)   jenkins=valid
+  HariSekhon_Jenkins.Jenkinsfile
+      fogell=err (malformed_syntax)   jenkins=valid
+  MrRameshRajendran_Hybrid_MultiCloud_Overlay.Jenkinsfile
+      fogell=err (malformed_syntax)   jenkins=valid
+  Rapter1990_springbootmicroservicedailybuffer.Jenkinsfile
+      fogell=ok (-)   jenkins=invalid
+      jenkins says: Errors encountered validating Jenkinsfile: WorkflowScript: 4: Tool type "maven" does not have an install of "Maven 3.6.3" configured - did you mean "n
+  SumitKr88_multiscanpipeline-jenkins-fastlane-ios.Jenkinsfile
+      fogell=err (malformed_syntax)   jenkins=valid
+  Terradue_DotNetOpenSearchClient.Jenkinsfile
+      fogell=err (malformed_syntax)   jenkins=valid
+  VAD37_unity-jenkinsfile.Jenkinsfile
+      fogell=err (malformed_syntax)   jenkins=valid
+  alanmacgowan_WebApplication.Jenkinsfile
+      fogell=err (malformed_syntax)   jenkins=valid
+  aws-samples_ecs-bg-external-controller.Jenkinsfile
+      fogell=err (malformed_syntax)   jenkins=valid
+  beifei1_fire-cloud.Jenkinsfile
+      fogell=ok (-)   jenkins=invalid
+      jenkins says: Errors encountered validating Jenkinsfile: WorkflowScript: 13: Tool type "maven" does not have an install of "maven-3.10.0" configured - did you mean 
+  buildit_jenkins-pipeline-libraries.Jenkinsfile
+      fogell=ok (-)   jenkins=invalid
+      jenkins says: Errors encountered validating Jenkinsfile: WorkflowScript: 12: Tool type "maven" does not have an install of "apache-maven-3.5.0" configured - did you
+  choiis_Cpp-IOCP-Server.Jenkinsfile
+      fogell=ok (-)   jenkins=invalid
+      jenkins says: Errors encountered validating Jenkinsfile: WorkflowScript: 7: Invalid trigger type "githubPush". Valid trigger types: [upstream, cron, pollSCM] @ line
+  cloudogu_gitops-playground.Jenkinsfile
+      fogell=err (malformed_syntax)   jenkins=valid
+  holdennguyen_cicd-pipeline-java-webapp.Jenkinsfile
+      fogell=ok (-)   jenkins=invalid
+      jenkins says: Errors encountered validating Jenkinsfile: WorkflowScript: 4: Tool type "maven" does not have an install of "maven" configured - did you mean "null"? 
+  hungbang_spring-boot-aws-docdb-example.Jenkinsfile
+      fogell=ok (-)   jenkins=invalid
+      jenkins says: Errors encountered validating Jenkinsfile: WorkflowScript: 9: Tool type "maven" does not have an install of "maven3.8.1" configured - did you mean "nu
+  jerearista_python-jenkinsfile-testing.Jenkinsfile
+      fogell=err (malformed_syntax)   jenkins=valid
+  jjasghar_jenkinsfile_cookbook_pipeline.Jenkinsfile
+      fogell=err (malformed_syntax)   jenkins=valid
+  k11h-de_zap-jenkins.Jenkinsfile
+      fogell=ok (-)   jenkins=invalid
+      jenkins says: Errors encountered validating Jenkinsfile: WorkflowScript: 6: unexpected token: < @ line 6, column 17. def gitCredId = <jenkins-cred-id> ^
+  nikoly_selenium-grid-docker.Jenkinsfile
+      fogell=ok (-)   jenkins=invalid
+      jenkins says: Errors encountered validating Jenkinsfile: WorkflowScript: 27: Expected a step @ line 27, column 9. try { ^
+  pavankjadda_BookStore.Jenkinsfile
+      fogell=ok (-)   jenkins=invalid
+      jenkins says: Errors encountered validating Jenkinsfile: WorkflowScript: 7: Tool type "maven" does not have an install of "M3" configured - did you mean "null"? @ l
+  saidsef_alpine-jenkins-dockerfile.Jenkinsfile
+      fogell=err (malformed_syntax)   jenkins=valid
+  sidd-harth_apigee-cicd.Jenkinsfile
+      fogell=ok (-)   jenkins=invalid
+      jenkins says: Errors encountered validating Jenkinsfile: WorkflowScript: 8: Tool type "maven" does not have an install of "M2" configured - did you mean "null"? @ l
+
+=== SCRIPTED SUBSET (135) — NOT SCORED ===
+The Declarative linter cannot adjudicate a scripted Jenkinsfile; getting
+Jenkins' verdict would mean CPS-compiling untrusted code by starting a build.
+  fogell=scripted-err  linter=invalid  13
+  fogell=scripted-ok   linter=invalid  122
