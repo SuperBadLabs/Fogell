@@ -658,19 +658,24 @@ let main argv =
             if not (File.Exists journalPath) then
                 None, Some(readAndPreflightScript ())
             else
-                // Bind the framing byte and decoded records to one immutable byte
+                // Bind framing and decoded records to one immutable byte
                 // snapshot. FileShare is only advisory on the supported Linux
                 // runtime, so neither a lock flag nor two pathname reads can
                 // prevent an old newline from being associated with a newly
-                // appended, unterminated BuildFinished record.
+                // appended, unterminated BuildFinished record. Decode only the
+                // newline-terminated prefix: a durable BuildFinished remains a
+                // terminal no-op even if unrelated torn bytes follow it, while
+                // an unterminated BuildFinished is never trusted.
                 let snapshotBytes = File.ReadAllBytes journalPath
 
-                let endsWithNewline =
-                    snapshotBytes.Length > 0
-                    && snapshotBytes[snapshotBytes.Length - 1] = byte '\n'
+                let durableLength =
+                    snapshotBytes
+                    |> Array.tryFindIndexBack ((=) (byte '\n'))
+                    |> Option.map ((+) 1)
+                    |> Option.defaultValue 0
 
-                let records =
-                    use snapshot = new MemoryStream(snapshotBytes, false)
+                let durableRecords =
+                    use snapshot = new MemoryStream(snapshotBytes, 0, durableLength, false)
                     use reader = new StreamReader(snapshot, Encoding.UTF8, true)
                     let decoded = ResizeArray<Record>()
                     let mutable keepReading = true
@@ -683,14 +688,13 @@ let main argv =
                     decoded |> Seq.toList
 
                 let hasDurableTerminal =
-                    endsWithNewline
-                    && (records
-                        |> List.exists (function
-                            | BuildFinished _ -> true
-                            | _ -> false))
+                    durableRecords
+                    |> List.exists (function
+                        | BuildFinished _ -> true
+                        | _ -> false)
 
                 if hasDurableTerminal then
-                    Some(Resume.plan records), None
+                    Some(Resume.plan durableRecords), None
                 else
                     None, Some(readAndPreflightScript ())
 

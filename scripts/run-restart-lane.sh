@@ -96,6 +96,16 @@ grep -q 'unsupported_agent:' "$A_LANE/torn-terminal.log" \
   || { echo "FAIL: unsupported-agent preflight repaired a non-newline terminal fragment"; exit 1; }
 echo "non-newline terminal fragment is not trusted and remains byte-identical on refusal"
 
+printf '%s\n' $'build-identity\tfg253-durable-terminal' $'build-finished\tsuccess' > "$A_LANE/terminal-with-torn-tail.journal"
+printf '%s' 'step-star' >> "$A_LANE/terminal-with-torn-tail.journal"
+A_DURABLE_TERMINAL_BEFORE=$(sha256sum "$A_LANE/terminal-with-torn-tail.journal")
+"${HOST[@]}" "$A_LANE/rotated.Jenkinsfile" "$A_LANE/ws" fg253-agent "$A_LANE/terminal-with-torn-tail.journal" > "$A_LANE/terminal-with-torn-tail.log" 2>&1
+grep -q 'already-terminal: success' "$A_LANE/terminal-with-torn-tail.log" \
+  || { echo "FAIL: durable terminal before a torn tail required the rotated Jenkinsfile"; cat "$A_LANE/terminal-with-torn-tail.log"; exit 1; }
+[ "$(sha256sum "$A_LANE/terminal-with-torn-tail.journal")" = "$A_DURABLE_TERMINAL_BEFORE" ] \
+  || { echo "FAIL: terminal no-op changed its trailing fragment"; exit 1; }
+echo "newline-terminated terminal before a torn tail remains a byte-identical no-op without the Jenkinsfile"
+
 echo "=== attempt 1: SIGKILL mid-step ==="
 "${HOST[@]}" "$LANE/Jenkinsfile" "$WSROOT" "$JOB" "$JOURNAL" > "$LANE/run1.log" 2>&1 &
 PID=$!
