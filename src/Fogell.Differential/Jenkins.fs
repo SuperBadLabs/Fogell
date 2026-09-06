@@ -44,8 +44,9 @@ type JenkinsConfig =
       BuildPath: string option
       /// Optional build-context guard for a runtime-pinned corpus case. The
       /// guard is executed as real Pipeline `sh` builds immediately before and
-      /// after the requested build on the same disposable Jenkins job. Every
-      /// allocation, including the corpus build itself, must name RequiredNode.
+      /// after the requested build on a separate disposable Jenkins job, so it
+      /// cannot manufacture history for the tested job. Every allocation,
+      /// including the corpus build itself, must name RequiredNode.
       RuntimeGuard: RuntimeGuard option
       /// FG-053. Whether the SCRIPT declares `options { timestamps() }`.
       ///
@@ -88,6 +89,17 @@ module Jenkins =
             "[^A-Za-z0-9]+",
             "-"
         )
+
+    /// jobNameForCase always starts with `diff-` and cannot emit `_`; this
+    /// reserved sibling namespace cannot collide with an ordinary case job.
+    let internal runtimeGuardJobName (corpusJobName: string) =
+        $"_fogell-runtime-guard-{corpusJobName}"
+
+    let internal cleanupJobNames (corpusJobName: string) (hasRuntimeGuard: bool) =
+        if hasRuntimeGuard then
+            [ corpusJobName; runtimeGuardJobName corpusJobName ]
+        else
+            [ corpusJobName ]
 
     /// Jenkins execution and raw-console selection are keyed by job/build.
     /// Refuse two source cases that normalize to the same job before either
@@ -375,20 +387,53 @@ module Jenkins =
             Some "guard build did not emit exactly one success marker"
         | Ok _ -> None
 
+    type internal ScheduledBuild =
+        { IsGuard: bool
+          JobName: string
+          BuildNumber: int
+          Definition: JobDefinition }
+
+    let internal scheduleBuilds
+        (corpusJobName: string)
+        (guardJobName: string)
+        (guardDefinition: JobDefinition option)
+        (builds: JobDefinition list)
+        =
+        let corpus =
+            builds
+            |> List.mapi (fun index definition ->
+                { IsGuard = false
+                  JobName = corpusJobName
+                  BuildNumber = index + 1
+                  Definition = definition })
+
+        match guardDefinition with
+        | None -> corpus
+        | Some probe ->
+            { IsGuard = true
+              JobName = guardJobName
+              BuildNumber = 1
+              Definition = probe }
+            :: (corpus
+                @ [ { IsGuard = true
+                      JobName = guardJobName
+                      BuildNumber = 2
+                      Definition = probe } ])
+
     let internal executeScheduled
-        (runOne: int -> JobDefinition -> Result<Trace, string>)
-        (scheduled: (bool * JobDefinition) list)
+        (runOne: string -> int -> JobDefinition -> Result<Trace, string>)
+        (scheduled: ScheduledBuild list)
         =
         scheduled
         |> List.fold
-            (fun (acc, halted) (isGuard, definition) ->
+            (fun (acc, halted) item ->
                 match halted with
-                | Some why -> ((isGuard, Error $"sequence halted: {why}") :: acc, halted)
+                | Some why -> ((item.IsGuard, Error $"sequence halted: {why}") :: acc, halted)
                 | None ->
-                    let result = runOne (List.length acc + 1) definition
+                    let result = runOne item.JobName item.BuildNumber item.Definition
 
                     let nextHalt =
-                        if isGuard then
+                        if item.IsGuard then
                             runtimeGuardResultFailure result
                             |> Option.map (fun why -> $"runtime guard failed ({why})")
                         else
@@ -396,7 +441,7 @@ module Jenkins =
                             | Error why -> Some $"a prior build failed to run ({why})"
                             | Ok _ -> None
 
-                    ((isGuard, result) :: acc, nextHalt))
+                    ((item.IsGuard, result) :: acc, nextHalt))
             ([], None)
         |> fun (acc, _) -> List.rev acc
 
@@ -442,13 +487,14 @@ module Jenkins =
     let scmJobXml (attestDefinition: bool) (spec: ScmSpec) =
         scmJobXmlWithBuildPath None attestDefinition spec
 
-    /// FG-110. Run a SEQUENCE of builds of ONE job and return a trace per
-    /// build. The job is created once, its definition UPDATED between builds
-    /// (a sequence's scripts may differ), and deleted only at the end, so
-    /// build history exists and `changed`/`fixed`/`regression` can select
-    /// against a real previous result. Each build is polled BY NUMBER — build
-    /// k of the sequence is build #k of the job — and the workspace is hashed
-    /// after each build, exactly where it lives.
+    /// FG-110. Run a SEQUENCE of requested builds on ONE corpus job and return
+    /// a trace per build. The corpus job is created once, its definition
+    /// UPDATED between builds (a sequence's scripts may differ), and deleted
+    /// only at the end, so build history exists and `changed`/`fixed`/
+    /// `regression` can select against a real previous result. Optional runtime
+    /// guards use one sibling job and never enter that history. Each requested
+    /// build is polled BY NUMBER — build k is corpus build #k — and its
+    /// workspace is hashed after each build, exactly where it lives.
     let runMany
         (cfg: JenkinsConfig)
         (envReplacements: (string * string) list)
@@ -457,6 +503,8 @@ module Jenkins =
         : Result<Trace, string> list =
         try
             let field, value = crumb cfg
+            let guardJobName = runtimeGuardJobName jobName
+            let cleanupNames = cleanupJobNames jobName cfg.RuntimeGuard.IsSome
 
             let post (path: string) (content: HttpContent option) =
                 let req = new HttpRequestMessage(HttpMethod.Post, $"{cfg.BaseUrl}{path}")
@@ -465,9 +513,14 @@ module Jenkins =
                 let r = client.Send req
                 int r.StatusCode
 
-            post $"/job/{jobName}/doDelete" None |> ignore
+            for cleanupName in cleanupNames do
+                post $"/job/{cleanupName}/doDelete" None |> ignore
 
-            let runOneInner (buildNumber: int) (definition: JobDefinition) : Result<Trace, string> =
+            let runOneInner
+                (activeJobName: string)
+                (buildNumber: int)
+                (definition: JobDefinition)
+                : Result<Trace, string> =
                 let xml () =
                     let body =
                         match definition with
@@ -482,7 +535,7 @@ module Jenkins =
 
                 let ready =
                     if buildNumber = 1 then
-                        let created = post $"/createItem?name={jobName}" (Some(xml ()))
+                        let created = post $"/createItem?name={activeJobName}" (Some(xml ()))
 
                         if created = 200 || created = 201 then
                             Ok()
@@ -490,7 +543,7 @@ module Jenkins =
                             Error $"createItem returned HTTP {created}"
                     else
                         // update the definition in place; history survives
-                        let updated = post $"/job/{jobName}/config.xml" (Some(xml ()))
+                        let updated = post $"/job/{activeJobName}/config.xml" (Some(xml ()))
                         if updated = 200 then Ok() else Error $"config.xml update returned HTTP {updated}"
 
                 match ready with
@@ -500,7 +553,7 @@ module Jenkins =
                 // FG-103: the trigger's status propagates — a stale crumb or a 409
                 // otherwise means five minutes of blind polling for a build that
                 // never exists, blamed on "did not reach a terminal state".
-                match post (buildTriggerPath jobName cfg.BuildPath) None with
+                match post (buildTriggerPath activeJobName cfg.BuildPath) None with
                 | 200
                 | 201 -> ()
                 | other -> failwith $"build trigger returned HTTP {other}"
@@ -515,7 +568,7 @@ module Jenkins =
 
                     try
                         let body =
-                            client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/{buildNumber}/api/json").Result
+                            client.GetStringAsync($"{cfg.BaseUrl}/job/{activeJobName}/{buildNumber}/api/json").Result
 
                         if Regex.IsMatch(body, "\"building\":false") then
                             let m = Regex.Match(body, "\"result\":\"([A-Z_]+)\"")
@@ -527,9 +580,9 @@ module Jenkins =
                 | None -> Error "jenkins build did not reach a terminal state"
                 | Some terminal ->
                     let console =
-                        client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/{buildNumber}/consoleText").Result
+                        client.GetStringAsync($"{cfg.BaseUrl}/job/{activeJobName}/{buildNumber}/consoleText").Result
 
-                    exportRawConsole cfg.RawConsoleExport jobName buildNumber console
+                    exportRawConsole cfg.RawConsoleExport activeJobName buildNumber console
 
                     let rawLines = console.Replace("\r\n", "\n").Split '\n'
 
@@ -554,7 +607,7 @@ module Jenkins =
                             let tree = Uri.EscapeDataString "actions[lastBuiltRevision[SHA1]]"
                             let buildData =
                                 client.GetStringAsync(
-                                    $"{cfg.BaseUrl}/job/{jobName}/{buildNumber}/api/json?tree={tree}"
+                                    $"{cfg.BaseUrl}/job/{activeJobName}/{buildNumber}/api/json?tree={tree}"
                                 ).Result
 
                             match parseBuildDataRevisions buildData with
@@ -567,8 +620,8 @@ module Jenkins =
 
                     let workspaceHash, files =
                         match cfg.WorkspaceRoot, cfg.WorkspaceCollector with
-                        | Some root, _ -> Trace.hashWorkspace (IO.Path.Combine(root, jobName))
-                        | None, Some template -> Trace.collectRemote (template.Replace("{job}", jobName))
+                        | Some root, _ -> Trace.hashWorkspace (IO.Path.Combine(root, activeJobName))
+                        | None, Some template -> Trace.collectRemote (template.Replace("{job}", activeJobName))
                         | None, None -> "not-collected", []
 
                     let declaresTimestamps = cfg.DeclaresTimestamps
@@ -582,7 +635,7 @@ module Jenkins =
                                 let m = Text.RegularExpressions.Regex.Match(l.Trim(), "^Running on .+ in (/.+)$")
                                 if m.Success then Some m.Groups[1].Value else None)
 
-                        let ws = defaultArg fromBanner $"/var/jenkins_home/workspace/{jobName}"
+                        let ws = defaultArg fromBanner $"/var/jenkins_home/workspace/{activeJobName}"
                         Trace.normaliseOutputShapedWithTimestampCoverage
                             declaresTimestamps
                             true
@@ -616,18 +669,20 @@ module Jenkins =
             // remote workspace collector) is build k's OWN error — it must not
             // reach the outer handler and replace builds 1..k-1's already-collected
             // evidence with a misattributed message.
-            let runOne (buildNumber: int) (definition: JobDefinition) : Result<Trace, string> =
+            let runOne
+                (activeJobName: string)
+                (buildNumber: int)
+                (definition: JobDefinition)
+                : Result<Trace, string> =
                 try
-                    runOneInner buildNumber definition
+                    runOneInner activeJobName buildNumber definition
                 with ex ->
                     Error ex.Message
 
             let scheduled =
                 match cfg.RuntimeGuard with
-                | None -> builds |> List.map (fun definition -> false, definition)
-                | Some guard ->
-                    let probe = Inline(runtimeGuardScript guard)
-                    [ true, probe ] @ (builds |> List.map (fun definition -> false, definition)) @ [ true, probe ]
+                | None -> scheduleBuilds jobName guardJobName None builds
+                | Some guard -> scheduleBuilds jobName guardJobName (Some(Inline(runtimeGuardScript guard))) builds
 
             let scheduledResults = executeScheduled runOne scheduled
 
@@ -648,10 +703,11 @@ module Jenkins =
             // Best-effort cleanup AFTER the evidence is safe: a delete failure
             // must not replace collected traces (the next run of this case
             // deletes the job first anyway).
-            (try
-                post $"/job/{jobName}/doDelete" None |> ignore
-             with _ ->
-                 ())
+            for cleanupName in cleanupNames do
+                try
+                    post $"/job/{cleanupName}/doDelete" None |> ignore
+                with _ ->
+                    ()
 
             results
         with ex ->

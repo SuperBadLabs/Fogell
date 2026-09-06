@@ -228,8 +228,8 @@ pinned_at=$(./scripts/no-egress-fence.sh jenkins started-at) || die "could not r
 
 # A guarded runtime claim is deliberately one case / one pin per lane. The
 # case digest binds the reviewed absence of a Pipeline PATH overlay; Jenkins.fs
-# brackets that exact case with real `sh` guard builds on the SAME disposable
-# job and requires all three allocations to report the manifest's node.
+# brackets that exact case with real `sh` builds on a dedicated guard job and
+# requires both guards plus the history-pristine corpus job to report the node.
 if [ "${#pin_ids[@]}" -gt 0 ]; then
   [ "${#files[@]}" -eq 1 ] && [ "${#pin_ids[@]}" -eq 1 ] \
     || die "runtime-pinned execution requires exactly one corpus file and one runtime pin"

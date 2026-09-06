@@ -179,12 +179,31 @@ audit_build_path_sources() {
   [ "$(rg -c 'runtimeGuardScript guard' "$jenkins")" = 1 ] || return 1
   [ "$(rg -c "runtime guard required Jenkins node" "$jenkins")" = 1 ] || return 1
   [ "$(rg -c 'FOGELL_RUNTIME_GUARD_OK' "$jenkins")" -ge 2 ] || return 1
-  [ "$(rg -F -c '[ true, probe ] @ (builds |> List.map (fun definition -> false, definition)) @ [ true, probe ]' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'let scheduledResults = executeScheduled runOne scheduled' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'match validateRuntimeGuardNode guard.RequiredNode rawLines with' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c '| Inline script -> jobXml cfg.BuildPath script' "$jenkins")" = 1 ] || return 1
-  [ "$(rg -F -c 'match post (buildTriggerPath jobName cfg.BuildPath) None with' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'match post (buildTriggerPath activeJobName cfg.BuildPath) None with' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'runtimeGuardResultFailure result' "$jenkins")" = 2 ] || return 1
+  [ "$(rg -F -c '$"_fogell-runtime-guard-{corpusJobName}"' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'let guardJobName = runtimeGuardJobName jobName' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'let cleanupNames = cleanupJobNames jobName cfg.RuntimeGuard.IsSome' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'for cleanupName in cleanupNames do' "$jenkins")" = 2 ] || return 1
+  [ "$(rg -F -c '/job/{cleanupName}/doDelete' "$jenkins")" = 2 ] || return 1
+  [ "$(rg -F -c 'JobName = corpusJobName' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'JobName = guardJobName' "$jenkins")" = 2 ] || return 1
+  [ "$(rg -F -c 'BuildNumber = index + 1' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'BuildNumber = 1' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'BuildNumber = 2' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'let result = runOne item.JobName item.BuildNumber item.Definition' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'runOneInner activeJobName buildNumber definition' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c '/createItem?name={activeJobName}' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c '/job/{activeJobName}/config.xml' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c '/job/{activeJobName}/{buildNumber}/api/json' "$jenkins")" = 2 ] || return 1
+  [ "$(rg -F -c '/job/{activeJobName}/{buildNumber}/consoleText' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'exportRawConsole cfg.RawConsoleExport activeJobName buildNumber console' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'Trace.hashWorkspace (IO.Path.Combine(root, activeJobName))' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'template.Replace("{job}", activeJobName)' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c '/var/jenkins_home/workspace/{activeJobName}' "$jenkins")" = 1 ] || return 1
 }
 
 audit_runner scripts/run-corpus-differential.sh \
@@ -212,14 +231,14 @@ if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/
   echo "RUNTIME-PIN PROOF FAILED: wrong Jenkins parameter-name mutant was accepted" >&2; exit 1
 fi
 cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
-sed -i 's#\[ true, probe \] @ (builds |> List.map (fun definition -> false, definition)) @ \[ true, probe \]#(builds |> List.map (fun definition -> false, definition)) @ [ true, probe ]#' "$scratch/Jenkins.fs"
+sed -i '0,/BuildNumber = 1/s//BuildNumber = 2/' "$scratch/Jenkins.fs"
 if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
-  echo "RUNTIME-PIN PROOF FAILED: removed pre-guard mutant was accepted" >&2; exit 1
+  echo "RUNTIME-PIN PROOF FAILED: pre-guard numbering/removal mutant was accepted" >&2; exit 1
 fi
 cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
-sed -i 's#\[ true, probe \] @ (builds |> List.map (fun definition -> false, definition)) @ \[ true, probe \]#[ true, probe ] @ (builds |> List.map (fun definition -> false, definition))#' "$scratch/Jenkins.fs"
+sed -i '0,/BuildNumber = 2/s//BuildNumber = 1/' "$scratch/Jenkins.fs"
 if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
-  echo "RUNTIME-PIN PROOF FAILED: removed post-guard mutant was accepted" >&2; exit 1
+  echo "RUNTIME-PIN PROOF FAILED: post-guard numbering/removal mutant was accepted" >&2; exit 1
 fi
 cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
 sed -i 's/match validateRuntimeGuardNode guard.RequiredNode rawLines with/match Ok() with/' "$scratch/Jenkins.fs"
@@ -232,7 +251,7 @@ if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/
   echo "RUNTIME-PIN PROOF FAILED: job-config PATH propagation mutant was accepted" >&2; exit 1
 fi
 cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
-sed -i 's/buildTriggerPath jobName cfg.BuildPath/buildTriggerPath jobName None/' "$scratch/Jenkins.fs"
+sed -i 's/buildTriggerPath activeJobName cfg.BuildPath/buildTriggerPath activeJobName None/' "$scratch/Jenkins.fs"
 if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
   echo "RUNTIME-PIN PROOF FAILED: build-trigger PATH propagation mutant was accepted" >&2; exit 1
 fi
@@ -240,6 +259,36 @@ cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
 sed -i '0,/runtimeGuardResultFailure result/s//None/' "$scratch/Jenkins.fs"
 if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
   echo "RUNTIME-PIN PROOF FAILED: semantic pre-guard halt mutant was accepted" >&2; exit 1
+fi
+cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
+sed -i '0,/JobName = guardJobName/s//JobName = corpusJobName/' "$scratch/Jenkins.fs"
+if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
+  echo "RUNTIME-PIN PROOF FAILED: guard/corpus shared-history mutant was accepted" >&2; exit 1
+fi
+cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
+sed -i 's/_fogell-runtime-guard-{corpusJobName}/{corpusJobName}-runtime-guard/' "$scratch/Jenkins.fs"
+if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
+  echo "RUNTIME-PIN PROOF FAILED: colliding guard-job namespace mutant was accepted" >&2; exit 1
+fi
+cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
+sed -i 's/cleanupJobNames jobName cfg.RuntimeGuard.IsSome/cleanupJobNames jobName true/' "$scratch/Jenkins.fs"
+if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
+  echo "RUNTIME-PIN PROOF FAILED: unguarded sibling-deletion mutant was accepted" >&2; exit 1
+fi
+cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
+sed -i 's#/job/{activeJobName}/config.xml#/job/{jobName}/config.xml#' "$scratch/Jenkins.fs"
+if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
+  echo "RUNTIME-PIN PROOF FAILED: wrong job-config target mutant was accepted" >&2; exit 1
+fi
+cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
+sed -i 's/buildTriggerPath activeJobName cfg.BuildPath/buildTriggerPath jobName cfg.BuildPath/' "$scratch/Jenkins.fs"
+if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
+  echo "RUNTIME-PIN PROOF FAILED: wrong build-trigger job mutant was accepted" >&2; exit 1
+fi
+cp src/Fogell.Differential/Jenkins.fs "$scratch/Jenkins.fs"
+sed -i '0,/\/job\/{activeJobName}\/{buildNumber}\/api\/json/s//\/job\/{jobName}\/{buildNumber}\/api\/json/' "$scratch/Jenkins.fs"
+if audit_build_path_sources "$scratch/Jenkins.fs" tools/Fogell.Differential.Cli/Program.fs; then
+  echo "RUNTIME-PIN PROOF FAILED: wrong build-poll job mutant was accepted" >&2; exit 1
 fi
 cp scripts/run-corpus-differential.sh "$scratch/runner"
 sed -i '0,/^verify_runtime_pins || die /{/^verify_runtime_pins || die /d;}' "$scratch/runner"

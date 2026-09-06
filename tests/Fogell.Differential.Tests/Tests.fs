@@ -9733,7 +9733,6 @@ let compileRefusalDisposition =
                   (Jenkins.buildTriggerPath "diff-ordinary" None)
                   "/job/diff-ordinary/build"
                   "ordinary builds retain the non-parameterized endpoint"
-
               let guard =
                   { RequiredNode = "Jenkins"
                     BuildPath = path
@@ -9762,6 +9761,22 @@ let compileRefusalDisposition =
                   (Jenkins.validateRuntimeGuardNode "Jenkins" [| "no allocation banner" |])
                   "missing allocation evidence is refused"
 
+              let corpusJob = Jenkins.jobNameForCase "/cases/foo.Jenkinsfile"
+              let ordinaryLookalike = Jenkins.jobNameForCase "/cases/foo-runtime-guard.Jenkinsfile"
+              let guardJob = Jenkins.runtimeGuardJobName corpusJob
+              Expect.isTrue
+                  (guardJob.StartsWith "_")
+                  "the guard uses a namespace ordinary normalized case jobs cannot enter"
+              Expect.notEqual guardJob ordinaryLookalike "the guard cannot collide with a lookalike corpus case"
+              Expect.equal
+                  (Jenkins.cleanupJobNames corpusJob false)
+                  [ corpusJob ]
+                  "an unguarded run never deletes a guard sibling"
+              Expect.equal
+                  (Jenkins.cleanupJobNames corpusJob true)
+                  [ corpusJob; guardJob ]
+                  "a guarded run cleans exactly its corpus and reserved guard jobs"
+
               let trace result output =
                   { Disposition = ExecutedOrRuntime
                     Result = result
@@ -9773,23 +9788,57 @@ let compileRefusalDisposition =
                     Timestamps = 0, 0
                     ReportedFailureReason = result <> "success" }
 
+              let guardedSchedule =
+                  Jenkins.scheduleBuilds
+                      "diff-corpus"
+                      "diff-guard"
+                      (Some(Inline "guard"))
+                      [ Inline "first"; Inline "second" ]
+              let scheduleIdentity (item: Jenkins.ScheduledBuild) =
+                  item.IsGuard, item.JobName, item.BuildNumber, item.Definition
+              Expect.equal
+                  (guardedSchedule |> List.map scheduleIdentity)
+                  [ true, "diff-guard", 1, Inline "guard"
+                    false, "diff-corpus", 1, Inline "first"
+                    false, "diff-corpus", 2, Inline "second"
+                    true, "diff-guard", 2, Inline "guard" ]
+                  "guards have their own job/history while requested builds remain corpus #1..#N"
+              Expect.equal
+                  (Jenkins.scheduleBuilds
+                      "diff-corpus"
+                      "diff-guard"
+                      None
+                      [ Inline "first"; Inline "second" ]
+                   |> List.map scheduleIdentity)
+                  [ false, "diff-corpus", 1, Inline "first"
+                    false, "diff-corpus", 2, Inline "second" ]
+                  "ordinary sequences preserve their exact history"
+
               let mutable invoked = []
-              let fakeRun buildNumber definition =
-                  invoked <- (buildNumber, definition) :: invoked
+              let fakeRun jobName buildNumber definition =
+                  invoked <- (jobName, buildNumber, definition) :: invoked
                   Ok(trace "failure" [])
 
               let scheduled =
-                  [ true, Inline "pre-guard"
-                    false, Inline "corpus"
-                    true, Inline "post-guard" ]
+                  Jenkins.scheduleBuilds
+                      "diff-corpus"
+                      "diff-guard"
+                      (Some(Inline "guard"))
+                      [ Inline "corpus" ]
 
               let failed = Jenkins.executeScheduled fakeRun scheduled
               Expect.equal invoked.Length 1 "a semantic pre-guard failure prevents the corpus trigger"
+              Expect.equal
+                  invoked
+                  [ "diff-guard", 1, Inline "guard" ]
+                  "only the dedicated pre-guard job is invoked before the halt"
               Expect.equal failed.Length 3 "every requested schedule slot receives a result"
 
               let mutable passedInvocations = 0
-              let passingRun _ definition =
+              let mutable passedIdentities = []
+              let passingRun jobName buildNumber definition =
                   passedInvocations <- passedInvocations + 1
+                  passedIdentities <- (jobName, buildNumber) :: passedIdentities
                   match definition with
                   | Inline "corpus" -> Ok(trace "failure" [ "expected corpus failure" ])
                   | _ -> Ok(trace "success" [ "FOGELL_RUNTIME_GUARD_OK" ])
@@ -9799,6 +9848,10 @@ let compileRefusalDisposition =
                   passedInvocations
                   3
                   "a successful pre-guard allows the corpus and post-guard despite the corpus's ordinary failure result"
+              Expect.equal
+                  (List.rev passedIdentities)
+                  [ "diff-guard", 1; "diff-corpus", 1; "diff-guard", 2 ]
+                  "guard/corpus/guard execute with separate exact job histories"
           }
 
           test "Fogell input rejection returns a refusal trace without touching a fresh workspace" {
