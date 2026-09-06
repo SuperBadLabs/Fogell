@@ -470,7 +470,7 @@ if ! busy_json=$(curl -sS -m 10 "$tunnel_url/computer/api/json?tree=busyExecutor
 fi
 busy=$(printf '%s' "$busy_json" | sed -n 's/.*"busyExecutors":\([0-9]*\).*/\1/p')
 [ "${busy:-x}" = "0" ] || die "oracle reports busyExecutors=${busy:-unknown}; the lane is single-tenant"
-if ! queue_json=$(curl -sS -m 10 "$tunnel_url/queue/api/json?tree=items[id]" 2>&1); then
+if ! queue_json=$(curl --globoff -sS -m 10 "$tunnel_url/queue/api/json?tree=items[id]" 2>&1); then
   die "the authenticated oracle tunnel did not answer the queue check: ${queue_json:-no output}"
 fi
 printf '%s' "$queue_json" | jq -e '.items | type == "array" and length == 0' >/dev/null \

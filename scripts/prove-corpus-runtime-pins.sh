@@ -212,6 +212,7 @@ audit_runner() {
   [ "$(rg -c '^tail --pid=\$\$ -f /dev/null 9>&- \| ssh -o BatchMode=yes -o ExitOnForwardFailure=yes ' "$runner")" = 1 ] || return 1
   [ "$(rg -c 'FOGELL_JENKINS_HOST.*echo tunneled; exec cat >/dev/null.*tunnel_fifo' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^FOGELL_JENKINS_URL="\$tunnel_url" "\$fence_script" fogell run -- \\$' "$runner")" = 1 ] || return 1
+  [ "$(rg -F -c 'if ! queue_json=$(curl --globoff -sS -m 10 "$tunnel_url/queue/api/json?tree=items[id]" 2>&1); then' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  FOGELL_JENKINS_BUILD_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  export FOGELL_JENKINS_BUILD_PATH$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  FOGELL_RUNTIME_GUARD_CASE_SHA=\$\{file_digests\[0\]\}$' "$runner")" = 1 ] || return 1
@@ -506,6 +507,7 @@ reject_runner_mutant "missing cleanup ownership label" '/^    if \[ "$owned" = /
 reject_runner_mutant "missing anonymous-volume cleanup proof" '/podman volume exists \$oracle_home_volume/d'
 reject_runner_mutant "missing remote access heartbeat" '/"\$fence_script" jenkins access-present >\/dev\/null 2>&1 \\/d'
 reject_runner_mutant "missing local access heartbeat" '/"\$fence_script" local access-present >\/dev\/null 2>&1 \\/d'
+reject_runner_mutant "glob-expanding tunneled queue check" '/queue_json=\$(curl --globoff/s/--globoff //'
 
 reject_fence_mutant "missing access token validator" 's/^jenkins_access_token()/jenkins_access_token_unchecked()/'
 reject_fence_mutant "missing authenticated uid validator" 's/^jenkins_access_uid()/jenkins_access_uid_unchecked()/'
