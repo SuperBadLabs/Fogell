@@ -407,3 +407,29 @@ Read with the two sections above; this is the second addendum.
   threads. PR #438 merged as verified exact-tree commit `8cd9f126`; post-merge
   main runs `34109793327` and `34109793329` passed the fast and slow gates.
   [`tickets/FG-257.md`](tickets/FG-257.md) is the live record.
+
+## 2026-09-07 custodian addendum — FG-258 closed
+
+- **The measured Groovy `println` route is Tier-1 PROVEN.** Pinned Jenkins
+  2.568.1 established that one positional string prints once and returns null,
+  zero arguments prints a blank line and returns null, and two arguments fail.
+  Fogell admits only zero or one string and deliberately refuses the unmeasured
+  named-map and scalar-coercion surface. Direct Declarative `println` is
+  refused before argument rendering; six isolated mutants pin the boundary.
+- **One corpus file moved.** `vskurikhin_DayBook3` ran alone through both
+  proven no-egress fences on an empty workspace. Both engines printed the same
+  build-number line, failed at `cd auth` before `touch` or `make`, emitted the
+  same three later-stage skip sentences, and retained the same empty workspace.
+  Gradle, JUnit, archive, credential, Docker and network surfaces did not run
+  and are not claimed. Receipt seal `514f943a…` binds the result.
+- **Generated accounting:** `tier1=15`, `admitted=185`, `tier3=28`; the
+  separate hand-written population remains 308 of 308 proven. All 323 receipt
+  seals verify.
+- **Publication record.** Final signed source `90b87061`, tree `ab83993a`,
+  passed the authoritative 1,143-test HeMan gate and hosted run `34129058535`.
+  Exact-head Copilot review `5132660999` covered 13/13 files with zero comments;
+  Codex result `5571620562` and security result `5571654623` were clean.
+  Canonical review coverage passed with zero review threads. PR #440 merged as
+  GitHub-verified exact-tree commit `a7feafe8`; post-merge main runs
+  `34130020987` and `34130020953` passed the fast and slow gates.
+  [`tickets/FG-258.md`](tickets/FG-258.md) is the live record.
