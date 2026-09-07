@@ -9788,9 +9788,21 @@ let compileRefusalDisposition =
                   occurrences
                   1
                   "the parsed insertion point adds exactly one unpredictable marker"
+              let guardIndex =
+                  fourSpaceScript.IndexOf("Fogell target runtime guard", StringComparison.Ordinal)
+              let installIndex =
+                  fourSpaceScript.IndexOf("stage('Install')", StringComparison.Ordinal)
+              Expect.isGreaterThanOrEqual
+                  guardIndex
+                  0
+                  "the injected runtime-guard label remains present"
+              Expect.isGreaterThanOrEqual
+                  installIndex
+                  0
+                  "the corpus first-stage label remains present"
               Expect.isLessThan
-                  (fourSpaceScript.IndexOf("Fogell target runtime guard", StringComparison.Ordinal))
-                  (fourSpaceScript.IndexOf("stage('Install')", StringComparison.Ordinal))
+                  guardIndex
+                  installIndex
                   "the guard executes before the corpus first stage"
               Expect.isError
                   (Jenkins.injectTargetRuntimeGuard guard "0123456789abcdef" marker "pipeline { agent any; stages {} }")
