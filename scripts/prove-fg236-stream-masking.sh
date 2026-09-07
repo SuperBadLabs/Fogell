@@ -35,7 +35,7 @@ dotnet run --project "$differential_project" -c Release --no-build -- \
 
 kill_mutant() {
   local label=$1 expected=$2
-  # The mutation has been applied; exactly one file may differ from pristine.
+  # The mutation has been applied; exactly one file must differ from pristine.
   assert_isolated "$label"
   set +e
   bash -ic "dotnet build '$project' -c Release --no-restore -m:1" >/dev/null
@@ -56,7 +56,7 @@ kill_mutant() {
 
 kill_differential_mutant() {
   local label=$1 expected=$2
-  # The mutation has been applied; exactly one file may differ from pristine.
+  # The mutation has been applied; exactly one file must differ from pristine.
   assert_isolated "$label"
   set +e
   bash -ic "dotnet build '$differential_project' -c Release --no-restore -m:1" >/dev/null
