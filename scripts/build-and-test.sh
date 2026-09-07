@@ -40,21 +40,69 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 #   lanes       the restart lane, the inbox-watcher proof and the approval lane;
 #               the restart lane's own `dotnet build` produces the tree all three
 #               use
-GATE_LANES=(build audits prelude stale-refs lanes)
+GATE_LANES=(build audits prelude stale-refs lanes mutants)
 
-if [ "${1:-}" = "--list-lanes" ]; then
-  printf '%s\n' "${GATE_LANES[@]}"
-  exit 0
-fi
+# TIERS. Two hosted workflows, one script. .github/workflows/gate.yml runs the
+# FAST tier on every pull request and every push to the default branch, and is
+# the required check; .github/workflows/gate-mutants.yml runs the SLOW tier
+# nightly and on merge. The split is declared HERE, not in either workflow, for
+# the same reason the lanes are: both derive their lane set from
+# `--list-lanes fast` / `--list-lanes slow`, so neither can drift from this file.
+#
+# ONLY THE SLOW TIER IS LISTED. The fast tier is its complement, computed below.
+# An earlier draft carried two lists and a check that they partitioned
+# GATE_LANES — but that check would then have been the only thing standing
+# between a typo and a lane that runs in NO hosted job while every job stays
+# green. Deriving one side from the other makes that state unrepresentable
+# instead of audited.
+#
+# WHAT EARNS A PLACE IN THE SLOW TIER: not "less important" — every lane here is
+# blocking, and the local `all` run is unchanged. It is cost that a pull request
+# should not wait on. The `mutants` lane compiles and runs one hostile candidate
+# per mutant and measured 1810 s of the build lane's 2103 s across 49 hosted runs
+# to 2026-09-06 (FG-236 1495 s of it), against ~293 s for everything else in that
+# lane put together.
+GATE_SLOW_LANES=(mutants)
 
-# `-` not `:-`: unset means the whole gate, but a variable that is SET and empty
-# is a caller that meant to name a lane and did not, and is refused below.
-gate_lanes_requested="${FOGELL_GATE_LANES-all}"
 lane_known() {
   local lane
   for lane in "${GATE_LANES[@]}"; do [ "$lane" = "$1" ] && return 0; done
   return 1
 }
+lane_is_slow() {
+  local lane
+  for lane in "${GATE_SLOW_LANES[@]}"; do [ "$lane" = "$1" ] && return 0; done
+  return 1
+}
+
+# `--list-lanes [all|fast|slow]`. A BARE `--list-lanes` MUST KEEP PRINTING EVERY
+# LANE: scripts/bin/audit-gate-lanes reads it to decide which lanes a block may
+# name and which lanes must own one, so narrowing the default would blind the
+# partition audit rather than fail it.
+if [ "${1:-}" = "--list-lanes" ]; then
+  gate_tier="${2:-all}"
+  case "$gate_tier" in
+    all|fast|slow) ;;
+    *) echo "usage: --list-lanes [all|fast|slow]"; exit 2 ;;
+  esac
+  # A slow lane that is not a lane at all would silently empty the slow tier and
+  # leave its blocks running nowhere. Refuse instead.
+  for lane in "${GATE_SLOW_LANES[@]}"; do
+    lane_known "$lane" \
+      || { echo "INTERNAL: the slow tier names unlisted lane '$lane'"; exit 2; }
+  done
+  for lane in "${GATE_LANES[@]}"; do
+    case "$gate_tier" in
+      all) printf '%s\n' "$lane" ;;
+      slow) lane_is_slow "$lane" && printf '%s\n' "$lane" ;;
+      fast) lane_is_slow "$lane" || printf '%s\n' "$lane" ;;
+    esac
+  done
+  exit 0
+fi
+# `-` not `:-`: unset means the whole gate, but a variable that is SET and empty
+# is a caller that meant to name a lane and did not, and is refused below.
+gate_lanes_requested="${FOGELL_GATE_LANES-all}"
 if [ "$gate_lanes_requested" != all ]; then
   [[ -n "${gate_lanes_requested//[[:space:]]/}" ]] \
     || { echo "FOGELL_GATE_LANES is set but names no lane (known: ${GATE_LANES[*]})"; exit 2; }
@@ -148,6 +196,56 @@ if lane_active build; then
   ./scripts/run-project-tests.sh \
     || { echo "TESTS FAILED"; exit 1; }
 
+  # FG-228 evidence. STAYS IN `build` while its mutation proof moved to the
+  # `mutants` lane: this runs the built Differential CLI with --no-build against
+  # the tree prove-dependency-locks.sh produced above, and no such tree exists in
+  # a lane that builds nothing. It also asks a different question — committed
+  # probe digests against recomputed receipt seals — rather than whether the
+  # containment mutant dies.
+  ./scripts/check-fg228-evidence.sh \
+    || { echo "STASH SYMLINK EVIDENCE CHECK FAILED"; exit 1; }
+
+  # FG-026. The ordinary Store project run above covers the ledger and already
+  # refuses a no-summary database skip. This focused wrapper additionally proves
+  # that the named ten-test slice and exact live schema marker ran, after first
+  # rejecting planted skip/count/marker/summary/exit-code outputs.
+  echo "=== effect-checkpoint ledger proof (FG-026, blocking) ==="
+  ./scripts/prove-fg026-effect-ledger.sh \
+    || { echo "EFFECT-CHECKPOINT LEDGER PROOF FAILED"; exit 1; }
+
+  # FG-207. StepFinished and its optional StepReason are historical records but
+  # one current durability group: exact order under one lock and exactly one
+  # EveryStep Flush(true). The deterministic observer proof runs everywhere;
+  # strace adds a syscall-level count only on hosts that provide it.
+  echo "=== grouped step-finish force proof (FG-207, blocking) ==="
+  ./scripts/prove-fg207-fsync.sh \
+    || { echo "GROUPED STEP-FINISH FORCE PROOF FAILED"; exit 1; }
+fi
+
+if lane_active mutants; then
+  # THE MUTATION PROOFS — THE SLOW TIER. Each compiles and runs one hostile
+  # candidate per mutant, which is why they are here rather than on the pull
+  # request path: 1810 s of the build lane's 2103 s across 49 hosted runs
+  # measured to 2026-09-06 (FG-236 1495 s over its 44 mutants, FG-235 142 s,
+  # FG-251 138 s, FG-228 35 s), against ~293 s for the whole rest of that lane.
+  # .github/workflows/gate-mutants.yml runs this lane nightly and on every merge
+  # to the default branch; an unset FOGELL_GATE_LANES still runs it here, so the
+  # local gate is unchanged and remains the full one.
+  #
+  # THIS BLOCK MUST STAY BELOW THE FIRST `build` BLOCK. Every proof here restores
+  # into NUGET_PACKAGES, and prove-dependency-locks.sh refuses a package cache
+  # that is not empty — that emptiness is part of what it proves. Placed above
+  # it, the local `all` sequence would fail inside the lock proof, naming a cause
+  # unrelated to the edit that caused it.
+  #
+  # WHAT THIS LANE NEEDS and nothing more: the SDK; git, because each proof
+  # exports tracked worktree bytes with `git ls-files -z | tar` — the index, not
+  # history, so no full-depth fetch; ripgrep, because every proof asserts its
+  # mutation landed and matches its expected refusal text with `rg`; and a live
+  # PostgreSQL for FG-251 alone, whose Controller.Api suite returns 0 with
+  # "skipped: no PostgreSQL" when none answers — which would make its baseline
+  # pass vacuously and every mutant read as a survivor. It needs no built tree
+  # (each proof builds its own scratch copy), no fflat, and no comparison ref.
   # FG-251. The global operator bearer is accepted only from one bounded,
   # metadata-validated descriptor. Compile hostile candidates that hardcode an
   # x86 flag, trust incomplete/wrong statx fields, reopen either loader path,
@@ -180,24 +278,6 @@ if lane_active build; then
   echo "=== stash symlink containment mutation proof (FG-228, blocking) ==="
   ./scripts/prove-fg228-stash-symlinks.sh \
     || { echo "STASH SYMLINK CONTAINMENT PROOF FAILED"; exit 1; }
-  ./scripts/check-fg228-evidence.sh \
-    || { echo "STASH SYMLINK EVIDENCE CHECK FAILED"; exit 1; }
-
-  # FG-026. The ordinary Store project run above covers the ledger and already
-  # refuses a no-summary database skip. This focused wrapper additionally proves
-  # that the named ten-test slice and exact live schema marker ran, after first
-  # rejecting planted skip/count/marker/summary/exit-code outputs.
-  echo "=== effect-checkpoint ledger proof (FG-026, blocking) ==="
-  ./scripts/prove-fg026-effect-ledger.sh \
-    || { echo "EFFECT-CHECKPOINT LEDGER PROOF FAILED"; exit 1; }
-
-  # FG-207. StepFinished and its optional StepReason are historical records but
-  # one current durability group: exact order under one lock and exactly one
-  # EveryStep Flush(true). The deterministic observer proof runs everywhere;
-  # strace adds a syscall-level count only on hosts that provide it.
-  echo "=== grouped step-finish force proof (FG-207, blocking) ==="
-  ./scripts/prove-fg207-fsync.sh \
-    || { echo "GROUPED STEP-FINISH FORCE PROOF FAILED"; exit 1; }
 fi
 
 if lane_active audits; then
