@@ -105,7 +105,8 @@ else
   unset FOGELL_JENKINS_BUILD_PATH
 fi
 unset FOGELL_RUNTIME_GUARD_CASE_SHA FOGELL_RUNTIME_GUARD_NODE \
-  FOGELL_RUNTIME_GUARD_COMMAND FOGELL_RUNTIME_GUARD_TOOL_PATH
+  FOGELL_RUNTIME_GUARD_COMMAND FOGELL_RUNTIME_GUARD_EXPECTATION \
+  FOGELL_RUNTIME_GUARD_TOOL_PATH
 
 # THE BYTES THAT WERE CHECKED ARE THE BYTES THAT RUN. The corpus lives on a
 # shared mount; a refresh between the hash check and the CLI's own read would
@@ -135,7 +136,7 @@ cli_closure_sha=$(find "$cli_build" -type f -printf '%P\0' | sort -z | while IFS
 echo "corpus lane: fresh exact-HEAD differential CLI closure sha256 $cli_closure_sha"
 capability=$(dotnet "$cli" --runtime-guard-capability 2>/dev/null) \
   || die "the fresh differential CLI did not answer the runtime-guard capability probe"
-[ "$capability" = fogell-runtime-guard-v3 ] \
+[ "$capability" = fogell-runtime-guard-v4 ] \
   || die "the fresh differential CLI reported an unexpected runtime-guard capability: ${capability:-no output}"
 
 # One lane per user on this host: a second lane's exit trap would remove this
@@ -318,15 +319,17 @@ if [ "${#pin_ids[@]}" -gt 0 ]; then
     || die "runtime-pinned execution requires exactly one corpus file and one runtime pin"
   guard_row=$(awk -F'\t' -v p="${pin_ids[0]}" '$1==p {n++; row=$0} END {if(n==1) print row; else exit 1}' \
     "$runtime_pins") || die "could not recover the verified runtime pin row"
-  IFS=$'\t' read -r guard_pin guard_command _ guard_tool_path _ guard_image guard_digest guard_container_port guard_host_binding guard_node guard_plugin_count guard_plugin_sha guard_extra <<< "$guard_row"
+  IFS=$'\t' read -r guard_pin guard_command guard_expectation _ guard_tool_path _ guard_image guard_digest guard_container_port guard_host_binding guard_node guard_plugin_count guard_plugin_sha guard_extra <<< "$guard_row"
   [ -z "${guard_extra:-}" ] || die "verified runtime pin row changed shape"
   [ "$guard_pin" = "${pin_ids[0]}" ] || die "verified runtime pin identity changed"
   FOGELL_RUNTIME_GUARD_CASE_SHA=${file_digests[0]}
   FOGELL_RUNTIME_GUARD_NODE=$guard_node
   FOGELL_RUNTIME_GUARD_COMMAND=$guard_command
+  FOGELL_RUNTIME_GUARD_EXPECTATION=$guard_expectation
   FOGELL_RUNTIME_GUARD_TOOL_PATH=$guard_tool_path
   export FOGELL_RUNTIME_GUARD_CASE_SHA FOGELL_RUNTIME_GUARD_NODE \
-    FOGELL_RUNTIME_GUARD_COMMAND FOGELL_RUNTIME_GUARD_TOOL_PATH
+    FOGELL_RUNTIME_GUARD_COMMAND FOGELL_RUNTIME_GUARD_EXPECTATION \
+    FOGELL_RUNTIME_GUARD_TOOL_PATH
 fi
 
 # A receipt never shares the long-lived lab JVM or its mutable home. The lane

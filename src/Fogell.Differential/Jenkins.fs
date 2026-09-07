@@ -72,7 +72,11 @@ and RuntimeGuard =
     { CaseSha: string
       RequiredNode: string
       BuildPath: string
-      Tools: (string * string) list }
+      Requirements: RuntimeRequirement list }
+
+and RuntimeRequirement =
+    | PresentAtPath of command: string * path: string
+    | AbsentCommand of command: string
 
 /// FG-052. What defines a build's pipeline on the Jenkins side: an inline
 /// script (CpsFlowDefinition) or an SCM the Jenkinsfile is obtained from
@@ -84,6 +88,56 @@ type JobDefinition =
 module Jenkins =
 
     let private client = new HttpClient(Timeout = TimeSpan.FromMinutes 10.0)
+
+    /// Translate the corpus lane's deliberately small environment protocol into
+    /// a typed runtime requirement. The wire format carries a path in every mode
+    /// so partial old/new runner combinations fail closed: present requires one
+    /// absolute safe path, while absent requires the exact non-path sentinel `-`.
+    let configureRuntimeGuard
+        (caseSha: string)
+        (node: string)
+        (command: string)
+        (toolPath: string)
+        (expectation: string)
+        (buildPath: string option)
+        (caseCount: int)
+        =
+        let values = [ caseSha; node; command; toolPath; expectation ]
+        let present value = not (String.IsNullOrEmpty value)
+        let safe (pattern: string) (value: string) = Regex.IsMatch(value, pattern)
+
+        match values |> List.filter present |> List.length with
+        | 0 -> Ok(None, None)
+        | 5 ->
+            let commonValid =
+                safe "^[0-9a-f]{64}$" caseSha
+                && safe "^[A-Za-z0-9._-]+$" node
+                && safe "^[A-Za-z0-9._+-]+$" command
+
+            let requirement =
+                match expectation with
+                | "present" when safe "^/[A-Za-z0-9._/+:-]+$" toolPath ->
+                    Ok(PresentAtPath(command, toolPath))
+                | "present" -> Error "expectation 'present' requires an absolute safe tool path"
+                | "absent" when toolPath = "-" -> Ok(AbsentCommand command)
+                | "absent" -> Error "expectation 'absent' requires tool path '-'"
+                | _ -> Error "expectation must be exactly 'present' or 'absent'"
+
+            match commonValid, requirement, buildPath, caseCount with
+            | false, _, _, _ -> Error "malformed case SHA, node, or command"
+            | true, Error why, _, _ -> Error why
+            | true, Ok requirement, Some path, 1 ->
+                Ok(
+                    Some caseSha,
+                    Some
+                        { CaseSha = caseSha
+                          RequiredNode = node
+                          BuildPath = path
+                          Requirements = [ requirement ] }
+                )
+            | true, Ok _, Some _, _ -> Error "exactly one corpus case is required"
+            | true, Ok _, None, _ -> Error "FOGELL_JENKINS_BUILD_PATH is required"
+        | _ -> Error "all five FOGELL_RUNTIME_GUARD_* values are required"
 
     let jobNameForCase (casePath: string) =
         "diff-"
@@ -363,10 +417,13 @@ module Jenkins =
 
     let internal runtimeGuardScript (guard: RuntimeGuard) =
         let checks =
-            guard.Tools
-            |> List.map (fun (command, path) ->
-                $"actual=$(command -v {command}) || exit 91\n"
-                + $"[ \"$actual\" = \"{path}\" ] || exit 92\n")
+            guard.Requirements
+            |> List.map (function
+                | PresentAtPath(command, path) ->
+                    $"actual=$(command -v {command}) || exit 91\n"
+                    + $"[ \"$actual\" = \"{path}\" ] || exit 92\n"
+                | AbsentCommand command ->
+                    $"if command -v {command} >/dev/null 2>&1; then exit 94; fi\n")
             |> String.concat ""
 
         "pipeline {\n"
@@ -406,10 +463,13 @@ module Jenkins =
             Error $"runtime-guarded corpus definition has no parsed top-level stages insertion point: {refusal}"
         | Ok bodyStart ->
             let checks =
-                guard.Tools
-                |> List.map (fun (command, path) ->
-                    $"          actual=$(command -v {command}) || exit 91\n"
-                    + $"          [ \"$actual\" = \"{path}\" ] || exit 92\n")
+                guard.Requirements
+                |> List.map (function
+                    | PresentAtPath(command, path) ->
+                        $"          actual=$(command -v {command}) || exit 91\n"
+                        + $"          [ \"$actual\" = \"{path}\" ] || exit 92\n"
+                    | AbsentCommand command ->
+                        $"          if command -v {command} >/dev/null 2>&1; then exit 94; fi\n")
                 |> String.concat ""
 
             let stage =

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Verify the exact command resolution, tool bytes, Jenkins image, and published
-# endpoint selected by an allowlisted corpus row. The corpus runner calls this
-# under its cross-host lease before execution and again before receipt promotion.
+# Verify the exact command resolution (present at pinned bytes, or absent),
+# Jenkins image, and published endpoint selected by an allowlisted corpus row.
+# The corpus runner calls this under its cross-host lease before execution and
+# again before receipt promotion.
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 
@@ -22,17 +23,27 @@ build_path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # shellcheck source=scripts/jenkins-workspace-v2.sh disable=SC1091
 source scripts/jenkins-workspace-v2.sh || die "Jenkins command quoting helpers could not be loaded"
 
-declare -A tool_name=() local_tool=() jenkins_tool=() tool_sha=() image_id=() image_digest=() container_port=() host_binding=() jenkins_node=() plugin_count=() plugin_sha=()
-while IFS=$'\t' read -r pin command local_path jenkins_path sha expected_image expected_digest expected_container_port expected_host_binding expected_node expected_plugin_count expected_plugin_sha extra; do
+declare -A tool_name=() expectation=() local_tool=() jenkins_tool=() tool_sha=() image_id=() image_digest=() container_port=() host_binding=() jenkins_node=() plugin_count=() plugin_sha=()
+while IFS=$'\t' read -r pin command expected_resolution local_path jenkins_path sha expected_image expected_digest expected_container_port expected_host_binding expected_node expected_plugin_count expected_plugin_sha extra; do
   [ -n "$pin" ] || continue
   case "$pin" in \#*) continue ;; esac
-  [ -z "${extra:-}" ] || die "pin '$pin' has more than twelve tab-separated fields"
+  [ -z "${extra:-}" ] || die "pin '$pin' has more than thirteen tab-separated fields"
   [[ "$pin" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die "invalid pin id '$pin'"
   [ -z "${tool_name[$pin]+x}" ] || die "duplicate pin id '$pin'"
   [[ "$command" =~ ^[A-Za-z0-9._+-]+$ ]] || die "pin '$pin' has an unsafe tool name"
-  [[ "$local_path" =~ ^/[A-Za-z0-9._/+:-]+$ ]] || die "pin '$pin' has an unsafe local tool path"
-  [[ "$jenkins_path" =~ ^/[A-Za-z0-9._/+:-]+$ ]] || die "pin '$pin' has an unsafe Jenkins tool path"
-  [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || die "pin '$pin' has an invalid tool SHA-256"
+  case "$expected_resolution" in
+    present)
+      [[ "$local_path" =~ ^/[A-Za-z0-9._/+:-]+$ ]] || die "pin '$pin' has an unsafe local tool path"
+      [[ "$jenkins_path" =~ ^/[A-Za-z0-9._/+:-]+$ ]] || die "pin '$pin' has an unsafe Jenkins tool path"
+      [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || die "pin '$pin' has an invalid tool SHA-256"
+      ;;
+    absent)
+      if [ "$local_path" != - ] || [ "$jenkins_path" != - ] || [ "$sha" != - ]; then
+        die "pin '$pin' absent expectation requires '-' for both tool paths and SHA-256"
+      fi
+      ;;
+    *) die "pin '$pin' has invalid expectation '$expected_resolution' (expected present or absent)" ;;
+  esac
   [[ "$expected_image" =~ ^[0-9a-f]{64}$ ]] || die "pin '$pin' has an invalid Jenkins image ID"
   [[ "$expected_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die "pin '$pin' has an invalid Jenkins image digest"
   [[ "$expected_container_port" =~ ^[1-9][0-9]{0,4}/tcp$ ]] \
@@ -50,6 +61,7 @@ while IFS=$'\t' read -r pin command local_path jenkins_path sha expected_image e
   binding_port=${expected_host_binding##*:}
   [ "$binding_port" -le 65535 ] || die "pin '$pin' has an invalid Jenkins host binding"
   tool_name[$pin]=$command
+  expectation[$pin]=$expected_resolution
   local_tool[$pin]=$local_path
   jenkins_tool[$pin]=$jenkins_path
   tool_sha[$pin]=$sha
@@ -68,39 +80,67 @@ for pin in "$@"; do
   requested[$pin]=1
   [ -n "${tool_name[$pin]+x}" ] || die "pin '$pin' is not defined in $pins_file"
 
-  observed_local_path=$(PATH="$build_path" command -v "${tool_name[$pin]}" 2>/dev/null || true)
-  [ "$observed_local_path" = "${local_tool[$pin]}" ] \
-    || die "pin '$pin' local command resolves to ${observed_local_path:-nothing}, expected ${local_tool[$pin]}"
-  if ! observed_local=$(sha256sum -- "$observed_local_path" 2>/dev/null); then
-    die "pin '$pin' could not hash local tool $observed_local_path"
+  if observed_local_path=$(PATH="$build_path" command -v "${tool_name[$pin]}" 2>/dev/null); then
+    local_resolution=present
+  else
+    observed_local_path=
+    local_resolution=absent
   fi
-  observed_local=${observed_local%% *}
-  [ "$observed_local" = "${tool_sha[$pin]}" ] \
-    || die "pin '$pin' local tool SHA-256 is $observed_local, expected ${tool_sha[$pin]}"
+
+  case "${expectation[$pin]}" in
+    present)
+      [ "$local_resolution" = present ] \
+        || die "pin '$pin' local command resolves to nothing, expected ${local_tool[$pin]}"
+      [ "$observed_local_path" = "${local_tool[$pin]}" ] \
+        || die "pin '$pin' local command resolves to $observed_local_path, expected ${local_tool[$pin]}"
+      if ! observed_local=$(sha256sum -- "$observed_local_path" 2>/dev/null); then
+        die "pin '$pin' could not hash local tool $observed_local_path"
+      fi
+      observed_local=${observed_local%% *}
+      [ "$observed_local" = "${tool_sha[$pin]}" ] \
+        || die "pin '$pin' local tool SHA-256 is $observed_local, expected ${tool_sha[$pin]}"
+      ;;
+    absent)
+      [ "$local_resolution" = absent ] \
+        || die "pin '$pin' local command unexpectedly resolves to $observed_local_path under the fixed build PATH"
+      ;;
+  esac
 
   container_q=$(fogell_quote_posix_shell_v2 "$FOGELL_JENKINS_CONTAINER") \
     || die "pin '$pin' could not quote the Jenkins container"
   command_q=$(fogell_quote_posix_shell_v2 "${tool_name[$pin]}") \
     || die "pin '$pin' could not quote the tool name"
-  # The single quotes deliberately preserve $1 for the remote `sh -c`.
+  path_q=$(fogell_quote_posix_shell_v2 "PATH=$build_path") \
+    || die "pin '$pin' could not quote the fixed Jenkins build PATH"
+  # The single quotes deliberately preserve $1 for the remote `sh -c`. The
+  # exact marker distinguishes command absence from SSH, podman, or shell
+  # failure: transport failure is nonzero, and any unexpected stdout refuses.
   # shellcheck disable=SC2016
-  resolve_q=$(fogell_quote_posix_shell_v2 'command -v "$1"') \
+  resolve_q=$(fogell_quote_posix_shell_v2 'if actual=$(command -v "$1" 2>/dev/null); then printf "present:%s\n" "$actual"; else printf "absent\n"; fi') \
     || die "pin '$pin' could not quote the resolution probe"
-  if ! observed_remote_path=$(ssh -o BatchMode=yes -- "$FOGELL_JENKINS_HOST" \
-      "podman exec --user 1000 $container_q sh -c $resolve_q sh $command_q" 2>/dev/null); then
-    die "pin '$pin' could not resolve Jenkins tool ${tool_name[$pin]}"
+  if ! observed_remote_resolution=$(ssh -o BatchMode=yes -- "$FOGELL_JENKINS_HOST" \
+      "podman exec --user 1000 --env $path_q $container_q /bin/sh -c $resolve_q sh $command_q" 2>/dev/null); then
+    die "pin '$pin' could not inspect Jenkins command ${tool_name[$pin]}"
   fi
-  [ "$observed_remote_path" = "${jenkins_tool[$pin]}" ] \
-    || die "pin '$pin' Jenkins command resolves to ${observed_remote_path:-nothing}, expected ${jenkins_tool[$pin]}"
-  tool_q=$(fogell_quote_posix_shell_v2 "$observed_remote_path") \
-    || die "pin '$pin' could not quote the Jenkins tool path"
-  if ! observed_remote=$(ssh -o BatchMode=yes -- "$FOGELL_JENKINS_HOST" \
-      "podman exec --user 1000 $container_q sha256sum -- $tool_q" 2>/dev/null); then
-    die "pin '$pin' could not hash Jenkins tool $observed_remote_path"
-  fi
-  observed_remote=${observed_remote%% *}
-  [ "$observed_remote" = "${tool_sha[$pin]}" ] \
-    || die "pin '$pin' Jenkins tool SHA-256 is $observed_remote, expected ${tool_sha[$pin]}"
+  case "${expectation[$pin]}" in
+    present)
+      [ "$observed_remote_resolution" = "present:${jenkins_tool[$pin]}" ] \
+        || die "pin '$pin' Jenkins command resolution is ${observed_remote_resolution:-no output}, expected present:${jenkins_tool[$pin]}"
+      tool_q=$(fogell_quote_posix_shell_v2 "${jenkins_tool[$pin]}") \
+        || die "pin '$pin' could not quote the Jenkins tool path"
+      if ! observed_remote=$(ssh -o BatchMode=yes -- "$FOGELL_JENKINS_HOST" \
+          "podman exec --user 1000 $container_q sha256sum -- $tool_q" 2>/dev/null); then
+        die "pin '$pin' could not hash Jenkins tool ${jenkins_tool[$pin]}"
+      fi
+      observed_remote=${observed_remote%% *}
+      [ "$observed_remote" = "${tool_sha[$pin]}" ] \
+        || die "pin '$pin' Jenkins tool SHA-256 is $observed_remote, expected ${tool_sha[$pin]}"
+      ;;
+    absent)
+      [ "$observed_remote_resolution" = absent ] \
+        || die "pin '$pin' Jenkins command unexpectedly resolves (${observed_remote_resolution:-no output}) under the fixed build PATH"
+      ;;
+  esac
 
   if ! observed_image=$(fogell_jenkins_podman_inspect_v2 \
       "$FOGELL_JENKINS_HOST" "$FOGELL_JENKINS_CONTAINER" '{{.Image}}' 2>/dev/null); then
@@ -154,7 +194,7 @@ for pin in "$@"; do
   [ "$observed_binding" = "${host_binding[$pin]}" ] \
     || die "pin '$pin' Jenkins port binding is ${observed_binding:-nothing}, expected ${host_binding[$pin]}"
 
-  printf 'corpus runtime pin: %s verified (tool %s; image %s; digest %s; plugins %s/%s; endpoint %s; node %s)\n' \
-    "$pin" "${tool_sha[$pin]}" "${image_id[$pin]}" "${image_digest[$pin]}" \
+  printf 'corpus runtime pin: %s verified (command %s %s; image %s; digest %s; plugins %s/%s; endpoint %s; node %s)\n' \
+    "$pin" "${tool_name[$pin]}" "${expectation[$pin]}" "${image_id[$pin]}" "${image_digest[$pin]}" \
     "${plugin_count[$pin]}" "${plugin_sha[$pin]}" "$FOGELL_JENKINS_URL" "${jenkins_node[$pin]}"
 done

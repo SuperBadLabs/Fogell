@@ -2,7 +2,7 @@
 # Hostile proof for the fail-closed corpus runtime-pin boundary. It uses this
 # host's ordinary `make` as inert bytes and a fake ssh; no Jenkins, corpus,
 # container runtime or network is used.
-# shellcheck disable=SC1003,SC2016  # deliberate literal source/mutant patterns
+# shellcheck disable=SC1003,SC2016,SC2317  # deliberate literal source/mutant patterns and exported hostile function
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 
@@ -21,11 +21,26 @@ plugin_count=1
 plugin_sha=$(printf '%s' "$plugin_json" | jq -cS '.plugins | sort_by(.shortName)' | sha256sum | cut -d' ' -f1)
 
 apply_fixture() {
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    make-pin make "$local_path" /usr/local/bin/make "$local_sha" "$image_id" "$image_digest" "$container_port" "$host_binding" "$expected_node" "$plugin_count" "$plugin_sha" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    make-pin make present "$local_path" /usr/local/bin/make "$local_sha" "$image_id" "$image_digest" "$container_port" "$host_binding" "$expected_node" "$plugin_count" "$plugin_sha" \
     > "$scratch/pins.tsv"
   export FAKE_REMOTE_PATH=/usr/local/bin/make
   export FAKE_REMOTE_TOOL_SHA=$local_sha
+  export FAKE_IMAGE_ID=$image_id
+  export FAKE_IMAGE_DIGEST=$image_digest
+  export FAKE_PORT_BINDING=$host_binding
+  export FAKE_PLUGIN_JSON=$plugin_json
+  export FOGELL_JENKINS_URL=http://fake:18083
+  unset FAKE_REMOTE_RESOLUTION FAKE_SSH_FAIL
+}
+
+apply_absent_fixture() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    composer-absent-v1 composer absent - - - "$image_id" "$image_digest" "$container_port" "$host_binding" "$expected_node" "$plugin_count" "$plugin_sha" \
+    > "$scratch/pins.tsv"
+  export FAKE_REMOTE_PATH=-
+  export FAKE_REMOTE_TOOL_SHA=-
+  export FAKE_REMOTE_RESOLUTION=absent
   export FAKE_IMAGE_ID=$image_id
   export FAKE_IMAGE_DIGEST=$image_digest
   export FAKE_PORT_BINDING=$host_binding
@@ -41,7 +56,7 @@ remote_command=${!#}
 [ -z "${FAKE_SSH_FAIL:-}" ] || exit 1
 case "$remote_command" in
   *"pluginManager/api/json"*) printf '%s\n' "$FAKE_PLUGIN_JSON" ;;
-  *"podman exec "*"command -v"*) printf '%s\n' "$FAKE_REMOTE_PATH" ;;
+  *"podman exec "*"command -v"*) printf '%s\n' "${FAKE_REMOTE_RESOLUTION:-present:$FAKE_REMOTE_PATH}" ;;
   *"podman exec "*" sha256sum -- "*) printf '%s  %s\n' "$FAKE_REMOTE_TOOL_SHA" "$FAKE_REMOTE_PATH" ;;
   *"podman inspect "*"Image"*) printf '%s\n' "$FAKE_IMAGE_ID" ;;
   *"podman image inspect "*"Digest"*) printf '%s\n' "$FAKE_IMAGE_DIGEST" ;;
@@ -52,15 +67,16 @@ EOF
 chmod +x "$scratch/bin/ssh"
 
 check() {
+  pin=${1:-make-pin}
   PATH="$scratch/bin:$PATH" \
   FOGELL_JENKINS_HOST=fake FOGELL_JENKINS_CONTAINER=jenkins-lab \
-    ./scripts/check-corpus-runtime-pins.sh "$scratch/pins.tsv" make-pin
+    ./scripts/check-corpus-runtime-pins.sh "$scratch/pins.tsv" "$pin"
 }
 
 must_refuse() {
-  label=$1 expected=$2
+  label=$1 expected=$2 pin=${3:-make-pin}
   set +e
-  out=$(check 2>&1); rc=$?
+  out=$(check "$pin" 2>&1); rc=$?
   set -e
   [ "$rc" -ne 0 ] || { echo "RUNTIME-PIN PROOF FAILED: $label was accepted" >&2; exit 1; }
   case "$out" in *"$expected"*) ;; *) printf 'RUNTIME-PIN PROOF FAILED: %s emitted:\n%s\n' "$label" "$out" >&2; exit 1 ;; esac
@@ -70,6 +86,24 @@ must_refuse() {
 apply_fixture
 check >/dev/null
 echo "=== corpus runtime pin: exact tuple accepted ==="
+
+apply_absent_fixture
+check composer-absent-v1 >/dev/null
+echo "=== corpus runtime pin: exact command absence accepted ==="
+
+composer() { :; }
+export -f composer
+must_refuse "local shadowed composer" "local command unexpectedly resolves" composer-absent-v1
+unset -f composer
+apply_absent_fixture
+
+FAKE_REMOTE_RESOLUTION=present:/opt/shadow/composer
+must_refuse "Jenkins shadowed composer" "Jenkins command unexpectedly resolves" composer-absent-v1
+apply_absent_fixture
+
+export FAKE_SSH_FAIL=1
+must_refuse "unavailable remote absence identity" "could not inspect Jenkins command" composer-absent-v1
+apply_fixture
 
 sed -i "s#\t$local_path\t#\t/bin/not-the-resolved-make\t#" "$scratch/pins.tsv"
 must_refuse "local command shadow/path drift" "local command resolves"
@@ -81,7 +115,7 @@ must_refuse "local tool-byte drift" "local tool SHA-256"
 apply_fixture
 
 FAKE_REMOTE_PATH=/opt/shadow/make
-must_refuse "Jenkins command shadow/path drift" "Jenkins command resolves"
+must_refuse "Jenkins command shadow/path drift" "Jenkins command resolution"
 apply_fixture
 
 FAKE_REMOTE_TOOL_SHA=$bad_sha
@@ -113,7 +147,23 @@ must_refuse "container port-binding drift" "Jenkins port binding"
 apply_fixture
 
 export FAKE_SSH_FAIL=1
-must_refuse "unavailable remote identity" "could not resolve Jenkins tool"
+must_refuse "unavailable remote identity" "could not inspect Jenkins command"
+apply_fixture
+
+sed -i 's/\tpresent\t/\tmissing\t/' "$scratch/pins.tsv"
+must_refuse "missing/invalid resolution expectation" "invalid expectation"
+apply_absent_fixture
+
+sed -i 's#\tabsent\t-\t-\t-\t#\tabsent\t/tmp/composer\t-\t-\t#' "$scratch/pins.tsv"
+must_refuse "absent row with local path" "absent expectation requires '-'" composer-absent-v1
+apply_absent_fixture
+
+sed -i 's#\tabsent\t-\t-\t-\t#\tabsent\t-\t/opt/composer\t-\t#' "$scratch/pins.tsv"
+must_refuse "absent row with Jenkins path" "absent expectation requires '-'" composer-absent-v1
+apply_absent_fixture
+
+sed -i "s/\tabsent\t-\t-\t-\t/\tabsent\t-\t-\t$bad_sha\t/" "$scratch/pins.tsv"
+must_refuse "absent row with tool digest" "absent expectation requires '-'" composer-absent-v1
 apply_fixture
 
 sed -i "s/$local_sha/bad/" "$scratch/pins.tsv"
@@ -148,8 +198,8 @@ FAKE_PLUGIN_JSON='{"plugins":[{"shortName":"workflow-job","version":"mutated","a
 must_refuse "Jenkins plugin-inventory drift" "Jenkins plugin digest"
 apply_fixture
 
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  make-pin make "$local_path" /usr/local/bin/make "$local_sha" "$image_id" "$image_digest" "$container_port" "$host_binding" "$expected_node" "$plugin_count" "$plugin_sha" \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  make-pin make present "$local_path" /usr/local/bin/make "$local_sha" "$image_id" "$image_digest" "$container_port" "$host_binding" "$expected_node" "$plugin_count" "$plugin_sha" \
   >> "$scratch/pins.tsv"
 must_refuse "duplicate pin id" "duplicate pin id"
 apply_fixture
@@ -202,7 +252,7 @@ audit_runner() {
   [ "$(rg -c '^runtime_pins="\$cli_source/differential/corpus-runtime-pins\.tsv"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^snap_dir=\$\(mktemp -d\); cli_private=\$\(mktemp -d\); cli_source="\$cli_private/source"; cli_build="\$cli_private/output"; snaps=\(\)$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^cli="\$cli_build/fogell-diff\.dll"$' "$runner")" = 1 ] || return 1
-  [ "$(rg -c '^\[ "\$capability" = fogell-runtime-guard-v3 \] \\$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^\[ "\$capability" = fogell-runtime-guard-v4 \] \\$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  \[ -n "\$cli_private" \] && rm -rf "\$cli_private"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  "\$runtime_pin_checker" "\$runtime_pins" "\$\{pin_ids\[@\]\}"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^source "\$workspace_helper" \|\| die ' "$runner")" = 1 ] || return 1
@@ -215,10 +265,13 @@ audit_runner() {
   [ "$(rg -F -c 'if ! queue_json=$(curl --globoff -sS -m 10 "$tunnel_url/queue/api/json?tree=items[id]" 2>&1); then' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  FOGELL_JENKINS_BUILD_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  export FOGELL_JENKINS_BUILD_PATH$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c 'read -r guard_pin guard_command guard_expectation _ guard_tool_path _ guard_image guard_digest guard_container_port guard_host_binding guard_node guard_plugin_count guard_plugin_sha guard_extra <<< "\$guard_row"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  FOGELL_RUNTIME_GUARD_CASE_SHA=\$\{file_digests\[0\]\}$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  FOGELL_RUNTIME_GUARD_NODE=\$guard_node$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  FOGELL_RUNTIME_GUARD_COMMAND=\$guard_command$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^  FOGELL_RUNTIME_GUARD_EXPECTATION=\$guard_expectation$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  FOGELL_RUNTIME_GUARD_TOOL_PATH=\$guard_tool_path$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^    FOGELL_RUNTIME_GUARD_COMMAND FOGELL_RUNTIME_GUARD_EXPECTATION \\$' "$runner")" = 1 ] || return 1
   [ "$(rg -F -c 'podman run --pull=never -d --name $oracle_name --label fogell.lane-token=$FOGELL_JENKINS_ACCESS_TOKEN' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^FOGELL_JENKINS_ACCESS_TOKEN=\$\(od -An -N16 -tx1 /dev/urandom \| tr -d '\'' \\n'\''\)$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^\[\[ "\$oracle_run_output" =~ \^\[0-9a-f\]\{64\}\$ \]\] \\$' "$runner")" = 1 ] || return 1
@@ -274,10 +327,12 @@ audit_build_path_sources() {
   [ "$(rg -F -c 'let pathPart = $"PATH={Uri.EscapeDataString path}"' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c '$"&FOGELL_BUILD_TOKEN={Uri.EscapeDataString value}"' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c '$"/job/{jobName}/buildWithParameters?{pathPart}{tokenPart}"' "$jenkins")" = 1 ] || return 1
-  [ "$(rg -c 'FOGELL_JENKINS_BUILD_PATH' "$cli_source")" = 2 ] || return 1
+  [ "$(rg -c 'FOGELL_JENKINS_BUILD_PATH' "$cli_source")" = 1 ] || return 1
   [ "$(rg -c 'path when path = expected -> Some path' "$cli_source")" = 1 ] || return 1
   [ "$(rg -c 'FOGELL_RUNTIME_GUARD_CASE_SHA' "$cli_source")" = 1 ] || return 1
+  [ "$(rg -c 'FOGELL_RUNTIME_GUARD_EXPECTATION' "$cli_source")" = 1 ] || return 1
   [ "$(rg -c 'runtimeGuardCaseSha' "$cli_source")" -ge 2 ] || return 1
+  [ "$(rg -F -c '| "absent" when toolPath = "-" -> Ok(AbsentCommand command)' "$jenkins")" = 1 ] || return 1
   [ "$(rg -c 'runtimeGuardScript guard' "$jenkins")" = 1 ] || return 1
   [ "$(rg -c "runtime guard required Jenkins node" "$jenkins")" = 1 ] || return 1
   [ "$(rg -c 'FOGELL_RUNTIME_GUARD_OK' "$jenkins")" -ge 2 ] || return 1
@@ -312,6 +367,7 @@ audit_build_path_sources() {
   [ "$(rg -F -c '[ \"$PATH\" = \"{guard.BuildPath}\" ] || exit 90' "$jenkins")" = 2 ] || return 1
   [ "$(rg -F -c '[ \"$FOGELL_BUILD_TOKEN\" = \"{buildToken}\" ] || exit 93' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'actual=$(command -v {command}) || exit 91' "$jenkins")" = 2 ] || return 1
+  [ "$(rg -F -c 'if command -v {command} >/dev/null 2>&1; then exit 94; fi' "$jenkins")" = 2 ] || return 1
   [ "$(rg -F -c 'validateAndRemoveTargetRuntimeMarker' "$jenkins")" = 2 ] || return 1
   [ "$(rg -F -c 'if isNull r.Headers.Location then None' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'Regex.Match(location, "/queue/item/([1-9][0-9]*)/?(?:$|[?#])")' "$jenkins")" = 1 ] || return 1
@@ -324,7 +380,7 @@ audit_build_path_sources() {
   [ "$(rg -F -c '/job/{activeJobName}/{buildNumber}/replay/' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'String.Equals(observed, expectedScript, StringComparison.Ordinal)' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c '| [ "--runtime-guard-capability" ] ->' "$cli_source")" = 1 ] || return 1
-  [ "$(rg -F -c 'printfn "fogell-runtime-guard-v3"' "$cli_source")" = 1 ] || return 1
+  [ "$(rg -F -c 'printfn "fogell-runtime-guard-v4"' "$cli_source")" = 1 ] || return 1
 }
 
 audit_runner scripts/run-corpus-differential.sh \
@@ -494,7 +550,10 @@ reject_runner_mutant "working-tree executed-surface allowlist" 's#allowlist="$cl
 reject_runner_mutant "working-tree runtime-pin policy" 's#runtime_pins="$cli_source/differential/corpus-runtime-pins.tsv"#runtime_pins="differential/corpus-runtime-pins.tsv"#'
 reject_runner_mutant "unlocked CLI restore" 's/ --locked-mode / /'
 reject_runner_mutant "shared CLI output" 's#cli="$cli_build/fogell-diff.dll"#cli="tools/Fogell.Differential.Cli/bin/fogell-diff.dll"#'
-reject_runner_mutant "missing CLI capability handshake" 's/\[ "$capability" = fogell-runtime-guard-v3 \]/[ -n "$capability" ]/'
+reject_runner_mutant "missing CLI capability handshake" 's/\[ "$capability" = fogell-runtime-guard-v4 \]/[ -n "$capability" ]/'
+reject_runner_mutant "missing resolution-expectation parsing" 's/guard_command guard_expectation _ guard_tool_path/guard_command _ _ guard_tool_path/'
+reject_runner_mutant "missing resolution-expectation assignment" '/^  FOGELL_RUNTIME_GUARD_EXPECTATION=\$guard_expectation$/d'
+reject_runner_mutant "missing resolution-expectation export" '/^    FOGELL_RUNTIME_GUARD_COMMAND FOGELL_RUNTIME_GUARD_EXPECTATION \\/s/ FOGELL_RUNTIME_GUARD_EXPECTATION//'
 reject_runner_mutant "missing local pre-listener access fence" '/^"\$fence_script" local access-apply$/d'
 reject_runner_mutant "missing remote pre-listener access fence" '/^"\$fence_script" jenkins access-apply$/d'
 reject_runner_mutant "mutable oracle image pull" 's/podman run --pull=never/podman run --pull=always/'
@@ -524,6 +583,7 @@ reject_jenkins_mutant "constant target nonce" 's/Convert.ToHexString(RandomNumbe
 reject_jenkins_mutant "missing target PATH check" '/          \[ \\"\$PATH\\" = \\"{guard.BuildPath}\\" \] || exit 90/d'
 reject_jenkins_mutant "missing target build-token check" '/\$FOGELL_BUILD_TOKEN.*exit 93/d'
 reject_jenkins_mutant "missing target command-resolution check" '/          actual=\$(command -v {command}) || exit 91/d'
+reject_jenkins_mutant "missing target absent-command check" '/          if command -v {command} >\/dev\/null 2>&1; then exit 94; fi/d'
 reject_jenkins_mutant "missing target marker validation" 's/validateAndRemoveTargetRuntimeMarker/acceptTargetRuntimeMarker/g'
 reject_jenkins_mutant "missing queue Location" 's/if isNull r.Headers.Location then None/if true then None/'
 reject_jenkins_mutant "loose queue Location parser" 's/\[1-9\]\[0-9\]\*/[0-9]*/'
@@ -534,7 +594,7 @@ reject_jenkins_mutant "weakened exact ownership token" 's/observed = expectedQue
 reject_jenkins_mutant "non-exact Replay definition" 's/String.Equals(observed, expectedScript, StringComparison.Ordinal)/true/'
 
 cp tools/Fogell.Differential.Cli/Program.fs "$scratch/Program.fs"
-sed -i 's/printfn "fogell-runtime-guard-v3"/printfn "fogell-runtime-guard-v2"/' "$scratch/Program.fs"
+sed -i 's/printfn "fogell-runtime-guard-v4"/printfn "fogell-runtime-guard-v3"/' "$scratch/Program.fs"
 if cmp -s tools/Fogell.Differential.Cli/Program.fs "$scratch/Program.fs"; then
   echo "RUNTIME-PIN PROOF FAILED: CLI capability mutant did not apply" >&2; exit 1
 fi

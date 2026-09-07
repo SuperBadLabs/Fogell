@@ -24,7 +24,7 @@ open Fogell.Execution
 let main argv =
     match Array.toList argv with
     | [ "--runtime-guard-capability" ] ->
-        printfn "fogell-runtime-guard-v3"
+        printfn "fogell-runtime-guard-v4"
         0
 
     // FG-161. Recompute every receipt's seal from the receipt itself.
@@ -150,42 +150,21 @@ let main argv =
             let node = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_NODE"
             let command = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_COMMAND"
             let toolPath = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_TOOL_PATH"
-            let values = [ caseSha; node; command; toolPath ]
-            let present value = not (String.IsNullOrEmpty value)
+            let expectation = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_EXPECTATION"
 
-            match values |> List.filter present |> List.length with
-            | 0 -> None, None
-            | 4 ->
-                let safe (pattern: string) (value: string) =
-                    Text.RegularExpressions.Regex.IsMatch(value, pattern)
-                let valid =
-                    safe "^[0-9a-f]{64}$" caseSha
-                    && safe "^[A-Za-z0-9._-]+$" node
-                    && safe "^[A-Za-z0-9._+-]+$" command
-                    && safe "^/[A-Za-z0-9._/+:-]+$" toolPath
-
-                match valid, jenkinsBuildPath with
-                | true, Some buildPath when files.Length = 1 ->
-                    Some caseSha,
-                    Some
-                        { CaseSha = caseSha
-                          RequiredNode = node
-                          BuildPath = buildPath
-                          Tools = [ command, toolPath ] }
-                | true, Some _ ->
-                    eprintfn "Jenkins runtime guard refused: exactly one corpus case is required"
-                    exit 2
-                    None, None
-                | true, None ->
-                    eprintfn "Jenkins runtime guard refused: FOGELL_JENKINS_BUILD_PATH is required"
-                    exit 2
-                    None, None
-                | _ ->
-                    eprintfn "Jenkins runtime guard refused: malformed case SHA, node, command, or tool path"
-                    exit 2
-                    None, None
-            | _ ->
-                eprintfn "Jenkins runtime guard refused: all four FOGELL_RUNTIME_GUARD_* values are required"
+            match
+                Jenkins.configureRuntimeGuard
+                    caseSha
+                    node
+                    command
+                    toolPath
+                    expectation
+                    jenkinsBuildPath
+                    files.Length
+            with
+            | Ok configured -> configured
+            | Error why ->
+                eprintfn $"Jenkins runtime guard refused: {why}"
                 exit 2
                 None, None
 

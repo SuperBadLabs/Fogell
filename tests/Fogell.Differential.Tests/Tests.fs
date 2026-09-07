@@ -9826,7 +9826,7 @@ let compileRefusalDisposition =
                   { CaseSha = String.replicate 64 "a"
                     RequiredNode = "Jenkins"
                     BuildPath = path
-                    Tools = [ "make", "/usr/local/bin/make" ] }
+                    Requirements = [ PresentAtPath("make", "/usr/local/bin/make") ] }
               let probe = Jenkins.runtimeGuardScript guard
               Expect.stringContains probe "[ \"$PATH\" = \"/usr/local/sbin:" "the real sh checks effective PATH"
               Expect.stringContains probe "actual=$(command -v make)" "the real sh resolves the selected command"
@@ -9848,6 +9848,70 @@ let compileRefusalDisposition =
                   "the target build checks the owned trigger token before its marker"
               Expect.stringContains targetScript "actual=$(command -v make)" "the target build resolves the pinned tool"
               Expect.stringContains targetScript $"[ \"$PATH\" = \"{path}\" ]" "the target build checks effective PATH"
+
+              let absentGuard =
+                  { guard with
+                      Requirements = [ AbsentCommand "composer" ] }
+              let absentProbe = Jenkins.runtimeGuardScript absentGuard
+              Expect.stringContains
+                  absentProbe
+                  "if command -v composer >/dev/null 2>&1; then exit 94; fi"
+                  "the separate guard build fails if the forbidden command resolves"
+              Expect.isFalse
+                  (absentProbe.Contains "actual=$(command -v composer)")
+                  "absence is not represented as a failed present-at-path lookup"
+              let absentMarker = Jenkins.targetRuntimeMarker absentGuard.CaseSha "fedcba9876543210"
+              let absentTarget =
+                  Jenkins.injectTargetRuntimeGuard
+                      absentGuard
+                      "fedcba9876543210"
+                      absentMarker
+                      "pipeline {\n  agent any\n  stages {\n    stage('Build') { steps { sh 'composer install' } }\n  }\n}\n"
+              Expect.isOk absentTarget "an absent-command requirement injects before the target stage"
+              let absentTargetScript = absentTarget |> Result.defaultValue ""
+              Expect.stringContains
+                  absentTargetScript
+                  "if command -v composer >/dev/null 2>&1; then exit 94; fi"
+                  "the target build itself fails if the forbidden command resolves"
+              Expect.stringContains absentTargetScript absentMarker "the absence check gates the target marker"
+
+              let sha = String.replicate 64 "a"
+              let configured expectation toolPath =
+                  Jenkins.configureRuntimeGuard sha "Jenkins" "composer" toolPath expectation (Some path) 1
+
+              match configured "present" "/usr/local/bin/composer" with
+              | Ok(Some observedSha, Some configuredGuard) ->
+                  Expect.equal observedSha sha "the valid present guard retains its digest binding"
+                  Expect.equal
+                      configuredGuard.Requirements
+                      [ PresentAtPath("composer", "/usr/local/bin/composer") ]
+                      "present mode becomes a typed path requirement"
+              | other -> failtestf "valid present runtime guard was refused: %A" other
+
+              match configured "absent" "-" with
+              | Ok(Some observedSha, Some configuredGuard) ->
+                  Expect.equal observedSha sha "the valid absent guard retains its digest binding"
+                  Expect.equal
+                      configuredGuard.Requirements
+                      [ AbsentCommand "composer" ]
+                      "absent mode becomes a typed negative requirement"
+              | other -> failtestf "valid absent runtime guard was refused: %A" other
+
+              Expect.isError (configured "sometimes" "-") "an unknown expectation fails closed"
+              Expect.isError (configured "present" "-") "present mode requires an absolute path"
+              Expect.isError
+                  (configured "present" "relative/composer")
+                  "present mode rejects a relative path"
+              Expect.isError
+                  (configured "absent" "/usr/local/bin/composer")
+                  "absent mode requires the exact non-path sentinel"
+              Expect.isError
+                  (Jenkins.configureRuntimeGuard sha "Jenkins" "composer" "" "absent" (Some path) 1)
+                  "all five guard values remain mandatory"
+              Expect.equal
+                  (Jenkins.configureRuntimeGuard "" "" "" "" "" None 1)
+                  (Ok(None, None))
+                  "an entirely unconfigured ordinary differential remains unguarded"
 
               let fourSpaceSource =
                   "pipeline {\n"

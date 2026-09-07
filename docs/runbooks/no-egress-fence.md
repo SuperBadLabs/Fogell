@@ -26,16 +26,25 @@ regenerate the ledger with
 
 An allowlist row may name a fourth-field runtime-pin ID from
 `differential/corpus-runtime-pins.tsv`. Under the cross-host lease and before
-any corpus execution, the lane verifies the command resolves to the pinned
-path on each engine, both resolved files have the pinned SHA-256, and injects
-Fogell's fixed compatibility `PATH` and a cryptographic per-trigger ownership
-token as explicit Jenkins build parameters. The trigger's returned queue item,
-the build API's `queueId`, both parameters, and the exact Replay definition must
-all agree. The corpus definition is augmented with a first stage that checks
-the token, effective PATH, and pinned `command -v` result before emitting one
-case- and nonce-bound marker; only that exact marker is removed from comparison.
-Separate real Pipeline guard builds remain immediately before and after the
-corpus history, and every allocation must report the pinned node.
+any corpus execution, each pin declares whether its command must be `present`
+or `absent` under Fogell's exact compatibility `PATH`. A `present` row carries
+absolute local and Jenkins paths plus the common file SHA-256. An `absent` row
+must carry `-` for both paths and the SHA-256; the checker then proves that
+`command -v` resolves nowhere locally and in the actual disposable Jenkins
+container identity. `composer-absent-v1` is the absence prerequisite for the
+Tier-1 Composer case. SSH, podman, shell, or malformed-probe failures are not
+accepted as absence. The checker runs once before execution and again before
+receipt promotion.
+
+The lane also injects that typed requirement, the fixed `PATH`, and a
+cryptographic per-trigger ownership token as explicit Jenkins build
+parameters. The trigger's returned queue item, the build API's `queueId`, both
+parameters, and the exact Replay definition must all agree. The corpus
+definition is augmented with a first stage that checks the token, effective
+PATH, and required command presence or absence before emitting one case- and
+nonce-bound marker; only that exact marker is removed from comparison. Separate
+real Pipeline guard builds apply the same requirement immediately before and
+after the corpus history, and every allocation must report the pinned node.
 
 The lane never executes on the long-lived `jenkins-lab` JVM or its mutable
 home. Under the cross-host lease it installs a token-bound Luigi access fence
@@ -43,7 +52,7 @@ before any listener, starts a random-named controller with `--pull=never` from
 the exact image ID, and captures the returned full container ID. Jenkins gets
 one fresh anonymous home volume; readiness is accepted only with the pinned
 core, exact 154-plugin closure, zero jobs, empty queue, idle executor set, exact
-image/digest/tool/port tuple, and one online node. The namespace egress fence
+image/digest/runtime-requirement/port tuple, and one online node. The namespace egress fence
 is installed as soon as the new container has a PID. Every collector uses the
 full random container ID. The lane carries all Jenkins REST traffic over a
 life-bound SSH local forward; an exact owner-UID nftables rule exists on HeMan
@@ -63,6 +72,8 @@ not verify, a file whose sha256 and stem are not on
 `differential/corpus-allowlist.tsv` (read the file, record its executed
 surface there in one line, then run — the corpus is untrusted and the list
 is the permission), a missing or mismatching runtime pin selected by that row,
+an invalid resolution expectation, an absent command that resolves on either
+host, or a present command with a path or byte mismatch,
 a runner different from HEAD, a private archive/restore/build/capability
 failure, a second lane of this user on this host (a lock in
 `$XDG_RUNTIME_DIR`), an oracle with busy executors, a lane lease it
