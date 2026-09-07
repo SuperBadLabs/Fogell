@@ -1,7 +1,9 @@
 namespace Fogell.Differential
 
 open System
+open System.Net
 open System.Net.Http
+open System.Security.Cryptography
 open System.Text
 open System.Text.Json
 open System.Text.RegularExpressions
@@ -37,6 +39,17 @@ type JenkinsConfig =
       /// deleted. A configured write failure fails that build rather than leaving
       /// a stale or partial evidence artifact.
       RawConsoleExport: RawConsoleExport option
+      /// Optional exact PATH injected as a Jenkins string parameter on every
+      /// disposable build. Runtime-pinned corpus cases use this to bind command
+      /// resolution in the real Jenkins `sh` launcher rather than merely in an
+      /// out-of-band `podman exec` inspection.
+      BuildPath: string option
+      /// Optional build-context guard for a runtime-pinned corpus case. The
+      /// guard is executed as real Pipeline `sh` builds immediately before and
+      /// after the requested build on a separate disposable Jenkins job, so it
+      /// cannot manufacture history for the tested job. Every allocation,
+      /// including the corpus build itself, must name RequiredNode.
+      RuntimeGuard: RuntimeGuard option
       /// FG-053. Whether the SCRIPT declares `options { timestamps() }`.
       ///
       /// Jenkins cannot be asked, and its console cannot be inspected for it
@@ -54,6 +67,12 @@ and RawConsoleExport =
       /// The CLI checks this after every requested case, so a selector that
       /// matched no executed build cannot silently report success.
       mutable Observed: bool }
+
+and RuntimeGuard =
+    { CaseSha: string
+      RequiredNode: string
+      BuildPath: string
+      Tools: (string * string) list }
 
 /// FG-052. What defines a build's pipeline on the Jenkins side: an inline
 /// script (CpsFlowDefinition) or an SCM the Jenkinsfile is obtained from
@@ -73,6 +92,17 @@ module Jenkins =
             "[^A-Za-z0-9]+",
             "-"
         )
+
+    /// jobNameForCase always starts with `diff-` and cannot emit `_`; this
+    /// reserved sibling namespace cannot collide with an ordinary case job.
+    let internal runtimeGuardJobName (corpusJobName: string) =
+        $"_fogell-runtime-guard-{corpusJobName}"
+
+    let internal cleanupJobNames (corpusJobName: string) (hasRuntimeGuard: bool) =
+        if hasRuntimeGuard then
+            [ corpusJobName; runtimeGuardJobName corpusJobName ]
+        else
+            [ corpusJobName ]
 
     /// Jenkins execution and raw-console selection are keyed by job/build.
     /// Refuse two source cases that normalize to the same job before either
@@ -300,7 +330,331 @@ module Jenkins =
     let private xmlEscape (s: string) =
         s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;")
 
-    let private jobXml (script: string) =
+    let private buildPathProperty (buildPath: string option) =
+        match buildPath with
+        | None -> ""
+        | Some path ->
+            "<hudson.model.ParametersDefinitionProperty><parameterDefinitions>"
+            + "<hudson.model.StringParameterDefinition><name>PATH</name>"
+            + "<description>Fogell exact build command-resolution path</description>"
+            + $"<defaultValue>{xmlEscape path}</defaultValue><trim>false</trim>"
+            + "</hudson.model.StringParameterDefinition>"
+            + "<hudson.model.StringParameterDefinition><name>FOGELL_BUILD_TOKEN</name>"
+            + "<description>Per-trigger Fogell queue ownership token</description>"
+            + "<defaultValue></defaultValue><trim>false</trim>"
+            + "</hudson.model.StringParameterDefinition></parameterDefinitions>"
+            + "</hudson.model.ParametersDefinitionProperty>"
+
+    let internal buildTriggerPath
+        (jobName: string)
+        (buildPath: string option)
+        (buildToken: string option)
+        =
+        match buildPath, buildToken with
+        | None, None -> $"/job/{jobName}/build"
+        | Some path, token ->
+            let pathPart = $"PATH={Uri.EscapeDataString path}"
+            let tokenPart =
+                token
+                |> Option.map (fun value -> $"&FOGELL_BUILD_TOKEN={Uri.EscapeDataString value}")
+                |> Option.defaultValue ""
+            $"/job/{jobName}/buildWithParameters?{pathPart}{tokenPart}"
+        | None, Some _ -> invalidArg (nameof buildToken) "a build ownership token requires a PATH parameterized job"
+
+    let internal runtimeGuardScript (guard: RuntimeGuard) =
+        let checks =
+            guard.Tools
+            |> List.map (fun (command, path) ->
+                $"actual=$(command -v {command}) || exit 91\n"
+                + $"[ \"$actual\" = \"{path}\" ] || exit 92\n")
+            |> String.concat ""
+
+        "pipeline {\n"
+        + "  agent any\n"
+        + "  stages {\n"
+        + "    stage('Fogell runtime guard') {\n"
+        + "      steps {\n"
+        + "        sh '''set +x\n"
+        + $"[ \"$PATH\" = \"{guard.BuildPath}\" ] || exit 90\n"
+        + checks
+        + "printf 'FOGELL_RUNTIME_GUARD_OK\\n'\n"
+        + "'''\n"
+        + "      }\n"
+        + "    }\n"
+        + "  }\n"
+        + "}\n"
+
+    let internal targetRuntimeMarker (caseSha: string) (nonce: string) =
+        $"FOGELL_TARGET_RUNTIME_OK:{caseSha}:{nonce}"
+
+    let internal injectTargetRuntimeGuard
+        (guard: RuntimeGuard)
+        (buildToken: string)
+        (marker: string)
+        (script: string)
+        =
+        let anchor = "\n  stages {\n"
+        let occurrences = Regex.Matches(script, Regex.Escape anchor).Count
+
+        if occurrences <> 1 then
+            Error $"runtime-guarded corpus definition has {occurrences} exact top-level stages anchors, expected one"
+        else
+            let checks =
+                guard.Tools
+                |> List.map (fun (command, path) ->
+                    $"          actual=$(command -v {command}) || exit 91\n"
+                    + $"          [ \"$actual\" = \"{path}\" ] || exit 92\n")
+                |> String.concat ""
+
+            let stage =
+                "    stage('Fogell target runtime guard') {\n"
+                + "      steps {\n"
+                + "        sh '''#!/bin/sh\n"
+                + "          set +x\n"
+                + $"          [ \"$PATH\" = \"{guard.BuildPath}\" ] || exit 90\n"
+                + $"          [ \"$FOGELL_BUILD_TOKEN\" = \"{buildToken}\" ] || exit 93\n"
+                + checks
+                + "          printf '%s\\n' '" + marker + "'\n"
+                + "        '''\n"
+                + "      }\n"
+                + "    }\n"
+
+            Ok(script.Replace(anchor, anchor + stage, StringComparison.Ordinal))
+
+    let internal validateAndRemoveTargetRuntimeMarker
+        (declaresTimestamps: bool)
+        (marker: string)
+        (rawLines: string array)
+        =
+        let matches line =
+            String.Equals(
+                (Trace.stripDecoration declaresTimestamps line).Trim(),
+                marker,
+                StringComparison.Ordinal
+            )
+
+        match rawLines |> Array.filter matches |> Array.length with
+        | 1 -> Ok(rawLines |> Array.filter (matches >> not))
+        | count -> Error $"target runtime guard emitted {count} exact success markers, expected one"
+
+    let internal validateRuntimeGuardNode (requiredNode: string) (rawLines: string array) =
+        let allocations =
+            rawLines
+            |> Array.choose (fun line ->
+                let m = Regex.Match(line.Trim(), "^Running on (.+) in /.+$")
+                if m.Success then Some m.Groups[1].Value else None)
+            |> Array.distinct
+
+        match allocations with
+        | [| node |] when node = requiredNode -> Ok()
+        | [| node |] -> Error $"runtime guard required Jenkins node '{requiredNode}', build ran on '{node}'"
+        | _ -> Error "runtime guard could not bind the Jenkins build to one reported node"
+
+    let internal replayMainScript (html: string) =
+        let matches =
+            Regex.Matches(
+                html,
+                "<textarea[^>]*name=\"_.mainScript\"[^>]*>(.*?)</textarea>",
+                RegexOptions.Singleline
+            )
+
+        match matches.Count with
+        | 1 -> Ok(WebUtility.HtmlDecode matches[0].Groups[1].Value)
+        | count -> Error $"executed Jenkins definition had {count} Replay script fields, expected one"
+
+    let internal validateBuildPathParameter (expectedPath: string) (json: string) =
+        try
+            use document = JsonDocument.Parse json
+
+            let values =
+                document.RootElement.GetProperty("actions").EnumerateArray()
+                |> Seq.collect (fun action ->
+                    let mutable parameters = Unchecked.defaultof<JsonElement>
+                    if action.TryGetProperty("parameters", &parameters)
+                       && parameters.ValueKind = JsonValueKind.Array then
+                        parameters.EnumerateArray() |> Seq.toArray
+                    else
+                        [||])
+                |> Seq.choose (fun parameter ->
+                    let mutable name = Unchecked.defaultof<JsonElement>
+                    let mutable value = Unchecked.defaultof<JsonElement>
+                    if parameter.TryGetProperty("name", &name)
+                       && name.ValueKind = JsonValueKind.String
+                       && name.GetString() = "PATH"
+                       && parameter.TryGetProperty("value", &value)
+                       && value.ValueKind = JsonValueKind.String then
+                        Some(value.GetString())
+                    else
+                        None)
+                |> Seq.toList
+
+            match values with
+            | [ path ] when path = expectedPath -> Ok()
+            | [ path ] -> Error $"Jenkins build PATH parameter was '{path}', expected '{expectedPath}'"
+            | _ -> Error "Jenkins build did not record exactly one PATH parameter"
+        with ex ->
+            Error $"Jenkins build PATH parameter evidence was malformed ({ex.Message})"
+
+    let internal queueItemId (location: string) =
+        let match' = Regex.Match(location, "/queue/item/([1-9][0-9]*)/?(?:$|[?#])")
+        if match'.Success then Ok(Int64.Parse match'.Groups[1].Value)
+        else Error "Jenkins trigger did not return one parseable queue-item Location"
+
+    let internal queueExecutableNumber (json: string) =
+        try
+            use document = JsonDocument.Parse json
+            let root = document.RootElement
+            let mutable cancelled = Unchecked.defaultof<JsonElement>
+
+            if root.TryGetProperty("cancelled", &cancelled)
+               && cancelled.ValueKind = JsonValueKind.True then
+                Error "owned Jenkins queue item was cancelled"
+            else
+                let mutable executable = Unchecked.defaultof<JsonElement>
+                if root.TryGetProperty("executable", &executable)
+                   && executable.ValueKind = JsonValueKind.Object then
+                    let mutable number = Unchecked.defaultof<JsonElement>
+                    if executable.TryGetProperty("number", &number)
+                       && number.ValueKind = JsonValueKind.Number then
+                        Ok(Some(number.GetInt32()))
+                    else
+                        Error "owned Jenkins queue executable had no numeric build identity"
+                else
+                    Ok None
+        with ex ->
+            Error $"owned Jenkins queue evidence was malformed ({ex.Message})"
+
+    let internal validateBuildOwnership
+        (expectedQueueId: int64)
+        (expectedToken: string)
+        (json: string)
+        =
+        try
+            use document = JsonDocument.Parse json
+            let root = document.RootElement
+            let queueId = root.GetProperty("queueId").GetInt64()
+
+            let tokens =
+                root.GetProperty("actions").EnumerateArray()
+                |> Seq.collect (fun action ->
+                    let mutable parameters = Unchecked.defaultof<JsonElement>
+                    if action.TryGetProperty("parameters", &parameters)
+                       && parameters.ValueKind = JsonValueKind.Array then
+                        parameters.EnumerateArray() |> Seq.toArray
+                    else
+                        [||])
+                |> Seq.choose (fun parameter ->
+                    let mutable name = Unchecked.defaultof<JsonElement>
+                    let mutable value = Unchecked.defaultof<JsonElement>
+                    if parameter.TryGetProperty("name", &name)
+                       && name.ValueKind = JsonValueKind.String
+                       && name.GetString() = "FOGELL_BUILD_TOKEN"
+                       && parameter.TryGetProperty("value", &value)
+                       && value.ValueKind = JsonValueKind.String then
+                        Some(value.GetString())
+                    else
+                        None)
+                |> Seq.toList
+
+            match queueId, tokens with
+            | observed, [ token ] when observed = expectedQueueId && token = expectedToken -> Ok()
+            | observed, _ when observed <> expectedQueueId ->
+                Error $"Jenkins build queueId was {observed}, expected owned queue item {expectedQueueId}"
+            | _, [ token ] ->
+                Error $"Jenkins build ownership token was '{token}', expected the per-trigger token"
+            | _ -> Error "Jenkins build did not record exactly one ownership token"
+        with ex ->
+            Error $"Jenkins build ownership evidence was malformed ({ex.Message})"
+
+    let internal runtimeGuardResultFailure (result: Result<Trace, string>) =
+        match result with
+        | Error why -> Some why
+        | Ok trace when trace.Result <> "success" -> Some $"guard build ended {trace.Result}"
+        | Ok trace when trace.Output |> List.filter ((=) "FOGELL_RUNTIME_GUARD_OK") |> List.length <> 1 ->
+            Some "guard build did not emit exactly one success marker"
+        | Ok _ -> None
+
+    type internal ScheduledBuild =
+        { IsGuard: bool
+          JobName: string
+          BuildNumber: int
+          Definition: JobDefinition
+          ExpectedTargetMarker: string option
+          ExpectedBuildToken: string option }
+
+    let internal scheduleBuilds
+        (corpusJobName: string)
+        (guardJobName: string)
+        (guardDefinition: JobDefinition option)
+        (targetMarker: string option)
+        (buildTokenNonce: string option)
+        (builds: JobDefinition list)
+        =
+        let token isGuard job number =
+            buildTokenNonce
+            |> Option.map (fun nonce ->
+                if isGuard then $"fogell:{nonce}:guard:{job}:{number}"
+                else nonce)
+
+        let corpus =
+            builds
+            |> List.mapi (fun index definition ->
+                { IsGuard = false
+                  JobName = corpusJobName
+                  BuildNumber = index + 1
+                  Definition = definition
+                  ExpectedTargetMarker = targetMarker
+                  ExpectedBuildToken = token false corpusJobName (index + 1) })
+
+        match guardDefinition with
+        | None -> corpus
+        | Some probe ->
+            { IsGuard = true
+              JobName = guardJobName
+              BuildNumber = 1
+              Definition = probe
+              ExpectedTargetMarker = None
+              ExpectedBuildToken = token true guardJobName 1 }
+            :: (corpus
+                @ [ { IsGuard = true
+                      JobName = guardJobName
+                      BuildNumber = 2
+                      Definition = probe
+                      ExpectedTargetMarker = None
+                      ExpectedBuildToken = token true guardJobName 2 } ])
+
+    let internal executeScheduled
+        (runOne: string -> int -> JobDefinition -> string option -> string option -> Result<Trace, string>)
+        (scheduled: ScheduledBuild list)
+        =
+        scheduled
+        |> List.fold
+            (fun (acc, halted) item ->
+                match halted with
+                | Some why -> ((item.IsGuard, Error $"sequence halted: {why}") :: acc, halted)
+                | None ->
+                    let result =
+                        runOne
+                            item.JobName
+                            item.BuildNumber
+                            item.Definition
+                            item.ExpectedTargetMarker
+                            item.ExpectedBuildToken
+
+                    let nextHalt =
+                        if item.IsGuard then
+                            runtimeGuardResultFailure result
+                            |> Option.map (fun why -> $"runtime guard failed ({why})")
+                        else
+                            match result with
+                            | Error why -> Some $"a prior build failed to run ({why})"
+                            | Ok _ -> None
+
+                    ((item.IsGuard, result) :: acc, nextHalt))
+            ([], None)
+        |> fun (acc, _) -> List.rev acc
+
+    let internal jobXml (buildPath: string option) (script: string) =
         "<flow-definition plugin=\"workflow-job\"><description/><keepDependencies>false</keepDependencies>"
         + "<properties>"
         // PERFORMANCE_OPTIMIZED deliberately: the differential compares SEMANTICS,
@@ -309,6 +663,7 @@ module Jenkins =
         + "<org.jenkinsci.plugins.workflow.job.properties.DurabilityHintJobProperty>"
         + "<hint>PERFORMANCE_OPTIMIZED</hint>"
         + "</org.jenkinsci.plugins.workflow.job.properties.DurabilityHintJobProperty>"
+        + buildPathProperty buildPath
         + "</properties>"
         + "<definition class=\"org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition\" plugin=\"workflow-cps\">"
         + $"<script>{xmlEscape script}</script><sandbox>true</sandbox></definition>"
@@ -316,13 +671,14 @@ module Jenkins =
 
     /// CpsScmFlowDefinition: the job POINTS AT the SCM; Jenkins obtains the
     /// Jenkinsfile from it (lightweight) and Declarative auto-checks-out.
-    let scmJobXml (attestDefinition: bool) (spec: ScmSpec) =
+    let private scmJobXmlWithBuildPath (buildPath: string option) (attestDefinition: bool) (spec: ScmSpec) =
         let lightweight = if attestDefinition then "false" else "true"
         "<flow-definition plugin=\"workflow-job\"><description/><keepDependencies>false</keepDependencies>"
         + "<properties>"
         + "<org.jenkinsci.plugins.workflow.job.properties.DurabilityHintJobProperty>"
         + "<hint>PERFORMANCE_OPTIMIZED</hint>"
         + "</org.jenkinsci.plugins.workflow.job.properties.DurabilityHintJobProperty>"
+        + buildPathProperty buildPath
         + "</properties>"
         + "<definition class=\"org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition\" plugin=\"workflow-cps\">"
         + "<scm class=\"hudson.plugins.git.GitSCM\" plugin=\"git\"><configVersion>2</configVersion>"
@@ -337,38 +693,84 @@ module Jenkins =
         + $"<scriptPath>Jenkinsfile</scriptPath><lightweight>{lightweight}</lightweight>"
         + "</definition><triggers/><disabled>false</disabled></flow-definition>"
 
-    /// FG-110. Run a SEQUENCE of builds of ONE job and return a trace per
-    /// build. The job is created once, its definition UPDATED between builds
-    /// (a sequence's scripts may differ), and deleted only at the end, so
-    /// build history exists and `changed`/`fixed`/`regression` can select
-    /// against a real previous result. Each build is polled BY NUMBER — build
-    /// k of the sequence is build #k of the job — and the workspace is hashed
-    /// after each build, exactly where it lives.
+    let scmJobXml (attestDefinition: bool) (spec: ScmSpec) =
+        scmJobXmlWithBuildPath None attestDefinition spec
+
+    /// FG-110. Run a SEQUENCE of requested builds on ONE corpus job and return
+    /// a trace per build. The corpus job is created once, its definition
+    /// UPDATED between builds (a sequence's scripts may differ), and deleted
+    /// only at the end, so build history exists and `changed`/`fixed`/
+    /// `regression` can select against a real previous result. Optional runtime
+    /// guards use one sibling job and never enter that history. Each requested
+    /// build is polled BY NUMBER — build k is corpus build #k — and its
+    /// workspace is hashed after each build, exactly where it lives.
     let runMany
         (cfg: JenkinsConfig)
         (envReplacements: (string * string) list)
         (jobName: string)
         (builds: JobDefinition list)
         : Result<Trace, string> list =
-        try
-            let field, value = crumb cfg
+        let prepared =
+            match cfg.RuntimeGuard with
+            | None -> Ok(builds, None, None)
+            | Some guard ->
+                let nonce =
+                    Convert.ToHexString(RandomNumberGenerator.GetBytes 16).ToLowerInvariant()
+                let marker = targetRuntimeMarker guard.CaseSha nonce
 
-            let post (path: string) (content: HttpContent option) =
-                let req = new HttpRequestMessage(HttpMethod.Post, $"{cfg.BaseUrl}{path}")
+                if cfg.BuildPath <> Some guard.BuildPath then
+                    Error "runtime guard and Jenkins job PATH do not name the same exact value"
+                else
+                    builds
+                    |> List.fold
+                        (fun state definition ->
+                            match state, definition with
+                            | Error why, _ -> Error why
+                            | Ok _, FromScm _ -> Error "runtime-guarded SCM definitions are not supported"
+                            | Ok accumulated, Inline script ->
+                                injectTargetRuntimeGuard guard nonce marker script
+                                |> Result.map (fun transformed -> Inline transformed :: accumulated))
+                        (Ok [])
+                    |> Result.map (fun reversed -> List.rev reversed, Some marker, Some nonce)
+
+        match prepared with
+        | Error why -> builds |> List.map (fun _ -> Error $"Jenkins runtime guard refused: {why}")
+        | Ok(preparedBuilds, targetMarker, buildTokenNonce) ->
+            try
+            let field, value = crumb cfg
+            let guardJobName = runtimeGuardJobName jobName
+            let cleanupNames = cleanupJobNames jobName cfg.RuntimeGuard.IsSome
+
+            let postWithLocation (path: string) (content: HttpContent option) =
+                use req = new HttpRequestMessage(HttpMethod.Post, $"{cfg.BaseUrl}{path}")
                 req.Headers.Add(field, value)
                 content |> Option.iter (fun c -> req.Content <- c)
-                let r = client.Send req
-                int r.StatusCode
+                use r = client.Send req
+                let location =
+                    if isNull r.Headers.Location then None
+                    else Some(r.Headers.Location.ToString())
+                int r.StatusCode, location
 
-            post $"/job/{jobName}/doDelete" None |> ignore
+            let post (path: string) (content: HttpContent option) =
+                postWithLocation path content |> fst
 
-            let runOneInner (buildNumber: int) (definition: JobDefinition) : Result<Trace, string> =
+            for cleanupName in cleanupNames do
+                post $"/job/{cleanupName}/doDelete" None |> ignore
+
+            let runOneInner
+                (activeJobName: string)
+                (buildNumber: int)
+                (definition: JobDefinition)
+                (expectedTargetMarker: string option)
+                (expectedBuildToken: string option)
+                : Result<Trace, string> =
                 let xml () =
                     let body =
                         match definition with
-                        | Inline script -> jobXml script
+                        | Inline script -> jobXml cfg.BuildPath script
                         | FromScm spec ->
-                            scmJobXml
+                            scmJobXmlWithBuildPath
+                                cfg.BuildPath
                                 (Environment.GetEnvironmentVariable "FOGELL_SCM_ATTESTATION" = "fg177-probes-v1")
                                 spec
 
@@ -376,7 +778,7 @@ module Jenkins =
 
                 let ready =
                     if buildNumber = 1 then
-                        let created = post $"/createItem?name={jobName}" (Some(xml ()))
+                        let created = post $"/createItem?name={activeJobName}" (Some(xml ()))
 
                         if created = 200 || created = 201 then
                             Ok()
@@ -384,7 +786,7 @@ module Jenkins =
                             Error $"createItem returned HTTP {created}"
                     else
                         // update the definition in place; history survives
-                        let updated = post $"/job/{jobName}/config.xml" (Some(xml ()))
+                        let updated = post $"/job/{activeJobName}/config.xml" (Some(xml ()))
                         if updated = 200 then Ok() else Error $"config.xml update returned HTTP {updated}"
 
                 match ready with
@@ -394,10 +796,46 @@ module Jenkins =
                 // FG-103: the trigger's status propagates — a stale crumb or a 409
                 // otherwise means five minutes of blind polling for a build that
                 // never exists, blamed on "did not reach a terminal state".
-                match post $"/job/{jobName}/build" None with
-                | 200
-                | 201 -> ()
-                | other -> failwith $"build trigger returned HTTP {other}"
+                let queueId =
+                    let triggerStatus, location =
+                        postWithLocation
+                            (buildTriggerPath activeJobName cfg.BuildPath expectedBuildToken)
+                            None
+
+                    match triggerStatus, location with
+                    | (200 | 201), Some value ->
+                        match queueItemId value with
+                        | Ok id -> id
+                        | Error why -> failwith why
+                    | (200 | 201), None ->
+                        failwith "Jenkins trigger did not return a queue-item Location"
+                    | other, _ -> failwith $"build trigger returned HTTP {other}"
+
+                let mutable ownedBuildNumber = None
+                let mutable queueAttempts = 0
+                let mutable queueFailure = None
+
+                while ownedBuildNumber.IsNone && queueFailure.IsNone && queueAttempts < 600 do
+                    Threading.Thread.Sleep 100
+                    queueAttempts <- queueAttempts + 1
+
+                    try
+                        let queueJson =
+                            client.GetStringAsync($"{cfg.BaseUrl}/queue/item/{queueId}/api/json").Result
+
+                        match queueExecutableNumber queueJson with
+                        | Ok(Some number) -> ownedBuildNumber <- Some number
+                        | Ok None -> ()
+                        | Error why -> queueFailure <- Some why
+                    with _ -> ()
+
+                match queueFailure, ownedBuildNumber with
+                | Some why, _ -> failwith $"owned Jenkins queue item {queueId} was refused ({why})"
+                | None, None -> failwith $"owned Jenkins queue item {queueId} did not become executable"
+                | None, Some observed when observed <> buildNumber ->
+                    failwith
+                        $"owned Jenkins queue item {queueId} became build {observed}, expected history-pristine build {buildNumber}"
+                | None, Some _ -> ()
 
                 // poll THIS build number to a terminal state
                 let mutable result = None
@@ -409,7 +847,7 @@ module Jenkins =
 
                     try
                         let body =
-                            client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/{buildNumber}/api/json").Result
+                            client.GetStringAsync($"{cfg.BaseUrl}/job/{activeJobName}/{buildNumber}/api/json").Result
 
                         if Regex.IsMatch(body, "\"building\":false") then
                             let m = Regex.Match(body, "\"result\":\"([A-Z_]+)\"")
@@ -420,12 +858,64 @@ module Jenkins =
                 match result with
                 | None -> Error "jenkins build did not reach a terminal state"
                 | Some terminal ->
+                    cfg.RuntimeGuard
+                    |> Option.iter (fun guard ->
+                        let parameterTree = Uri.EscapeDataString "queueId,actions[parameters[name,value]]"
+                        let parameterJson =
+                            client.GetStringAsync(
+                                $"{cfg.BaseUrl}/job/{activeJobName}/{buildNumber}/api/json?tree={parameterTree}"
+                            ).Result
+
+                        match validateBuildPathParameter guard.BuildPath parameterJson with
+                        | Ok() -> ()
+                        | Error why -> failwith why
+
+                        match expectedBuildToken with
+                        | Some token ->
+                            match validateBuildOwnership queueId token parameterJson with
+                            | Ok() -> ()
+                            | Error why -> failwith why
+                        | None -> failwith "runtime-guarded build had no expected ownership token"
+
+                        match definition with
+                        | FromScm _ -> failwith "runtime-guarded SCM definitions are not supported"
+                        | Inline expectedScript ->
+                            let replay =
+                                client.GetStringAsync(
+                                    $"{cfg.BaseUrl}/job/{activeJobName}/{buildNumber}/replay/"
+                                ).Result
+
+                            match replayMainScript replay with
+                            | Ok observed when String.Equals(observed, expectedScript, StringComparison.Ordinal) -> ()
+                            | Ok _ -> failwith "executed Jenkins definition differed from the scheduled definition"
+                            | Error why -> failwith why)
+
                     let console =
-                        client.GetStringAsync($"{cfg.BaseUrl}/job/{jobName}/{buildNumber}/consoleText").Result
+                        client.GetStringAsync($"{cfg.BaseUrl}/job/{activeJobName}/{buildNumber}/consoleText").Result
 
-                    exportRawConsole cfg.RawConsoleExport jobName buildNumber console
+                    exportRawConsole cfg.RawConsoleExport activeJobName buildNumber console
 
-                    let rawLines = console.Replace("\r\n", "\n").Split '\n'
+                    let rawLinesUnattested = console.Replace("\r\n", "\n").Split '\n'
+
+                    let rawLines =
+                        match expectedTargetMarker with
+                        | None -> rawLinesUnattested
+                        | Some marker ->
+                            match
+                                validateAndRemoveTargetRuntimeMarker
+                                    cfg.DeclaresTimestamps
+                                    marker
+                                    rawLinesUnattested
+                            with
+                            | Ok lines -> lines
+                            | Error why -> failwith why
+
+                    cfg.RuntimeGuard
+                    |> Option.iter (fun guard ->
+                        match validateRuntimeGuardNode guard.RequiredNode rawLines with
+                        | Ok() -> ()
+                        | Error why -> failwith why)
+
                     let disposition = classifyExecutionDisposition terminal rawLines
 
                     let scmEngineNotes =
@@ -441,7 +931,7 @@ module Jenkins =
                             let tree = Uri.EscapeDataString "actions[lastBuiltRevision[SHA1]]"
                             let buildData =
                                 client.GetStringAsync(
-                                    $"{cfg.BaseUrl}/job/{jobName}/{buildNumber}/api/json?tree={tree}"
+                                    $"{cfg.BaseUrl}/job/{activeJobName}/{buildNumber}/api/json?tree={tree}"
                                 ).Result
 
                             match parseBuildDataRevisions buildData with
@@ -454,8 +944,8 @@ module Jenkins =
 
                     let workspaceHash, files =
                         match cfg.WorkspaceRoot, cfg.WorkspaceCollector with
-                        | Some root, _ -> Trace.hashWorkspace (IO.Path.Combine(root, jobName))
-                        | None, Some template -> Trace.collectRemote (template.Replace("{job}", jobName))
+                        | Some root, _ -> Trace.hashWorkspace (IO.Path.Combine(root, activeJobName))
+                        | None, Some template -> Trace.collectRemote (template.Replace("{job}", activeJobName))
                         | None, None -> "not-collected", []
 
                     let declaresTimestamps = cfg.DeclaresTimestamps
@@ -469,7 +959,7 @@ module Jenkins =
                                 let m = Text.RegularExpressions.Regex.Match(l.Trim(), "^Running on .+ in (/.+)$")
                                 if m.Success then Some m.Groups[1].Value else None)
 
-                        let ws = defaultArg fromBanner $"/var/jenkins_home/workspace/{jobName}"
+                        let ws = defaultArg fromBanner $"/var/jenkins_home/workspace/{activeJobName}"
                         Trace.normaliseOutputShapedWithTimestampCoverage
                             declaresTimestamps
                             true
@@ -503,40 +993,65 @@ module Jenkins =
             // remote workspace collector) is build k's OWN error — it must not
             // reach the outer handler and replace builds 1..k-1's already-collected
             // evidence with a misattributed message.
-            let runOne (buildNumber: int) (definition: JobDefinition) : Result<Trace, string> =
+            let runOne
+                (activeJobName: string)
+                (buildNumber: int)
+                (definition: JobDefinition)
+                (expectedTargetMarker: string option)
+                (expectedBuildToken: string option)
+                : Result<Trace, string> =
                 try
-                    runOneInner buildNumber definition
+                    runOneInner
+                        activeJobName
+                        buildNumber
+                        definition
+                        expectedTargetMarker
+                        expectedBuildToken
                 with ex ->
                     Error ex.Message
 
-            let results =
-                builds
-                |> List.fold
-                    (fun (acc, halted) definition ->
-                        match halted with
-                        | Some why -> (Error $"sequence halted: {why}" :: acc, halted)
-                        | None ->
-                            let r = runOne (List.length acc + 1) definition
+            let scheduled =
+                match cfg.RuntimeGuard with
+                | None -> scheduleBuilds jobName guardJobName None None None preparedBuilds
+                | Some guard ->
+                    scheduleBuilds
+                        jobName
+                        guardJobName
+                        (Some(Inline(runtimeGuardScript guard)))
+                        targetMarker
+                        buildTokenNonce
+                        preparedBuilds
 
-                            match r with
-                            | Ok _ -> (r :: acc, None)
-                            | Error why -> (r :: acc, Some $"a prior build failed to run ({why})"))
-                    ([], None)
-                |> fun (acc, _) -> List.rev acc
+            let scheduledResults = executeScheduled runOne scheduled
+
+            let guardFailure =
+                scheduledResults
+                |> List.tryPick (fun (isGuard, result) ->
+                    if not isGuard then None
+                    else
+                        runtimeGuardResultFailure result)
+
+            let results =
+                match guardFailure with
+                | Some why -> builds |> List.map (fun _ -> Error $"Jenkins runtime guard failed: {why}")
+                | None ->
+                    scheduledResults
+                    |> List.choose (fun (isGuard, result) -> if isGuard then None else Some result)
 
             // Best-effort cleanup AFTER the evidence is safe: a delete failure
             // must not replace collected traces (the next run of this case
             // deletes the job first anyway).
-            (try
-                post $"/job/{jobName}/doDelete" None |> ignore
-             with _ ->
-                 ())
+            for cleanupName in cleanupNames do
+                try
+                    post $"/job/{cleanupName}/doDelete" None |> ignore
+                with _ ->
+                    ()
 
             results
-        with ex ->
-            // one entry PER REQUESTED BUILD, so a caller zipping against the
-            // fogell side cannot misalign a sequence on a harness exception
-            builds |> List.map (fun _ -> Error ex.Message)
+            with ex ->
+                // one entry PER REQUESTED BUILD, so a caller zipping against the
+                // fogell side cannot misalign a sequence on a harness exception
+                builds |> List.map (fun _ -> Error ex.Message)
 
     /// Run one Jenkinsfile under a disposable job name — the pre-FG-110 contract.
     let run (cfg: JenkinsConfig) (envReplacements: (string * string) list) (jobName: string) (script: string) =

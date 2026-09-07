@@ -335,3 +335,40 @@ Read with the two sections above; this is the second addendum.
   source tree. Copilot review `5124265373` is an error artifact, not a review;
   FG-253 remains PARTIAL until a substantive review of `665b7bac` exists or the
   owner explicitly records a reviewer exception.
+
+## 2026-09-06 custodian addendum — FG-254 candidate
+
+- **Measured, publication pending: FG-254.** The exact GNU Make 4.3 executable
+  already on HeMan (SHA-256 `d78b8f1d…`) is copied into a network-disabled,
+  digest-checked immutable derivative of the pinned Jenkins 2.568.1 image.
+  Three real `sh -xe script.sh.copy` probes on each engine matched in output
+  and exit before the corpus allowlist changed.
+- **One corpus file moved.** `charlires_golang-docker-jenkins` ran alone
+  through the cross-host lease and both proven no-egress fences. Receipt
+  `charlires_golang-docker-jenkins` is Tier-1 PROVEN: both engines fail at the
+  first `make build-base` because the empty workspace has no Makefile, emit the
+  same two later-stage skip sentences, and retain the same empty workspace.
+  The intended build, later Make targets, `ls`, and `junit` do not run and are
+  not claimed.
+- **Generated accounting:** `tier1=13`, `admitted=187`, `tier3=28`; the
+  separate hand-written population remains 308 of 308 proven.
+- **The runtime pin is executable policy, not prose.** Before execution and
+  promotion the lane checks both resolved Make paths/hashes, the image and
+  exact 154-plugin closure. The executing runner must match its archived HEAD
+  copy, and every repository helper/policy input plus the freshly built CLI is
+  consumed from that private committed tree. It starts a fresh random-ID
+  controller and home
+  only after Luigi's owner-UID fence stands, then installs the namespace fence;
+  it never inherits the persistent lab JVM. HeMan's owner-UID fence precedes
+  the SSH listener. The target build is bound to the returned queue item,
+  `queueId`, cryptographic token, Replay definition, PATH, tool resolution and
+  case/nonce marker; separate outer guards preserve corpus history and all
+  three builds report the manifest node. The tunnel dies and the exact
+  container/home are proven absent before access reopens.
+- **Publication remains.** The ticket is
+  [`tickets/FG-254.md`](tickets/FG-254.md). Exact-head local gate, final review,
+  hosted gate, protected merge, and accounting are still required before DONE.
+  The fresh disposable-controller lane passed on signed `a8aec39b` from
+  `22:09:40Z` to `22:10:50Z`; its exact-commit private CLI closure was
+  `50488f605c4782453e52d369e5ddd7a0f2e1708b69089075e1d8486ba63a2463`,
+  and the promoted receipt remained byte-identical.

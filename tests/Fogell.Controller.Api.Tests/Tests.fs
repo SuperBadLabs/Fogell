@@ -496,6 +496,82 @@ let private hostFootprint =
               finally
                   Environment.SetEnvironmentVariable("ASPNETCORE_CONTENTROOT", previous)
                   IO.Directory.Delete(ambientRoot, true)
+          }
+
+          test "PID1 attestation binds a lowercase nonce, self PID, namespace PID, and executable" {
+              let nonce = "0123456789abcdef0123456789abcdef"
+
+              Expect.equal
+                  (Fogell.Controller.Host.Program.pid1AttestationPayload
+                      nonce
+                      1
+                      "/opt/fogell/Fogell.Controller.Host"
+                      [ "Name:\tfogell"; "NSpid:\t4172\t1" ])
+                  (Ok $"{nonce}\t1\t1\t/opt/fogell/Fogell.Controller.Host\n")
+                  "one exact payload proves this process is PID 1 in the innermost namespace"
+          }
+
+          test "PID1 attestation refuses malformed or non-PID1 identities" {
+              let validNonce = "0123456789abcdef0123456789abcdef"
+              let payload nonce pid executable status =
+                  Fogell.Controller.Host.Program.pid1AttestationPayload nonce pid executable status
+
+              Expect.isError
+                  (payload "0123456789ABCDEF0123456789ABCDEF" 1 "/controller" [ "NSpid:\t1" ])
+                  "an uppercase nonce cannot match the host's fresh lowercase challenge"
+              Expect.isError
+                  (payload validNonce 2 "/controller" [ "NSpid:\t2" ])
+                  "a non-PID1 process cannot attest"
+              Expect.isError
+                  (payload validNonce 1 "/controller" [ "NSpid:\t4172\t2" ])
+                  "the innermost namespace PID must be one"
+              Expect.isError
+                  (payload validNonce 1 "/controller" [ "NSpid:\t1"; "NSpid:\t1" ])
+                  "ambiguous proc status is refused"
+              Expect.isError
+                  (payload validNonce 1 "" [ "NSpid:\t1" ])
+                  "an unavailable executable is refused"
+          }
+
+          test "PID1 attestation publication is create-new and non-overwriting" {
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-pid1-attestation-{Guid.NewGuid():N}")
+              IO.Directory.CreateDirectory root |> ignore
+              let nonce = "0123456789abcdef0123456789abcdef"
+              let destination = IO.Path.Combine(root, "attestation")
+              let temporary = destination + ".tmp-" + nonce
+              let publish () =
+                  Fogell.Controller.Host.Program.writePid1AttestationFile
+                      destination
+                      nonce
+                      1
+                      "/controller"
+                      [ "NSpid:\t1" ]
+
+              try
+                  Expect.equal (publish ()) (Ok()) "an absent destination is atomically published"
+                  Expect.equal
+                      (IO.File.ReadAllText destination)
+                      $"{nonce}\t1\t1\t/controller\n"
+                      "the published bytes are exact"
+
+                  IO.File.Delete destination
+                  IO.File.WriteAllText(temporary, "pre-existing temporary")
+                  Expect.isError (publish ()) "CreateNew refuses a pre-existing temporary name"
+                  Expect.equal
+                      (IO.File.ReadAllText temporary)
+                      "pre-existing temporary"
+                      "a temporary file this process did not create is not removed or replaced"
+
+                  IO.File.Delete temporary
+                  IO.File.WriteAllText(destination, "pre-existing destination")
+                  Expect.isError (publish ()) "the final move refuses a pre-existing destination"
+                  Expect.equal
+                      (IO.File.ReadAllText destination)
+                      "pre-existing destination"
+                      "the final publication never overwrites an existing entry"
+                  Expect.isFalse (IO.File.Exists temporary) "a failed move removes only its own temporary file"
+              finally
+                  IO.Directory.Delete(root, true)
           } ]
 
 let private controllerConfigurationVariables =

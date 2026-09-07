@@ -6,6 +6,8 @@
 # corpus file executes — a fence that is merely configured is not evidence.
 #
 #   scripts/no-egress-fence.sh jenkins apply|verify|quiesce|remove|status|present|started-at
+#   scripts/no-egress-fence.sh jenkins access-apply|access-verify|access-remove|access-present
+#   scripts/no-egress-fence.sh local   access-apply|access-verify|access-remove|access-present
 #   scripts/no-egress-fence.sh fogell  run -- <command...>
 #   scripts/no-egress-fence.sh fogell  status
 #
@@ -53,6 +55,7 @@ set -Eeuo pipefail
 : "${FOGELL_JENKINS_HOST:=luigi}"
 : "${FOGELL_JENKINS_CONTAINER:=jenkins-lab}"
 : "${FOGELL_JENKINS_URL:=http://luigi:18083}"
+: "${FOGELL_JENKINS_EVIDENCE_URL:=$FOGELL_JENKINS_URL}"
 : "${FOGELL_FENCE_PROBE_HOST:=example.com}"
 : "${FOGELL_FENCE_PROBE_IP:=1.1.1.1}"
 : "${FOGELL_FENCE_PROBE_LAN_IP:=}"
@@ -170,6 +173,243 @@ jenkins_started_at() {
   ssh -n -o ConnectTimeout=10 "$FOGELL_JENKINS_HOST" "podman inspect --format '{{.State.StartedAt}}' $(printf '%q' "$FOGELL_JENKINS_CONTAINER")"
 }
 
+jenkins_access_port() {
+  local authority port
+  case "$FOGELL_JENKINS_URL" in http://*) authority=${FOGELL_JENKINS_URL#http://} ;; *) die "Jenkins access fence requires an http:// URL" ;; esac
+  authority=${authority%%/*}
+  case "$authority" in *:*) port=${authority##*:} ;; *) die "Jenkins access fence URL has no explicit port" ;; esac
+  case "$port" in ''|*[!0-9]*) die "Jenkins access fence port is not numeric" ;; esac
+  [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || die "Jenkins access fence port is out of range"
+  printf '%s' "$port"
+}
+
+jenkins_access_token() {
+  case "${FOGELL_JENKINS_ACCESS_TOKEN:-}" in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+    *) die "Jenkins access fence requires a 32-character lowercase hex lane token" ;;
+  esac
+  printf '%s' "$FOGELL_JENKINS_ACCESS_TOKEN"
+}
+
+jenkins_access_uid() {
+  case "${FOGELL_JENKINS_ACCESS_UID:-}" in
+    ''|*[!0-9]*) die "Jenkins access fence requires the authenticated remote numeric uid" ;;
+  esac
+  [ "$FOGELL_JENKINS_ACCESS_UID" -ge 1 ] || die "Jenkins access fence uid must be non-root"
+  printf '%s' "$FOGELL_JENKINS_ACCESS_UID"
+}
+
+jenkins_access_exists() {
+  ssh -n -o ConnectTimeout=10 "$FOGELL_JENKINS_HOST" \
+    "tables=\$(sudo -n nft -j list tables) || exit 3; printf '%s\\n' \"\$tables\" | jq -e 'any(.nftables[]; .table.family == \"inet\" and .table.name == \"fogell_jenkins_access\")' >/dev/null"
+}
+
+jenkins_access_present() {
+  local port token uid; port=$(jenkins_access_port); token=$(jenkins_access_token); uid=$(jenkins_access_uid)
+  ssh -n -o ConnectTimeout=10 "$FOGELL_JENKINS_HOST" \
+    "json=\$(sudo -n nft -j list table inet fogell_jenkins_access 2>/dev/null) || exit 3; printf '%s\\n' \"\$json\" | jq -e --argjson port '$port' --argjson uid '$uid' --arg token '$token' '
+      ([.nftables[].table? | select(. != null)] | length == 1)
+      and ([.nftables[].table? | select(. != null)][0] | .family == \"inet\" and .name == \"fogell_jenkins_access\")
+      and ([.nftables[].chain? | select(. != null)] | length == 2)
+      and ([.nftables[].chain? | select(. != null)][0] | .family == \"inet\" and .table == \"fogell_jenkins_access\" and .name == \"input\" and .type == \"filter\" and .hook == \"input\" and .prio == -10 and .policy == \"accept\")
+      and ([.nftables[].chain? | select(. != null)][1] | .family == \"inet\" and .table == \"fogell_jenkins_access\" and .name == \"output\" and .type == \"filter\" and .hook == \"output\" and .prio == -10 and .policy == \"accept\")
+      and ([.nftables[].rule? | select(. != null)] | length == 4)
+      and ([.nftables[].rule? | select(. != null)][0] as \$r |
+        \$r.family == \"inet\" and \$r.table == \"fogell_jenkins_access\" and \$r.chain == \"input\"
+        and \$r.comment == (\"fogell:\" + \$token + \":loopback\") and (\$r.expr | length == 4)
+        and \$r.expr[0].match == {op:\"==\",left:{meta:{key:\"iifname\"}},right:\"lo\"}
+        and \$r.expr[1].match == {op:\"==\",left:{payload:{protocol:\"tcp\",field:\"dport\"}},right:\$port}
+        and (\$r.expr[2] | has(\"counter\")) and (\$r.expr[3] | has(\"accept\")))
+      and ([.nftables[].rule? | select(. != null)][1] as \$r |
+        \$r.family == \"inet\" and \$r.table == \"fogell_jenkins_access\" and \$r.chain == \"input\"
+        and \$r.comment == (\"fogell:\" + \$token + \":reject\") and (\$r.expr | length == 3)
+        and \$r.expr[0].match == {op:\"==\",left:{payload:{protocol:\"tcp\",field:\"dport\"}},right:\$port}
+        and (\$r.expr[1] | has(\"counter\")) and \$r.expr[2].reject == {type:\"tcp reset\"})
+      and ([.nftables[].rule? | select(. != null)][2] as \$r |
+        \$r.family == \"inet\" and \$r.table == \"fogell_jenkins_access\" and \$r.chain == \"output\"
+        and \$r.comment == (\"fogell:\" + \$token + \":owner\") and (\$r.expr | length == 5)
+        and \$r.expr[0].match == {op:\"==\",left:{meta:{key:\"oifname\"}},right:\"lo\"}
+        and \$r.expr[1].match == {op:\"==\",left:{meta:{key:\"skuid\"}},right:\$uid}
+        and \$r.expr[2].match == {op:\"==\",left:{payload:{protocol:\"tcp\",field:\"dport\"}},right:\$port}
+        and (\$r.expr[3] | has(\"counter\")) and (\$r.expr[4] | has(\"accept\")))
+      and ([.nftables[].rule? | select(. != null)][3] as \$r |
+        \$r.family == \"inet\" and \$r.table == \"fogell_jenkins_access\" and \$r.chain == \"output\"
+        and \$r.comment == (\"fogell:\" + \$token + \":local-reject\") and (\$r.expr | length == 4)
+        and \$r.expr[0].match == {op:\"==\",left:{meta:{key:\"oifname\"}},right:\"lo\"}
+        and \$r.expr[1].match == {op:\"==\",left:{payload:{protocol:\"tcp\",field:\"dport\"}},right:\$port}
+        and (\$r.expr[2] | has(\"counter\")) and \$r.expr[3].reject == {type:\"tcp reset\"})
+    ' >/dev/null"
+}
+
+jenkins_access_apply() {
+  local port token uid rc; port=$(jenkins_access_port); token=$(jenkins_access_token); uid=$(jenkins_access_uid)
+  jenkins_access_exists && rc=0 || rc=$?
+  case "$rc" in
+    0) die "a Jenkins host access fence is already present — recover it before starting another lane" ;;
+    1) ;;
+    *) die "cannot inspect the Jenkins host access fence (rc $rc)" ;;
+  esac
+  ssh "$FOGELL_JENKINS_HOST" "sudo -n nft -f - <<'NFT'
+table inet fogell_jenkins_access {
+  chain input {
+    type filter hook input priority -10; policy accept;
+    iifname \"lo\" tcp dport $port counter accept comment \"fogell:$token:loopback\"
+    tcp dport $port counter reject with tcp reset comment \"fogell:$token:reject\"
+  }
+  chain output {
+    type filter hook output priority -10; policy accept;
+    oifname \"lo\" meta skuid $uid tcp dport $port counter accept comment \"fogell:$token:owner\"
+    oifname \"lo\" tcp dport $port counter reject with tcp reset comment \"fogell:$token:local-reject\"
+  }
+}
+NFT" || die "Jenkins host access fence could not be applied"
+  log "jenkins host access fence applied: port $port is limited to authenticated uid $uid loopback"
+}
+
+jenkins_access_verify() {
+  local port direct direct_rc started ended elapsed evidence remote other counter local_counter failed=0
+  port=$(jenkins_access_port)
+  jenkins_access_present || die "Jenkins host access fence ruleset or lane token changed"
+  started=$(date +%s%N)
+  direct=$(curl -sS -m 3 -o /dev/null -w '%{http_code}' "$FOGELL_JENKINS_URL/api/json" 2>/dev/null) && direct_rc=0 || direct_rc=$?
+  ended=$(date +%s%N); elapsed=$(( (ended - started) / 1000000 ))
+  if [ "$direct_rc" -ne 0 ] && [ "$direct_rc" -ne 127 ] && [ "$elapsed" -lt 2000 ]; then
+    log "jenkins PASS lab-network REST refused (curl exit $direct_rc in ${elapsed} ms)"
+  else
+    log "jenkins FAIL lab-network REST remained reachable or did not fail fast (HTTP ${direct:-none}, exit $direct_rc, ${elapsed} ms)"; failed=1
+  fi
+  evidence=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' "$FOGELL_JENKINS_EVIDENCE_URL/api/json" 2>/dev/null || echo fail)
+  [ "$evidence" = 200 ] && log "jenkins PASS authenticated tunnel REST open" \
+    || { log "jenkins FAIL authenticated tunnel REST (got $evidence, want 200)"; failed=1; }
+  remote=$(ssh "$FOGELL_JENKINS_HOST" "curl -sS -m 10 -o /dev/null -w '%{http_code}' http://127.0.0.1:$port/api/json" 2>/dev/null || echo fail)
+  [ "$remote" = 200 ] && log "jenkins PASS remote loopback REST open" \
+    || { log "jenkins FAIL remote loopback REST (got $remote, want 200)"; failed=1; }
+  other=$(ssh "$FOGELL_JENKINS_HOST" \
+    "sudo -n -u nobody curl -sS -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:$port/api/json" \
+    2>/dev/null || echo refused)
+  [ "$other" != 200 ] && log "jenkins PASS other local uid REST refused" \
+    || { log "jenkins FAIL other local uid REST remained open"; failed=1; }
+  counter=$(ssh "$FOGELL_JENKINS_HOST" \
+    "sudo -n nft -j list table inet fogell_jenkins_access 2>/dev/null" \
+    | jq -r --arg token "$(jenkins_access_token)" '.nftables[].rule? | select(.comment == ("fogell:" + $token + ":reject")) | .expr[] | .counter?.packets // empty') || true
+  [ -n "$counter" ] && [ "$counter" -gt 0 ] && log "jenkins PASS host access rule live ($counter packet(s) rejected)" \
+    || { log "jenkins FAIL host access rule counter (${counter:-absent})"; failed=1; }
+  local_counter=$(ssh "$FOGELL_JENKINS_HOST" \
+    "sudo -n nft -j list table inet fogell_jenkins_access 2>/dev/null" \
+    | jq -r --arg token "$(jenkins_access_token)" '.nftables[].rule? | select(.comment == ("fogell:" + $token + ":local-reject")) | .expr[] | .counter?.packets // empty') || true
+  [ -n "$local_counter" ] && [ "$local_counter" -gt 0 ] && log "jenkins PASS other-uid rule live ($local_counter packet(s) rejected)" \
+    || { log "jenkins FAIL other-uid rule counter (${local_counter:-absent})"; failed=1; }
+  [ "$failed" -eq 0 ] || die "Jenkins host access fence NOT proven"
+  log "jenkins host access fence PROVEN"
+}
+
+jenkins_access_remove() {
+  jenkins_access_present \
+    || die "Jenkins host access fence no longer has this lane's exact token/rules — leaving it present"
+  ssh "$FOGELL_JENKINS_HOST" \
+    "set -e; sudo -n nft delete table inet fogell_jenkins_access; tables=\$(sudo -n nft -j list tables); set +e; printf '%s\\n' \"\$tables\" | jq -e 'any(.nftables[]; .table.family == \"inet\" and .table.name == \"fogell_jenkins_access\")' >/dev/null; rc=\$?; set -e; case \$rc in 0) exit 1 ;; 1) exit 0 ;; *) exit 3 ;; esac" \
+    || die "Jenkins host access fence could not be confirmed removed"
+  log "jenkins host access fence removed"
+}
+
+local_access_port() {
+  case "${FOGELL_JENKINS_TUNNEL_PORT:-}" in
+    ''|*[!0-9]*) die "local tunnel access fence requires a numeric FOGELL_JENKINS_TUNNEL_PORT" ;;
+  esac
+  [ "$FOGELL_JENKINS_TUNNEL_PORT" -ge 1024 ] && [ "$FOGELL_JENKINS_TUNNEL_PORT" -le 65535 ] \
+    || die "local tunnel access fence port is out of range"
+  printf '%s' "$FOGELL_JENKINS_TUNNEL_PORT"
+}
+
+local_access_uid() {
+  local uid; uid=$(id -u)
+  [ "$uid" -ge 1 ] || die "local tunnel access fence refuses root as its owning principal"
+  printf '%s' "$uid"
+}
+
+local_access_exists() {
+  local tables rc
+  tables=$(sudo -n nft -j list tables) || return 3
+  printf '%s\n' "$tables" | jq -e 'any(.nftables[]; .table.family == "inet" and .table.name == "fogell_jenkins_tunnel_access")' >/dev/null && rc=0 || rc=$?
+  case "$rc" in 0|1) return "$rc" ;; *) return 3 ;; esac
+}
+
+local_access_present() {
+  local port token uid json; port=$(local_access_port); token=$(jenkins_access_token); uid=$(local_access_uid)
+  json=$(sudo -n nft -j list table inet fogell_jenkins_tunnel_access 2>/dev/null) || return 3
+  printf '%s\n' "$json" | jq -e --argjson port "$port" --argjson uid "$uid" --arg token "$token" '
+    ([.nftables[].table? | select(. != null)] | length == 1)
+    and ([.nftables[].table? | select(. != null)][0] | .family == "inet" and .name == "fogell_jenkins_tunnel_access")
+    and ([.nftables[].chain? | select(. != null)] | length == 1)
+    and ([.nftables[].chain? | select(. != null)][0] | .family == "inet" and .table == "fogell_jenkins_tunnel_access" and .name == "output" and .type == "filter" and .hook == "output" and .prio == -10 and .policy == "accept")
+    and ([.nftables[].rule? | select(. != null)] | length == 2)
+    and ([.nftables[].rule? | select(. != null)][0] as $r |
+      $r.family == "inet" and $r.table == "fogell_jenkins_tunnel_access" and $r.chain == "output"
+      and $r.comment == ("fogell:" + $token + ":owner") and ($r.expr | length == 5)
+      and $r.expr[0].match == {op:"==",left:{meta:{key:"oifname"}},right:"lo"}
+      and $r.expr[1].match == {op:"==",left:{meta:{key:"skuid"}},right:$uid}
+      and $r.expr[2].match == {op:"==",left:{payload:{protocol:"tcp",field:"dport"}},right:$port}
+      and ($r.expr[3] | has("counter")) and ($r.expr[4] | has("accept")))
+    and ([.nftables[].rule? | select(. != null)][1] as $r |
+      $r.family == "inet" and $r.table == "fogell_jenkins_tunnel_access" and $r.chain == "output"
+      and $r.comment == ("fogell:" + $token + ":local-reject") and ($r.expr | length == 4)
+      and $r.expr[0].match == {op:"==",left:{meta:{key:"oifname"}},right:"lo"}
+      and $r.expr[1].match == {op:"==",left:{payload:{protocol:"tcp",field:"dport"}},right:$port}
+      and ($r.expr[2] | has("counter")) and $r.expr[3].reject == {type:"tcp reset"})
+  ' >/dev/null
+}
+
+local_access_apply() {
+  local port token uid rc; port=$(local_access_port); token=$(jenkins_access_token); uid=$(local_access_uid)
+  local_access_exists && rc=0 || rc=$?
+  case "$rc" in
+    0) die "a local Jenkins tunnel access fence is already present — recover it before starting another lane" ;;
+    1) ;;
+    *) die "cannot inspect the local Jenkins tunnel access fence (rc $rc)" ;;
+  esac
+  sudo -n nft -f - <<NFT
+table inet fogell_jenkins_tunnel_access {
+  chain output {
+    type filter hook output priority -10; policy accept;
+    oifname "lo" meta skuid $uid tcp dport $port counter accept comment "fogell:$token:owner"
+    oifname "lo" tcp dport $port counter reject with tcp reset comment "fogell:$token:local-reject"
+  }
+}
+NFT
+  local_access_present || die "local Jenkins tunnel access fence did not match its exact installed rules"
+  log "local Jenkins tunnel port $port is limited to uid $uid"
+}
+
+local_access_verify() {
+  local port token owner other counter; port=$(local_access_port); token=$(jenkins_access_token)
+  local_access_present || die "local Jenkins tunnel access fence ruleset or lane token changed"
+  owner=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' "$FOGELL_JENKINS_EVIDENCE_URL/api/json" 2>/dev/null || echo fail)
+  [ "$owner" = 200 ] && log "local PASS owner tunnel REST open" \
+    || die "local Jenkins tunnel owner probe failed (got $owner, want 200)"
+  other=$(sudo -n -u nobody curl -sS -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/json" 2>/dev/null || echo refused)
+  [ "$other" != 200 ] || die "local Jenkins tunnel remained reachable to uid nobody"
+  counter=$(sudo -n nft -j list table inet fogell_jenkins_tunnel_access 2>/dev/null \
+    | jq -r --arg token "$token" '.nftables[].rule? | select(.comment == ("fogell:" + $token + ":local-reject")) | .expr[] | .counter?.packets // empty') || true
+  [ -n "$counter" ] && [ "$counter" -gt 0 ] \
+    || die "local Jenkins tunnel reject counter was absent or zero"
+  log "local Jenkins tunnel access fence PROVEN ($counter other-uid packet(s) rejected)"
+}
+
+local_access_remove() {
+  local tables rc
+  local_access_present \
+    || die "local Jenkins tunnel access fence no longer has this lane's exact token/rules — leaving it present"
+  sudo -n nft delete table inet fogell_jenkins_tunnel_access
+  tables=$(sudo -n nft -j list tables) || die "cannot inspect nftables after local tunnel fence deletion"
+  printf '%s\n' "$tables" | jq -e 'any(.nftables[]; .table.family == "inet" and .table.name == "fogell_jenkins_tunnel_access")' >/dev/null && rc=0 || rc=$?
+  case "$rc" in
+    0) die "local Jenkins tunnel access fence remained after deletion" ;;
+    1) ;;
+    *) die "local Jenkins tunnel access fence post-delete inspection failed" ;;
+  esac
+  log "local Jenkins tunnel access fence removed"
+}
+
 jenkins_status() {
   local ns c; ns=$(jenkins_ns); c=$(printf '%q' "$FOGELL_JENKINS_CONTAINER")
   if ssh "$FOGELL_JENKINS_HOST" "$ns nft list table inet fogell_fence 2>/dev/null"; then
@@ -211,8 +451,8 @@ jenkins_verify() {
   fi
   check "loopback open" "$loop" 200 "Jenkins answers itself on 127.0.0.1:8080"
   local inbound
-  inbound=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' "$FOGELL_JENKINS_URL/api/json" 2>/dev/null || echo fail)
-  check "inbound open" "$inbound" 200 "$FOGELL_JENKINS_URL/api/json from this host"
+  inbound=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' "$FOGELL_JENKINS_EVIDENCE_URL/api/json" 2>/dev/null || echo fail)
+  check "inbound open" "$inbound" 200 "$FOGELL_JENKINS_EVIDENCE_URL/api/json from this host"
   local rejected
   rejected=$( (ssh "$FOGELL_JENKINS_HOST" "$(jenkins_ns) nft list chain inet fogell_fence output 2>/dev/null" || true) | sed -n 's/.*counter packets \([0-9]*\).*/\1/p')
   [ -n "$rejected" ] && [ "$rejected" -gt 0 ] && check "rules live" ok ok "$rejected packets rejected so far" || check "rules live" "${rejected:-absent}" ">0" "reject counter"
@@ -408,6 +648,14 @@ case "$side/$action" in
   jenkins/quiesce) jenkins_quiesce ;;
   jenkins/present) jenkins_present ;;
   jenkins/started-at) jenkins_started_at ;;
+  jenkins/access-apply)   jenkins_access_apply ;;
+  jenkins/access-verify)  jenkins_access_verify ;;
+  jenkins/access-remove)  jenkins_access_remove ;;
+  jenkins/access-present) jenkins_access_present ;;
+  local/access-apply)   local_access_apply ;;
+  local/access-verify)  local_access_verify ;;
+  local/access-remove)  local_access_remove ;;
+  local/access-present) local_access_present ;;
   fogell/status)  fogell_status ;;
   fogell/run)     shift 2; [ "${1:-}" = "--" ] && shift; [ $# -gt 0 ] || die "fogell run -- <command...>"; fogell_run "$@" ;;
   *) sed -n '2,12p' "$0" >&2; exit 2 ;;
