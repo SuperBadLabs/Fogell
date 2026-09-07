@@ -4632,15 +4632,15 @@ let stepDescriptorValidation =
                   Expect.stringContains reason "at most one" "two values fail before any output"
               | other -> failtestf "two-argument println escaped its measured arity: %A" other
 
-              match
-                  WalkerRules.validateHostedCall
-                      "println"
-                      [ Fogell.Groovy.Interpreter.VList(ref [ v "unmeasured" ]) ]
-                      []
-              with
-              | Error(WalkerRules.EngineRefusal reason) ->
-                  Expect.stringContains reason "no measured rendering" "object surfaces remain closed"
-              | other -> failtestf "unmeasured println object rendering escaped: %A" other
+              for unmeasured in
+                  [ Fogell.Groovy.Interpreter.VList(ref [ v "unmeasured" ])
+                    Fogell.Groovy.Interpreter.VInt 42L
+                    Fogell.Groovy.Interpreter.VNull
+                    Fogell.Groovy.Interpreter.VBool true ] do
+                  match WalkerRules.validateHostedCall "println" [ unmeasured ] [] with
+                  | Error(WalkerRules.EngineRefusal reason) ->
+                      Expect.stringContains reason "no measured rendering" "non-string surfaces remain closed"
+                  | other -> failtestf "unmeasured println rendering escaped: %A" other
           }
 
           test "warning rows normalize the primary and return warning data" {
@@ -4919,7 +4919,7 @@ let genuineNullRuntime =
               withWorkspace (fun root workspace ->
                   let direct =
                       "pipeline { agent any stages { stage('probe') { steps { "
-                      + "println 'MUST-NOT-PRINT'; sh 'touch direct-bypass.txt'"
+                      + "println \"${x = 'MUST-NOT-PRINT'; x}\"; sh 'touch direct-bypass.txt'"
                       + " } } } }"
 
                   match FogellSide.run [] root "job" direct with
@@ -4930,6 +4930,10 @@ let genuineNullRuntime =
                       Expect.isFalse
                           (trace.Output |> List.contains "MUST-NOT-PRINT")
                           "the direct value is never rendered or emitted"
+                      Expect.isFalse
+                          (trace.Output
+                           |> List.exists (fun line -> line.Contains "Did you forget the `def` keyword?"))
+                          "argument rendering never publishes its assignment advisory"
                       Expect.isFalse
                           (IO.File.Exists(IO.Path.Combine(workspace, "direct-bypass.txt")))
                           "the following shell never runs")

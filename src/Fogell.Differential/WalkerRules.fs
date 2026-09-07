@@ -328,7 +328,9 @@ module WalkerRules =
                       | [ Fogell.Groovy.Interpreter.VStr _ ] -> None
                       | [ other ] ->
                           Some $"`println` value type `{open' other}` has no measured rendering contract"
-                      | _ -> Some "`println` takes at most one positional value")
+                      // The shared MaxPositionals boundary above exclusively owns
+                      // arity. Keeping a second check here made its mutation invisible.
+                      | _ -> None)
               "archiveArtifacts",
               row 1 (Some "artifacts") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException)
                   [ "artifacts"; "allowEmptyArchive"; "caseSensitive"; "defaultExcludes"
