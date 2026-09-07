@@ -4367,17 +4367,19 @@ let returnFlagContract =
               Expect.isEmpty missing "a vocabulary step with no arity entry falls back to a guess"
           }
 
-          // FG-177. THE TWO TABLES MUST AGREE. `positionalArity` says how many
-          // positionals a step takes; `soleRequiredParameter` says what its one required
-          // parameter is called. A step with arity 0 has no parameter to name, and a step
-          // with arity 1 must have one or the named spelling stays unreachable — which is
-          // exactly the false refusal `dir(path: 'sub')` was.
-          test "the arity table and the parameter table agree" {
+          // FG-177. Pipeline-step constructor rows with arity 1 need a promotion name,
+          // or their named spelling stays unreachable — exactly the false refusal
+          // `dir(path: 'sub')` was. FG-258's Groovy `println` method is deliberately
+          // different: a named call is one Map value and remains outside the model.
+          test "constructor arity and parameter promotion agree" {
               for step in WalkerRules.scriptStepVocabulary do
                   let arity = Map.find step WalkerRules.positionalArity
                   let named = Map.containsKey step WalkerRules.soleRequiredParameter
+                  let descriptor = Map.find step WalkerRules.stepDescriptors
+                  let expectsPromotion =
+                      arity = 1 && descriptor.UnknownNamed <> WalkerRules.RefuseNamedMap
 
-                  Expect.equal named (arity = 1) $"{step}: arity {arity} and named-parameter presence must match"
+                  Expect.equal named expectsPromotion $"{step}: arity {arity} and named-parameter policy must match"
           }
 
           test "deleteDir takes NO positional argument" {
@@ -4437,7 +4439,7 @@ let stepDescriptorValidation =
 
     testList
         "FG-177 shared step descriptor and call validator"
-        [ test "the descriptor is exhaustive over the 14-step vocabulary" {
+        [ test "the descriptor is exhaustive over the hosted vocabulary" {
               Expect.equal
                   (WalkerRules.stepDescriptors |> Map.keys |> Set.ofSeq)
                   WalkerRules.scriptStepVocabulary
@@ -4446,7 +4448,7 @@ let stepDescriptorValidation =
 
           test "return shapes partition null, body, JUnit summary, and nominal SCM rows" {
               let genuineNull =
-                  set [ "sh"; "echo"; "archiveArtifacts"; "deleteDir"; "stash"; "unstable"; "unstash" ]
+                  set [ "sh"; "echo"; "println"; "archiveArtifacts"; "deleteDir"; "stash"; "unstable"; "unstash" ]
 
               let bodyResult = set [ "dir"; "timeout"; "retry"; "withEnv" ]
               let junitSummary = set [ "junit" ]
@@ -4479,16 +4481,18 @@ let stepDescriptorValidation =
               Expect.equal
                   (Set.unionMany [ genuineNull; bodyResult; junitSummary; scmMap ])
                   WalkerRules.scriptStepVocabulary
-                  "the classifications partition all 14 descriptors"
+                  "the classifications partition every descriptor"
           }
 
-          test "all 14 descriptor rows match the pinned Jenkins schemas" {
-              // Jenkins 2.568.1 GDSL owns thirteen rows; archiveArtifacts is
-              // pinned by the direct archive-schema measurement receipt.
+          test "all descriptor rows match their pinned call schemas" {
+              // Jenkins 2.568.1 GDSL owns thirteen Pipeline-step rows;
+              // archiveArtifacts is pinned by direct schema measurement, and println
+              // is a Groovy Script method with no named step parameters.
               let expected =
                   Map.ofList
                       [ "sh", set [ "script"; "encoding"; "label"; "returnStatus"; "returnStdout" ]
                         "echo", set [ "message" ]
+                        "println", Set.empty
                         "archiveArtifacts",
                         set
                             [ "artifacts"; "allowEmptyArchive"; "caseSensitive"; "defaultExcludes"
@@ -4553,6 +4557,7 @@ let stepDescriptorValidation =
                         "git"; "stash"; "timeout"; "retry" ]
 
               let thrown = set [ "echo"; "unstable"; "unstash"; "dir"; "withEnv" ]
+              let refusedMaps = set [ "println" ]
 
               for KeyValue(name, descriptor) in WalkerRules.stepDescriptors do
                   match descriptor.UnknownNamed with
@@ -4561,11 +4566,16 @@ let stepDescriptorValidation =
                       Expect.isNonEmpty bindingClass $"{name} warning names its Jenkins binding class"
                   | WalkerRules.ConstructorMapThrow ->
                       Expect.isTrue (thrown.Contains name) $"{name} is a measured constructor-map row"
+                  | WalkerRules.RefuseNamedMap ->
+                      Expect.isTrue (refusedMaps.Contains name) $"{name} refuses the unmodelled named-Map surface"
 
-              Expect.equal (Set.union warned thrown) WalkerRules.scriptStepVocabulary "policies partition the vocabulary"
+              Expect.equal
+                  (Set.unionMany [ warned; thrown; refusedMaps ])
+                  WalkerRules.scriptStepVocabulary
+                  "policies partition the vocabulary"
           }
 
-          test "terminal hosted-status delivery is exhaustive over all 14 descriptors" {
+          test "terminal hosted-status delivery is exhaustive over every descriptor" {
               let catchable = set [ "sh"; "unstash" ]
               let deferred = Set.difference WalkerRules.scriptStepVocabulary catchable
 
@@ -4603,6 +4613,34 @@ let stepDescriptorValidation =
                   Expect.stringContains reason "fogellProbeUnknown" "the raw unknown survives until classification"
                   Expect.isEmpty warnings "constructor-map throw does not warn first"
               | other -> failtestf "expected a catchable constructor-map throw, got %A" other
+          }
+
+          test "println admits only its measured positional surface" {
+              match WalkerRules.validateHostedCall "println" [ v "value" ] [] with
+              | Ok validated ->
+                  Expect.equal validated.Positional [ v "value" ] "one positional value is preserved"
+                  Expect.isEmpty validated.Named "no named arguments are manufactured"
+              | Error error -> failtestf "measured println value refused: %A" error
+
+              match WalkerRules.validateHostedCall "println" [] [ "message", v "value" ] with
+              | Error(WalkerRules.EngineRefusal reason) ->
+                  Expect.stringContains reason "Map" "the wider valid Jenkins shape is refused by name"
+              | other -> failtestf "named println escaped the conservative Map boundary: %A" other
+
+              match WalkerRules.validateHostedCall "println" [ v "one"; v "two" ] [] with
+              | Error(WalkerRules.EngineRefusal reason) ->
+                  Expect.stringContains reason "at most one" "two values fail before any output"
+              | other -> failtestf "two-argument println escaped its measured arity: %A" other
+
+              for unmeasured in
+                  [ Fogell.Groovy.Interpreter.VList(ref [ v "unmeasured" ])
+                    Fogell.Groovy.Interpreter.VInt 42L
+                    Fogell.Groovy.Interpreter.VNull
+                    Fogell.Groovy.Interpreter.VBool true ] do
+                  match WalkerRules.validateHostedCall "println" [ unmeasured ] [] with
+                  | Error(WalkerRules.EngineRefusal reason) ->
+                      Expect.stringContains reason "no measured rendering" "non-string surfaces remain closed"
+                  | other -> failtestf "unmeasured println rendering escaped: %A" other
           }
 
           test "warning rows normalize the primary and return warning data" {
@@ -4837,21 +4875,68 @@ let genuineNullRuntime =
 
     testList
         "FG-177 genuine-null runtime publication"
-        [ test "plain and false-flag sh, echo and successful unstable publish VNull" {
+        [ test "plain and false-flag sh, echo, println and successful unstable publish VNull" {
               let body =
                   "def plain = sh(script: 'true'); "
                   + "def falseFlags = sh(script: 'true', returnStdout: false, returnStatus: false); "
                   + "def echoed = echo(); "
+                  + "def printed = println \"Build number: ${env.BUILD_NUMBER}\"; "
+                  + "def blank = println(); "
                   + "def unstableValue = unstable(message: 'measured-null'); "
-                  + "if (plain == null && falseFlags == null && echoed == null && unstableValue == null) { "
+                  + "if (plain == null && falseFlags == null && echoed == null && printed == null && blank == null && unstableValue == null) { "
                   + "sh 'printf pass > basic-null.txt' }"
 
               run body (fun workspace trace ->
                   Expect.equal trace.Result "unstable" "unstable remains nonterminal and controls the build result"
                   Expect.equal
+                      (trace.Output |> List.filter ((=) "Build number: 1") |> List.length)
+                      1
+                      "println renders the live build-number GString exactly once"
+                  Expect.equal
                       (IO.File.ReadAllText(IO.Path.Combine(workspace, "basic-null.txt")))
                       "pass"
-                      "all four callback results were real Groovy null")
+                      "all six callback results were real Groovy null")
+          }
+
+          test "invalid println shapes halt before output or later effects" {
+              for label, call in
+                  [ "named-map", "println(message: 'MUST-NOT-PRINT')"
+                    "two-values", "println('MUST-NOT-PRINT', 'SECOND')" ] do
+                  run
+                      (call + $"; sh 'touch {label}.txt'")
+                      (fun workspace trace ->
+                          Expect.equal trace.Result "failure" $"{label}: the invalid call fails"
+                          Expect.isTrue trace.ReportedFailureReason $"{label}: the refusal is explicit"
+                          Expect.isFalse
+                              (trace.Output |> List.contains "MUST-NOT-PRINT")
+                              $"{label}: validation precedes output"
+                          Expect.isFalse
+                              (IO.File.Exists(IO.Path.Combine(workspace, $"{label}.txt")))
+                              $"{label}: validation halts the script before the following shell")
+          }
+
+          test "direct Declarative println cannot bypass hosted validation" {
+              withWorkspace (fun root workspace ->
+                  let direct =
+                      "pipeline { agent any stages { stage('probe') { steps { "
+                      + "println \"${x = 'MUST-NOT-PRINT'; x}\"; sh 'touch direct-bypass.txt'"
+                      + " } } } }"
+
+                  match FogellSide.run [] root "job" direct with
+                  | Error why -> failtestf "direct println guard did not return a trace: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "failure" "the unvalidated direct surface fails closed"
+                      Expect.isTrue trace.ReportedFailureReason "the hosted-only boundary is explicit"
+                      Expect.isFalse
+                          (trace.Output |> List.contains "MUST-NOT-PRINT")
+                          "the direct value is never rendered or emitted"
+                      Expect.isFalse
+                          (trace.Output
+                           |> List.exists (fun line -> line.Contains "Did you forget the `def` keyword?"))
+                          "argument rendering never publishes its assignment advisory"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "direct-bypass.txt")))
+                          "the following shell never runs")
           }
 
           test "archive, stash, deleteDir and unstash publish VNull after their stateful effects" {

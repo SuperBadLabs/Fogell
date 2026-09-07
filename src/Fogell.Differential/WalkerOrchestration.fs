@@ -2145,6 +2145,16 @@ module WalkerOrchestration =
             // used to describe is gone. `StepValueUse.find` admits only descriptor-modelled
             // values — typed shell returns, genuine nulls, and hosted-wrapper body results —
             // and refuses the remaining JUnit/SCM object surfaces by name.
+            // FG-258. `println` is admitted as a Groovy Script method only. A direct
+            // Declarative spelling does not cross validateHostedCall; letting it fall
+            // into WalkerStep would therefore discard extra positionals and reinterpret
+            // a named Map as a `message` parameter. Refuse before rendering any argument
+            // so an invalid direct call cannot acquire evaluation effects either.
+            | "println", _ when ctx.HostedArgs.IsNone ->
+                emit "ERROR: direct Declarative `println` is not modelled; use it only inside `script { }`"
+                ctx.Failed.Value <- true
+                ctx.Sink BuildStatus.Failure
+
             | "script", _ when step.ScriptBody.IsSome ->
                 let src = Option.get step.ScriptBody
 
