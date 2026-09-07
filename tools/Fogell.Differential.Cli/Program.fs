@@ -24,7 +24,7 @@ open Fogell.Execution
 let main argv =
     match Array.toList argv with
     | [ "--runtime-guard-capability" ] ->
-        printfn "fogell-runtime-guard-v3"
+        printfn "fogell-runtime-guard-v9"
         0
 
     // FG-161. Recompute every receipt's seal from the receipt itself.
@@ -149,43 +149,24 @@ let main argv =
             let caseSha = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_CASE_SHA"
             let node = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_NODE"
             let command = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_COMMAND"
+            let fogellToolPath = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_FOGELL_TOOL_PATH"
             let toolPath = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_TOOL_PATH"
-            let values = [ caseSha; node; command; toolPath ]
-            let present value = not (String.IsNullOrEmpty value)
+            let expectation = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_EXPECTATION"
 
-            match values |> List.filter present |> List.length with
-            | 0 -> None, None
-            | 4 ->
-                let safe (pattern: string) (value: string) =
-                    Text.RegularExpressions.Regex.IsMatch(value, pattern)
-                let valid =
-                    safe "^[0-9a-f]{64}$" caseSha
-                    && safe "^[A-Za-z0-9._-]+$" node
-                    && safe "^[A-Za-z0-9._+-]+$" command
-                    && safe "^/[A-Za-z0-9._/+:-]+$" toolPath
-
-                match valid, jenkinsBuildPath with
-                | true, Some buildPath when files.Length = 1 ->
-                    Some caseSha,
-                    Some
-                        { CaseSha = caseSha
-                          RequiredNode = node
-                          BuildPath = buildPath
-                          Tools = [ command, toolPath ] }
-                | true, Some _ ->
-                    eprintfn "Jenkins runtime guard refused: exactly one corpus case is required"
-                    exit 2
-                    None, None
-                | true, None ->
-                    eprintfn "Jenkins runtime guard refused: FOGELL_JENKINS_BUILD_PATH is required"
-                    exit 2
-                    None, None
-                | _ ->
-                    eprintfn "Jenkins runtime guard refused: malformed case SHA, node, command, or tool path"
-                    exit 2
-                    None, None
-            | _ ->
-                eprintfn "Jenkins runtime guard refused: all four FOGELL_RUNTIME_GUARD_* values are required"
+            match
+                Jenkins.configureRuntimeGuard
+                    caseSha
+                    node
+                    command
+                    fogellToolPath
+                    toolPath
+                    expectation
+                    jenkinsBuildPath
+                    files.Length
+            with
+            | Ok configured -> configured
+            | Error why ->
+                eprintfn $"Jenkins runtime guard refused: {why}"
                 exit 2
                 None, None
 
@@ -584,6 +565,24 @@ let main argv =
                     else
                         None
 
+                // One guard admission decision governs BOTH engines. Jenkins.runMany
+                // reports a rejected target as a Result so ordinary comparison can
+                // describe Jenkins failures; a runtime-guard refusal is instead a
+                // harness boundary and must stop before Fogell can execute the source.
+                let runtimeGuardPreflight =
+                    if malformed then
+                        Ok()
+                    else
+                        match runtimeGuard with
+                        | None -> Ok()
+                        | Some guard ->
+                            let definitions =
+                                match scmSpec with
+                                | Some spec -> [ FromScm spec ]
+                                | None -> scripts |> List.map Inline
+
+                            Jenkins.validateRuntimeGuardDefinitions guard definitions
+
                 // FG-119. A case is run, and if it DIVERGES it is run again before
                 // any verdict is sealed. `dash` writes an `sh -x` trace line in more
                 // than one write(), so two stages of a shell pipeline interleave
@@ -601,6 +600,11 @@ let main argv =
                 // A divergence that reproduces is real and still fails; one that does
                 // not is reported RECOVERED with the original text, never silently.
                 let runBothEngines () =
+                    match runtimeGuardPreflight with
+                    | Error why ->
+                        raise (RuntimeGuardFailure $"Jenkins runtime guard refused: {why}")
+                    | Ok() -> ()
+
                     wipeJenkinsWorkspace ()
 
                     let jenkinsRuns, fogellRuns =
@@ -618,11 +622,40 @@ let main argv =
                         else
                             match scmSpec with
                             | Some spec ->
-                                Jenkins.runMany caseCfg envReplacementsAll job [ FromScm spec ],
-                                [ FogellSide.runScm envReplacementsAll fogellRoot job spec scripts.Head ]
+                                let jenkinsRuns =
+                                    Jenkins.runMany caseCfg envReplacementsAll job [ FromScm spec ]
+
+                                let fogellRun =
+                                    match runtimeGuard with
+                                    | Some guard ->
+                                        FogellSide.runScmWithRuntimeGuard
+                                            guard
+                                            envReplacementsAll
+                                            fogellRoot
+                                            job
+                                            spec
+                                            scripts.Head
+                                    | None ->
+                                        FogellSide.runScm envReplacementsAll fogellRoot job spec scripts.Head
+
+                                jenkinsRuns, [ fogellRun ]
                             | None ->
-                                Jenkins.runMany caseCfg envReplacementsAll job (scripts |> List.map Inline),
-                                FogellSide.runMany envReplacementsAll fogellRoot job scripts
+                                let jenkinsRuns =
+                                    Jenkins.runMany caseCfg envReplacementsAll job (scripts |> List.map Inline)
+
+                                let fogellRuns =
+                                    match runtimeGuard with
+                                    | Some guard ->
+                                        FogellSide.runManyWithRuntimeGuard
+                                            guard
+                                            envReplacementsAll
+                                            fogellRoot
+                                            job
+                                            scripts
+                                    | None ->
+                                        FogellSide.runMany envReplacementsAll fogellRoot job scripts
+
+                                jenkinsRuns, fogellRuns
 
                     jenkinsRuns, fogellRuns
 

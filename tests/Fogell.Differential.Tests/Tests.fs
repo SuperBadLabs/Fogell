@@ -9826,7 +9826,8 @@ let compileRefusalDisposition =
                   { CaseSha = String.replicate 64 "a"
                     RequiredNode = "Jenkins"
                     BuildPath = path
-                    Tools = [ "make", "/usr/local/bin/make" ] }
+                    Requirements = [ PresentAtPath("make", "/usr/local/bin/make") ]
+                    FogellRequirements = [ PresentAtPath("make", "/usr/bin/make") ] }
               let probe = Jenkins.runtimeGuardScript guard
               Expect.stringContains probe "[ \"$PATH\" = \"/usr/local/sbin:" "the real sh checks effective PATH"
               Expect.stringContains probe "actual=$(command -v make)" "the real sh resolves the selected command"
@@ -9848,6 +9849,175 @@ let compileRefusalDisposition =
                   "the target build checks the owned trigger token before its marker"
               Expect.stringContains targetScript "actual=$(command -v make)" "the target build resolves the pinned tool"
               Expect.stringContains targetScript $"[ \"$PATH\" = \"{path}\" ]" "the target build checks effective PATH"
+
+              let absentGuard =
+                  { guard with
+                      Requirements = [ AbsentCommand "composer" ]
+                      FogellRequirements = [ AbsentCommand "composer" ] }
+              let absentProbe = Jenkins.runtimeGuardScript absentGuard
+              Expect.stringContains
+                  absentProbe
+                  "if command -v composer >/dev/null 2>&1; then exit 94; fi"
+                  "the separate guard build fails if the forbidden command resolves"
+              Expect.isFalse
+                  (absentProbe.Contains "actual=$(command -v composer)")
+                  "absence is not represented as a failed present-at-path lookup"
+              let absentMarker = Jenkins.targetRuntimeMarker absentGuard.CaseSha "fedcba9876543210"
+              let absentTarget =
+                  Jenkins.injectTargetRuntimeGuard
+                      absentGuard
+                      "fedcba9876543210"
+                      absentMarker
+                      "pipeline {\n  agent any\n  stages {\n    stage('Build') { steps { sh 'composer install' } }\n  }\n}\n"
+              Expect.isOk absentTarget "an absent-command requirement injects before the target stage"
+              let absentTargetScript = absentTarget |> Result.defaultValue ""
+              Expect.stringContains
+                  absentTargetScript
+                  "if command -v composer >/dev/null 2>&1; then exit 94; fi"
+                  "the target build itself fails if the forbidden command resolves"
+              Expect.stringContains absentTargetScript absentMarker "the absence check gates the target marker"
+
+              let pathChangingTargets =
+                  [ "pipeline environment",
+                    "pipeline { agent any environment { PATH = '/tmp/bin' } stages { stage('Build') { steps { sh 'true' } } } }"
+                    "stage environment",
+                    "pipeline { agent any stages { stage('Build') { environment { PATH = '/tmp/bin' } steps { sh 'true' } } } }"
+                    "withEnv",
+                    "pipeline { agent any stages { stage('Build') { steps { withEnv(['PATH=/tmp/bin']) { sh 'true' } } } } }"
+                    "hosted PATH addition",
+                    "pipeline { agent any stages { stage('Build') { steps { script { withEnv(['PATH+ATTACK=/tmp/bin']) { sh 'true' } } } } } }"
+                    "computed hosted withEnv name",
+                    "pipeline { agent any stages { stage('Build') { steps { script { def key = 'PA' + 'TH'; withEnv([\"${key}=/tmp/bin\"]) { sh 'composer install' } } } } } }"
+                    "computed indexed environment assignment",
+                    "pipeline { agent any stages { stage('Build') { steps { script { def target = env; target['PA' + 'TH'] = '/tmp/bin'; sh 'composer install' } } } } }"
+                    "computed credential variable",
+                    "pipeline { agent any stages { stage('Build') { steps { withCredentials([string(credentialsId: 'secret', variable: 'PA' + 'TH')]) { sh 'composer install' } } } } }"
+                    "stage agent environment",
+                    "pipeline { agent any stages { stage('Build') { agent { docker { image 'composer:latest' } } steps { sh 'composer install' } } } }"
+                    "shell-local assignment",
+                    "pipeline { agent any stages { stage('Build') { steps { sh 'PATH=/tmp/bin composer install' } } } }"
+                    "computed shell-local assignment",
+                    "pipeline { agent any stages { stage('Build') { steps { sh 'p=PA; name=${p}TH; eval export $name=/tmp/bin; composer install' } } } }"
+                    "preamble shell helper",
+                    "def early() { sh 'echo early' }; pipeline { agent any stages { stage('Build') { steps { script { echo early(); sh 'composer install' } } } } }"
+                    "nonterminal returnStatus shell",
+                    "pipeline { agent any stages { stage('Build') { steps { sh script: 'composer install', returnStatus: true } } } }"
+                    "post-failure effect",
+                    "pipeline { agent any stages { stage('Build') { steps { sh 'composer install' } post { failure { sh 'touch escaped' } } } } }"
+                    "pre-command substitution",
+                    "pipeline { agent any stages { stage('Build') { steps { sh 'composer $(touch escaped)' } } } }"
+                    "nested shell in echo argument",
+                    "pipeline { agent any stages { stage('Build') { steps { script { echo(sh(script: 'touch escaped', returnStdout: true)); sh 'composer install' } } } } }"
+                    "pipeline option",
+                    "pipeline { agent any options { disableConcurrentBuilds() } stages { stage('Build') { steps { sh 'composer install' } } } }"
+                    "pipeline parameter",
+                    "pipeline { agent any parameters { string(name: 'TARGET') } stages { stage('Build') { steps { sh 'composer install' } } } }"
+                    "pipeline trigger",
+                    "pipeline { agent any triggers { cron('* * * * *') } stages { stage('Build') { steps { sh 'composer install' } } } }"
+                    "stage option",
+                    "pipeline { agent any stages { stage('Build') { options { timeout(time: 1, unit: 'HOURS') } steps { sh 'composer install' } } } }"
+                    "shared libraries",
+                    "pipeline { agent any libraries { lib('remote@main') } stages { stage('Build') { steps { sh 'composer install' } } } }"
+                    "opaque plugin section",
+                    "pipeline { agent any pluginBehavior { enabled() } stages { stage('Build') { steps { sh 'composer install' } } } }"
+                    "opaque stage plugin section",
+                    "pipeline { agent any stages { stage('Build') { pluginBehavior { enabled() } steps { sh 'composer install' } } } }" ]
+
+              for label, source in pathChangingTargets do
+                  Expect.isOk
+                      (Fogell.Pipeline.Parser.Parser.parse source)
+                      $"{label}: the hostile control itself is admitted Jenkins syntax"
+                  Expect.isError
+                      (Jenkins.injectTargetRuntimeGuard absentGuard "fedcba9876543210" absentMarker source)
+                      $"{label}: original PATH references are refused before Jenkins scheduling"
+
+              Expect.isError
+                  (Jenkins.validateRuntimeGuardTargetSource
+                      absentGuard
+                      "pipeline { agent any environment { CLASSPATH = '/tmp/lib' } stages { stage('Build') { steps { sh 'composer install' } } } }")
+                  "runtime-pinned targets conservatively refuse every Declarative environment scope"
+              Expect.isError
+                  (Jenkins.validateRuntimeGuardTargetSource
+                      absentGuard
+                      "def getdockertag() { return \"${env.GIT_BRANCH}\" }; pipeline { agent any environment {\nDOCKER_TAG = getdockertag()\n} stages { stage('Build') { steps { script { echo 'install'; sh 'composer install' } } } } }")
+                  "the already-rejected Composer candidate remains safely outside runtime execution"
+              Expect.isOk
+                  (Jenkins.validateRuntimeGuardTargetSource
+                      absentGuard
+                      "pipeline { agent any stages { stage('Build') { steps { script { echo 'install'; sh 'composer install --prefer-source' } } } } }")
+                  "a closed literal Composer-first route remains runtime-guardable"
+              Expect.isOk
+                  (Jenkins.validateRuntimeGuardTargetSource
+                      guard
+                      "pipeline { agent any stages { stage('Install') { steps { sh 'make install' } } stage('Deploy') { steps { withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'AwsCreds', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) { sh 'aws deploy' } } } } }")
+                  "the current make-pinned corpus shape retains its later literal credential bindings"
+              Expect.isError
+                  (Jenkins.validateRuntimeGuardDefinitions
+                      absentGuard
+                      [ Inline "pipeline { agent any stages { stage('Build') { steps { sh script: 'composer install', returnStatus: true } } } }" ])
+                  "the shared engine preflight refuses a Jenkins target that Fogell could otherwise execute"
+              Expect.isError
+                  (Jenkins.validateRuntimeGuardDefinitions
+                      absentGuard
+                      [ FromScm { Url = "git://fixture/repo.git"; Branch = "case/pinned" } ])
+                  "the shared engine preflight refuses unsupported guarded SCM before either engine"
+
+              let sha = String.replicate 64 "a"
+              let configured expectation fogellToolPath jenkinsToolPath =
+                  Jenkins.configureRuntimeGuard
+                      sha
+                      "Jenkins"
+                      "composer"
+                      fogellToolPath
+                      jenkinsToolPath
+                      expectation
+                      (Some path)
+                      1
+
+              match configured "present" "/usr/bin/composer" "/usr/local/bin/composer" with
+              | Ok(Some observedSha, Some configuredGuard) ->
+                  Expect.equal observedSha sha "the valid present guard retains its digest binding"
+                  Expect.equal
+                      configuredGuard.Requirements
+                      [ PresentAtPath("composer", "/usr/local/bin/composer") ]
+                      "present mode becomes the Jenkins typed path requirement"
+                  Expect.equal
+                      configuredGuard.FogellRequirements
+                      [ PresentAtPath("composer", "/usr/bin/composer") ]
+                      "present mode retains the distinct Fogell typed path requirement"
+              | other -> failtestf "valid present runtime guard was refused: %A" other
+
+              match configured "absent" "-" "-" with
+              | Ok(Some observedSha, Some configuredGuard) ->
+                  Expect.equal observedSha sha "the valid absent guard retains its digest binding"
+                  Expect.equal
+                      configuredGuard.Requirements
+                      [ AbsentCommand "composer" ]
+                      "absent mode becomes a typed negative requirement"
+                  Expect.equal
+                      configuredGuard.FogellRequirements
+                      [ AbsentCommand "composer" ]
+                      "the same negative requirement reaches Fogell"
+              | other -> failtestf "valid absent runtime guard was refused: %A" other
+
+              Expect.isError (configured "sometimes" "-" "-") "an unknown expectation fails closed"
+              Expect.isError (configured "present" "-" "/usr/local/bin/composer") "present mode requires a Fogell path"
+              Expect.isError
+                  (configured "present" "/usr/bin/composer" "relative/composer")
+                  "present mode rejects a relative Jenkins path"
+              Expect.isError
+                  (configured "absent" "-" "/usr/local/bin/composer")
+                  "absent mode requires both exact non-path sentinels"
+              Expect.isError
+                  (Jenkins.configureRuntimeGuard sha "Jenkins" "-composer" "-" "-" "absent" (Some path) 1)
+                  "a leading-hyphen command cannot be interpreted as an option"
+              Expect.isError
+                  (Jenkins.configureRuntimeGuard sha "Jenkins" "composer" "" "-" "absent" (Some path) 1)
+                  "all six guard values remain mandatory"
+              Expect.equal
+                  (Jenkins.configureRuntimeGuard "" "" "" "" "" "" None 1)
+                  (Ok(None, None))
+                  "an entirely unconfigured ordinary differential remains unguarded"
 
               let fourSpaceSource =
                   "pipeline {\n"
@@ -10101,6 +10271,103 @@ let compileRefusalDisposition =
                   (List.rev passedIdentities)
                   [ "diff-guard", 1; "diff-corpus", 1; "diff-guard", 2 ]
                   "guard/corpus/guard execute with separate exact job histories"
+          }
+
+          test "Fogell runtime guards fail outside comparison and enforce every typed requirement" {
+              let resolved =
+                  Map [ "make", "/usr/bin/make"; "sh", "/usr/bin/sh" ]
+                  |> fun paths -> fun command -> Map.tryFind command paths
+
+              Expect.isOk
+                  (FogellSide.verifyRuntimeRequirements
+                      resolved
+                      [ PresentAtPath("make", "/usr/bin/make"); AbsentCommand "composer" ])
+                  "all matching present and absent requirements pass"
+              Expect.isError
+                  (FogellSide.verifyRuntimeRequirements
+                      resolved
+                      [ PresentAtPath("make", "/usr/bin/make"); AbsentCommand "sh" ])
+                  "a later forbidden requirement cannot be skipped"
+              Expect.isError
+                  (FogellSide.verifyRuntimeRequirements
+                      resolved
+                      [ PresentAtPath("make", "/usr/local/bin/make") ])
+                  "present requirements compare the exact resolved path"
+
+              let mutable drifted = false
+              let changingResolver command =
+                  if command = "composer" && drifted then Some "/tmp/composer" else None
+              let requirements = [ AbsentCommand "composer" ]
+              Expect.isOk
+                  (FogellSide.verifyRuntimeRequirements changingResolver requirements)
+                  "the first absent observation passes"
+              drifted <- true
+              Expect.isError
+                  (FogellSide.verifyRuntimeRequirements changingResolver requirements)
+                  "a later attempt resolves the requirement again"
+
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg259-guard-{Guid.NewGuid():N}")
+              let marker = IO.Path.Combine(root, "job", "ran")
+              let guard =
+                  { CaseSha = String.replicate 64 "a"
+                    RequiredNode = "Jenkins"
+                    BuildPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                    Requirements = [ AbsentCommand "sh" ]
+                    FogellRequirements = [ AbsentCommand "sh" ] }
+              let source =
+                  $"pipeline {{ agent any; stages {{ stage('Build') {{ steps {{ sh 'touch {marker}' }} }} }} }}"
+
+              try
+                  Expect.throws
+                      (fun () ->
+                          FogellSide.runManyWithRuntimeGuard guard [] root "job" [ source ]
+                          |> ignore)
+                      "runtime drift is a harness failure, never a comparable Fogell result"
+                  Expect.isFalse (IO.File.Exists marker) "the guarded user build never executed"
+
+                  let fakeBin = IO.Path.Combine(root, "guard-bin")
+                  IO.Directory.CreateDirectory fakeBin |> ignore
+                  let fakeComposer = IO.Path.Combine(fakeBin, "composer")
+                  IO.File.WriteAllText(fakeComposer, "#!/bin/sh\nexit 0\n")
+                  IO.File.SetUnixFileMode(
+                      fakeComposer,
+                      IO.UnixFileMode.UserRead
+                      ||| IO.UnixFileMode.UserWrite
+                      ||| IO.UnixFileMode.UserExecute
+                  )
+
+                  let overlayMarker = IO.Path.Combine(root, "job", "overlay-ran")
+                  let guardedPath = fakeBin + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                  let overlayGuard =
+                      { guard with
+                          Requirements = [ AbsentCommand "composer" ]
+                          FogellRequirements = [ AbsentCommand "composer" ] }
+
+                  let overlaySources =
+                      [ "pipeline environment",
+                        $"pipeline {{ agent any environment {{\nPATH = '{guardedPath}'\n}} stages {{ stage('Build') {{ steps {{ sh 'touch {overlayMarker}' }} }} }} }}"
+                        "stage environment",
+                        $"pipeline {{ agent any stages {{ stage('Build') {{ environment {{\nPATH = '{guardedPath}'\n}} steps {{ sh 'touch {overlayMarker}' }} }} }} }}"
+                        "withEnv",
+                        $"pipeline {{ agent any stages {{ stage('Build') {{ steps {{ withEnv(['PATH={guardedPath}']) {{ sh 'touch {overlayMarker}' }} }} }} }} }}"
+                        "hosted withEnv PATH addition",
+                        $"pipeline {{ agent any stages {{ stage('Build') {{ steps {{ script {{ withEnv(['PATH+ATTACK={fakeBin}']) {{ sh 'touch {overlayMarker}' }} }} }} }} }} }}"
+                        "retry",
+                        $"pipeline {{ agent any stages {{ stage('Build') {{ steps {{ retry(2) {{ withEnv(['PATH={guardedPath}']) {{ sh 'touch {overlayMarker}' }} }} }} }} }} }}"
+                        "parallel",
+                        $"pipeline {{ agent any stages {{ stage('fanout') {{ parallel {{ stage('bad') {{ environment {{\nPATH = '{guardedPath}'\n}} steps {{ sh 'touch {overlayMarker}' }} }} stage('other') {{ steps {{ echo 'joined' }} }} }} }} }} }}" ]
+
+                  for label, overlaySource in overlaySources do
+                      Expect.throwsT<RuntimeGuardFailure>
+                          (fun () ->
+                              FogellSide.runManyWithRuntimeGuard overlayGuard [] root "job" [ overlaySource ]
+                              |> ignore)
+                          $"{label}: effective shell PATH drift escapes as a runtime-guard harness failure"
+                      Expect.isFalse
+                          (IO.File.Exists overlayMarker)
+                          $"{label}: the guarded shell never launched"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
           }
 
           test "Fogell input rejection returns a refusal trace without touching a fresh workspace" {
