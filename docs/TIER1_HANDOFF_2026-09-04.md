@@ -377,7 +377,7 @@ Read with the two sections above; this is the second addendum.
   executable bit. Protected merge `7578fd49` preserved the exact source tree,
   and post-merge main run `34071018691` passed every job.
 
-## 2026-09-07 custodian addendum — FG-257 measured
+## 2026-09-07 custodian addendum — FG-257 closed
 
 - **One more real corpus file is Tier-1 PROVEN.** The exact GNU Make 4.3 pin
   built by FG-254 was reused for
@@ -399,5 +399,11 @@ Read with the two sections above; this is the second addendum.
   source `9f72e86f` from `08:00:33Z` to `08:01:44Z`, with private CLI closure
   `857e1561…`, every runtime tuple and fence green, and no teardown residue.
   Receipt seal `6db6e7bf…` binds the result, five normalized lines, and empty
-  workspace. Full gate, exact-head reviews, publication, and protected merge
-  remain; [`tickets/FG-257.md`](tickets/FG-257.md) is the live record.
+  workspace. Final signed source `aa2f7cfd` passed the authoritative 1,139-test
+  HeMan gate and replacement-PR hosted run `34108682629`. Exact-head Copilot
+  review `5130592826` covered 11/11 files with zero comments; Codex result
+  `5568980246` was clean and security result `5568949048` found no issues.
+  Coverage passed for both canonical reviewer identities with zero review
+  threads. PR #438 merged as verified exact-tree commit `8cd9f126`; post-merge
+  main runs `34109793327` and `34109793329` passed the fast and slow gates.
+  [`tickets/FG-257.md`](tickets/FG-257.md) is the live record.
