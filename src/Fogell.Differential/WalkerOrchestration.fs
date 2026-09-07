@@ -2966,6 +2966,8 @@ module WalkerOrchestration =
                     // Every branch is awaited even under failFast: an
                     // interrupted branch still has a process group to reap,
                     // and abandoning it is how orphans happen (FG-032).
+                    let mutable runtimeGuardFailure: exn option = None
+
                     branches
                     |> List.iter (fun (bc, t) ->
                         try
@@ -2991,9 +2993,21 @@ module WalkerOrchestration =
                                     |> Option.defaultValue ex
                                 | _ -> ex
 
-                            emit $"ERROR: parallel branch failed: {root.GetType().Name}: {root.Message}"
-                            bc.Failed.Value <- true
-                            bc.Sink BuildStatus.Failure)
+                            match root with
+                            | :? RuntimeGuardFailure ->
+                                // Runtime pins are harness authority. Await every
+                                // branch for process cleanup, but never turn this
+                                // failure into comparable build output/status.
+                                if runtimeGuardFailure.IsNone then
+                                    runtimeGuardFailure <- Some root
+                            | _ ->
+                                emit $"ERROR: parallel branch failed: {root.GetType().Name}: {root.Message}"
+                                bc.Failed.Value <- true
+                                bc.Sink BuildStatus.Failure)
+
+                    match runtimeGuardFailure with
+                    | Some failure -> raise failure
+                    | None -> ()
 
                     if branches |> List.exists (fun (bc, _) -> bc.Failed.Value) then
                         ctx.Failed.Value <- true

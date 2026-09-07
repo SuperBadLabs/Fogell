@@ -10239,6 +10239,48 @@ let compileRefusalDisposition =
                           |> ignore)
                       "runtime drift is a harness failure, never a comparable Fogell result"
                   Expect.isFalse (IO.File.Exists marker) "the guarded user build never executed"
+
+                  let fakeBin = IO.Path.Combine(root, "guard-bin")
+                  IO.Directory.CreateDirectory fakeBin |> ignore
+                  let fakeComposer = IO.Path.Combine(fakeBin, "composer")
+                  IO.File.WriteAllText(fakeComposer, "#!/bin/sh\nexit 0\n")
+                  IO.File.SetUnixFileMode(
+                      fakeComposer,
+                      IO.UnixFileMode.UserRead
+                      ||| IO.UnixFileMode.UserWrite
+                      ||| IO.UnixFileMode.UserExecute
+                  )
+
+                  let overlayMarker = IO.Path.Combine(root, "job", "overlay-ran")
+                  let guardedPath = fakeBin + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                  let overlayGuard =
+                      { guard with
+                          Requirements = [ AbsentCommand "composer" ]
+                          FogellRequirements = [ AbsentCommand "composer" ] }
+
+                  let overlaySources =
+                      [ "pipeline environment",
+                        $"pipeline {{ agent any environment {{\nPATH = '{guardedPath}'\n}} stages {{ stage('Build') {{ steps {{ sh 'touch {overlayMarker}' }} }} }} }}"
+                        "stage environment",
+                        $"pipeline {{ agent any stages {{ stage('Build') {{ environment {{\nPATH = '{guardedPath}'\n}} steps {{ sh 'touch {overlayMarker}' }} }} }} }}"
+                        "withEnv",
+                        $"pipeline {{ agent any stages {{ stage('Build') {{ steps {{ withEnv(['PATH={guardedPath}']) {{ sh 'touch {overlayMarker}' }} }} }} }} }}"
+                        "hosted withEnv PATH addition",
+                        $"pipeline {{ agent any stages {{ stage('Build') {{ steps {{ script {{ withEnv(['PATH+ATTACK={fakeBin}']) {{ sh 'touch {overlayMarker}' }} }} }} }} }} }}"
+                        "retry",
+                        $"pipeline {{ agent any stages {{ stage('Build') {{ steps {{ retry(2) {{ withEnv(['PATH={guardedPath}']) {{ sh 'touch {overlayMarker}' }} }} }} }} }} }}"
+                        "parallel",
+                        $"pipeline {{ agent any stages {{ stage('fanout') {{ parallel {{ stage('bad') {{ environment {{\nPATH = '{guardedPath}'\n}} steps {{ sh 'touch {overlayMarker}' }} }} stage('other') {{ steps {{ echo 'joined' }} }} }} }} }} }}" ]
+
+                  for label, overlaySource in overlaySources do
+                      Expect.throwsT<RuntimeGuardFailure>
+                          (fun () ->
+                              FogellSide.runManyWithRuntimeGuard overlayGuard [] root "job" [ overlaySource ]
+                              |> ignore)
+                          $"{label}: effective shell PATH drift escapes as a runtime-guard harness failure"
+                      Expect.isFalse
+                          (IO.File.Exists overlayMarker)
+                          $"{label}: the guarded shell never launched"
               finally
                   if IO.Directory.Exists root then IO.Directory.Delete(root, true)
           }

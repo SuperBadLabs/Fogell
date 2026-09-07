@@ -81,6 +81,11 @@ and RuntimeRequirement =
     | PresentAtPath of command: string * path: string
     | AbsentCommand of command: string
 
+/// A runtime-pin mismatch is harness evidence failure, never a build result
+/// that either engine may compare, retry, or convert into a normal failure.
+type RuntimeGuardFailure(message: string) =
+    inherit InvalidOperationException(message)
+
 /// FG-052. What defines a build's pipeline on the Jenkins side: an inline
 /// script (CpsFlowDefinition) or an SCM the Jenkinsfile is obtained from
 /// (CpsScmFlowDefinition — `checkout scm` has meaning only here).

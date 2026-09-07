@@ -19,6 +19,7 @@ module WalkerStep =
     let runStepInner
             (runCtx: WalkerCtx)
             (envForWith: (string * string) list -> Stage -> (string * string) list)
+            (beforeShellLaunch: (string -> (string * string) list -> unit) option)
             (workspace: string)
             (artifactRoot: string)
             (jobName: string)
@@ -269,12 +270,22 @@ module WalkerStep =
                 match materializeDurableWorkspace () with
                 | Result.Error why -> Executor.refusedBeforeRunning why
                 | Result.Ok() ->
+                    // Runtime pins are harness authority, not build semantics.
+                    // Compute the effective environment once at the last common
+                    // Step -> Executor boundary, validate that exact object, then
+                    // hand the same object to the launcher. Malformed/refused shell
+                    // calls never reach this hook and remain ordinary build results.
+                    let environment = envForWith ctx.EnvOverlay stage
+
+                    if (step.Name = "sh" || step.Name = "bat") && script.IsSome then
+                        beforeShellLaunch |> Option.iter (fun verify -> verify cwd environment)
+
                     Executor.runStep
                         { Name = step.Name
                           Script = script
                           Workspace = cwd
                           WorkspaceRoot = Some workspace
-                          Environment = envForWith ctx.EnvOverlay stage
+                          Environment = environment
                           // FG-174. `returnStdout` CAPTURES instead of printing — Jenkins' console
                           // shows the xtrace and not the program's output, because durable-task
                           // calls `captureOutput()`. `returnStatus` does NOT capture, so it is

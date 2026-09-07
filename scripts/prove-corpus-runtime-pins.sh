@@ -268,7 +268,7 @@ audit_runner() {
   [ "$(rg -c '^runtime_pins="\$cli_source/differential/corpus-runtime-pins\.tsv"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^snap_dir=\$\(mktemp -d\); cli_private=\$\(mktemp -d\); cli_source="\$cli_private/source"; cli_build="\$cli_private/output"; snaps=\(\)$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^cli="\$cli_build/fogell-diff\.dll"$' "$runner")" = 1 ] || return 1
-  [ "$(rg -c '^\[ "\$capability" = fogell-runtime-guard-v6 \] \\$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^\[ "\$capability" = fogell-runtime-guard-v7 \] \\$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  \[ -n "\$cli_private" \] && rm -rf "\$cli_private"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  "\$runtime_pin_checker" "\$runtime_pins" "\$\{pin_ids\[@\]\}"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^source "\$workspace_helper" \|\| die ' "$runner")" = 1 ] || return 1
@@ -341,6 +341,8 @@ audit_access_sources() {
 
 audit_build_path_sources() {
   jenkins=$1 cli_source=$2 fogell_source=${3:-src/Fogell.Differential/Fogell.fs}
+  walker_step=${4:-src/Fogell.Differential/WalkerStep.fs}
+  walker_orchestration=${5:-src/Fogell.Differential/WalkerOrchestration.fs}
   [ "$(rg -c '<hudson\.model\.StringParameterDefinition><name>PATH</name>' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'let pathPart = $"PATH={Uri.EscapeDataString path}"' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c '$"&FOGELL_BUILD_TOKEN={Uri.EscapeDataString value}"' "$jenkins")" = 1 ] || return 1
@@ -400,15 +402,23 @@ audit_build_path_sources() {
   [ "$(rg -F -c '/job/{activeJobName}/{buildNumber}/replay/' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'String.Equals(observed, expectedScript, StringComparison.Ordinal)' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c '| [ "--runtime-guard-capability" ] ->' "$cli_source")" = 1 ] || return 1
-  [ "$(rg -F -c 'printfn "fogell-runtime-guard-v6"' "$cli_source")" = 1 ] || return 1
+  [ "$(rg -F -c 'printfn "fogell-runtime-guard-v7"' "$cli_source")" = 1 ] || return 1
   [ "$(rg -F -c 'FogellSide.runScmWithRuntimeGuard' "$cli_source")" = 1 ] || return 1
   [ "$(rg -F -c 'FogellSide.runManyWithRuntimeGuard' "$cli_source")" = 1 ] || return 1
+  [ "$(rg -F -c 'let private verifyRuntimeGuardEnvironment' "$fogell_source")" = 1 ] || return 1
   [ "$(rg -F -c 'let private verifyRuntimeGuardAttempt' "$fogell_source")" = 1 ] || return 1
   [ "$(rg -F -c 'LaunchEnvironment.buildBaseline (agentHome workspaceRoot jobName buildNumber)' "$fogell_source")" = 1 ] || return 1
-  [ "$(rg -F -c 'LaunchEnvironment.resolveBuildExecutable command workspaceRoot environment' "$fogell_source")" = 1 ] || return 1
+  [ "$(rg -F -c 'LaunchEnvironment.resolveBuildExecutable command workingDirectory environment' "$fogell_source")" = 1 ] || return 1
   [ "$(rg -F -c 'guard.FogellRequirements' "$fogell_source")" = 1 ] || return 1
+  [ "$(rg -F -c '(Some(requireRuntimeGuardEnvironment guard))' "$fogell_source")" = 1 ] || return 1
   [ "$(rg -F -c 'match verifyRuntimeGuardAttempt guard workspaceRoot jobName (List.length acc + 1) with' "$fogell_source")" = 1 ] || return 1
-  [ "$(rg -F -c 'invalidOp $"Fogell runtime guard failed: {why}"' "$fogell_source")" = 1 ] || return 1
+  [ "$(rg -F -c '| :? RuntimeGuardFailure -> reraise ()' "$fogell_source")" = 1 ] || return 1
+  [ "$(rg -F -c 'let environment = envForWith ctx.EnvOverlay stage' "$walker_step")" = 1 ] || return 1
+  [ "$(rg -F -c 'beforeShellLaunch |> Option.iter (fun verify -> verify cwd environment)' "$walker_step")" = 1 ] || return 1
+  [ "$(rg -F -c 'Environment = environment' "$walker_step")" = 1 ] || return 1
+  [ "$(rg -F -c 'let mutable runtimeGuardFailure: exn option = None' "$walker_orchestration")" = 1 ] || return 1
+  [ "$(rg -F -c '| :? RuntimeGuardFailure ->' "$walker_orchestration")" = 1 ] || return 1
+  [ "$(rg -F -c '| Some failure -> raise failure' "$walker_orchestration")" = 1 ] || return 1
 }
 
 audit_runner scripts/run-corpus-differential.sh \
@@ -578,7 +588,7 @@ reject_runner_mutant "working-tree executed-surface allowlist" 's#allowlist="$cl
 reject_runner_mutant "working-tree runtime-pin policy" 's#runtime_pins="$cli_source/differential/corpus-runtime-pins.tsv"#runtime_pins="differential/corpus-runtime-pins.tsv"#'
 reject_runner_mutant "unlocked CLI restore" 's/ --locked-mode / /'
 reject_runner_mutant "shared CLI output" 's#cli="$cli_build/fogell-diff.dll"#cli="tools/Fogell.Differential.Cli/bin/fogell-diff.dll"#'
-reject_runner_mutant "missing CLI capability handshake" 's/\[ "$capability" = fogell-runtime-guard-v6 \]/[ -n "$capability" ]/'
+reject_runner_mutant "missing CLI capability handshake" 's/\[ "$capability" = fogell-runtime-guard-v7 \]/[ -n "$capability" ]/'
 reject_runner_mutant "missing resolution-expectation parsing" 's/guard_command guard_expectation guard_fogell_tool_path/guard_command _ guard_fogell_tool_path/'
 reject_runner_mutant "missing Fogell tool-path parsing" 's/guard_expectation guard_fogell_tool_path guard_tool_path/guard_expectation _ guard_tool_path/'
 reject_runner_mutant "missing resolution-expectation assignment" '/^  FOGELL_RUNTIME_GUARD_EXPECTATION=\$guard_expectation$/d'
@@ -640,8 +650,36 @@ if audit_build_path_sources src/Fogell.Differential/Jenkins.fs tools/Fogell.Diff
 fi
 echo "  refused bypassed per-build Fogell guard mutant"
 
+cp src/Fogell.Differential/WalkerStep.fs "$scratch/WalkerStep.fs"
+sed -i '/beforeShellLaunch |> Option.iter (fun verify -> verify cwd environment)/d' "$scratch/WalkerStep.fs"
+if audit_build_path_sources src/Fogell.Differential/Jenkins.fs tools/Fogell.Differential.Cli/Program.fs src/Fogell.Differential/Fogell.fs "$scratch/WalkerStep.fs"; then
+  echo "RUNTIME-PIN PROOF FAILED: bypassed effective-environment shell guard mutant was accepted" >&2; exit 1
+fi
+echo "  refused bypassed effective-environment shell guard mutant"
+
+cp src/Fogell.Differential/WalkerStep.fs "$scratch/WalkerStep.fs"
+sed -i 's/Environment = environment/Environment = envForWith ctx.EnvOverlay stage/' "$scratch/WalkerStep.fs"
+if audit_build_path_sources src/Fogell.Differential/Jenkins.fs tools/Fogell.Differential.Cli/Program.fs src/Fogell.Differential/Fogell.fs "$scratch/WalkerStep.fs"; then
+  echo "RUNTIME-PIN PROOF FAILED: recomputed shell environment mutant was accepted" >&2; exit 1
+fi
+echo "  refused recomputed shell environment mutant"
+
+cp src/Fogell.Differential/Fogell.fs "$scratch/Fogell.fs"
+sed -i '/| :? RuntimeGuardFailure -> reraise ()/d' "$scratch/Fogell.fs"
+if audit_build_path_sources src/Fogell.Differential/Jenkins.fs tools/Fogell.Differential.Cli/Program.fs "$scratch/Fogell.fs"; then
+  echo "RUNTIME-PIN PROOF FAILED: comparable runtime-guard failure mutant was accepted" >&2; exit 1
+fi
+echo "  refused comparable runtime-guard failure mutant"
+
+cp src/Fogell.Differential/WalkerOrchestration.fs "$scratch/WalkerOrchestration.fs"
+sed -i 's/| Some failure -> raise failure/| Some _ -> ()/' "$scratch/WalkerOrchestration.fs"
+if audit_build_path_sources src/Fogell.Differential/Jenkins.fs tools/Fogell.Differential.Cli/Program.fs src/Fogell.Differential/Fogell.fs src/Fogell.Differential/WalkerStep.fs "$scratch/WalkerOrchestration.fs"; then
+  echo "RUNTIME-PIN PROOF FAILED: parallel runtime-guard absorption mutant was accepted" >&2; exit 1
+fi
+echo "  refused parallel runtime-guard absorption mutant"
+
 cp tools/Fogell.Differential.Cli/Program.fs "$scratch/Program.fs"
-sed -i 's/printfn "fogell-runtime-guard-v6"/printfn "fogell-runtime-guard-v5"/' "$scratch/Program.fs"
+sed -i 's/printfn "fogell-runtime-guard-v7"/printfn "fogell-runtime-guard-v6"/' "$scratch/Program.fs"
 if cmp -s tools/Fogell.Differential.Cli/Program.fs "$scratch/Program.fs"; then
   echo "RUNTIME-PIN PROOF FAILED: CLI capability mutant did not apply" >&2; exit 1
 fi
