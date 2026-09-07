@@ -30,7 +30,7 @@ while IFS=$'\t' read -r pin command expected_resolution local_path jenkins_path 
   [ -z "${extra:-}" ] || die "pin '$pin' has more than thirteen tab-separated fields"
   [[ "$pin" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die "invalid pin id '$pin'"
   [ -z "${tool_name[$pin]+x}" ] || die "duplicate pin id '$pin'"
-  [[ "$command" =~ ^[A-Za-z0-9._+-]+$ ]] || die "pin '$pin' has an unsafe tool name"
+  [[ "$command" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || die "pin '$pin' has an unsafe tool name"
   case "$expected_resolution" in
     present)
       [[ "$local_path" =~ ^/[A-Za-z0-9._/+:-]+$ ]] || die "pin '$pin' has an unsafe local tool path"

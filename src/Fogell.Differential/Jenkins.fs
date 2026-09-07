@@ -112,7 +112,7 @@ module Jenkins =
             let commonValid =
                 safe "^[0-9a-f]{64}$" caseSha
                 && safe "^[A-Za-z0-9._-]+$" node
-                && safe "^[A-Za-z0-9._+-]+$" command
+                && safe "^[A-Za-z0-9][A-Za-z0-9._+-]*$" command
 
             let requirement =
                 match expectation with

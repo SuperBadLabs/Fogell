@@ -14,7 +14,7 @@ build_path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # image may legitimately install. Generate one shell-safe name for this process
 # and establish its absence before using it as the negative fixture.
 absent_command="fogell_fg259_absent_${BASHPID}"
-[[ "$absent_command" =~ ^[A-Za-z0-9._+-]+$ ]] || { echo "RUNTIME-PIN PROOF FAILED: generated command is unsafe" >&2; exit 1; }
+[[ "$absent_command" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || { echo "RUNTIME-PIN PROOF FAILED: generated command is unsafe" >&2; exit 1; }
 if PATH="$build_path" command -v "$absent_command" >/dev/null 2>&1; then
   echo "RUNTIME-PIN PROOF FAILED: generated command unexpectedly resolves" >&2
   exit 1
@@ -100,6 +100,10 @@ echo "=== corpus runtime pin: exact tuple accepted ==="
 apply_absent_fixture
 check composer-absent-v1 >/dev/null
 echo "=== corpus runtime pin: exact command absence accepted ==="
+
+sed -i "s/\t$absent_command\tabsent\t/\t-$absent_command\tabsent\t/" "$scratch/pins.tsv"
+must_refuse "leading-hyphen command" "unsafe tool name" composer-absent-v1
+apply_absent_fixture
 
 # The generated identifier was grammar-checked above before it enters this
 # deliberately dynamic positive-control definition.

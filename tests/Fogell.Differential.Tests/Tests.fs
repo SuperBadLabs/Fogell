@@ -9906,6 +9906,9 @@ let compileRefusalDisposition =
                   (configured "absent" "/usr/local/bin/composer")
                   "absent mode requires the exact non-path sentinel"
               Expect.isError
+                  (Jenkins.configureRuntimeGuard sha "Jenkins" "-composer" "-" "absent" (Some path) 1)
+                  "a leading-hyphen command cannot be interpreted as an option"
+              Expect.isError
                   (Jenkins.configureRuntimeGuard sha "Jenkins" "composer" "" "absent" (Some path) 1)
                   "all five guard values remain mandatory"
               Expect.equal
