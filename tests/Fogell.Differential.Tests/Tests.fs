@@ -4632,15 +4632,6 @@ let stepDescriptorValidation =
                   Expect.stringContains reason "at most one" "two values fail before any output"
               | other -> failtestf "two-argument println escaped its measured arity: %A" other
 
-              for measured in
-                  [ Fogell.Groovy.Interpreter.VInt 42L
-                    Fogell.Groovy.Interpreter.VInteger 42L
-                    Fogell.Groovy.Interpreter.VArithmeticInteger 42L
-                    Fogell.Groovy.Interpreter.VNull ] do
-                  match WalkerRules.validateHostedCall "println" [ measured ] [] with
-                  | Ok _ -> ()
-                  | Error error -> failtestf "measured println scalar refused: %A" error
-
               match
                   WalkerRules.validateHostedCall
                       "println"
@@ -4897,11 +4888,51 @@ let genuineNullRuntime =
 
               run body (fun workspace trace ->
                   Expect.equal trace.Result "unstable" "unstable remains nonterminal and controls the build result"
-                  Expect.contains trace.Output "Build number: 1" "println renders the live build-number GString once"
+                  Expect.equal
+                      (trace.Output |> List.filter ((=) "Build number: 1") |> List.length)
+                      1
+                      "println renders the live build-number GString exactly once"
                   Expect.equal
                       (IO.File.ReadAllText(IO.Path.Combine(workspace, "basic-null.txt")))
                       "pass"
                       "all six callback results were real Groovy null")
+          }
+
+          test "invalid println shapes halt before output or later effects" {
+              for label, call in
+                  [ "named-map", "println(message: 'MUST-NOT-PRINT')"
+                    "two-values", "println('MUST-NOT-PRINT', 'SECOND')" ] do
+                  run
+                      (call + $"; sh 'touch {label}.txt'")
+                      (fun workspace trace ->
+                          Expect.equal trace.Result "failure" $"{label}: the invalid call fails"
+                          Expect.isTrue trace.ReportedFailureReason $"{label}: the refusal is explicit"
+                          Expect.isFalse
+                              (trace.Output |> List.contains "MUST-NOT-PRINT")
+                              $"{label}: validation precedes output"
+                          Expect.isFalse
+                              (IO.File.Exists(IO.Path.Combine(workspace, $"{label}.txt")))
+                              $"{label}: validation halts the script before the following shell")
+          }
+
+          test "direct Declarative println cannot bypass hosted validation" {
+              withWorkspace (fun root workspace ->
+                  let direct =
+                      "pipeline { agent any stages { stage('probe') { steps { "
+                      + "println 'MUST-NOT-PRINT'; sh 'touch direct-bypass.txt'"
+                      + " } } } }"
+
+                  match FogellSide.run [] root "job" direct with
+                  | Error why -> failtestf "direct println guard did not return a trace: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "failure" "the unvalidated direct surface fails closed"
+                      Expect.isTrue trace.ReportedFailureReason "the hosted-only boundary is explicit"
+                      Expect.isFalse
+                          (trace.Output |> List.contains "MUST-NOT-PRINT")
+                          "the direct value is never rendered or emitted"
+                      Expect.isFalse
+                          (IO.File.Exists(IO.Path.Combine(workspace, "direct-bypass.txt")))
+                          "the following shell never runs")
           }
 
           test "archive, stash, deleteDir and unstash publish VNull after their stateful effects" {

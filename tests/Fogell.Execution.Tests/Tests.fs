@@ -5741,6 +5741,22 @@ let printlnExecution =
               Expect.equal blankResult.Status Success "zero-argument println succeeds"
               Expect.equal blankResult.Stdout "\n" "zero-argument println writes one blank line"
               Expect.equal (blankLines |> Seq.toList) [ "" ] "the blank record is still published"
+
+              let secret = "println-secret-value"
+              let maskedLines = System.Collections.Generic.List<string>()
+              let maskedRoot = tempRoot ()
+              let binding = Secrets.bind maskedRoot "PRINT_TOKEN" secret
+
+              let maskedResult =
+                  Executor.runStep
+                      { request maskedRoot secret with
+                          Name = "println"
+                          Secrets = [ binding ]
+                          OnLine = Some maskedLines.Add }
+
+              Expect.equal maskedResult.Status Success "masked println succeeds"
+              Expect.equal maskedResult.Stdout "****\n" "the buffered output is masked"
+              Expect.equal (maskedLines |> Seq.toList) [ "****" ] "the streamed output is masked"
           } ]
 
 let maskingOnOutputPath =

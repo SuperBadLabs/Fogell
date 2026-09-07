@@ -325,11 +325,7 @@ module WalkerRules =
                   (fun positional _ ->
                       match positional with
                       | []
-                      | [ Fogell.Groovy.Interpreter.VStr _ ]
-                      | [ Fogell.Groovy.Interpreter.VInt _ ]
-                      | [ Fogell.Groovy.Interpreter.VInteger _ ]
-                      | [ Fogell.Groovy.Interpreter.VArithmeticInteger _ ]
-                      | [ Fogell.Groovy.Interpreter.VNull ] -> None
+                      | [ Fogell.Groovy.Interpreter.VStr _ ] -> None
                       | [ other ] ->
                           Some $"`println` value type `{open' other}` has no measured rendering contract"
                       | _ -> Some "`println` takes at most one positional value")
