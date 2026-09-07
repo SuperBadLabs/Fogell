@@ -713,7 +713,7 @@ module Executor =
         | ("sh" | "bat"), None ->
             { ok Failure with
                 Diagnostic = Some $"step '{request.Name}' requires a script argument" }
-        | "echo", Some message ->
+        | ("echo" | "println"), Some message ->
             // FG-044b. Masking lived ONLY on the shell path, so `echo "$TOKEN"` published
             // the credential verbatim while Jenkins prints `****`. Any path that emits
             // output has to mask, or the guarantee is "we mask, except where we forgot".
@@ -773,6 +773,12 @@ module Executor =
         | "echo", None ->
             request.OnLine |> Option.iter (fun f -> f "null")
             { ok Success with Stdout = "null\n" }
+        // FG-258. Groovy's zero-argument println writes one blank line and returns
+        // null. The differential comparison drops blank output records, but direct
+        // executor consumers still receive the byte-accurate callback.
+        | "println", None ->
+            request.OnLine |> Option.iter (fun f -> f "")
+            { ok Success with Stdout = "\n" }
         | name, _ ->
             { ok Failure with
                 Diagnostic = Some $"step '{name}' is not implemented; unsupported behaviour fails closed" }

@@ -227,7 +227,7 @@ module WalkerRules =
     /// arity entry is the same silent-pass hole `timeout` fell through.
     let scriptStepVocabulary =
         set
-            [ "sh"; "echo"; "archiveArtifacts"; "junit"; "checkout"; "deleteDir"; "git"
+            [ "sh"; "echo"; "println"; "archiveArtifacts"; "junit"; "checkout"; "deleteDir"; "git"
               "stash"; "unstable"; "unstash"; "dir"; "timeout"; "retry"; "withEnv" ]
 
     /// How a fresh terminal status returned by a hosted step is delivered to
@@ -246,10 +246,15 @@ module WalkerRules =
         else
             Some DeferredStatusHalt
 
-    /// FG-177 slice 1. Jenkins has two measured unknown-key binding policies.
+    /// FG-177 slice 1. Pipeline steps use two measured Jenkins unknown-key binding
+    /// policies. FG-258 adds a conservative policy for Groovy methods such as
+    /// `println`: Jenkins treats `println(message: 'x')` as one Map value, not as a
+    /// step-constructor call. Until Fogell models that Map surface, it must refuse the
+    /// named spelling rather than invent a catchable constructor failure.
     type UnknownNamedBinding =
         | WarnAndContinue of bindingClass: string
         | ConstructorMapThrow
+        | RefuseNamedMap
 
     /// One closed call contract for every step the hosted interpreter may dispatch.
     /// `PrimaryParameter` is a promotion name, not a requiredness assertion: Jenkins
@@ -310,6 +315,24 @@ module WalkerRules =
               "echo",
               row 1 (Some "message") false None [ "message" ] [] ConstructorMapThrow GenuineNull
                   "takes at most one message argument" noCheck
+              // FG-258. `println` is a Groovy Script method, not a Pipeline-step
+              // descriptor. The pinned oracle proves zero or one positional value and
+              // a null return. A named call is a single Map value on Jenkins; that wider
+              // object-rendering surface stays explicitly refused above.
+              "println",
+              row 1 None false None [] [] RefuseNamedMap GenuineNull
+                  "takes at most one positional value"
+                  (fun positional _ ->
+                      match positional with
+                      | []
+                      | [ Fogell.Groovy.Interpreter.VStr _ ]
+                      | [ Fogell.Groovy.Interpreter.VInt _ ]
+                      | [ Fogell.Groovy.Interpreter.VInteger _ ]
+                      | [ Fogell.Groovy.Interpreter.VArithmeticInteger _ ]
+                      | [ Fogell.Groovy.Interpreter.VNull ] -> None
+                      | [ other ] ->
+                          Some $"`println` value type `{open' other}` has no measured rendering contract"
+                      | _ -> Some "`println` takes at most one positional value")
               "archiveArtifacts",
               row 1 (Some "artifacts") true (Some Fogell.Groovy.Interpreter.IllegalArgumentException)
                   [ "artifacts"; "allowEmptyArchive"; "caseSensitive"; "defaultExcludes"
@@ -458,6 +481,11 @@ module WalkerRules =
             match unsupported, descriptor.UnknownNamed, unknown with
             | first :: _, _, _ ->
                 Error(EngineRefusal $"`{name}` named key `{first}:` is recognized by Jenkins but not implemented by Fogell")
+            | [], RefuseNamedMap, _ :: _ ->
+                Error(
+                    EngineRefusal
+                        $"`{name}` named arguments form one Groovy Map value on Jenkins; Fogell has not modelled that map-rendering surface"
+                )
             | [], ConstructorMapThrow, first :: _ ->
                 let parameter = defaultArg descriptor.PrimaryParameter "constructor"
                 Error(

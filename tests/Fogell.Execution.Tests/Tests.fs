@@ -5711,6 +5711,38 @@ let externalInterrupt =
 
 
 
+let printlnExecution =
+    testList
+        "FG-258 Groovy println execution"
+        [ test "one value and zero values publish the measured lines" {
+              let valueLines = System.Collections.Generic.List<string>()
+              let valueRoot = tempRoot ()
+
+              let valueResult =
+                  Executor.runStep
+                      { request valueRoot "Build number: 1" with
+                          Name = "println"
+                          OnLine = Some valueLines.Add }
+
+              Expect.equal valueResult.Status Success "one positional value succeeds"
+              Expect.equal valueResult.Stdout "Build number: 1\n" "one newline is appended"
+              Expect.equal (valueLines |> Seq.toList) [ "Build number: 1" ] "one output record is streamed"
+
+              let blankLines = System.Collections.Generic.List<string>()
+              let blankRoot = tempRoot ()
+
+              let blankResult =
+                  Executor.runStep
+                      { request blankRoot "unused" with
+                          Name = "println"
+                          Script = None
+                          OnLine = Some blankLines.Add }
+
+              Expect.equal blankResult.Status Success "zero-argument println succeeds"
+              Expect.equal blankResult.Stdout "\n" "zero-argument println writes one blank line"
+              Expect.equal (blankLines |> Seq.toList) [ "" ] "the blank record is still published"
+          } ]
+
 let maskingOnOutputPath =
     testList
         "FG-071 masking is ON the output path, not merely available"
@@ -6519,6 +6551,7 @@ let main argv =
                       stashDefaultExcludes
                       stashSymlinkContainment
                       descriptorPolicyArchitecture
+                      printlnExecution
                       secrets
                       deadProcessDetection
                       externalInterrupt
