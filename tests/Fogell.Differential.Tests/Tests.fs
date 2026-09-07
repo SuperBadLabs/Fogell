@@ -9780,10 +9780,12 @@ let compileRefusalDisposition =
                       fourSpaceSource
               Expect.isOk fourSpaceTarget "corpus formatting does not become a runtime-guard prerequisite"
               let fourSpaceScript = fourSpaceTarget |> Result.defaultValue ""
-              Expect.equal
-                  (Text.RegularExpressions.Regex.Matches(
+              let occurrences =
+                  Text.RegularExpressions.Regex.Matches(
                       fourSpaceScript,
-                      Text.RegularExpressions.Regex.Escape marker).Count)
+                      Text.RegularExpressions.Regex.Escape marker).Count
+              Expect.equal
+                  occurrences
                   1
                   "the parsed insertion point adds exactly one unpredictable marker"
               Expect.isLessThan
