@@ -136,7 +136,7 @@ cli_closure_sha=$(find "$cli_build" -type f -printf '%P\0' | sort -z | while IFS
 echo "corpus lane: fresh exact-HEAD differential CLI closure sha256 $cli_closure_sha"
 capability=$(dotnet "$cli" --runtime-guard-capability 2>/dev/null) \
   || die "the fresh differential CLI did not answer the runtime-guard capability probe"
-[ "$capability" = fogell-runtime-guard-v4 ] \
+[ "$capability" = fogell-runtime-guard-v5 ] \
   || die "the fresh differential CLI reported an unexpected runtime-guard capability: ${capability:-no output}"
 
 # One lane per user on this host: a second lane's exit trap would remove this

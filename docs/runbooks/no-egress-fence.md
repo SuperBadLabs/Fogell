@@ -90,6 +90,12 @@ access fence UP and names the recovery path below. A run that loses its fence (t
 restarted, the table gone) or its lease is aborted and its receipts are
 reverted; rerun it.
 
+The v5 runtime-guard capability also threads the same typed requirement into
+Fogell. Every retained build re-resolves it against Fogell's fixed build
+environment immediately before that build enters the engine. A mismatch is a
+harness failure outside the comparison path, so it cannot become a matching
+failure trace or a sealable receipt.
+
 ## What "proven" means
 
 `scripts/no-egress-fence.sh jenkins verify` runs inside the container:

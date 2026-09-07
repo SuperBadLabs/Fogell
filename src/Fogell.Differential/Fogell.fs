@@ -45,6 +45,49 @@ module FogellSide =
 
         Path.Combine(workspaceRoot, "_agent_home", identity.ToLowerInvariant())
 
+    let internal verifyRuntimeRequirements
+        (resolve: string -> string option)
+        (requirements: RuntimeRequirement list)
+        =
+        requirements
+        |> List.tryPick (function
+            | PresentAtPath(command, expected) ->
+                match resolve command with
+                | Some observed when String.Equals(observed, expected, StringComparison.Ordinal) -> None
+                | Some observed ->
+                    Some $"command '{command}' resolved to '{observed}', expected '{expected}'"
+                | None -> Some $"required command '{command}' did not resolve"
+            | AbsentCommand command ->
+                match resolve command with
+                | None -> None
+                | Some observed -> Some $"forbidden command '{command}' resolved to '{observed}'")
+        |> function
+            | None -> Ok()
+            | Some why -> Error why
+
+    let private verifyRuntimeGuardAttempt
+        (guard: RuntimeGuard)
+        (workspaceRoot: string)
+        (jobName: string)
+        (buildNumber: int)
+        =
+        let environment =
+            LaunchEnvironment.buildBaseline (agentHome workspaceRoot jobName buildNumber)
+
+        let buildPath =
+            environment
+            |> List.rev
+            |> List.tryPick (fun (name, value) -> if name = "PATH" then Some value else None)
+
+        match buildPath with
+        | Some observed when String.Equals(observed, guard.BuildPath, StringComparison.Ordinal) ->
+            verifyRuntimeRequirements
+                (fun command -> LaunchEnvironment.resolveBuildExecutable command workspaceRoot environment)
+                guard.Requirements
+        | Some observed ->
+            Error $"build PATH was '{observed}', expected runtime guard PATH '{guard.BuildPath}'"
+        | None -> Error "build environment did not contain PATH"
+
     let coordinatedAgentHomeReplacement coordinated workspaceRoot jobName buildNumber =
         if coordinated |> List.exists (fun (_, token) -> token = "${HOME}") then
             [ agentHome workspaceRoot jobName buildNumber, "${HOME}" ]
@@ -1806,6 +1849,7 @@ module FogellSide =
     /// halting must not acquire a second implementation just because an SCM
     /// branch changes between builds.
     let private runSequence
+        (runtimeGuard: RuntimeGuard option)
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
@@ -1829,6 +1873,12 @@ module FogellSide =
                 match halted with
                 | Some why -> (Result.Error $"sequence halted: {why}" :: acc, previous, halted)
                 | None ->
+                    runtimeGuard
+                    |> Option.iter (fun guard ->
+                        match verifyRuntimeGuardAttempt guard workspaceRoot jobName (List.length acc + 1) with
+                        | Ok() -> ()
+                        | Error why -> invalidOp $"Fogell runtime guard failed: {why}")
+
                     let r =
                         try
                             runWith
@@ -1862,7 +1912,21 @@ module FogellSide =
         : Result<Trace, string> list =
         scripts
         |> List.map (fun script -> None, script)
-        |> runSequence envReplacements workspaceRoot jobName
+        |> runSequence None envReplacements workspaceRoot jobName
+
+    /// Run an inline-script sequence with the typed runtime requirement checked
+    /// inside every retained build, immediately before that build enters Fogell.
+    /// Guard failure escapes the comparison path as a harness error.
+    let runManyWithRuntimeGuard
+        (guard: RuntimeGuard)
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (scripts: string list)
+        : Result<Trace, string> list =
+        scripts
+        |> List.map (fun script -> None, script)
+        |> runSequence (Some guard) envReplacements workspaceRoot jobName
 
     /// FG-177. Run a SEQUENCE of SCM-defined builds of one retained job. The
     /// per-build spec is intentional: the measured schedule switches between
@@ -1875,4 +1939,22 @@ module FogellSide =
         : Result<Trace, string> list =
         builds
         |> List.map (fun (scm, script) -> Some scm, script)
-        |> runSequence envReplacements workspaceRoot jobName
+        |> runSequence None envReplacements workspaceRoot jobName
+
+    /// Run one SCM-defined build under the same per-build runtime requirement
+    /// used by guarded inline corpus cases.
+    let runScmWithRuntimeGuard
+        (guard: RuntimeGuard)
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (scm: ScmSpec)
+        (script: string)
+        : Result<Trace, string> =
+        runSequence
+            (Some guard)
+            envReplacements
+            workspaceRoot
+            jobName
+            [ Some scm, script ]
+        |> List.exactlyOne

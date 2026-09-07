@@ -24,7 +24,7 @@ open Fogell.Execution
 let main argv =
     match Array.toList argv with
     | [ "--runtime-guard-capability" ] ->
-        printfn "fogell-runtime-guard-v4"
+        printfn "fogell-runtime-guard-v5"
         0
 
     // FG-161. Recompute every receipt's seal from the receipt itself.
@@ -597,11 +597,40 @@ let main argv =
                         else
                             match scmSpec with
                             | Some spec ->
-                                Jenkins.runMany caseCfg envReplacementsAll job [ FromScm spec ],
-                                [ FogellSide.runScm envReplacementsAll fogellRoot job spec scripts.Head ]
+                                let jenkinsRuns =
+                                    Jenkins.runMany caseCfg envReplacementsAll job [ FromScm spec ]
+
+                                let fogellRun =
+                                    match runtimeGuard with
+                                    | Some guard ->
+                                        FogellSide.runScmWithRuntimeGuard
+                                            guard
+                                            envReplacementsAll
+                                            fogellRoot
+                                            job
+                                            spec
+                                            scripts.Head
+                                    | None ->
+                                        FogellSide.runScm envReplacementsAll fogellRoot job spec scripts.Head
+
+                                jenkinsRuns, [ fogellRun ]
                             | None ->
-                                Jenkins.runMany caseCfg envReplacementsAll job (scripts |> List.map Inline),
-                                FogellSide.runMany envReplacementsAll fogellRoot job scripts
+                                let jenkinsRuns =
+                                    Jenkins.runMany caseCfg envReplacementsAll job (scripts |> List.map Inline)
+
+                                let fogellRuns =
+                                    match runtimeGuard with
+                                    | Some guard ->
+                                        FogellSide.runManyWithRuntimeGuard
+                                            guard
+                                            envReplacementsAll
+                                            fogellRoot
+                                            job
+                                            scripts
+                                    | None ->
+                                        FogellSide.runMany envReplacementsAll fogellRoot job scripts
+
+                                jenkinsRuns, fogellRuns
 
                     jenkinsRuns, fogellRuns
 

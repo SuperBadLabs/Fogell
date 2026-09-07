@@ -10170,6 +10170,60 @@ let compileRefusalDisposition =
                   "guard/corpus/guard execute with separate exact job histories"
           }
 
+          test "Fogell runtime guards fail outside comparison and enforce every typed requirement" {
+              let resolved =
+                  Map [ "make", "/usr/bin/make"; "sh", "/usr/bin/sh" ]
+                  |> fun paths -> fun command -> Map.tryFind command paths
+
+              Expect.isOk
+                  (FogellSide.verifyRuntimeRequirements
+                      resolved
+                      [ PresentAtPath("make", "/usr/bin/make"); AbsentCommand "composer" ])
+                  "all matching present and absent requirements pass"
+              Expect.isError
+                  (FogellSide.verifyRuntimeRequirements
+                      resolved
+                      [ PresentAtPath("make", "/usr/bin/make"); AbsentCommand "sh" ])
+                  "a later forbidden requirement cannot be skipped"
+              Expect.isError
+                  (FogellSide.verifyRuntimeRequirements
+                      resolved
+                      [ PresentAtPath("make", "/usr/local/bin/make") ])
+                  "present requirements compare the exact resolved path"
+
+              let mutable drifted = false
+              let changingResolver command =
+                  if command = "composer" && drifted then Some "/tmp/composer" else None
+              let requirements = [ AbsentCommand "composer" ]
+              Expect.isOk
+                  (FogellSide.verifyRuntimeRequirements changingResolver requirements)
+                  "the first absent observation passes"
+              drifted <- true
+              Expect.isError
+                  (FogellSide.verifyRuntimeRequirements changingResolver requirements)
+                  "a later attempt resolves the requirement again"
+
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg259-guard-{Guid.NewGuid():N}")
+              let marker = IO.Path.Combine(root, "job", "ran")
+              let guard =
+                  { CaseSha = String.replicate 64 "a"
+                    RequiredNode = "Jenkins"
+                    BuildPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                    Requirements = [ AbsentCommand "sh" ] }
+              let source =
+                  $"pipeline {{ agent any; stages {{ stage('Build') {{ steps {{ sh 'touch {marker}' }} }} }} }}"
+
+              try
+                  Expect.throws
+                      (fun () ->
+                          FogellSide.runManyWithRuntimeGuard guard [] root "job" [ source ]
+                          |> ignore)
+                      "runtime drift is a harness failure, never a comparable Fogell result"
+                  Expect.isFalse (IO.File.Exists marker) "the guarded user build never executed"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
           test "Fogell input rejection returns a refusal trace without touching a fresh workspace" {
               let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg129-fresh-{Guid.NewGuid():N}")
               let workspace = IO.Path.Combine(root, "job")
