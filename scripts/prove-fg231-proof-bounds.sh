@@ -15,12 +15,11 @@
 #   - an HTTP request against a socket that accepts and never answers;
 #   - a synchronous Run.Host invocation that never exits, once leaving on
 #     SIGTERM and once ignoring it (GNU timeout returns 124 and 137);
-#   - with FOGELL_FG224_CONTROLLER_IMAGE set, recovery after one PID1 query
-#     stalls, refusal when that per-query budget is removed, a late-query pair
-#     that kills removal of the aggregate-deadline clamp, a refusal after the container
-#     launched whose runtime stop then hangs (a daemon that stopped
-#     answering), and a runtime run that takes 35 s to create the container
-#     so the 30 s identity budget expires first, runtime stop
+#   - with FOGELL_FG224_CONTROLLER_IMAGE set, a constant challenge source is
+#     refused, one real nonce-bound PID1 self-attestation succeeds, a refusal
+#     after the container launched whose runtime
+#     stop then hangs (a daemon that stopped answering), and a runtime run that
+#     takes 35 s to create the container so the 30 s attestation budget expires first, runtime stop
 #     fails fast on a container that does not exist, and the client then
 #     brings the controller up with nothing left to stop it — the two
 #     readings of hosted jobs 100045425020 and 100055372746.
@@ -28,6 +27,7 @@ set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 proof="$repo/scripts/prove-runnable-controller.sh"
+attestation_reader="$repo/scripts/read-pid1-attestation.py"
 controller_image=${FOGELL_FG224_CONTROLLER_IMAGE:-}
 # Outer bound per arm. The proof's widest single budget is the 80 s tail poll;
 # an arm that reaches this has hung, which is the defect this proves absent.
@@ -55,6 +55,7 @@ cleanup() {
 trap cleanup EXIT
 
 [[ -x "$proof" ]] || { echo "FG-231 REFUSED: $proof is not executable" >&2; exit 2; }
+[[ -x "$attestation_reader" ]] || { echo "FG-231 REFUSED: $attestation_reader is not executable" >&2; exit 2; }
 [[ "$runtime" = podman || "$runtime" = docker ]] \
   || { echo "FG-231 REFUSED: FOGELL_CONTAINER_RUNTIME must be exactly podman or docker" >&2; exit 2; }
 [[ -n "$real_runtime" ]] || { echo "FG-231 REFUSED: $runtime is required" >&2; exit 2; }
@@ -95,6 +96,164 @@ if after.count(target) != 0 or after.count(replacement) != 1:
 p.write_text(after)
 PY
 }
+
+# Prove the small host-side reader before trusting it in any controller arm.
+# Its callback swaps the pathname immediately after open; correct code still
+# consumes the original descriptor. Every hostile filesystem shape must fail
+# without blocking.
+reader_probe() {
+  local candidate="$1"
+  local root="$scratch/reader-probe"
+  rm -rf -- "$root"
+  mkdir -p "$root"
+  timeout -k 1 5 python3 - "$candidate" "$root" <<'PY'
+import importlib.util
+import os
+import pathlib
+import sys
+
+candidate, root_value = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("pid1_reader", candidate)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+root = pathlib.Path(root_value)
+
+def refused(action):
+    try:
+        action()
+    except module.Refusal:
+        return
+    raise AssertionError("hostile attestation was accepted")
+
+valid = root / "valid"
+valid.write_bytes(b"valid-attestation\n")
+assert module.read_attestation(valid) == b"valid-attestation\n"
+
+link = root / "link"
+link.symlink_to(valid)
+refused(lambda: module.read_attestation(link))
+
+second_link = root / "hard-link"
+os.link(valid, second_link)
+refused(lambda: module.read_attestation(valid))
+second_link.unlink()
+
+refused(lambda: module.read_attestation(valid, expected_uid=os.getuid() + 1))
+
+oversized = root / "oversized"
+oversized.write_bytes(b"x" * (module.MAX_ATTESTATION_BYTES + 1))
+refused(lambda: module.read_attestation(oversized))
+
+fifo = root / "fifo"
+os.mkfifo(fifo)
+refused(lambda: module.read_attestation(fifo))
+
+opened = root / "opened"
+held = root / "held"
+replacement = root / "replacement"
+opened.write_bytes(b"opened-inode\n")
+replacement.write_bytes(b"replacement\n")
+
+def swap_path():
+    opened.rename(held)
+    replacement.rename(opened)
+
+assert module.read_attestation(opened, after_open=swap_path) == b"opened-inode\n"
+PY
+}
+
+reader_probe "$attestation_reader"
+
+kill_reader_mutant() {
+  local label="$1"
+  local target="$2"
+  local replacement="$3"
+  local mutant="$scratch/reader-$label.py"
+  cp "$attestation_reader" "$mutant"
+  plant "$mutant" "$target" "$replacement"
+  set +e
+  reader_probe "$mutant" >/dev/null 2>&1
+  local rc=$?
+  set -e
+  (( rc != 0 )) || { echo "FG-231 REFUSED: attestation-reader $label mutant survived" >&2; exit 1; }
+  echo "FG-231 attestation-reader $label mutant: KILLED"
+}
+
+kill_reader_mutant nofollow \
+  'flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC' \
+  'flags = os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC'
+kill_reader_mutant nonblocking \
+  'flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC' \
+  'flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC'
+kill_reader_mutant owner \
+  'if opened.st_uid != owner:' \
+  'if False:'
+kill_reader_mutant link-count \
+  'if opened.st_nlink != 1:' \
+  'if False:'
+kill_reader_mutant pathname-reopen \
+  'payload = _read_bounded(descriptor)' \
+  'payload = path.read_bytes()'
+
+bounded_size_mutant="$scratch/reader-bounded-size.py"
+cp "$attestation_reader" "$bounded_size_mutant"
+plant "$bounded_size_mutant" \
+  'if opened.st_size <= 0 or opened.st_size > MAX_ATTESTATION_BYTES:' \
+  'if opened.st_size <= 0:'
+plant "$bounded_size_mutant" \
+  'if len(payload) != opened.st_size or len(payload) > MAX_ATTESTATION_BYTES:' \
+  'if len(payload) != opened.st_size:'
+set +e
+reader_probe "$bounded_size_mutant" >/dev/null 2>&1
+bounded_size_rc=$?
+set -e
+(( bounded_size_rc != 0 )) \
+  || { echo "FG-231 REFUSED: attestation-reader bounded-size mutant survived" >&2; exit 1; }
+echo "FG-231 attestation-reader bounded-size mutant: KILLED"
+
+# The controller's writer must also be mutation-pinned: an existing temporary
+# file cannot be opened destructively, and an existing destination can never
+# be replaced. Stage the focused project so mutants never touch the worktree.
+publication_root="$scratch/publication-source"
+mkdir -p "$publication_root"
+git -C "$repo" ls-files -z -- \
+  src tests/Fogell.Controller.Api.Tests \
+  Directory.Build.props Directory.Build.targets Directory.Packages.props global.json \
+  | tar -C "$repo" --null -T - -cf - \
+  | tar -xf - -C "$publication_root"
+publication_project="$publication_root/tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj"
+publication_program="$publication_root/src/Fogell.Controller.Host/Program.fs"
+publication_filter='PID1 attestation publication is create-new and non-overwriting'
+publication_database_url="Host=127.0.0.1;Port=${FOGELL_PG_PORT:-55440};Username=fogell;Database=fogell"
+bash -ic "dotnet restore '$publication_project' --locked-mode --ignore-failed-sources -m:1" >/dev/null
+bash -ic "dotnet build '$publication_project' -c Release --no-restore -m:1" >/dev/null
+FOGELL_TEST_DATABASE_URL="$publication_database_url" dotnet run --project "$publication_project" -c Release --no-build -- \
+  --filter-test-case "$publication_filter" --sequenced >/dev/null
+
+kill_publication_mutant() {
+  local label="$1"
+  local target="$2"
+  local replacement="$3"
+  cp "$repo/src/Fogell.Controller.Host/Program.fs" "$publication_program"
+  plant "$publication_program" "$target" "$replacement"
+  bash -ic "dotnet build '$publication_project' -c Release --no-restore -m:1" >/dev/null
+  set +e
+  FOGELL_TEST_DATABASE_URL="$publication_database_url" timeout -k 5 30 dotnet run --project "$publication_project" -c Release --no-build -- \
+    --filter-test-case "$publication_filter" --sequenced >/dev/null 2>&1
+  local rc=$?
+  set -e
+  (( rc != 0 && rc != 124 && rc != 137 )) \
+    || { echo "FG-231 REFUSED: PID1 publication $label mutant survived or hung" >&2; exit 1; }
+  echo "FG-231 PID1 publication $label mutant: KILLED"
+}
+
+kill_publication_mutant create \
+  'FileMode.CreateNew,' \
+  'FileMode.Create,'
+kill_publication_mutant overwrite \
+  'File.Move(temporary, path, false)' \
+  'File.Move(temporary, path, true)'
 
 # The harness's own runtime calls are bounded too: a daemon that stops
 # answering is one of the shapes under test, and an inventory that hangs
@@ -250,98 +409,37 @@ plant "$copy" \
 run_arm run-host-restart-ignores-term "$copy" \
   'FG-224 REFUSED: line [0-9]+: `timeout -k 5 "\$1" "\$\{@:2\}"` exited 137 \(budget expired\) in bounded called from line [0-9]+'
 
-# The final six arms need the digest-pinned image. The refusal arms end in the EXIT trap's
+# The final four arms need the digest-pinned image. The refusal arms end in the EXIT trap's
 # bounded reap, which must kill the runtime client, remove the container
 # by name, and name the reap; each first reproduces the refusal that reached
 # the trap.
 if [[ -n "$controller_image" ]]; then
   reap_expected='controller container client \(pid [0-9]+\) did not exit within 15000 ms and was killed'
 
-  # Arms 4a/4b: the first identity query stalls longer than its dedicated
-  # two-second TERM budget and ignores TERM so the one-second KILL grace is
-  # exercised too.  The unmodified proof must kill that client, retry, and
-  # read PID1.  A byte-mutant that restores the general 30-second runtime
-  # budget must consume the complete startup deadline and refuse instead.
-  mkdir -p "$scratch/runtime-first-exec-stalls"
-  cat >"$scratch/runtime-first-exec-stalls/$runtime" <<EOS
+  # Arm 4: two challenge draws must differ. A deterministic source is refused
+  # before a controller container is started.
+  mkdir -p "$scratch/constant-od"
+  cat >"$scratch/constant-od/od" <<'EOS'
 #!/usr/bin/env bash
-if [[ "\${1:-}" = exec && "\${2:-}" = fogell-fg224-proof-* && ! -e "$scratch/first-exec-seen" ]]; then
-  : >"$scratch/first-exec-seen"
-  exec /bin/sh -c 'trap "" TERM; exec /bin/sleep 35'
-fi
-exec "$real_runtime" "\$@"
+printf ' 00000000000000000000000000000000\n'
 EOS
-  chmod +x "$scratch/runtime-first-exec-stalls/$runtime"
+  chmod +x "$scratch/constant-od/od"
+  copy=$(stage container-constant-nonce)
+  run_arm container-constant-nonce "$copy" 'FG-224 REFUSED: PID1 challenge source did not produce a fresh nonce' \
+    "PATH=$scratch/constant-od:$PATH" "FOGELL_FG224_CONTROLLER_IMAGE=$controller_image"
 
-  copy=$(stage container-query-recovers)
+  # Arm 5: the real controller itself must publish the fresh challenge, its
+  # exact executable and both views of PID 1 before any HTTP readiness claim.
+  # The staged exit after the host accepts those bytes turns that otherwise
+  # internal boundary into an observable proof result.
+  copy=$(stage container-pid1-attests)
   plant "$copy" \
-    '      [[ "$pid1_executable" = "$controller" ]] && break' \
-    '      [[ "$pid1_executable" = "$controller" ]] && { echo "FG-231 PID1 QUERY RECOVERED" >&2; exit 91; }'
-  run_arm container-query-recovers "$copy" 'FG-231 PID1 QUERY RECOVERED' \
-    "PATH=$scratch/runtime-first-exec-stalls:$PATH" "FOGELL_FG224_CONTROLLER_IMAGE=$controller_image"
+    '        [[ "$pid1_attestation" = "$expected_pid1_attestation" ]] && break' \
+    '        [[ "$pid1_attestation" = "$expected_pid1_attestation" ]] && { echo "FG-231 PID1 SELF-ATTESTATION PROVEN" >&2; exit 91; }'
+  run_arm container-pid1-attests "$copy" 'FG-231 PID1 SELF-ATTESTATION PROVEN' \
+    "FOGELL_FG224_CONTROLLER_IMAGE=$controller_image"
 
-  rm -f "$scratch/first-exec-seen"
-  copy=$(stage container-query-budget-removed)
-  plant "$copy" \
-    '      pid1_executable=$(bounded_pid1_query "$query_term_seconds" "$runtime" exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true)' \
-    '      pid1_executable=$(bounded "$runtime_budget" "$runtime" exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true)'
-  run_arm container-query-budget-removed "$copy" \
-    'FG-224 REFUSED: container PID1 was unreadable, expected .* \(container running;' \
-    "PATH=$scratch/runtime-first-exec-stalls:$PATH" "FOGELL_FG224_CONTROLLER_IMAGE=$controller_image"
-
-  # Arms 4c/4d pin the remaining-time arithmetic itself.  A staged five-and-a-
-  # half-second aggregate window leaves less than the full two-second TERM
-  # budget after the TERM-ignoring first query consumes its TERM+KILL slot.
-  # Record the actual budgets passed to the query helper: the real clamp must
-  # reduce the second one, while a byte-mutant deleting only that clamp must
-  # expose a second full 2.000-second budget.
-  rm -f "$scratch/first-exec-seen"
-  clamp_budgets="$scratch/container-query-clamp.budgets"
-  copy=$(stage container-query-clamp)
-  plant "$copy" 'pid1_identity_budget_ms=30000' 'pid1_identity_budget_ms=5500'
-  plant "$copy" \
-    '      pid1_executable=$(bounded_pid1_query "$query_term_seconds" "$runtime" exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true)' \
-    '      echo "$query_term_seconds" >>"'"$clamp_budgets"'"
-      pid1_executable=$(
-        bounded_pid1_query "$query_term_seconds" "$runtime" exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true
-      )'
-  plant "$copy" \
-    '      [[ "$pid1_executable" = "$controller" ]] && break' \
-    '      [[ "$pid1_executable" = "$controller" ]] && { echo "FG-231 PID1 DEADLINE CLAMPED" >&2; exit 91; }'
-  run_arm container-query-clamp "$copy" 'FG-231 PID1 DEADLINE CLAMPED' \
-    "PATH=$scratch/runtime-first-exec-stalls:$PATH" "FOGELL_FG224_CONTROLLER_IMAGE=$controller_image"
-  [[ "$(head -n 1 "$clamp_budgets")" = 2.000 \
-      && "$(wc -l <"$clamp_budgets")" -ge 2 \
-      && "$(tail -n 1 "$clamp_budgets")" =~ ^[01]\.[0-9]{3}$ ]] \
-    || { echo "FG-231 REFUSED: late PID1 query was not clamped inside the aggregate deadline: $(tr '\n' ' ' <"$clamp_budgets")" >&2; exit 1; }
-
-  rm -f "$scratch/first-exec-seen"
-  mutant_budgets="$scratch/container-query-clamp-removed.budgets"
-  copy=$(stage container-query-clamp-removed)
-  plant "$copy" 'pid1_identity_budget_ms=30000' 'pid1_identity_budget_ms=5500'
-  plant "$copy" \
-    '      query_term_ms=$pid1_query_budget_ms
-      if (( query_term_ms + pid1_query_kill_grace_ms > remaining_ms )); then
-        query_term_ms=$(( remaining_ms - pid1_query_kill_grace_ms ))
-      fi' \
-    '      query_term_ms=$pid1_query_budget_ms'
-  plant "$copy" \
-    '      pid1_executable=$(bounded_pid1_query "$query_term_seconds" "$runtime" exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true)' \
-    '      echo "$query_term_seconds" >>"'"$mutant_budgets"'"
-      pid1_executable=$(
-        bounded_pid1_query "$query_term_seconds" "$runtime" exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true
-      )'
-  plant "$copy" \
-    '      [[ "$pid1_executable" = "$controller" ]] && break' \
-    '      [[ "$pid1_executable" = "$controller" ]] && { echo "FG-231 PID1 DEADLINE CLAMP MUTANT REACHED" >&2; exit 91; }'
-  run_arm container-query-clamp-removed "$copy" 'FG-231 PID1 DEADLINE CLAMP MUTANT REACHED' \
-    "PATH=$scratch/runtime-first-exec-stalls:$PATH" "FOGELL_FG224_CONTROLLER_IMAGE=$controller_image"
-  [[ "$(wc -l <"$mutant_budgets")" -ge 2 \
-      && "$(sort -u "$mutant_budgets")" = 2.000 ]] \
-    || { echo "FG-231 REFUSED: clamp-removal mutant did not expose its full late-query budget: $(tr '\n' ' ' <"$mutant_budgets")" >&2; exit 1; }
-  echo "FG-231 aggregate-deadline clamp removal: late full-budget query exposed — KILLED"
-
-  # Arm 5: the container is up (its PID1 identity is compared against a name
+  # Arm 6: the container is up (its PID1 identity is compared against a name
   # the controller cannot have, so the launch refuses) and runtime stop never
   # returns.
   mkdir -p "$scratch/runtime-stop-hangs" "$scratch/runtime-run-delayed"
@@ -350,7 +448,7 @@ EOS
 [[ "\${1:-}" = stop ]] && exec /bin/sleep infinity
 exec "$real_runtime" "\$@"
 EOS
-  # Arm 6: runtime run takes 35 s to create the container, longer than the
+  # Arm 7: runtime run takes 35 s to create the container, longer than the
   # 30 s identity budget. The proof refuses with the container absent, the
   # real runtime stop fails fast on a name that does not exist yet, and the
   # client then starts the controller during the reap. Nothing is mutated in
@@ -364,20 +462,20 @@ EOS
 
   copy=$(stage container-stop-hangs)
   plant "$copy" \
-    '    if [[ "$pid1_executable" != "$controller" ]]; then' \
-    '    if [[ "$pid1_executable" != "$controller-never" ]]; then'
+    '    if [[ "$pid1_attestation" != "$expected_pid1_attestation" ]]; then' \
+    '    if [[ "$pid1_attestation" != "$expected_pid1_attestation-never" ]]; then'
   run_arm container-stop-hangs "$copy" "$reap_expected" \
     "PATH=$scratch/runtime-stop-hangs:$PATH" "FOGELL_FG224_CONTROLLER_IMAGE=$controller_image"
-  rg -q 'FG-224 REFUSED: container PID1 was /.*, expected /.* \(container running;' "$scratch/container-stop-hangs.stderr" \
+  rg -q 'FG-224 REFUSED: PID1 attestation was missing, expected /.* as container PID 1 \(container running;' "$scratch/container-stop-hangs.stderr" \
     || { echo "FG-231 REFUSED: container-stop-hangs did not first refuse on PID1 identity with the container up" >&2; exit 1; }
 
   copy=$(stage container-run-delayed)
   run_arm container-run-delayed "$copy" "$reap_expected" \
     "PATH=$scratch/runtime-run-delayed:$PATH" "FOGELL_FG224_CONTROLLER_IMAGE=$controller_image"
-  rg -q 'FG-224 REFUSED: container PID1 was unreadable, expected .* \(container absent;' "$scratch/container-run-delayed.stderr" \
+  rg -q 'FG-224 REFUSED: PID1 attestation was missing, expected .* as container PID 1 \(container absent;' "$scratch/container-run-delayed.stderr" \
     || { echo "FG-231 REFUSED: container-run-delayed did not first refuse on an absent container" >&2; exit 1; }
 else
-  echo "FG-231: FOGELL_FG224_CONTROLLER_IMAGE is unset; the six image-dependent arms did not run"
+  echo "FG-231: FOGELL_FG224_CONTROLLER_IMAGE is unset; the four image-dependent arms did not run"
 fi
 
-echo "FG-231 PROOF PASS: $arms_run planted stalls in the runnable-controller proof each became a named refusal within budget and left no controller behind"
+echo "FG-231 PROOF PASS: $arms_run planted controls/stalls in the runnable-controller proof each became a named result within budget and left no controller behind"

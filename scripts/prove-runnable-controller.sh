@@ -13,6 +13,13 @@ command -v "$runtime" >/dev/null \
   || { echo "FG-224 REFUSED: $runtime is required for the scratch database and PID-1 proof" >&2; exit 2; }
 command -v timeout >/dev/null \
   || { echo "FG-224 REFUSED: coreutils timeout is required to bound this proof" >&2; exit 2; }
+command -v od >/dev/null \
+  || { echo "FG-224 REFUSED: coreutils od is required for the PID1 challenge" >&2; exit 2; }
+command -v python3 >/dev/null \
+  || { echo "FG-224 REFUSED: python3 is required for descriptor-bound PID1 attestation reads" >&2; exit 2; }
+pid1_attestation_reader="$repo/scripts/read-pid1-attestation.py"
+[[ -f "$pid1_attestation_reader" && ! -L "$pid1_attestation_reader" ]] \
+  || { echo "FG-224 REFUSED: descriptor-bound PID1 attestation reader is unavailable" >&2; exit 2; }
 [[ "$container" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] \
   || { echo "FG-224 REFUSED: FOGELL_PG_CONTAINER must be a literal container name" >&2; exit 2; }
 [[ -n "$port" && "$port" =~ ^[0-9]{1,5}$ ]] \
@@ -45,6 +52,7 @@ host_pid=""
 controller_container=""
 controller_serial=0
 controller_image=${FOGELL_FG224_CONTROLLER_IMAGE:-}
+declare -A pid1_attestation_nonces=()
 controller_death_receipt=""
 liveness_writer_pid=""
 liveness_host_pid=""
@@ -72,15 +80,14 @@ http_max_time=10
 runtime_budget=30
 process_budget=30
 reap_budget_ms=15000
-# Container creation and the first exec share runtime state.  Keep each PID1
-# read short so one client waiting on that state cannot consume the whole
-# startup window (hosted run 34048888704 did exactly that: the first exec used
-# the 30 s general runtime budget, then the already-running container was
-# refused without a retry).  The wider deadline is for startup as a whole;
-# no individual identity client may monopolise it.
+# Do not enter the container to read /proc/1/exe: hosted run 34065640380 proved
+# the container was running while every post-timeout `podman exec` remained
+# unreadable. The controller process instead atomically publishes a fresh
+# nonce-bound attestation containing its own executable, process id and the
+# innermost NSpid into the private bind-mounted scratch. Requiring both PIDs to
+# be 1 proves the actual container init without trusting daemon-local host PIDs
+# or a caller-local /proc view. The deadline bounds that startup publication.
 pid1_identity_budget_ms=30000
-pid1_query_budget_ms=2000
-pid1_query_kill_grace_ms=1000
 # The one-time image pull. Sized under the hosted step's 10-minute bound, so
 # it is a bound there too; the hosted PID1 step has already pulled the image,
 # where this is a no-op.
@@ -107,17 +114,6 @@ before_deadline() {
 # `budget_expired` is the one place that says so.
 bounded() {
   timeout -k 5 "$1" "${@:2}"
-}
-
-# PID1 readiness is the one runtime call made inside a shorter aggregate
-# deadline.  Its caller supplies a TERM budget already clamped so this one
-# second KILL grace cannot carry the call beyond that deadline.
-bounded_pid1_query() {
-  timeout -k 1 "$1" "${@:2}"
-}
-
-seconds_from_ms() {
-  printf '%d.%03d\n' "$(( $1 / 1000 ))" "$(( $1 % 1000 ))"
 }
 
 budget_expired() {
@@ -414,6 +410,18 @@ launch_controller() {
   if [[ -n "$controller_image" ]]; then
     controller_serial=$((controller_serial + 1))
     controller_container="fogell-fg224-proof-$$_$controller_serial"
+    local pid1_attestation_file="$scratch/pid1-attestation-$controller_serial"
+    local pid1_attestation_nonce
+    local pid1_attestation_freshness_control
+    pid1_attestation_nonce=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+    pid1_attestation_freshness_control=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+    [[ "$pid1_attestation_nonce" =~ ^[0-9a-f]{32}$ ]] \
+      || { echo "FG-224 REFUSED: PID1 challenge generation failed" >&2; exit 1; }
+    [[ "$pid1_attestation_freshness_control" =~ ^[0-9a-f]{32}$ \
+        && "$pid1_attestation_nonce" != "$pid1_attestation_freshness_control" \
+        && ! -v 'pid1_attestation_nonces[$pid1_attestation_nonce]' ]] \
+      || { echo "FG-224 REFUSED: PID1 challenge source did not produce a fresh nonce" >&2; exit 1; }
+    pid1_attestation_nonces["$pid1_attestation_nonce"]=1
     local container_env=()
     local entry
     for entry in "${common_env[@]}"; do
@@ -422,7 +430,12 @@ launch_controller() {
         *) container_env+=(--env "$entry") ;;
       esac
     done
-    container_env+=(--env "FOGELL_API_TOKEN_FILE=$token_file" --env "FOGELL_WORKER_POLL_MS=$poll_ms")
+    container_env+=(
+      --env "FOGELL_API_TOKEN_FILE=$token_file"
+      --env "FOGELL_WORKER_POLL_MS=$poll_ms"
+      --env "FOGELL_PID1_ATTESTATION_FILE=$pid1_attestation_file"
+      --env "FOGELL_PID1_ATTESTATION_NONCE=$pid1_attestation_nonce"
+    )
     "$runtime" run --rm --name "$controller_container" --network host \
       "${container_user_args[@]}" \
       --volume "$repo:$repo:ro" --volume "$scratch:$scratch" \
@@ -435,35 +448,35 @@ launch_controller() {
   host_pid=$!
 
   if [[ -n "$controller_image" ]]; then
-    local pid1_executable=""
+    local pid1_attestation=""
+    local expected_pid1_attestation="$pid1_attestation_nonce"$'\t1\t1\t'"$controller"
     local poll_deadline
-    local remaining_ms
-    local query_term_ms
-    local query_term_seconds
+    local attestation_read_rc
     poll_deadline=$(deadline_after "$pid1_identity_budget_ms")
     while before_deadline "$poll_deadline"; do
-      remaining_ms=$(( poll_deadline - $(now_ms) ))
-      (( remaining_ms > pid1_query_kill_grace_ms )) || break
-      query_term_ms=$pid1_query_budget_ms
-      if (( query_term_ms + pid1_query_kill_grace_ms > remaining_ms )); then
-        query_term_ms=$(( remaining_ms - pid1_query_kill_grace_ms ))
+      set +e
+      pid1_attestation=$(bounded 2 python3 "$pid1_attestation_reader" "$pid1_attestation_file" 2>"$scratch/pid1-attestation-reader.stderr")
+      attestation_read_rc=$?
+      set -e
+      if (( attestation_read_rc == 0 )); then
+        [[ "$pid1_attestation" = "$expected_pid1_attestation" ]] && break
+        echo "FG-224 REFUSED: PID1 attestation did not bind the fresh nonce, container PID 1, and exact controller executable" >&2
+        exit 1
+      elif (( attestation_read_rc != 3 )); then
+        sed 's/^/FG-224 REFUSED: reader: /' "$scratch/pid1-attestation-reader.stderr" >&2
+        exit 1
       fi
-      query_term_seconds=$(seconds_from_ms "$query_term_ms")
-      pid1_executable=$(bounded_pid1_query "$query_term_seconds" "$runtime" exec "$controller_container" /usr/bin/readlink /proc/1/exe 2>/dev/null || true)
-      [[ "$pid1_executable" = "$controller" ]] && break
       kill -0 "$host_pid" 2>/dev/null \
         || { echo "FG-224 REFUSED: controller container exited before PID1 identity was proven" >&2; exit 1; }
       sleep 0.05
     done
-    if [[ "$pid1_executable" != "$controller" ]]; then
-      # Name what the client was doing, since the identity read says only that
-      # nothing answered: the container's state if it exists, and the client's
-      # last output (a pull in progress reports itself here).
+    if [[ "$pid1_attestation" != "$expected_pid1_attestation" ]]; then
+      # Name the container state separately from the missing self-attestation.
       # Runtime inspect prints an empty line for an object it cannot find.
       local container_state
       container_state=$(bounded "$runtime_budget" "$runtime" inspect --format '{{.State.Status}}' "$controller_container" 2>/dev/null | tr -d '\n' || true)
       [[ -n "$container_state" ]] || container_state=absent
-      echo "FG-224 REFUSED: container PID1 was ${pid1_executable:-unreadable}, expected $controller (container $container_state; client output: $(tail -n 3 "$host_log" | tr '\n' ' '))" >&2
+      echo "FG-224 REFUSED: PID1 attestation was missing, expected $controller as container PID 1 (container $container_state; client output: $(tail -n 3 "$host_log" | tr '\n' ' '))" >&2
       exit 1
     fi
   fi

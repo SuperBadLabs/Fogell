@@ -23,8 +23,8 @@
 #   controller  the two FG-224 runnable-controller proofs and FG-232's inotify
 #           bound, on a build of just the two projects they run
 #           (Controller.Host, Run.Host)
-#   hang-proof  FG-231's six planted stalls in that proof — a 192 s step of
-#           budgeted waits on run 33595804856, serial by construction (one
+#   hang-proof  FG-231's eight planted controls/stalls in that proof, serial
+#           by construction (one
 #           listen port, a leftover-controller check), so they get a job of
 #           their own
 #   database  the backup/restore and migration-rollback drills; pg_dump and
@@ -399,8 +399,9 @@ jobs:
 
       - name: runnable controller as container PID 1 (FG-224)
         # The native lane cannot exercise init-parent semantics. Pin the image
-        # bytes, override its entrypoint in the proof, and require /proc/1/exe
-        # to be the exact controller apphost before accepting any HTTP result.
+        # bytes, override its entrypoint in the proof, and require the controller
+        # to atomically attest a fresh nonce, its exact /proc/self/exe target,
+        # and both process/namespace PID 1 before accepting any HTTP result.
         # A complementary surviving-init pass kills only the controller during
         # a real nested step, then binds Run.Host, shell, and sleep extinction.
         # 51 s on run 33567962039. This is the step that hung on 2026-09-01:
@@ -459,7 +460,7 @@ jobs:
         run: ./scripts/ci-postgres.sh start
 
       - name: start pulling the PID-1 controller image
-        # Two of the six arms run the controller inside the pinned image; see
+        # Four of the eight arms exercise the pinned-image path; see
         # the `controller` job for why the pull starts here.
         run: |
           nohup "$FOGELL_CONTAINER_RUNTIME" pull "$FG224_CONTROLLER_IMAGE" >"$RUNNER_TEMP/fg224-image-pull.log" 2>&1 &
@@ -482,11 +483,12 @@ jobs:
           dotnet build tools/Fogell.Run.Host/Fogell.Run.Host.fsproj -c Release --no-restore
 
       - name: runnable controller proof cannot hang (FG-231)
-        # Plants six stalls in byte-mutated copies of the proof above — a
-        # controller ignoring SIGTERM, a silent HTTP socket, a Run.Host that
-        # never exits (leaving on SIGTERM, and ignoring it), a post-launch
-        # refusal whose runtime stop hangs, and a runtime run that creates
-        # the container only after the identity budget expired — and requires
+        # Refuses a constant nonce source, runs one real nonce-bound controller
+        # PID1 attestation, and plants six stalls in byte-mutated copies — a controller
+        # ignoring SIGTERM, a silent HTTP socket, a Run.Host that never exits
+        # (leaving on SIGTERM, and ignoring it), a post-launch refusal whose
+        # runtime stop hangs, and a runtime run that creates the container only
+        # after the attestation budget expired — and requires
         # each to become a named refusal within budget
         # with no controller left behind. This is the checker being shown to
         # fail; the two steps in the `controller` job are it passing.

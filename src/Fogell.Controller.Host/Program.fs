@@ -1,6 +1,8 @@
 module Fogell.Controller.Host.Program
 
 open System
+open System.IO
+open System.Text
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Http
@@ -76,8 +78,107 @@ let internal reloadConfigOnChangeSwitch = "--hostBuilder:reloadConfigOnChange=fa
 let internal hostOptions () =
     WebApplicationOptions(ContentRootPath = contentRootPath, Args = [| reloadConfigOnChangeSwitch |])
 
-[<EntryPoint>]
-let main _ =
+[<Literal>]
+let internal pid1AttestationFileVariable = "FOGELL_PID1_ATTESTATION_FILE"
+
+[<Literal>]
+let internal pid1AttestationNonceVariable = "FOGELL_PID1_ATTESTATION_NONCE"
+
+let internal pid1AttestationPayload (nonce: string) (processId: int) (executable: string) (statusLines: seq<string>) =
+    let lowerHex =
+        nonce.Length = 32
+        && nonce |> Seq.forall (fun value -> Char.IsAsciiHexDigitLower value)
+
+    let namespacePids =
+        statusLines
+        |> Seq.choose (fun line ->
+            if line.StartsWith("NSpid:", StringComparison.Ordinal) then
+                Some(
+                    line.Substring("NSpid:".Length)
+                        .Split([| ' '; '\t' |], StringSplitOptions.RemoveEmptyEntries)
+                )
+            else
+                None)
+        |> Seq.toList
+
+    match lowerHex, processId, executable, namespacePids with
+    | false, _, _, _ -> Error "PID1 attestation nonce must be exactly 32 lowercase hexadecimal characters"
+    | _, pid, _, _ when pid <> 1 -> Error "PID1 attestation process is not container PID 1"
+    | _, _, value, _ when String.IsNullOrWhiteSpace value -> Error "PID1 attestation executable is unavailable"
+    | _, _, _, [ values ] when values.Length > 0 && values[values.Length - 1] = "1" ->
+        Ok $"{nonce}\t{processId}\t1\t{executable}\n"
+    | _ -> Error "PID1 attestation namespace identity is unavailable"
+
+let internal writePid1AttestationFile
+    (path: string)
+    (nonce: string)
+    (processId: int)
+    (executable: string)
+    (statusLines: seq<string>)
+    =
+    if not (Path.IsPathFullyQualified path) then
+        Error "PID1 attestation file must be absolute"
+    else
+        let temporary = path + ".tmp-" + nonce
+        let mutable temporaryCreated = false
+
+        try
+            match pid1AttestationPayload nonce processId executable statusLines with
+            | Error error -> Error error
+            | Ok payload ->
+                let bytes = UTF8Encoding(false, true).GetBytes payload
+
+                use stream =
+                    new FileStream(
+                        temporary,
+                        FileMode.CreateNew,
+                        FileAccess.Write,
+                        FileShare.None,
+                        4096,
+                        FileOptions.WriteThrough
+                    )
+
+                temporaryCreated <- true
+                stream.Write(bytes, 0, bytes.Length)
+                stream.Flush(true)
+                File.Move(temporary, path, false)
+                Ok()
+        with _ ->
+            if temporaryCreated then
+                try
+                    File.Delete temporary
+                with _ ->
+                    ()
+
+            Error "PID1 attestation could not be published"
+
+let private writePid1Attestation () =
+    let setting name =
+        match Environment.GetEnvironmentVariable name with
+        | null
+        | "" -> None
+        | value -> Some value
+
+    match setting pid1AttestationFileVariable, setting pid1AttestationNonceVariable with
+    | None, None -> Ok()
+    | None, Some _
+    | Some _, None -> Error "PID1 attestation file and nonce must be configured together"
+    | Some path, Some nonce ->
+        try
+            let target = FileInfo("/proc/self/exe").ResolveLinkTarget(false)
+
+            if isNull target then
+                Error "PID1 attestation executable is unavailable"
+            else
+                writePid1AttestationFile
+                    path
+                    nonce
+                    Environment.ProcessId
+                    target.FullName
+                    (File.ReadLines "/proc/self/status")
+        with _ -> Error "PID1 attestation could not be published"
+
+let private run () =
     match ControllerConfig.load () with
     | Error error ->
         eprintfn "FG-224 startup refused: %s" error
@@ -170,3 +271,11 @@ let main _ =
         with _ ->
             eprintfn "FG-224 startup refused: controller initialization failed"
             4
+
+[<EntryPoint>]
+let main _ =
+    match writePid1Attestation () with
+    | Error error ->
+        eprintfn "FG-224 startup refused: %s" error
+        2
+    | Ok () -> run ()
