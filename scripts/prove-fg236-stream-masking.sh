@@ -127,17 +127,36 @@ reset_tree() {
 }
 
 # Fail closed on the class of defect described above. Every one of the 44
-# mutants edits exactly one file, so more than one file differing from pristine
-# at the moment a mutant is judged means a restore went missing again. Checked
-# rather than trusted, because the symptom of the original defect was a proof
-# that stayed green.
+# mutants edits EXACTLY one file, so this requires exactly one — not at most
+# one. Checked rather than trusted, because the symptom of the original defect
+# was a proof that stayed green.
+#
+# BOTH BOUNDS ARE LOAD-BEARING, and an earlier draft only had the upper one:
+#
+#   more than one  a restore went missing, and this mutant is being judged
+#                  against someone else's mutation as well as its own. That is
+#                  the defect this function was written for.
+#   zero           the mutant's own `sed` changed nothing — a drifted target, or
+#                  a substitution subtly narrower than the guard that checked
+#                  for it. The suite would then run against a PRISTINE tree.
+#                  `kill_*` catches the ordinary form of that, because an
+#                  unmutated tree passes and a passing suite is reported as a
+#                  survivor. It does NOT catch the case where the suite fails
+#                  for some unrelated reason and the expected string is present
+#                  anyway: the mutant is then recorded as killed without its own
+#                  edit ever having existed. That is the same false green as the
+#                  residual-mutation defect, arrived at from the other side.
 assert_isolated() {
   local label=$1 file dirty=()
   for file in "${!clean_of[@]}"; do
     cmp -s "${clean_of[$file]}" "$file" || dirty+=("$(basename "$file")")
   done
-  (( ${#dirty[@]} <= 1 )) || {
-    echo "FG-236 proof: $label runs with ${#dirty[@]} mutated files (${dirty[*]}); a restore is missing" >&2
+  (( ${#dirty[@]} == 1 )) || {
+    if (( ${#dirty[@]} == 0 )); then
+      echo "FG-236 proof: $label mutated nothing; its substitution did not apply" >&2
+    else
+      echo "FG-236 proof: $label runs with ${#dirty[@]} mutated files (${dirty[*]}); a restore is missing" >&2
+    fi
     exit 1
   }
 }
