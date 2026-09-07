@@ -9,7 +9,17 @@ cd "$(dirname "$0")/.."
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/bin"
-local_path=$(PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin command -v make)
+build_path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# The proof must not inherit its baseline from a package that a developer or CI
+# image may legitimately install. Generate one shell-safe name for this process
+# and establish its absence before using it as the negative fixture.
+absent_command="fogell_fg259_absent_${BASHPID}"
+[[ "$absent_command" =~ ^[A-Za-z0-9._+-]+$ ]] || { echo "RUNTIME-PIN PROOF FAILED: generated command is unsafe" >&2; exit 1; }
+if PATH="$build_path" command -v "$absent_command" >/dev/null 2>&1; then
+  echo "RUNTIME-PIN PROOF FAILED: generated command unexpectedly resolves" >&2
+  exit 1
+fi
+local_path=$(PATH="$build_path" command -v make)
 local_sha=$(sha256sum -- "$local_path" | cut -d' ' -f1)
 image_id=$(printf 'a%.0s' {1..64})
 image_digest="sha256:$(printf 'b%.0s' {1..64})"
@@ -36,7 +46,7 @@ apply_fixture() {
 
 apply_absent_fixture() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    composer-absent-v1 composer absent - - - "$image_id" "$image_digest" "$container_port" "$host_binding" "$expected_node" "$plugin_count" "$plugin_sha" \
+    composer-absent-v1 "$absent_command" absent - - - "$image_id" "$image_digest" "$container_port" "$host_binding" "$expected_node" "$plugin_count" "$plugin_sha" \
     > "$scratch/pins.tsv"
   export FAKE_REMOTE_PATH=-
   export FAKE_REMOTE_TOOL_SHA=-
@@ -91,14 +101,16 @@ apply_absent_fixture
 check composer-absent-v1 >/dev/null
 echo "=== corpus runtime pin: exact command absence accepted ==="
 
-composer() { :; }
-export -f composer
-must_refuse "local shadowed composer" "local command unexpectedly resolves" composer-absent-v1
-unset -f composer
+# The generated identifier was grammar-checked above before it enters this
+# deliberately dynamic positive-control definition.
+eval "$absent_command() { :; }"
+export -f "${absent_command?}"
+must_refuse "local shadowed synthetic command" "local command unexpectedly resolves" composer-absent-v1
+unset -f "$absent_command"
 apply_absent_fixture
 
-FAKE_REMOTE_RESOLUTION=present:/opt/shadow/composer
-must_refuse "Jenkins shadowed composer" "Jenkins command unexpectedly resolves" composer-absent-v1
+FAKE_REMOTE_RESOLUTION="present:/opt/shadow/$absent_command"
+must_refuse "Jenkins shadowed synthetic command" "Jenkins command unexpectedly resolves" composer-absent-v1
 apply_absent_fixture
 
 export FAKE_SSH_FAIL=1
