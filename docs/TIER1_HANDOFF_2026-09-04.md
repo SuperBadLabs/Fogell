@@ -336,9 +336,9 @@ Read with the two sections above; this is the second addendum.
   FG-253 remains PARTIAL until a substantive review of `665b7bac` exists or the
   owner explicitly records a reviewer exception.
 
-## 2026-09-06 custodian addendum — FG-254 candidate
+## 2026-09-06 custodian addendum — FG-254 published
 
-- **Measured, publication pending: FG-254.** The exact GNU Make 4.3 executable
+- **Measured and published: FG-254.** The exact GNU Make 4.3 executable
   already on HeMan (SHA-256 `d78b8f1d…`) is copied into a network-disabled,
   digest-checked immutable derivative of the pinned Jenkins 2.568.1 image.
   Three real `sh -xe script.sh.copy` probes on each engine matched in output
@@ -365,10 +365,14 @@ Read with the two sections above; this is the second addendum.
   case/nonce marker; separate outer guards preserve corpus history and all
   three builds report the manifest node. The tunnel dies and the exact
   container/home are proven absent before access reopens.
-- **Publication remains.** The ticket is
-  [`tickets/FG-254.md`](tickets/FG-254.md). Exact-head local gate, final review,
-  hosted gate, protected merge, and accounting are still required before DONE.
-  The fresh disposable-controller lane passed on signed `a8aec39b` from
-  `22:09:40Z` to `22:10:50Z`; its exact-commit private CLI closure was
-  `50488f605c4782453e52d369e5ddd7a0f2e1708b69089075e1d8486ba63a2463`,
-  and the promoted receipt remained byte-identical.
+- **Publication record.** The ticket is
+  [`tickets/FG-254.md`](tickets/FG-254.md). The final disposable-controller
+  lane passed on exact signed source `4366214e` from `00:05:51Z` to `00:07:01Z`;
+  its private CLI closure was `b184ff137b1c63e3349dce6b23a79d36073017e7577ffc43c5978aac71f16a17`,
+  and the promoted receipt remained byte-identical. That source passed the
+  1,139-test authoritative local gate, 321 seals, exact-head Codex review and
+  hosted run `34068813444`. Exact-head Copilot review `5127220550` made one
+  portability suggestion, folded by the accounting follow-up: the Python-
+  invoked attestation reader now requires a regular non-symlink, not an
+  executable bit. Protected merge `7578fd49` preserved the exact source tree,
+  and post-merge main run `34071018691` passed every job.

@@ -55,7 +55,8 @@ cleanup() {
 trap cleanup EXIT
 
 [[ -x "$proof" ]] || { echo "FG-231 REFUSED: $proof is not executable" >&2; exit 2; }
-[[ -x "$attestation_reader" ]] || { echo "FG-231 REFUSED: $attestation_reader is not executable" >&2; exit 2; }
+[[ -f "$attestation_reader" && ! -L "$attestation_reader" ]] \
+  || { echo "FG-231 REFUSED: $attestation_reader is not a regular non-symlink file" >&2; exit 2; }
 [[ "$runtime" = podman || "$runtime" = docker ]] \
   || { echo "FG-231 REFUSED: FOGELL_CONTAINER_RUNTIME must be exactly podman or docker" >&2; exit 2; }
 [[ -n "$real_runtime" ]] || { echo "FG-231 REFUSED: $runtime is required" >&2; exit 2; }
