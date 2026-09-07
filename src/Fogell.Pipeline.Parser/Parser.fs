@@ -1643,7 +1643,12 @@ type private TopSection =
     | TopOptions of Step list
     | TopParameters of Step list
     | TopTriggers of Step list
-    | TopStages of Stage list
+    // The source index immediately after the top-level `stages {` opener is
+    // retained alongside the model. Runtime-backed differentials inject a
+    // guard stage into the definition Jenkins executes; deriving the insertion
+    // point from this parser keeps that evidence path on the same grammar as
+    // admission instead of imposing one author's indentation on corpus input.
+    | TopStages of int64 * Stage list
     | TopPost of (PostCondition * Step list) list
     | TopOther of string
 
@@ -1655,7 +1660,13 @@ let private topSection: P<TopSection> =
           attempt (keyword "options" >>. optionsBlock |>> TopOptions)
           attempt (keyword "parameters" >>. stepBlock |>> TopParameters)
           attempt (keyword "triggers" >>. stepBlock |>> TopTriggers)
-          attempt (structuralSection "stages" >>. stagesBody |>> TopStages)
+          attempt (
+              structuralSection "stages"
+              >>. (skipChar '{'
+                   >>. getPosition
+                   .>>. (ws >>. many (attempt stageParser))
+                   .>> symbol "}")
+              |>> fun (bodyStart, stages) -> TopStages(bodyStart.Index, stages))
           attempt (postSection |>> TopPost)
           attempt (keyword "libraries" >>. balancedRaw '{' '}' |>> fun _ -> TopOther "libraries")
           // THE TOP-LEVEL FALLBACK MUST NOT CLAIM SECTIONS FOGELL ACTS ON. Same shape
@@ -1703,7 +1714,7 @@ let private preamble: P<unit> =
 let private skipToPipeline: P<unit> =
     skipManyTill anyChar (lookAhead (attempt (keyword "pipeline" >>. skipChar '{')))
 
-let private pipelineParser: P<Pipeline> =
+let private pipelineParser: P<Pipeline * int64> =
     // FG-188. The skipped text is CAPTURED, not merely stepped over. Everything before
     // `pipeline {` used to be discarded, which made a top-level `def` helper invisible to
     // every `script { }` body — the commonest escape construct in the corpus.
@@ -1748,30 +1759,42 @@ let private pipelineParser: P<Pipeline> =
             >>% ((capturedPreamble, sections), capturedEpilogue)
     |>> fun ((capturedPreamble, sections), capturedEpilogue) ->
             let pick f = sections |> List.tryPick f
-            { Agent = defaultArg (pick (function TopAgent a -> Some a | _ -> None)) AgentNone
-              Environment =
-                defaultArg (pick (function TopEnv e -> Some(e |> List.map (fun (n, v, _) -> n, v)) | _ -> None)) []
-              EnvironmentLiteralNames =
-                defaultArg
-                    (pick (function
-                        | TopEnv e -> Some(e |> List.choose (fun (n, _, i) -> if i then None else Some n) |> Set.ofList)
-                        | _ -> None))
-                    Set.empty
-              Tools = defaultArg (pick (function TopTools t -> Some t | _ -> None)) []
-            // A duplicate top-level `options` section is REFUSED at collection
-            // (FG-132), so at most one reaches this projection. `collect` stays
-            // rather than a first-match `pick`: if the guard were ever removed,
-            // `pick` would silently revert to the first-vs-all mistake where a
-            // second block's directives — including the ones the FG-053 refusal
-            // exists to catch — vanished without a word, while `collect` keeps
-            // every directive visible to the validators.
-              Options = sections |> List.collect (function TopOptions o -> o | _ -> [])
-              Parameters = defaultArg (pick (function TopParameters p -> Some p | _ -> None)) []
-              Triggers = defaultArg (pick (function TopTriggers t -> Some t | _ -> None)) []
-              Preamble = capturedPreamble
-              Epilogue = capturedEpilogue
-              Stages = defaultArg (pick (function TopStages s -> Some s | _ -> None)) []
-              Post = defaultArg (pick (function TopPost p -> Some p | _ -> None)) [] }
+            let stagesBodyStart =
+                defaultArg (pick (function TopStages(position, _) -> Some position | _ -> None)) -1L
+
+            let pipeline =
+                { Agent = defaultArg (pick (function TopAgent a -> Some a | _ -> None)) AgentNone
+                  Environment =
+                    defaultArg
+                        (pick (function TopEnv e -> Some(e |> List.map (fun (n, v, _) -> n, v)) | _ -> None))
+                        []
+                  EnvironmentLiteralNames =
+                    defaultArg
+                        (pick (function
+                            | TopEnv e ->
+                                Some(
+                                    e
+                                    |> List.choose (fun (n, _, i) -> if i then None else Some n)
+                                    |> Set.ofList)
+                            | _ -> None))
+                        Set.empty
+                  Tools = defaultArg (pick (function TopTools t -> Some t | _ -> None)) []
+                // A duplicate top-level `options` section is REFUSED at collection
+                // (FG-132), so at most one reaches this projection. `collect` stays
+                // rather than a first-match `pick`: if the guard were ever removed,
+                // `pick` would silently revert to the first-vs-all mistake where a
+                // second block's directives — including the ones the FG-053 refusal
+                // exists to catch — vanished without a word, while `collect` keeps
+                // every directive visible to the validators.
+                  Options = sections |> List.collect (function TopOptions o -> o | _ -> [])
+                  Parameters = defaultArg (pick (function TopParameters p -> Some p | _ -> None)) []
+                  Triggers = defaultArg (pick (function TopTriggers t -> Some t | _ -> None)) []
+                  Preamble = capturedPreamble
+                  Epilogue = capturedEpilogue
+                  Stages = defaultArg (pick (function TopStages(_, s) -> Some s | _ -> None)) []
+                  Post = defaultArg (pick (function TopPost p -> Some p | _ -> None)) [] }
+
+            pipeline, stagesBodyStart
 
 /// Does this source look like a Declarative pipeline at all? Deliberately
 /// stricter than Forge's bare regex: the token must not be inside a line
@@ -2026,7 +2049,10 @@ let private scriptBodyErrors (limits: Limits) (pipeline: Pipeline) : NestedSourc
 /// `post`, then the HTTP endpoint, now custom limits), and it is this branch's recurring
 /// shape: a rule covering one path while an equivalent path stays open. `parse` now only
 /// supplies the defaults, so there is nothing left to forget. Raised in review on PR #53.
-let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, AdmissionError> =
+let private parseWithLimitsAndStagesBodyStart
+    (limits: Limits)
+    (source: string)
+    : Result<Pipeline * int64, AdmissionError> =
     let refusalError (message: string) (position: Fogell.Ir.Position) : AdmissionError =
         // Admission diagnostics are also emitted as one TSV row by the corpus
         // scorer. A refusal may quote raw multi-line source, but it must not turn
@@ -2051,7 +2077,7 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, Admissi
                     "Jenkinsfile"
                     source
             with
-            | ParserResult.Success(p, state, _) ->
+            | ParserResult.Success((p, stagesBodyStart), state, _) ->
                 match firstScalarRefusal state with
                 | Some scalar -> Result.Error scalar
                 | None ->
@@ -2068,7 +2094,7 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, Admissi
                                 { Code = MalformedSyntax
                                   Message = why
                                   Position = position }
-                        | [] -> Result.Ok p
+                        | [] -> Result.Ok(p, stagesBodyStart)
             | ParserResult.Failure(msg, err, state) ->
                 match firstScalarRefusal state with
                 | Some scalar -> Result.Error scalar
@@ -2086,5 +2112,24 @@ let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, Admissi
                             |> Option.defaultValue "unparsable"
 
                         Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
+
+let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, AdmissionError> =
+    parseWithLimitsAndStagesBodyStart limits source |> Result.map fst
+
+/// Return the exact source index immediately after the parsed top-level
+/// `stages {` opener. Consumers that must rewrite a Jenkins definition use
+/// this instead of maintaining a second, indentation-sensitive recognizer.
+let topLevelStagesBodyStart (source: string) : Result<int, AdmissionError> =
+    parseWithLimitsAndStagesBodyStart Limits.defaults source
+    |> Result.bind (fun (_, index) ->
+        if index >= 0L && index <= int64 source.Length then
+            Result.Ok(int index)
+        else
+            Result.Error(
+                AdmissionError.at
+                    MalformedSyntax
+                    1L
+                    1L
+                    "parsed top-level stages body has an invalid source position"))
 
 let parse (source: string) : Result<Pipeline, AdmissionError> = parseWithLimits Limits.defaults source

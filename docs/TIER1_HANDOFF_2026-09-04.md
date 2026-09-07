@@ -376,3 +376,28 @@ Read with the two sections above; this is the second addendum.
   invoked attestation reader now requires a regular non-symlink, not an
   executable bit. Protected merge `7578fd49` preserved the exact source tree,
   and post-merge main run `34071018691` passed every job.
+
+## 2026-09-07 custodian addendum — FG-257 measured
+
+- **One more real corpus file is Tier-1 PROVEN.** The exact GNU Make 4.3 pin
+  built by FG-254 was reused for
+  `aiwithqasim_Capstone-Project-Devops`. Three `sh -xe script.sh.copy` probes
+  per side matched byte-for-byte before allowlisting. The isolated corpus run
+  then matched on the first absent-Makefile failure, all three later-stage skip
+  sentences, and the empty workspace. The intended lint, Docker/ECR,
+  credentials, AWS, and deployment surfaces did not run and are not claimed.
+- **The evidence guard lost an accidental formatting prerequisite.** The first
+  fully fenced lane safely refused before the target because guard injection
+  recognized only a two-space top-level `stages` line. The Declarative parser
+  now returns the exact top-level stages-body source index; a four-space source
+  with a comment lookalike proves placement, and restoring the two-space
+  prerequisite makes that test fail.
+- **Generated accounting:** `tier1=14`, `admitted=186`, `tier3=28`; the
+  separate hand-written population remains 308 of 308 proven. All 322 receipt
+  seals verify.
+- **Evidence record.** The successful disposable-controller lane ran on signed
+  source `9f72e86f` from `08:00:33Z` to `08:01:44Z`, with private CLI closure
+  `857e1561…`, every runtime tuple and fence green, and no teardown residue.
+  Receipt seal `6db6e7bf…` binds the result, five normalized lines, and empty
+  workspace. Full gate, exact-head reviews, publication, and protected merge
+  remain; [`tickets/FG-257.md`](tickets/FG-257.md) is the live record.

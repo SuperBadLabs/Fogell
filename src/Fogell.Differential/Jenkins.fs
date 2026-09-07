@@ -393,12 +393,18 @@ module Jenkins =
         (marker: string)
         (script: string)
         =
-        let anchor = "\n  stages {\n"
-        let occurrences = Regex.Matches(script, Regex.Escape anchor).Count
-
-        if occurrences <> 1 then
-            Error $"runtime-guarded corpus definition has {occurrences} exact top-level stages anchors, expected one"
-        else
+        // Parse the insertion point with the same Declarative grammar that
+        // admitted the source. The first runtime-backed corpus case happened
+        // to use two-space indentation, and the original exact-string anchor
+        // silently turned that author's formatting into an execution
+        // prerequisite. FG-257's next case uses four spaces and exposed the
+        // false refusal before Jenkins ran it. Parser ownership also prevents
+        // a comment, string, or nested `stages` spelling from becoming an
+        // accidental injection point.
+        match Fogell.Pipeline.Parser.Parser.topLevelStagesBodyStart script with
+        | Error refusal ->
+            Error $"runtime-guarded corpus definition has no parsed top-level stages insertion point: {refusal}"
+        | Ok bodyStart ->
             let checks =
                 guard.Tools
                 |> List.map (fun (command, path) ->
@@ -407,7 +413,7 @@ module Jenkins =
                 |> String.concat ""
 
             let stage =
-                "    stage('Fogell target runtime guard') {\n"
+                "\n    stage('Fogell target runtime guard') {\n"
                 + "      steps {\n"
                 + "        sh '''#!/bin/sh\n"
                 + "          set +x\n"
@@ -419,7 +425,7 @@ module Jenkins =
                 + "      }\n"
                 + "    }\n"
 
-            Ok(script.Replace(anchor, anchor + stage, StringComparison.Ordinal))
+            Ok(script.Insert(bodyStart, stage))
 
     let internal validateAndRemoveTargetRuntimeMarker
         (declaresTimestamps: bool)
