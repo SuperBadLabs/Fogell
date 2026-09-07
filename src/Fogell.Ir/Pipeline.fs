@@ -143,6 +143,9 @@ type Stage =
       Options: Step list
       When: WhenCondition option
       Post: (PostCondition * Step list) list
+      /// Stage sections accepted by the bounded parser but not represented by
+      /// Fogell's executable model (for example `matrix` or `input`).
+      OpaqueSections: string list
       /// Nested `stages { }` (sequential) and `parallel { }` children.
       Nested: Stage list
       IsParallel: bool

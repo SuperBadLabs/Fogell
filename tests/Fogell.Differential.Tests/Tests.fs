@@ -9877,6 +9877,81 @@ let compileRefusalDisposition =
                   "the target build itself fails if the forbidden command resolves"
               Expect.stringContains absentTargetScript absentMarker "the absence check gates the target marker"
 
+              let pathChangingTargets =
+                  [ "pipeline environment",
+                    "pipeline { agent any environment { PATH = '/tmp/bin' } stages { stage('Build') { steps { sh 'true' } } } }"
+                    "stage environment",
+                    "pipeline { agent any stages { stage('Build') { environment { PATH = '/tmp/bin' } steps { sh 'true' } } } }"
+                    "withEnv",
+                    "pipeline { agent any stages { stage('Build') { steps { withEnv(['PATH=/tmp/bin']) { sh 'true' } } } } }"
+                    "hosted PATH addition",
+                    "pipeline { agent any stages { stage('Build') { steps { script { withEnv(['PATH+ATTACK=/tmp/bin']) { sh 'true' } } } } } }"
+                    "computed hosted withEnv name",
+                    "pipeline { agent any stages { stage('Build') { steps { script { def key = 'PA' + 'TH'; withEnv([\"${key}=/tmp/bin\"]) { sh 'composer install' } } } } } }"
+                    "computed indexed environment assignment",
+                    "pipeline { agent any stages { stage('Build') { steps { script { def target = env; target['PA' + 'TH'] = '/tmp/bin'; sh 'composer install' } } } } }"
+                    "computed credential variable",
+                    "pipeline { agent any stages { stage('Build') { steps { withCredentials([string(credentialsId: 'secret', variable: 'PA' + 'TH')]) { sh 'composer install' } } } } }"
+                    "stage agent environment",
+                    "pipeline { agent any stages { stage('Build') { agent { docker { image 'composer:latest' } } steps { sh 'composer install' } } } }"
+                    "shell-local assignment",
+                    "pipeline { agent any stages { stage('Build') { steps { sh 'PATH=/tmp/bin composer install' } } } }"
+                    "computed shell-local assignment",
+                    "pipeline { agent any stages { stage('Build') { steps { sh 'p=PA; name=${p}TH; eval export $name=/tmp/bin; composer install' } } } }"
+                    "preamble shell helper",
+                    "def early() { sh 'echo early' }; pipeline { agent any stages { stage('Build') { steps { script { echo early(); sh 'composer install' } } } } }"
+                    "nonterminal returnStatus shell",
+                    "pipeline { agent any stages { stage('Build') { steps { sh script: 'composer install', returnStatus: true } } } }"
+                    "post-failure effect",
+                    "pipeline { agent any stages { stage('Build') { steps { sh 'composer install' } post { failure { sh 'touch escaped' } } } } }"
+                    "pre-command substitution",
+                    "pipeline { agent any stages { stage('Build') { steps { sh 'composer $(touch escaped)' } } } }"
+                    "nested shell in echo argument",
+                    "pipeline { agent any stages { stage('Build') { steps { script { echo(sh(script: 'touch escaped', returnStdout: true)); sh 'composer install' } } } } }"
+                    "pipeline option",
+                    "pipeline { agent any options { disableConcurrentBuilds() } stages { stage('Build') { steps { sh 'composer install' } } } }"
+                    "pipeline parameter",
+                    "pipeline { agent any parameters { string(name: 'TARGET') } stages { stage('Build') { steps { sh 'composer install' } } } }"
+                    "pipeline trigger",
+                    "pipeline { agent any triggers { cron('* * * * *') } stages { stage('Build') { steps { sh 'composer install' } } } }"
+                    "stage option",
+                    "pipeline { agent any stages { stage('Build') { options { timeout(time: 1, unit: 'HOURS') } steps { sh 'composer install' } } } }"
+                    "shared libraries",
+                    "pipeline { agent any libraries { lib('remote@main') } stages { stage('Build') { steps { sh 'composer install' } } } }"
+                    "opaque plugin section",
+                    "pipeline { agent any pluginBehavior { enabled() } stages { stage('Build') { steps { sh 'composer install' } } } }"
+                    "opaque stage plugin section",
+                    "pipeline { agent any stages { stage('Build') { pluginBehavior { enabled() } steps { sh 'composer install' } } } }" ]
+
+              for label, source in pathChangingTargets do
+                  Expect.isOk
+                      (Fogell.Pipeline.Parser.Parser.parse source)
+                      $"{label}: the hostile control itself is admitted Jenkins syntax"
+                  Expect.isError
+                      (Jenkins.injectTargetRuntimeGuard absentGuard "fedcba9876543210" absentMarker source)
+                      $"{label}: original PATH references are refused before Jenkins scheduling"
+
+              Expect.isError
+                  (Jenkins.validateRuntimeGuardTargetSource
+                      absentGuard
+                      "pipeline { agent any environment { CLASSPATH = '/tmp/lib' } stages { stage('Build') { steps { sh 'composer install' } } } }")
+                  "runtime-pinned targets conservatively refuse every Declarative environment scope"
+              Expect.isError
+                  (Jenkins.validateRuntimeGuardTargetSource
+                      absentGuard
+                      "def getdockertag() { return \"${env.GIT_BRANCH}\" }; pipeline { agent any environment {\nDOCKER_TAG = getdockertag()\n} stages { stage('Build') { steps { script { echo 'install'; sh 'composer install' } } } } }")
+                  "the already-rejected Composer candidate remains safely outside runtime execution"
+              Expect.isOk
+                  (Jenkins.validateRuntimeGuardTargetSource
+                      absentGuard
+                      "pipeline { agent any stages { stage('Build') { steps { script { echo 'install'; sh 'composer install --prefer-source' } } } } }")
+                  "a closed literal Composer-first route remains runtime-guardable"
+              Expect.isOk
+                  (Jenkins.validateRuntimeGuardTargetSource
+                      guard
+                      "pipeline { agent any stages { stage('Install') { steps { sh 'make install' } } stage('Deploy') { steps { withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'AwsCreds', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) { sh 'aws deploy' } } } } }")
+                  "the current make-pinned corpus shape retains its later literal credential bindings"
+
               let sha = String.replicate 64 "a"
               let configured expectation fogellToolPath jenkinsToolPath =
                   Jenkins.configureRuntimeGuard

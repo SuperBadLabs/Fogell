@@ -90,7 +90,20 @@ access fence UP and names the recovery path below. A run that loses its fence (t
 restarted, the table gone) or its lease is aborted and its receipts are
 reverted; rerun it.
 
-The v7 runtime-guard capability also threads the same typed requirement into
+The v8 runtime-guard capability also refuses original Jenkins target source
+that references `PATH`, any pipeline/stage environment, tools, or options
+scope, any parameter, trigger, or opaque pipeline/stage section (including
+`libraries`), stage agent override, post block, or nontrivial
+preamble/epilogue. A structural walk additionally covers nested stages,
+recursive steps and Groovy
+script/condition ASTs, including dynamic `withEnv` calls and property/index
+writes. Jenkins cannot supply a trustworthy before-every-shell hook, so a later
+environment overlay must fail before scheduling rather than escape the injected
+target-stage check. The first user stage must be unconditional, inherit
+`agent any`, and reach a one-argument literal shell containing only the single
+pinned command plus expansion-free literal arguments; ticket-specific direct
+probes remain the authority that this command is terminal on the bounded route. V8 also
+threads the same typed requirement into
 Fogell. Every retained build re-resolves it against Fogell's fixed build
 environment immediately before that build enters the engine and against the
 exact effective environment handed to every shell launch. A mismatch is a

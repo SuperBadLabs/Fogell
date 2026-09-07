@@ -7,6 +7,8 @@ open System.Security.Cryptography
 open System.Text
 open System.Text.Json
 open System.Text.RegularExpressions
+open Fogell.Groovy
+open Fogell.Ir
 
 /// The Jenkins side of the differential. Drives a PINNED Jenkins over its REST
 /// API, runs one Jenkinsfile, and reduces the run to a [Trace].
@@ -460,6 +462,227 @@ module Jenkins =
     let internal targetRuntimeMarker (caseSha: string) (nonce: string) =
         $"FOGELL_TARGET_RUNTIME_OK:{caseSha}:{nonce}"
 
+    let internal validateRuntimeGuardTargetSource (guard: RuntimeGuard) (script: string) =
+        // Jenkins does not expose a trustworthy before-every-shell hook to this
+        // client. Reject every supported way the exact, digest-bound source can
+        // overlay or dynamically write the shell environment before scheduling
+        // it. The token check remains deliberately broader than the structural
+        // checks so raw shell text cannot carry an ordinary PATH assignment.
+        let rec unsafeGroovyStatements rejectShell statements =
+            let rec unsafeExpr expression =
+                match expression with
+                | EClosure closure -> unsafeGroovyStatements rejectShell closure.Body
+                | ECall(target, args, trailing) ->
+                    let unsafeReceiver =
+                        match target with
+                        | FreeCall _ -> false
+                        | MethodCall(receiver, _)
+                        | SafeMethodCall(receiver, _) -> unsafeExpr receiver
+
+                    let targetIsUnsafe =
+                        match target with
+                        | FreeCall name ->
+                            name = "withEnv" || name = "withCredentials" || rejectShell
+                        | MethodCall(_, name)
+                        | SafeMethodCall(_, name) ->
+                            name = "withEnv" || name = "withCredentials" || rejectShell
+
+                    targetIsUnsafe
+                    || unsafeReceiver
+                    || (args
+                        |> List.exists (function
+                            | APos value -> unsafeExpr value
+                            | ANamed(_, value) -> unsafeExpr value))
+                    || (trailing
+                        |> Option.exists (fun closure -> unsafeGroovyStatements rejectShell closure.Body))
+                | EGString parts ->
+                    parts
+                    |> List.exists (function
+                        | GLit _ -> false
+                        | GExpr value -> unsafeExpr value)
+                | EList values -> values |> List.exists unsafeExpr
+                | EMap entries -> entries |> List.exists (snd >> unsafeExpr)
+                | EProp(target, _)
+                | ESpreadProp(target, _)
+                | ESafeProp(target, _)
+                | EUnary(_, target) -> unsafeExpr target
+                | EIndex(target, index)
+                | EBinary(_, target, index)
+                | EElvis(target, index) -> unsafeExpr target || unsafeExpr index
+                | ETernary(condition, yes, no) ->
+                    unsafeExpr condition || unsafeExpr yes || unsafeExpr no
+                | ENull
+                | EBool _
+                | EInt _
+                | EStr _
+                | EVar _ -> false
+
+            let unsafeAssignmentTarget =
+                function
+                | EProp _
+                | ESpreadProp _
+                | ESafeProp _
+                | EIndex _ -> true
+                | _ -> false
+
+            statements
+            |> List.exists (function
+                | SAssign(target, value) ->
+                    unsafeAssignmentTarget target || unsafeExpr target || unsafeExpr value
+                | SIndexCompoundAssign _
+                | SIndexPostfixAssign _ -> true
+                | SExpr expression -> unsafeExpr expression
+                | SDef(_, value)
+                | SReturn value -> value |> Option.exists unsafeExpr
+                | SIf(condition, yes, no) ->
+                    unsafeExpr condition
+                    || unsafeGroovyStatements rejectShell yes
+                    || unsafeGroovyStatements rejectShell no
+                | SForIn(_, source, body)
+                | SWhile(source, body) -> unsafeExpr source || unsafeGroovyStatements rejectShell body
+                | SSwitch(subject, arms) ->
+                    unsafeExpr subject
+                    || (arms
+                        |> List.exists (fun (case, body) ->
+                            (case |> Option.exists unsafeExpr)
+                            || unsafeGroovyStatements rejectShell body))
+                | SThrow expression -> unsafeExpr expression
+                | STry(body, catch, finallyBlock) ->
+                    unsafeGroovyStatements rejectShell body
+                    || (catch
+                        |> Option.exists (fun (_, _, handler) ->
+                            unsafeGroovyStatements rejectShell handler))
+                    || unsafeGroovyStatements rejectShell finallyBlock
+                | SFunc(_, _, body) -> unsafeGroovyStatements rejectShell body
+                | SBreak
+                | SContinue -> false)
+
+        let unsafeGroovySource rejectShell source =
+            if String.IsNullOrWhiteSpace source then
+                false
+            else
+                match Fogell.Groovy.Parser.Parser.parse source with
+                | Ok statements -> unsafeGroovyStatements rejectShell statements
+                | Error _ -> true
+
+        let rec unsafeSteps (steps: Step list) =
+            steps
+            |> List.exists (fun step ->
+                step.Name = "withEnv"
+                || (step.ScriptBody |> Option.exists (unsafeGroovySource false))
+                || unsafeSteps step.Block)
+
+        let rec unsafeWhen =
+            function
+            | WhenExpression source -> unsafeGroovySource true source
+            | WhenAllOf conditions
+            | WhenAnyOf conditions -> conditions |> List.exists unsafeWhen
+            | WhenNot condition -> unsafeWhen condition
+            | _ -> false
+
+        let literalDeclarativeShell (step: Step) =
+            match step.Named, step.Positional with
+            | [ ("script", value) ], [] when step.LiteralNamedArgs.Contains "script" -> Ok value
+            | [], value :: [] when step.LiteralPositionalArgs.Contains 0 -> Ok value
+            | _ -> Error "the first runtime-pinned shell must have one literal script argument"
+
+        let literalScriptedShell args trailing =
+            match args, trailing with
+            | [ APos(EStr value) ], None -> Ok value
+            | [ ANamed("script", EStr value) ], None -> Ok value
+            | _ -> Error "the first runtime-pinned scripted shell must have one literal script argument"
+
+        let firstShellInScript source =
+            match Fogell.Groovy.Parser.Parser.parse source with
+            | Error _ -> Error "the first-stage script body did not parse"
+            | Ok statements ->
+                let rec find (statements: Stmt list) =
+                    match statements with
+                    | [] -> Error "the first user stage contains no shell"
+                    | SExpr(ECall(FreeCall "echo", [ APos(EStr _) ], None)) :: rest -> find rest
+                    | SExpr(ECall(FreeCall "echo", [ APos(EGString parts) ], None)) :: rest
+                        when parts |> List.forall (function GLit _ -> true | GExpr _ -> false) ->
+                        find rest
+                    | SExpr(ECall(FreeCall "sh", args, trailing)) :: _ ->
+                        literalScriptedShell args trailing
+                    | _ ->
+                        Error "the first-stage script body has an effect before its runtime-pinned shell"
+
+                find statements
+
+        let firstUserShell (pipeline: Pipeline) =
+            match pipeline.Stages with
+            | first :: _
+                when first.Agent.IsNone
+                     && first.When.IsNone
+                     && not first.IsParallel
+                     && List.isEmpty first.Nested ->
+                let rec find (steps: Step list) =
+                    match steps with
+                    | [] -> Error "the first user stage contains no shell"
+                    | step :: _ when step.Name = "sh" -> literalDeclarativeShell step
+                    | step :: _ when step.Name = "script" ->
+                        match step.ScriptBody with
+                        | Some source -> firstShellInScript source
+                        | None -> Error "the first-stage script body was unavailable"
+                    | _ -> Error "the first user stage has an effect before its runtime-pinned shell"
+
+                find first.Steps
+            | _ ->
+                Error "the first runtime-pinned user stage must be unconditional, non-nested, and inherit agent any"
+
+        let isClosedGuardedCommand command (shell: string) =
+            let trimmed = shell.TrimStart([| ' '; '\t'; '\r'; '\n' |])
+            Regex.IsMatch(
+                trimmed,
+                $"^{Regex.Escape command}(?:[ \\t]+[A-Za-z0-9._/+:-]+)*[ \\t]*$",
+                RegexOptions.CultureInvariant
+            )
+
+        if Regex.IsMatch(script, "(?<![A-Za-z0-9_])PATH(?=$|[^A-Za-z0-9_])", RegexOptions.CultureInvariant) then
+            Error "runtime-guarded corpus definitions may not reference PATH"
+        else
+            match Fogell.Pipeline.Parser.Parser.topLevelOpaqueSections script with
+            | Error refusal ->
+                Error $"runtime-guarded corpus definition did not parse: {refusal}"
+            | Ok (_ :: _) ->
+                Error "runtime-guarded corpus definition contains an opaque top-level section"
+            | Ok [] ->
+                match Fogell.Pipeline.Parser.Parser.parse script with
+                | Error refusal ->
+                    Error $"runtime-guarded corpus definition did not parse: {refusal}"
+                | Ok pipeline ->
+                    let stages = Pipeline.flattenStages pipeline.Stages
+                    let unsafeStage (stage: Stage) =
+                        stage.Agent.IsSome
+                        || not (List.isEmpty stage.Environment)
+                        || not (List.isEmpty stage.Tools)
+                        || not (List.isEmpty stage.Options)
+                        || unsafeSteps stage.Steps
+                        || not (List.isEmpty stage.Post)
+                        || not (List.isEmpty stage.OpaqueSections)
+                        || (stage.When |> Option.exists unsafeWhen)
+
+                    if pipeline.Agent <> AgentAny
+                       || not (List.isEmpty pipeline.Environment)
+                       || not (List.isEmpty pipeline.Tools)
+                       || not (List.isEmpty pipeline.Options)
+                       || not (List.isEmpty pipeline.Parameters)
+                       || not (List.isEmpty pipeline.Triggers)
+                       || not (List.isEmpty pipeline.Post)
+                       || (stages |> List.exists unsafeStage)
+                       || not (String.IsNullOrWhiteSpace pipeline.Preamble)
+                       || not (String.IsNullOrWhiteSpace pipeline.Epilogue) then
+                        Error "runtime-guarded corpus definition can change a shell environment"
+                    else
+                        match guard.Requirements, firstUserShell pipeline with
+                        | [ PresentAtPath(command, _) ], Ok shell
+                        | [ AbsentCommand command ], Ok shell when isClosedGuardedCommand command shell -> Ok()
+                        | [ _ ], Ok _ ->
+                            Error "the first user shell does not start with the runtime-pinned command"
+                        | [ _ ], Error why -> Error why
+                        | _ -> Error "exactly one Jenkins runtime requirement is required"
+
     let internal injectTargetRuntimeGuard
         (guard: RuntimeGuard)
         (buildToken: string)
@@ -474,10 +697,13 @@ module Jenkins =
         // false refusal before Jenkins ran it. Parser ownership also prevents
         // a comment, string, or nested `stages` spelling from becoming an
         // accidental injection point.
-        match Fogell.Pipeline.Parser.Parser.topLevelStagesBodyStart script with
-        | Error refusal ->
+        match validateRuntimeGuardTargetSource guard script with
+        | Error refusal -> Error refusal
+        | Ok() ->
+          match Fogell.Pipeline.Parser.Parser.topLevelStagesBodyStart script with
+          | Error refusal ->
             Error $"runtime-guarded corpus definition has no parsed top-level stages insertion point: {refusal}"
-        | Ok bodyStart ->
+          | Ok bodyStart ->
             let checks =
                 guard.Requirements
                 |> List.map (function

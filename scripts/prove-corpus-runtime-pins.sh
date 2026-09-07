@@ -268,7 +268,7 @@ audit_runner() {
   [ "$(rg -c '^runtime_pins="\$cli_source/differential/corpus-runtime-pins\.tsv"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^snap_dir=\$\(mktemp -d\); cli_private=\$\(mktemp -d\); cli_source="\$cli_private/source"; cli_build="\$cli_private/output"; snaps=\(\)$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^cli="\$cli_build/fogell-diff\.dll"$' "$runner")" = 1 ] || return 1
-  [ "$(rg -c '^\[ "\$capability" = fogell-runtime-guard-v7 \] \\$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^\[ "\$capability" = fogell-runtime-guard-v8 \] \\$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  \[ -n "\$cli_private" \] && rm -rf "\$cli_private"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  "\$runtime_pin_checker" "\$runtime_pins" "\$\{pin_ids\[@\]\}"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^source "\$workspace_helper" \|\| die ' "$runner")" = 1 ] || return 1
@@ -386,6 +386,35 @@ audit_build_path_sources() {
   [ "$(rg -F -c '/var/jenkins_home/workspace/{activeJobName}' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'Convert.ToHexString(RandomNumberGenerator.GetBytes 16).ToLowerInvariant()' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'targetRuntimeMarker guard.CaseSha nonce' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'let internal validateRuntimeGuardTargetSource (guard: RuntimeGuard) (script: string) =' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'Regex.IsMatch(script, "(?<![A-Za-z0-9_])PATH(?=$|[^A-Za-z0-9_])", RegexOptions.CultureInvariant)' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'match validateRuntimeGuardTargetSource guard script with' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'match Fogell.Pipeline.Parser.Parser.topLevelOpaqueSections script with' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c '| Ok (_ :: _) ->' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'let firstUserShell (pipeline: Pipeline) =' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'let isClosedGuardedCommand command (shell: string) =' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'first.When.IsNone' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'when isClosedGuardedCommand command shell -> Ok()' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c '| [ ("script", value) ], [] when step.LiteralNamedArgs.Contains "script" -> Ok value' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c '| SExpr(ECall(FreeCall "echo", [ APos(EStr _) ], None)) :: rest -> find rest' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'when parts |> List.forall (function GLit _ -> true | GExpr _ -> false) ->' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'step.Name = "withEnv"' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'name = "withEnv" || name = "withCredentials" || rejectShell' "$jenkins")" = 2 ] || return 1
+  [ "$(rg -F -c '| SIndexCompoundAssign _' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c '| SIndexPostfixAssign _ -> true' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'Pipeline.flattenStages pipeline.Stages' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'if pipeline.Agent <> AgentAny' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'stage.Agent.IsSome' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'not (List.isEmpty pipeline.Options)' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'not (List.isEmpty pipeline.Parameters)' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'not (List.isEmpty pipeline.Triggers)' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'not (List.isEmpty stage.Options)' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'unsafeSteps stage.Steps' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'not (List.isEmpty stage.Post)' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'not (List.isEmpty stage.OpaqueSections)' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'not (List.isEmpty pipeline.Post)' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'not (String.IsNullOrWhiteSpace pipeline.Preamble)' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'not (String.IsNullOrWhiteSpace pipeline.Epilogue)' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c '[ \"$PATH\" = \"{guard.BuildPath}\" ] || exit 90' "$jenkins")" = 2 ] || return 1
   [ "$(rg -F -c '[ \"$FOGELL_BUILD_TOKEN\" = \"{buildToken}\" ] || exit 93' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'actual=$(command -v {command}) || exit 91' "$jenkins")" = 2 ] || return 1
@@ -402,7 +431,7 @@ audit_build_path_sources() {
   [ "$(rg -F -c '/job/{activeJobName}/{buildNumber}/replay/' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'String.Equals(observed, expectedScript, StringComparison.Ordinal)' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c '| [ "--runtime-guard-capability" ] ->' "$cli_source")" = 1 ] || return 1
-  [ "$(rg -F -c 'printfn "fogell-runtime-guard-v7"' "$cli_source")" = 1 ] || return 1
+  [ "$(rg -F -c 'printfn "fogell-runtime-guard-v8"' "$cli_source")" = 1 ] || return 1
   [ "$(rg -F -c 'FogellSide.runScmWithRuntimeGuard' "$cli_source")" = 1 ] || return 1
   [ "$(rg -F -c 'FogellSide.runManyWithRuntimeGuard' "$cli_source")" = 1 ] || return 1
   [ "$(rg -F -c 'let private verifyRuntimeGuardEnvironment' "$fogell_source")" = 1 ] || return 1
@@ -588,7 +617,7 @@ reject_runner_mutant "working-tree executed-surface allowlist" 's#allowlist="$cl
 reject_runner_mutant "working-tree runtime-pin policy" 's#runtime_pins="$cli_source/differential/corpus-runtime-pins.tsv"#runtime_pins="differential/corpus-runtime-pins.tsv"#'
 reject_runner_mutant "unlocked CLI restore" 's/ --locked-mode / /'
 reject_runner_mutant "shared CLI output" 's#cli="$cli_build/fogell-diff.dll"#cli="tools/Fogell.Differential.Cli/bin/fogell-diff.dll"#'
-reject_runner_mutant "missing CLI capability handshake" 's/\[ "$capability" = fogell-runtime-guard-v7 \]/[ -n "$capability" ]/'
+reject_runner_mutant "missing CLI capability handshake" 's/\[ "$capability" = fogell-runtime-guard-v8 \]/[ -n "$capability" ]/'
 reject_runner_mutant "missing resolution-expectation parsing" 's/guard_command guard_expectation guard_fogell_tool_path/guard_command _ guard_fogell_tool_path/'
 reject_runner_mutant "missing Fogell tool-path parsing" 's/guard_expectation guard_fogell_tool_path guard_tool_path/guard_expectation _ guard_tool_path/'
 reject_runner_mutant "missing resolution-expectation assignment" '/^  FOGELL_RUNTIME_GUARD_EXPECTATION=\$guard_expectation$/d'
@@ -622,6 +651,21 @@ reject_fence_mutant "missing remote removal ownership check" '/^  jenkins_access
 reject_fence_mutant "missing local removal ownership check" '/^  local_access_present \\/d'
 
 reject_jenkins_mutant "constant target nonce" 's/Convert.ToHexString(RandomNumberGenerator.GetBytes 16).ToLowerInvariant()/"constant"/'
+reject_jenkins_mutant "missing target-source environment validation" 's/match validateRuntimeGuardTargetSource guard script with/match Ok() with/'
+reject_jenkins_mutant "missing opaque-section refusal" 's/| Ok (_ :: _) ->/| Ok (_ :: _) when false ->/'
+reject_jenkins_mutant "missing closed-command binding" 's/when isClosedGuardedCommand command shell -> Ok()/-> Ok()/'
+reject_jenkins_mutant "extra first-shell option accepted" 's/\[ ("script", value) \], \[\]/("script", value) :: _, []/'
+reject_jenkins_mutant "effectful scripted echo accepted" 's/FreeCall "echo", \[ APos(EStr _) \], None/FreeCall "echo", _, None/'
+reject_jenkins_mutant "missing Declarative withEnv refusal" 's/step.Name = "withEnv"/false/'
+reject_jenkins_mutant "missing pre-stage effectful-call refusal" 's/|| rejectShell/|| false/'
+reject_jenkins_mutant "missing nested-stage environment traversal" 's/Pipeline.flattenStages pipeline.Stages/pipeline.Stages/'
+reject_jenkins_mutant "missing pipeline-agent refusal" 's/if pipeline.Agent <> AgentAny/if false/'
+reject_jenkins_mutant "missing stage-agent refusal" 's/stage.Agent.IsSome/false/'
+reject_jenkins_mutant "missing pipeline-directive refusal" 's/not (List.isEmpty pipeline.Triggers)/false/'
+reject_jenkins_mutant "missing stage-option refusal" 's/not (List.isEmpty stage.Options)/false/'
+reject_jenkins_mutant "missing opaque-stage refusal" 's/not (List.isEmpty stage.OpaqueSections)/false/'
+reject_jenkins_mutant "missing preamble refusal" 's/not (String.IsNullOrWhiteSpace pipeline.Preamble)/false/'
+reject_jenkins_mutant "missing post refusal" 's/not (List.isEmpty stage.Post)/false/'
 reject_jenkins_mutant "missing target PATH check" '/          \[ \\"\$PATH\\" = \\"{guard.BuildPath}\\" \] || exit 90/d'
 reject_jenkins_mutant "missing target build-token check" '/\$FOGELL_BUILD_TOKEN.*exit 93/d'
 reject_jenkins_mutant "missing target command-resolution check" '/          actual=\$(command -v {command}) || exit 91/d'
@@ -679,7 +723,7 @@ fi
 echo "  refused parallel runtime-guard absorption mutant"
 
 cp tools/Fogell.Differential.Cli/Program.fs "$scratch/Program.fs"
-sed -i 's/printfn "fogell-runtime-guard-v7"/printfn "fogell-runtime-guard-v6"/' "$scratch/Program.fs"
+sed -i 's/printfn "fogell-runtime-guard-v8"/printfn "fogell-runtime-guard-v7"/' "$scratch/Program.fs"
 if cmp -s tools/Fogell.Differential.Cli/Program.fs "$scratch/Program.fs"; then
   echo "RUNTIME-PIN PROOF FAILED: CLI capability mutant did not apply" >&2; exit 1
 fi

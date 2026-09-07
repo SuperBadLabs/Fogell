@@ -1612,6 +1612,7 @@ module FogellSide =
                       Options = []
                       When = None
                       Post = pipeline.Post
+                      OpaqueSections = []
                       Nested = []
                       IsParallel = false
                       FailFast = false

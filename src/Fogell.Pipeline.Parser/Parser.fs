@@ -1627,6 +1627,11 @@ stageRef.Value <-
               Options = sections |> List.collect (function SecOptions o -> o | _ -> [])
               When = pick (function SecWhen w -> Some w | _ -> None)
               Post = defaultArg (pick (function SecPost p -> Some p | _ -> None)) []
+              OpaqueSections =
+                sections
+                |> List.choose (function
+                    | SecOther name -> Some name
+                    | _ -> None)
               Nested = defaultArg (pick (function SecNested(s, _) -> Some s | _ -> None)) []
               IsParallel = defaultArg (pick (function SecNested(_, p) -> Some p | _ -> None)) false
               FailFast = defaultArg (pick (function SecFailFast f -> Some f | _ -> None)) false
@@ -1714,7 +1719,7 @@ let private preamble: P<unit> =
 let private skipToPipeline: P<unit> =
     skipManyTill anyChar (lookAhead (attempt (keyword "pipeline" >>. skipChar '{')))
 
-let private pipelineParser: P<Pipeline * int64> =
+let private pipelineParser: P<Pipeline * int64 * string list> =
     // FG-188. The skipped text is CAPTURED, not merely stepped over. Everything before
     // `pipeline {` used to be discarded, which made a top-level `def` helper invisible to
     // every `script { }` body — the commonest escape construct in the corpus.
@@ -1794,7 +1799,13 @@ let private pipelineParser: P<Pipeline * int64> =
                   Stages = defaultArg (pick (function TopStages(_, s) -> Some s | _ -> None)) []
                   Post = defaultArg (pick (function TopPost p -> Some p | _ -> None)) [] }
 
-            pipeline, stagesBodyStart
+            let opaqueSections =
+                sections
+                |> List.choose (function
+                    | TopOther name -> Some name
+                    | _ -> None)
+
+            pipeline, stagesBodyStart, opaqueSections
 
 /// Does this source look like a Declarative pipeline at all? Deliberately
 /// stricter than Forge's bare regex: the token must not be inside a line
@@ -2052,7 +2063,7 @@ let private scriptBodyErrors (limits: Limits) (pipeline: Pipeline) : NestedSourc
 let private parseWithLimitsAndStagesBodyStart
     (limits: Limits)
     (source: string)
-    : Result<Pipeline * int64, AdmissionError> =
+    : Result<Pipeline * int64 * string list, AdmissionError> =
     let refusalError (message: string) (position: Fogell.Ir.Position) : AdmissionError =
         // Admission diagnostics are also emitted as one TSV row by the corpus
         // scorer. A refusal may quote raw multi-line source, but it must not turn
@@ -2077,7 +2088,7 @@ let private parseWithLimitsAndStagesBodyStart
                     "Jenkinsfile"
                     source
             with
-            | ParserResult.Success((p, stagesBodyStart), state, _) ->
+            | ParserResult.Success((p, stagesBodyStart, opaqueSections), state, _) ->
                 match firstScalarRefusal state with
                 | Some scalar -> Result.Error scalar
                 | None ->
@@ -2094,7 +2105,7 @@ let private parseWithLimitsAndStagesBodyStart
                                 { Code = MalformedSyntax
                                   Message = why
                                   Position = position }
-                        | [] -> Result.Ok(p, stagesBodyStart)
+                        | [] -> Result.Ok(p, stagesBodyStart, opaqueSections)
             | ParserResult.Failure(msg, err, state) ->
                 match firstScalarRefusal state with
                 | Some scalar -> Result.Error scalar
@@ -2114,14 +2125,14 @@ let private parseWithLimitsAndStagesBodyStart
                         Result.Error(AdmissionError.at MalformedSyntax pos.Line pos.Column (firstLine.Trim()))
 
 let parseWithLimits (limits: Limits) (source: string) : Result<Pipeline, AdmissionError> =
-    parseWithLimitsAndStagesBodyStart limits source |> Result.map fst
+    parseWithLimitsAndStagesBodyStart limits source |> Result.map (fun (pipeline, _, _) -> pipeline)
 
 /// Return the exact source index immediately after the parsed top-level
 /// `stages {` opener. Consumers that must rewrite a Jenkins definition use
 /// this instead of maintaining a second, indentation-sensitive recognizer.
 let topLevelStagesBodyStart (source: string) : Result<int, AdmissionError> =
     parseWithLimitsAndStagesBodyStart Limits.defaults source
-    |> Result.bind (fun (_, index) ->
+    |> Result.bind (fun (_, index, _) ->
         if index >= 0L && index <= int64 source.Length then
             Result.Ok(int index)
         else
@@ -2131,5 +2142,12 @@ let topLevelStagesBodyStart (source: string) : Result<int, AdmissionError> =
                     1L
                     1L
                     "parsed top-level stages body has an invalid source position"))
+
+/// Return top-level sections the admission model deliberately preserves as
+/// opaque. Runtime-backed consumers use this to refuse source-controlled
+/// Jenkins behavior that would otherwise disappear from the projected IR.
+let topLevelOpaqueSections (source: string) : Result<string list, AdmissionError> =
+    parseWithLimitsAndStagesBodyStart Limits.defaults source
+    |> Result.map (fun (_, _, sections) -> sections)
 
 let parse (source: string) : Result<Pipeline, AdmissionError> = parseWithLimits Limits.defaults source

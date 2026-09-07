@@ -24,7 +24,7 @@ open Fogell.Execution
 let main argv =
     match Array.toList argv with
     | [ "--runtime-guard-capability" ] ->
-        printfn "fogell-runtime-guard-v7"
+        printfn "fogell-runtime-guard-v8"
         0
 
     // FG-161. Recompute every receipt's seal from the receipt itself.
