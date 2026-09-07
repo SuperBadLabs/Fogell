@@ -13,6 +13,16 @@
 # The `\bdocker\b` scan therefore now applies to every workflow. That is
 # fail-closed and intended; a future workflow with a legitimate reason to name
 # Docker will have to argue with this proof rather than slip past it.
+#
+# SO DOES THE PODMAN DECLARATION, and that is the sharper edge: EVERY workflow
+# under this directory must carry `FOGELL_CONTAINER_RUNTIME: podman` exactly
+# once at global scope, including one that starts no container at all. A
+# docs-only workflow added later will fail this proof until it declares a
+# runtime it never uses. That is deliberate — the alternative, requiring the
+# declaration only where a PostgreSQL lifecycle is detected, would exempt
+# precisely the workflow that reaches for a container by some other means,
+# which is the hole FG-233 exists to close. Relax it only with a check that
+# still covers that case.
 set -euo pipefail
 
 for required_command in bash basename chmod cp date dirname mkdir mktemp rm rg sed seq sleep tail timeout tr; do
