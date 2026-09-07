@@ -83,7 +83,7 @@ module FogellSide =
         | Some observed when String.Equals(observed, guard.BuildPath, StringComparison.Ordinal) ->
             verifyRuntimeRequirements
                 (fun command -> LaunchEnvironment.resolveBuildExecutable command workspaceRoot environment)
-                guard.Requirements
+                guard.FogellRequirements
         | Some observed ->
             Error $"build PATH was '{observed}', expected runtime guard PATH '{guard.BuildPath}'"
         | None -> Error "build environment did not contain PATH"

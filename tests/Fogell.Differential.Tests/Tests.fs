@@ -9826,7 +9826,8 @@ let compileRefusalDisposition =
                   { CaseSha = String.replicate 64 "a"
                     RequiredNode = "Jenkins"
                     BuildPath = path
-                    Requirements = [ PresentAtPath("make", "/usr/local/bin/make") ] }
+                    Requirements = [ PresentAtPath("make", "/usr/local/bin/make") ]
+                    FogellRequirements = [ PresentAtPath("make", "/usr/bin/make") ] }
               let probe = Jenkins.runtimeGuardScript guard
               Expect.stringContains probe "[ \"$PATH\" = \"/usr/local/sbin:" "the real sh checks effective PATH"
               Expect.stringContains probe "actual=$(command -v make)" "the real sh resolves the selected command"
@@ -9851,7 +9852,8 @@ let compileRefusalDisposition =
 
               let absentGuard =
                   { guard with
-                      Requirements = [ AbsentCommand "composer" ] }
+                      Requirements = [ AbsentCommand "composer" ]
+                      FogellRequirements = [ AbsentCommand "composer" ] }
               let absentProbe = Jenkins.runtimeGuardScript absentGuard
               Expect.stringContains
                   absentProbe
@@ -9876,43 +9878,59 @@ let compileRefusalDisposition =
               Expect.stringContains absentTargetScript absentMarker "the absence check gates the target marker"
 
               let sha = String.replicate 64 "a"
-              let configured expectation toolPath =
-                  Jenkins.configureRuntimeGuard sha "Jenkins" "composer" toolPath expectation (Some path) 1
+              let configured expectation fogellToolPath jenkinsToolPath =
+                  Jenkins.configureRuntimeGuard
+                      sha
+                      "Jenkins"
+                      "composer"
+                      fogellToolPath
+                      jenkinsToolPath
+                      expectation
+                      (Some path)
+                      1
 
-              match configured "present" "/usr/local/bin/composer" with
+              match configured "present" "/usr/bin/composer" "/usr/local/bin/composer" with
               | Ok(Some observedSha, Some configuredGuard) ->
                   Expect.equal observedSha sha "the valid present guard retains its digest binding"
                   Expect.equal
                       configuredGuard.Requirements
                       [ PresentAtPath("composer", "/usr/local/bin/composer") ]
-                      "present mode becomes a typed path requirement"
+                      "present mode becomes the Jenkins typed path requirement"
+                  Expect.equal
+                      configuredGuard.FogellRequirements
+                      [ PresentAtPath("composer", "/usr/bin/composer") ]
+                      "present mode retains the distinct Fogell typed path requirement"
               | other -> failtestf "valid present runtime guard was refused: %A" other
 
-              match configured "absent" "-" with
+              match configured "absent" "-" "-" with
               | Ok(Some observedSha, Some configuredGuard) ->
                   Expect.equal observedSha sha "the valid absent guard retains its digest binding"
                   Expect.equal
                       configuredGuard.Requirements
                       [ AbsentCommand "composer" ]
                       "absent mode becomes a typed negative requirement"
+                  Expect.equal
+                      configuredGuard.FogellRequirements
+                      [ AbsentCommand "composer" ]
+                      "the same negative requirement reaches Fogell"
               | other -> failtestf "valid absent runtime guard was refused: %A" other
 
-              Expect.isError (configured "sometimes" "-") "an unknown expectation fails closed"
-              Expect.isError (configured "present" "-") "present mode requires an absolute path"
+              Expect.isError (configured "sometimes" "-" "-") "an unknown expectation fails closed"
+              Expect.isError (configured "present" "-" "/usr/local/bin/composer") "present mode requires a Fogell path"
               Expect.isError
-                  (configured "present" "relative/composer")
-                  "present mode rejects a relative path"
+                  (configured "present" "/usr/bin/composer" "relative/composer")
+                  "present mode rejects a relative Jenkins path"
               Expect.isError
-                  (configured "absent" "/usr/local/bin/composer")
-                  "absent mode requires the exact non-path sentinel"
+                  (configured "absent" "-" "/usr/local/bin/composer")
+                  "absent mode requires both exact non-path sentinels"
               Expect.isError
-                  (Jenkins.configureRuntimeGuard sha "Jenkins" "-composer" "-" "absent" (Some path) 1)
+                  (Jenkins.configureRuntimeGuard sha "Jenkins" "-composer" "-" "-" "absent" (Some path) 1)
                   "a leading-hyphen command cannot be interpreted as an option"
               Expect.isError
-                  (Jenkins.configureRuntimeGuard sha "Jenkins" "composer" "" "absent" (Some path) 1)
-                  "all five guard values remain mandatory"
+                  (Jenkins.configureRuntimeGuard sha "Jenkins" "composer" "" "-" "absent" (Some path) 1)
+                  "all six guard values remain mandatory"
               Expect.equal
-                  (Jenkins.configureRuntimeGuard "" "" "" "" "" None 1)
+                  (Jenkins.configureRuntimeGuard "" "" "" "" "" "" None 1)
                   (Ok(None, None))
                   "an entirely unconfigured ordinary differential remains unguarded"
 
@@ -10209,7 +10227,8 @@ let compileRefusalDisposition =
                   { CaseSha = String.replicate 64 "a"
                     RequiredNode = "Jenkins"
                     BuildPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-                    Requirements = [ AbsentCommand "sh" ] }
+                    Requirements = [ AbsentCommand "sh" ]
+                    FogellRequirements = [ AbsentCommand "sh" ] }
               let source =
                   $"pipeline {{ agent any; stages {{ stage('Build') {{ steps {{ sh 'touch {marker}' }} }} }} }}"
 

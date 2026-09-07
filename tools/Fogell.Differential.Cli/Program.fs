@@ -24,7 +24,7 @@ open Fogell.Execution
 let main argv =
     match Array.toList argv with
     | [ "--runtime-guard-capability" ] ->
-        printfn "fogell-runtime-guard-v5"
+        printfn "fogell-runtime-guard-v6"
         0
 
     // FG-161. Recompute every receipt's seal from the receipt itself.
@@ -149,6 +149,7 @@ let main argv =
             let caseSha = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_CASE_SHA"
             let node = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_NODE"
             let command = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_COMMAND"
+            let fogellToolPath = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_FOGELL_TOOL_PATH"
             let toolPath = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_TOOL_PATH"
             let expectation = Environment.GetEnvironmentVariable "FOGELL_RUNTIME_GUARD_EXPECTATION"
 
@@ -157,6 +158,7 @@ let main argv =
                     caseSha
                     node
                     command
+                    fogellToolPath
                     toolPath
                     expectation
                     jenkinsBuildPath

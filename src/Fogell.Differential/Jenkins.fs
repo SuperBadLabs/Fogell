@@ -72,7 +72,10 @@ and RuntimeGuard =
     { CaseSha: string
       RequiredNode: string
       BuildPath: string
-      Requirements: RuntimeRequirement list }
+      /// Requirements resolved inside the Jenkins execution identity.
+      Requirements: RuntimeRequirement list
+      /// Equivalent requirements expressed in Fogell's local build identity.
+      FogellRequirements: RuntimeRequirement list }
 
 and RuntimeRequirement =
     | PresentAtPath of command: string * path: string
@@ -90,54 +93,62 @@ module Jenkins =
     let private client = new HttpClient(Timeout = TimeSpan.FromMinutes 10.0)
 
     /// Translate the corpus lane's deliberately small environment protocol into
-    /// a typed runtime requirement. The wire format carries a path in every mode
-    /// so partial old/new runner combinations fail closed: present requires one
-    /// absolute safe path, while absent requires the exact non-path sentinel `-`.
+    /// typed runtime requirements. The wire format carries both execution-side
+    /// paths so partial old/new runner combinations fail closed: present requires
+    /// two absolute safe paths, while absent requires two exact `-` sentinels.
     let configureRuntimeGuard
         (caseSha: string)
         (node: string)
         (command: string)
-        (toolPath: string)
+        (fogellToolPath: string)
+        (jenkinsToolPath: string)
         (expectation: string)
         (buildPath: string option)
         (caseCount: int)
         =
-        let values = [ caseSha; node; command; toolPath; expectation ]
+        let values = [ caseSha; node; command; fogellToolPath; jenkinsToolPath; expectation ]
         let present value = not (String.IsNullOrEmpty value)
         let safe (pattern: string) (value: string) = Regex.IsMatch(value, pattern)
 
         match values |> List.filter present |> List.length with
         | 0 -> Ok(None, None)
-        | 5 ->
+        | 6 ->
             let commonValid =
                 safe "^[0-9a-f]{64}$" caseSha
                 && safe "^[A-Za-z0-9._-]+$" node
                 && safe "^[A-Za-z0-9][A-Za-z0-9._+-]*$" command
 
-            let requirement =
+            let requirements =
                 match expectation with
-                | "present" when safe "^/[A-Za-z0-9._/+:-]+$" toolPath ->
-                    Ok(PresentAtPath(command, toolPath))
-                | "present" -> Error "expectation 'present' requires an absolute safe tool path"
-                | "absent" when toolPath = "-" -> Ok(AbsentCommand command)
-                | "absent" -> Error "expectation 'absent' requires tool path '-'"
+                | "present"
+                    when safe "^/[A-Za-z0-9._/+:-]+$" fogellToolPath
+                         && safe "^/[A-Za-z0-9._/+:-]+$" jenkinsToolPath ->
+                    Ok(
+                        PresentAtPath(command, jenkinsToolPath),
+                        PresentAtPath(command, fogellToolPath)
+                    )
+                | "present" -> Error "expectation 'present' requires absolute safe Fogell and Jenkins tool paths"
+                | "absent" when fogellToolPath = "-" && jenkinsToolPath = "-" ->
+                    Ok(AbsentCommand command, AbsentCommand command)
+                | "absent" -> Error "expectation 'absent' requires Fogell and Jenkins tool paths '-'"
                 | _ -> Error "expectation must be exactly 'present' or 'absent'"
 
-            match commonValid, requirement, buildPath, caseCount with
+            match commonValid, requirements, buildPath, caseCount with
             | false, _, _, _ -> Error "malformed case SHA, node, or command"
             | true, Error why, _, _ -> Error why
-            | true, Ok requirement, Some path, 1 ->
+            | true, Ok(jenkinsRequirement, fogellRequirement), Some path, 1 ->
                 Ok(
                     Some caseSha,
                     Some
                         { CaseSha = caseSha
                           RequiredNode = node
                           BuildPath = path
-                          Requirements = [ requirement ] }
+                          Requirements = [ jenkinsRequirement ]
+                          FogellRequirements = [ fogellRequirement ] }
                 )
             | true, Ok _, Some _, _ -> Error "exactly one corpus case is required"
             | true, Ok _, None, _ -> Error "FOGELL_JENKINS_BUILD_PATH is required"
-        | _ -> Error "all five FOGELL_RUNTIME_GUARD_* values are required"
+        | _ -> Error "all six FOGELL_RUNTIME_GUARD_* values are required"
 
     let jobNameForCase (casePath: string) =
         "diff-"

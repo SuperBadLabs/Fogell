@@ -268,7 +268,7 @@ audit_runner() {
   [ "$(rg -c '^runtime_pins="\$cli_source/differential/corpus-runtime-pins\.tsv"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^snap_dir=\$\(mktemp -d\); cli_private=\$\(mktemp -d\); cli_source="\$cli_private/source"; cli_build="\$cli_private/output"; snaps=\(\)$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^cli="\$cli_build/fogell-diff\.dll"$' "$runner")" = 1 ] || return 1
-  [ "$(rg -c '^\[ "\$capability" = fogell-runtime-guard-v5 \] \\$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^\[ "\$capability" = fogell-runtime-guard-v6 \] \\$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  \[ -n "\$cli_private" \] && rm -rf "\$cli_private"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  "\$runtime_pin_checker" "\$runtime_pins" "\$\{pin_ids\[@\]\}"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^source "\$workspace_helper" \|\| die ' "$runner")" = 1 ] || return 1
@@ -281,12 +281,14 @@ audit_runner() {
   [ "$(rg -F -c 'if ! queue_json=$(curl --globoff -sS -m 10 "$tunnel_url/queue/api/json?tree=items[id]" 2>&1); then' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  FOGELL_JENKINS_BUILD_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  export FOGELL_JENKINS_BUILD_PATH$' "$runner")" = 1 ] || return 1
-  [ "$(rg -c 'read -r guard_pin guard_command guard_expectation _ guard_tool_path _ guard_image guard_digest guard_container_port guard_host_binding guard_node guard_plugin_count guard_plugin_sha guard_extra <<< "\$guard_row"$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c 'read -r guard_pin guard_command guard_expectation guard_fogell_tool_path guard_tool_path _ guard_image guard_digest guard_container_port guard_host_binding guard_node guard_plugin_count guard_plugin_sha guard_extra <<< "\$guard_row"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  FOGELL_RUNTIME_GUARD_CASE_SHA=\$\{file_digests\[0\]\}$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  FOGELL_RUNTIME_GUARD_NODE=\$guard_node$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  FOGELL_RUNTIME_GUARD_COMMAND=\$guard_command$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  FOGELL_RUNTIME_GUARD_EXPECTATION=\$guard_expectation$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^  FOGELL_RUNTIME_GUARD_FOGELL_TOOL_PATH=\$guard_fogell_tool_path$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  FOGELL_RUNTIME_GUARD_TOOL_PATH=\$guard_tool_path$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^[[:space:]]+FOGELL_RUNTIME_GUARD_FOGELL_TOOL_PATH FOGELL_RUNTIME_GUARD_TOOL_PATH$' "$runner")" = 2 ] || return 1
   [ "$(rg -c '^    FOGELL_RUNTIME_GUARD_COMMAND FOGELL_RUNTIME_GUARD_EXPECTATION \\$' "$runner")" = 1 ] || return 1
   [ "$(rg -F -c 'podman run --pull=never -d --name $oracle_name --label fogell.lane-token=$FOGELL_JENKINS_ACCESS_TOKEN' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^FOGELL_JENKINS_ACCESS_TOKEN=\$\(od -An -N16 -tx1 /dev/urandom \| tr -d '\'' \\n'\''\)$' "$runner")" = 1 ] || return 1
@@ -347,8 +349,10 @@ audit_build_path_sources() {
   [ "$(rg -c 'path when path = expected -> Some path' "$cli_source")" = 1 ] || return 1
   [ "$(rg -c 'FOGELL_RUNTIME_GUARD_CASE_SHA' "$cli_source")" = 1 ] || return 1
   [ "$(rg -c 'FOGELL_RUNTIME_GUARD_EXPECTATION' "$cli_source")" = 1 ] || return 1
+  [ "$(rg -c 'FOGELL_RUNTIME_GUARD_FOGELL_TOOL_PATH' "$cli_source")" = 1 ] || return 1
   [ "$(rg -c 'runtimeGuardCaseSha' "$cli_source")" -ge 2 ] || return 1
-  [ "$(rg -F -c '| "absent" when toolPath = "-" -> Ok(AbsentCommand command)' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c '| "absent" when fogellToolPath = "-" && jenkinsToolPath = "-" ->' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'FogellRequirements = [ fogellRequirement ]' "$jenkins")" = 1 ] || return 1
   [ "$(rg -c 'runtimeGuardScript guard' "$jenkins")" = 1 ] || return 1
   [ "$(rg -c "runtime guard required Jenkins node" "$jenkins")" = 1 ] || return 1
   [ "$(rg -c 'FOGELL_RUNTIME_GUARD_OK' "$jenkins")" -ge 2 ] || return 1
@@ -396,12 +400,13 @@ audit_build_path_sources() {
   [ "$(rg -F -c '/job/{activeJobName}/{buildNumber}/replay/' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'String.Equals(observed, expectedScript, StringComparison.Ordinal)' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c '| [ "--runtime-guard-capability" ] ->' "$cli_source")" = 1 ] || return 1
-  [ "$(rg -F -c 'printfn "fogell-runtime-guard-v5"' "$cli_source")" = 1 ] || return 1
+  [ "$(rg -F -c 'printfn "fogell-runtime-guard-v6"' "$cli_source")" = 1 ] || return 1
   [ "$(rg -F -c 'FogellSide.runScmWithRuntimeGuard' "$cli_source")" = 1 ] || return 1
   [ "$(rg -F -c 'FogellSide.runManyWithRuntimeGuard' "$cli_source")" = 1 ] || return 1
   [ "$(rg -F -c 'let private verifyRuntimeGuardAttempt' "$fogell_source")" = 1 ] || return 1
   [ "$(rg -F -c 'LaunchEnvironment.buildBaseline (agentHome workspaceRoot jobName buildNumber)' "$fogell_source")" = 1 ] || return 1
   [ "$(rg -F -c 'LaunchEnvironment.resolveBuildExecutable command workspaceRoot environment' "$fogell_source")" = 1 ] || return 1
+  [ "$(rg -F -c 'guard.FogellRequirements' "$fogell_source")" = 1 ] || return 1
   [ "$(rg -F -c 'match verifyRuntimeGuardAttempt guard workspaceRoot jobName (List.length acc + 1) with' "$fogell_source")" = 1 ] || return 1
   [ "$(rg -F -c 'invalidOp $"Fogell runtime guard failed: {why}"' "$fogell_source")" = 1 ] || return 1
 }
@@ -573,10 +578,14 @@ reject_runner_mutant "working-tree executed-surface allowlist" 's#allowlist="$cl
 reject_runner_mutant "working-tree runtime-pin policy" 's#runtime_pins="$cli_source/differential/corpus-runtime-pins.tsv"#runtime_pins="differential/corpus-runtime-pins.tsv"#'
 reject_runner_mutant "unlocked CLI restore" 's/ --locked-mode / /'
 reject_runner_mutant "shared CLI output" 's#cli="$cli_build/fogell-diff.dll"#cli="tools/Fogell.Differential.Cli/bin/fogell-diff.dll"#'
-reject_runner_mutant "missing CLI capability handshake" 's/\[ "$capability" = fogell-runtime-guard-v5 \]/[ -n "$capability" ]/'
-reject_runner_mutant "missing resolution-expectation parsing" 's/guard_command guard_expectation _ guard_tool_path/guard_command _ _ guard_tool_path/'
+reject_runner_mutant "missing CLI capability handshake" 's/\[ "$capability" = fogell-runtime-guard-v6 \]/[ -n "$capability" ]/'
+reject_runner_mutant "missing resolution-expectation parsing" 's/guard_command guard_expectation guard_fogell_tool_path/guard_command _ guard_fogell_tool_path/'
+reject_runner_mutant "missing Fogell tool-path parsing" 's/guard_expectation guard_fogell_tool_path guard_tool_path/guard_expectation _ guard_tool_path/'
 reject_runner_mutant "missing resolution-expectation assignment" '/^  FOGELL_RUNTIME_GUARD_EXPECTATION=\$guard_expectation$/d'
 reject_runner_mutant "missing resolution-expectation export" '/^    FOGELL_RUNTIME_GUARD_COMMAND FOGELL_RUNTIME_GUARD_EXPECTATION \\/s/ FOGELL_RUNTIME_GUARD_EXPECTATION//'
+reject_runner_mutant "missing Fogell tool-path assignment" '/^  FOGELL_RUNTIME_GUARD_FOGELL_TOOL_PATH=\$guard_fogell_tool_path$/d'
+reject_runner_mutant "missing Fogell tool-path export" '/^    FOGELL_RUNTIME_GUARD_FOGELL_TOOL_PATH FOGELL_RUNTIME_GUARD_TOOL_PATH$/s/FOGELL_RUNTIME_GUARD_FOGELL_TOOL_PATH //'
+reject_runner_mutant "missing ambient Fogell tool-path clearing" '0,/^  FOGELL_RUNTIME_GUARD_FOGELL_TOOL_PATH FOGELL_RUNTIME_GUARD_TOOL_PATH$/s/FOGELL_RUNTIME_GUARD_FOGELL_TOOL_PATH //'
 reject_runner_mutant "missing local pre-listener access fence" '/^"\$fence_script" local access-apply$/d'
 reject_runner_mutant "missing remote pre-listener access fence" '/^"\$fence_script" jenkins access-apply$/d'
 reject_runner_mutant "mutable oracle image pull" 's/podman run --pull=never/podman run --pull=always/'
@@ -608,6 +617,7 @@ reject_jenkins_mutant "missing target build-token check" '/\$FOGELL_BUILD_TOKEN.
 reject_jenkins_mutant "missing target command-resolution check" '/          actual=\$(command -v {command}) || exit 91/d'
 reject_jenkins_mutant "missing target absent-command check" '/          if command -v {command} >\/dev\/null 2>&1; then exit 94; fi/d'
 reject_jenkins_mutant "missing target marker validation" 's/validateAndRemoveTargetRuntimeMarker/acceptTargetRuntimeMarker/g'
+reject_jenkins_mutant "Jenkins path reused for Fogell" 's/FogellRequirements = \[ fogellRequirement \]/FogellRequirements = [ jenkinsRequirement ]/'
 reject_jenkins_mutant "missing queue Location" 's/if isNull r.Headers.Location then None/if true then None/'
 reject_jenkins_mutant "loose queue Location parser" 's/\[1-9\]\[0-9\]\*/[0-9]*/'
 reject_jenkins_mutant "wrong queue poll ownership" 's#/queue/item/{queueId}/api/json#/queue/api/json#'
@@ -631,7 +641,7 @@ fi
 echo "  refused bypassed per-build Fogell guard mutant"
 
 cp tools/Fogell.Differential.Cli/Program.fs "$scratch/Program.fs"
-sed -i 's/printfn "fogell-runtime-guard-v5"/printfn "fogell-runtime-guard-v4"/' "$scratch/Program.fs"
+sed -i 's/printfn "fogell-runtime-guard-v6"/printfn "fogell-runtime-guard-v5"/' "$scratch/Program.fs"
 if cmp -s tools/Fogell.Differential.Cli/Program.fs "$scratch/Program.fs"; then
   echo "RUNTIME-PIN PROOF FAILED: CLI capability mutant did not apply" >&2; exit 1
 fi
