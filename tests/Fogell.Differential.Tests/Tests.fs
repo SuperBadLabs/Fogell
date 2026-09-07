@@ -9754,7 +9754,7 @@ let compileRefusalDisposition =
                       "0123456789abcdef"
                       marker
                       "pipeline {\n  agent any\n  stages {\n    stage('Build') { steps { sh 'make build-base' } }\n  }\n}\n"
-              Expect.isOk target "one exact top-level stages anchor accepts target attestation"
+              Expect.isOk target "the parsed top-level stages body accepts target attestation"
               let targetScript = target |> Result.defaultValue ""
               Expect.stringContains targetScript marker "the unpredictable case-bound marker runs in the target build"
               Expect.stringContains
@@ -9763,9 +9763,36 @@ let compileRefusalDisposition =
                   "the target build checks the owned trigger token before its marker"
               Expect.stringContains targetScript "actual=$(command -v make)" "the target build resolves the pinned tool"
               Expect.stringContains targetScript $"[ \"$PATH\" = \"{path}\" ]" "the target build checks effective PATH"
+
+              let fourSpaceSource =
+                  "pipeline {\n"
+                  + "    agent any\n"
+                  + "    // stages { in a comment is not an insertion point\n"
+                  + "    stages {\n"
+                  + "        stage('Install') { steps { sh 'make install' } }\n"
+                  + "    }\n"
+                  + "}\n"
+              let fourSpaceTarget =
+                  Jenkins.injectTargetRuntimeGuard
+                      guard
+                      "0123456789abcdef"
+                      marker
+                      fourSpaceSource
+              Expect.isOk fourSpaceTarget "corpus formatting does not become a runtime-guard prerequisite"
+              let fourSpaceScript = fourSpaceTarget |> Result.defaultValue ""
+              Expect.equal
+                  (Text.RegularExpressions.Regex.Matches(
+                      fourSpaceScript,
+                      Text.RegularExpressions.Regex.Escape marker).Count)
+                  1
+                  "the parsed insertion point adds exactly one unpredictable marker"
+              Expect.isLessThan
+                  (fourSpaceScript.IndexOf("Fogell target runtime guard", StringComparison.Ordinal))
+                  (fourSpaceScript.IndexOf("stage('Install')", StringComparison.Ordinal))
+                  "the guard executes before the corpus first stage"
               Expect.isError
                   (Jenkins.injectTargetRuntimeGuard guard "0123456789abcdef" marker "pipeline { agent any; stages {} }")
-                  "a non-canonical insertion point is refused"
+                  "a definition with no executable stages is refused"
               Expect.isError
                   (Jenkins.injectTargetRuntimeGuard
                       guard
