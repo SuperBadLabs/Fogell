@@ -226,7 +226,7 @@ tomasbjerre_bitbucket-server-jenkins-release-tags.Jenkinsfile	admitted	-	parsed;
 varunpalekar_php-ci-cd.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 vineet68sharma_CI-CD-Docker.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 vinsguru_docker-selenium-jenkinsfile.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-vskurikhin_DayBook3.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
+vskurikhin_DayBook3.Jenkinsfile	1	-	receipt:vskurikhin_DayBook3
 wanghaoxi3000_advproject.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 wildec2_java-selenium-framework.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 yashpimple_Jenkins-CI-CD-with-GitHub-Integration.Jenkinsfile	3	malformed_syntax	malformed_syntax ordinary string literal crosses a physical line ending @9:1
