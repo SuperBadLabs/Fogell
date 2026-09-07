@@ -268,7 +268,7 @@ audit_runner() {
   [ "$(rg -c '^runtime_pins="\$cli_source/differential/corpus-runtime-pins\.tsv"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^snap_dir=\$\(mktemp -d\); cli_private=\$\(mktemp -d\); cli_source="\$cli_private/source"; cli_build="\$cli_private/output"; snaps=\(\)$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^cli="\$cli_build/fogell-diff\.dll"$' "$runner")" = 1 ] || return 1
-  [ "$(rg -c '^\[ "\$capability" = fogell-runtime-guard-v8 \] \\$' "$runner")" = 1 ] || return 1
+  [ "$(rg -c '^\[ "\$capability" = fogell-runtime-guard-v9 \] \\$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  \[ -n "\$cli_private" \] && rm -rf "\$cli_private"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^  "\$runtime_pin_checker" "\$runtime_pins" "\$\{pin_ids\[@\]\}"$' "$runner")" = 1 ] || return 1
   [ "$(rg -c '^source "\$workspace_helper" \|\| die ' "$runner")" = 1 ] || return 1
@@ -389,6 +389,11 @@ audit_build_path_sources() {
   [ "$(rg -F -c 'let internal validateRuntimeGuardTargetSource (guard: RuntimeGuard) (script: string) =' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'Regex.IsMatch(script, "(?<![A-Za-z0-9_])PATH(?=$|[^A-Za-z0-9_])", RegexOptions.CultureInvariant)' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'match validateRuntimeGuardTargetSource guard script with' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'let validateRuntimeGuardDefinitions (guard: RuntimeGuard) (definitions: JobDefinition list) =' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'match validateRuntimeGuardDefinitions guard builds with' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'let runtimeGuardPreflight =' "$cli_source")" = 1 ] || return 1
+  [ "$(rg -F -c 'Jenkins.validateRuntimeGuardDefinitions guard definitions' "$cli_source")" = 1 ] || return 1
+  [ "$(rg -F -c 'match runtimeGuardPreflight with' "$cli_source")" = 1 ] || return 1
   [ "$(rg -F -c 'match Fogell.Pipeline.Parser.Parser.topLevelOpaqueSections script with' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c '| Ok (_ :: _) ->' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'let firstUserShell (pipeline: Pipeline) =' "$jenkins")" = 1 ] || return 1
@@ -431,7 +436,7 @@ audit_build_path_sources() {
   [ "$(rg -F -c '/job/{activeJobName}/{buildNumber}/replay/' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'String.Equals(observed, expectedScript, StringComparison.Ordinal)' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c '| [ "--runtime-guard-capability" ] ->' "$cli_source")" = 1 ] || return 1
-  [ "$(rg -F -c 'printfn "fogell-runtime-guard-v8"' "$cli_source")" = 1 ] || return 1
+  [ "$(rg -F -c 'printfn "fogell-runtime-guard-v9"' "$cli_source")" = 1 ] || return 1
   [ "$(rg -F -c 'FogellSide.runScmWithRuntimeGuard' "$cli_source")" = 1 ] || return 1
   [ "$(rg -F -c 'FogellSide.runManyWithRuntimeGuard' "$cli_source")" = 1 ] || return 1
   [ "$(rg -F -c 'let private verifyRuntimeGuardEnvironment' "$fogell_source")" = 1 ] || return 1
@@ -617,7 +622,7 @@ reject_runner_mutant "working-tree executed-surface allowlist" 's#allowlist="$cl
 reject_runner_mutant "working-tree runtime-pin policy" 's#runtime_pins="$cli_source/differential/corpus-runtime-pins.tsv"#runtime_pins="differential/corpus-runtime-pins.tsv"#'
 reject_runner_mutant "unlocked CLI restore" 's/ --locked-mode / /'
 reject_runner_mutant "shared CLI output" 's#cli="$cli_build/fogell-diff.dll"#cli="tools/Fogell.Differential.Cli/bin/fogell-diff.dll"#'
-reject_runner_mutant "missing CLI capability handshake" 's/\[ "$capability" = fogell-runtime-guard-v8 \]/[ -n "$capability" ]/'
+reject_runner_mutant "missing CLI capability handshake" 's/\[ "$capability" = fogell-runtime-guard-v9 \]/[ -n "$capability" ]/'
 reject_runner_mutant "missing resolution-expectation parsing" 's/guard_command guard_expectation guard_fogell_tool_path/guard_command _ guard_fogell_tool_path/'
 reject_runner_mutant "missing Fogell tool-path parsing" 's/guard_expectation guard_fogell_tool_path guard_tool_path/guard_expectation _ guard_tool_path/'
 reject_runner_mutant "missing resolution-expectation assignment" '/^  FOGELL_RUNTIME_GUARD_EXPECTATION=\$guard_expectation$/d'
@@ -723,12 +728,20 @@ fi
 echo "  refused parallel runtime-guard absorption mutant"
 
 cp tools/Fogell.Differential.Cli/Program.fs "$scratch/Program.fs"
-sed -i 's/printfn "fogell-runtime-guard-v8"/printfn "fogell-runtime-guard-v7"/' "$scratch/Program.fs"
+sed -i 's/printfn "fogell-runtime-guard-v9"/printfn "fogell-runtime-guard-v8"/' "$scratch/Program.fs"
 if cmp -s tools/Fogell.Differential.Cli/Program.fs "$scratch/Program.fs"; then
   echo "RUNTIME-PIN PROOF FAILED: CLI capability mutant did not apply" >&2; exit 1
 fi
 if audit_build_path_sources src/Fogell.Differential/Jenkins.fs "$scratch/Program.fs"; then
   echo "RUNTIME-PIN PROOF FAILED: stale CLI capability mutant was accepted" >&2; exit 1
 fi
+
+cp tools/Fogell.Differential.Cli/Program.fs "$scratch/Program.fs"
+sed -i 's/match runtimeGuardPreflight with/match Ok() with/' "$scratch/Program.fs"
+if audit_build_path_sources src/Fogell.Differential/Jenkins.fs "$scratch/Program.fs"; then
+  echo "RUNTIME-PIN PROOF FAILED: bypassed shared engine preflight mutant was accepted" >&2; exit 1
+fi
+echo "  refused bypassed shared engine preflight mutant"
+
 echo "=== corpus runtime pin: private HEAD controls/CLI, disposable oracle, access fences, owned queue, Replay, and target guards mutation-proven ==="
 echo "CORPUS RUNTIME PIN: ALL ASSERTIONS PASSED"

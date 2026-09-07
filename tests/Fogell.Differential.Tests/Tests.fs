@@ -9951,6 +9951,16 @@ let compileRefusalDisposition =
                       guard
                       "pipeline { agent any stages { stage('Install') { steps { sh 'make install' } } stage('Deploy') { steps { withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'AwsCreds', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) { sh 'aws deploy' } } } } }")
                   "the current make-pinned corpus shape retains its later literal credential bindings"
+              Expect.isError
+                  (Jenkins.validateRuntimeGuardDefinitions
+                      absentGuard
+                      [ Inline "pipeline { agent any stages { stage('Build') { steps { sh script: 'composer install', returnStatus: true } } } }" ])
+                  "the shared engine preflight refuses a Jenkins target that Fogell could otherwise execute"
+              Expect.isError
+                  (Jenkins.validateRuntimeGuardDefinitions
+                      absentGuard
+                      [ FromScm { Url = "git://fixture/repo.git"; Branch = "case/pinned" } ])
+                  "the shared engine preflight refuses unsupported guarded SCM before either engine"
 
               let sha = String.replicate 64 "a"
               let configured expectation fogellToolPath jenkinsToolPath =

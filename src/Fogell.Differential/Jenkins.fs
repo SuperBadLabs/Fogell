@@ -683,6 +683,16 @@ module Jenkins =
                         | [ _ ], Error why -> Error why
                         | _ -> Error "exactly one Jenkins runtime requirement is required"
 
+    let validateRuntimeGuardDefinitions (guard: RuntimeGuard) (definitions: JobDefinition list) =
+        definitions
+        |> List.fold
+            (fun state definition ->
+                match state, definition with
+                | Error why, _ -> Error why
+                | Ok(), FromScm _ -> Error "runtime-guarded SCM definitions are not supported"
+                | Ok(), Inline script -> validateRuntimeGuardTargetSource guard script)
+            (Ok())
+
     let internal injectTargetRuntimeGuard
         (guard: RuntimeGuard)
         (buildToken: string)
@@ -1029,17 +1039,20 @@ module Jenkins =
                 if cfg.BuildPath <> Some guard.BuildPath then
                     Error "runtime guard and Jenkins job PATH do not name the same exact value"
                 else
-                    builds
-                    |> List.fold
-                        (fun state definition ->
-                            match state, definition with
-                            | Error why, _ -> Error why
-                            | Ok _, FromScm _ -> Error "runtime-guarded SCM definitions are not supported"
-                            | Ok accumulated, Inline script ->
-                                injectTargetRuntimeGuard guard nonce marker script
-                                |> Result.map (fun transformed -> Inline transformed :: accumulated))
-                        (Ok [])
-                    |> Result.map (fun reversed -> List.rev reversed, Some marker, Some nonce)
+                    match validateRuntimeGuardDefinitions guard builds with
+                    | Error why -> Error why
+                    | Ok() ->
+                        builds
+                        |> List.fold
+                            (fun state definition ->
+                                match state, definition with
+                                | Error why, _ -> Error why
+                                | Ok _, FromScm _ -> Error "runtime-guarded SCM definitions are not supported"
+                                | Ok accumulated, Inline script ->
+                                    injectTargetRuntimeGuard guard nonce marker script
+                                    |> Result.map (fun transformed -> Inline transformed :: accumulated))
+                            (Ok [])
+                        |> Result.map (fun reversed -> List.rev reversed, Some marker, Some nonce)
 
         match prepared with
         | Error why -> builds |> List.map (fun _ -> Error $"Jenkins runtime guard refused: {why}")

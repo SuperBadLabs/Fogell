@@ -24,7 +24,7 @@ open Fogell.Execution
 let main argv =
     match Array.toList argv with
     | [ "--runtime-guard-capability" ] ->
-        printfn "fogell-runtime-guard-v8"
+        printfn "fogell-runtime-guard-v9"
         0
 
     // FG-161. Recompute every receipt's seal from the receipt itself.
@@ -565,6 +565,24 @@ let main argv =
                     else
                         None
 
+                // One guard admission decision governs BOTH engines. Jenkins.runMany
+                // reports a rejected target as a Result so ordinary comparison can
+                // describe Jenkins failures; a runtime-guard refusal is instead a
+                // harness boundary and must stop before Fogell can execute the source.
+                let runtimeGuardPreflight =
+                    if malformed then
+                        Ok()
+                    else
+                        match runtimeGuard with
+                        | None -> Ok()
+                        | Some guard ->
+                            let definitions =
+                                match scmSpec with
+                                | Some spec -> [ FromScm spec ]
+                                | None -> scripts |> List.map Inline
+
+                            Jenkins.validateRuntimeGuardDefinitions guard definitions
+
                 // FG-119. A case is run, and if it DIVERGES it is run again before
                 // any verdict is sealed. `dash` writes an `sh -x` trace line in more
                 // than one write(), so two stages of a shell pipeline interleave
@@ -582,6 +600,11 @@ let main argv =
                 // A divergence that reproduces is real and still fails; one that does
                 // not is reported RECOVERED with the original text, never silently.
                 let runBothEngines () =
+                    match runtimeGuardPreflight with
+                    | Error why ->
+                        raise (RuntimeGuardFailure $"Jenkins runtime guard refused: {why}")
+                    | Ok() -> ()
+
                     wipeJenkinsWorkspace ()
 
                     let jenkinsRuns, fogellRuns =
