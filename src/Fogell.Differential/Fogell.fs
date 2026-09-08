@@ -412,107 +412,110 @@ module FogellSide =
             | Result.Error why -> Result.Error why
             | Result.Ok(Some why) -> Result.Error why
             | Result.Ok None ->
-                // FG-253. This repository's runnable controller is explicitly a
-                // single-node controller, and the differential runner exercises that
-                // same local executor. `built-in` is therefore the one label this
-                // execution path offers. Every other label needs scheduler capability
-                // matching, while docker/dockerfile need provisioning and environment
-                // semantics; treating any of them as `agent any` silently runs work
-                // Jenkins would queue or provision elsewhere.
-                let unsupportedAgent scope agent =
-                    match agent with
-                    | AgentLabel label when not (String.Equals(label, "built-in", StringComparison.Ordinal)) ->
-                        Some $"{scope} (`label`: `{label}`)"
-                    | AgentDocker _ -> Some $"{scope} (`docker`)"
-                    | AgentDockerfile _ -> Some $"{scope} (`dockerfile`)"
-                    | AgentUnmodelled(kind, _) -> Some $"{scope} (`{kind}`)"
-                    | AgentAny
-                    | AgentNone
-                    | AgentLabel _ -> None
+                match WalkerArgs.preflightEnvironmentExpressions pipeline with
+                | Result.Error why -> Result.Error why
+                | Result.Ok() ->
+                    // FG-253. This repository's runnable controller is explicitly a
+                    // single-node controller, and the differential runner exercises that
+                    // same local executor. `built-in` is therefore the one label this
+                    // execution path offers. Every other label needs scheduler capability
+                    // matching, while docker/dockerfile need provisioning and environment
+                    // semantics; treating any of them as `agent any` silently runs work
+                    // Jenkins would queue or provision elsewhere.
+                    let unsupportedAgent scope agent =
+                        match agent with
+                        | AgentLabel label when not (String.Equals(label, "built-in", StringComparison.Ordinal)) ->
+                            Some $"{scope} (`label`: `{label}`)"
+                        | AgentDocker _ -> Some $"{scope} (`docker`)"
+                        | AgentDockerfile _ -> Some $"{scope} (`dockerfile`)"
+                        | AgentUnmodelled(kind, _) -> Some $"{scope} (`{kind}`)"
+                        | AgentAny
+                        | AgentNone
+                        | AgentLabel _ -> None
 
-                let agentScopes =
-                    [ match unsupportedAgent "pipeline" pipeline.Agent with
-                      | Some scope -> yield scope
-                      | None -> ()
-                      for stage in Pipeline.flattenStages pipeline.Stages do
-                          match stage.Agent |> Option.bind (unsupportedAgent $"stage '{stage.Name}'") with
+                    let agentScopes =
+                        [ match unsupportedAgent "pipeline" pipeline.Agent with
                           | Some scope -> yield scope
-                          | None -> () ]
-
-                if not (List.isEmpty agentScopes) then
-                    Result.Error(
-                        "unsupported_agent: Declarative agents not offered by the single-node executor are parsed for admission but execution is refused "
-                        + "until label matching, provisioning, workspace placement and agent environment semantics are implemented; scopes: "
-                        + String.concat ", " agentScopes
-                    )
-                else
-                    let scopes =
-                        [ if not (List.isEmpty pipeline.Tools) then
-                              "pipeline"
+                          | None -> ()
                           for stage in Pipeline.flattenStages pipeline.Stages do
-                              if not (List.isEmpty stage.Tools) then
-                                  $"stage '{stage.Name}'" ]
+                              match stage.Agent |> Option.bind (unsupportedAgent $"stage '{stage.Name}'") with
+                              | Some scope -> yield scope
+                              | None -> () ]
 
-                    if not (List.isEmpty scopes) then
+                    if not (List.isEmpty agentScopes) then
                         Result.Error(
-                            "unsupported_tools: Declarative tools selections are parsed for admission but execution is refused "
-                            + "until installation lookup, agent provisioning and tool environment injection are implemented; scopes: "
-                            + String.concat ", " scopes
+                            "unsupported_agent: Declarative agents not offered by the single-node executor are parsed for admission but execution is refused "
+                            + "until label matching, provisioning, workspace placement and agent environment semantics are implemented; scopes: "
+                            + String.concat ", " agentScopes
                         )
                     else
-                        // FG-014 residual slice. Bracket-valued named arguments are retained as
-                        // source expressions for parse-only corpus admission. No executable step
-                        // has been proven to consume a named list/map with Jenkins semantics, so
-                        // the shared preflight refuses them before workspace preparation or any
-                        // earlier step. The one exception is descriptor-owned and inert for a
-                        // single build: pipeline `rateLimitBuilds(throttle: [...])`, already proven
-                        // by `options-accept-and-ignore`. Positional collections such as
-                        // `withEnv(['A=1'])` are outside this rule: that runtime path is proven.
-                        let rec collectionOccurrences allowPipelineOptionCollections (steps: Step list) =
-                            steps
-                            |> List.collect (fun step ->
-                                let here =
-                                    step.Named
-                                    |> List.choose (fun (name, source) ->
-                                        let value = source.Trim()
+                        let scopes =
+                            [ if not (List.isEmpty pipeline.Tools) then
+                                  "pipeline"
+                              for stage in Pipeline.flattenStages pipeline.Stages do
+                                  if not (List.isEmpty stage.Tools) then
+                                      $"stage '{stage.Name}'" ]
 
-                                        if step.ExpressionArgs.Contains name
-                                           && value.StartsWith("[", StringComparison.Ordinal)
-                                           && value.EndsWith("]", StringComparison.Ordinal)
-                                           && not (
-                                               allowPipelineOptionCollections
-                                               && isDeclaredPipelineOptionCollection step name
-                                           ) then
-                                            Some $"step '{step.Name}' argument `{name}`"
-                                        else
-                                            None)
-
-                                // Only the direct entries of `pipeline.Options` get the
-                                // descriptor exception. A nested block is executable step
-                                // scope again and therefore returns to the default refusal.
-                                here @ collectionOccurrences false step.Block)
-
-                        let postSteps (post: (PostCondition * Step list) list) =
-                            post |> List.collect (fun (_, steps) -> collectionOccurrences false steps)
-
-                        let unsupportedCollections =
-                            collectionOccurrences true pipeline.Options
-                            @ collectionOccurrences false (pipeline.Parameters @ pipeline.Triggers)
-                            @ (pipeline.Stages
-                               |> Pipeline.flattenStages
-                               |> List.collect (fun stage ->
-                                   collectionOccurrences false (stage.Options @ stage.Steps) @ postSteps stage.Post))
-                            @ postSteps pipeline.Post
-                            |> List.distinct
-
-                        if List.isEmpty unsupportedCollections then
-                            Result.Ok pipeline
-                        else
+                        if not (List.isEmpty scopes) then
                             Result.Error(
-                                "unsupported_named_collection: named list/map arguments are parsed for admission but execution is refused "
-                                + "until their step semantics are implemented; occurrences: "
-                                + String.concat ", " unsupportedCollections
+                                "unsupported_tools: Declarative tools selections are parsed for admission but execution is refused "
+                                + "until installation lookup, agent provisioning and tool environment injection are implemented; scopes: "
+                                + String.concat ", " scopes
                             )
+                        else
+                            // FG-014 residual slice. Bracket-valued named arguments are retained as
+                            // source expressions for parse-only corpus admission. No executable step
+                            // has been proven to consume a named list/map with Jenkins semantics, so
+                            // the shared preflight refuses them before workspace preparation or any
+                            // earlier step. The one exception is descriptor-owned and inert for a
+                            // single build: pipeline `rateLimitBuilds(throttle: [...])`, already proven
+                            // by `options-accept-and-ignore`. Positional collections such as
+                            // `withEnv(['A=1'])` are outside this rule: that runtime path is proven.
+                            let rec collectionOccurrences allowPipelineOptionCollections (steps: Step list) =
+                                steps
+                                |> List.collect (fun step ->
+                                    let here =
+                                        step.Named
+                                        |> List.choose (fun (name, source) ->
+                                            let value = source.Trim()
+
+                                            if step.ExpressionArgs.Contains name
+                                               && value.StartsWith("[", StringComparison.Ordinal)
+                                               && value.EndsWith("]", StringComparison.Ordinal)
+                                               && not (
+                                                   allowPipelineOptionCollections
+                                                   && isDeclaredPipelineOptionCollection step name
+                                               ) then
+                                                Some $"step '{step.Name}' argument `{name}`"
+                                            else
+                                                None)
+
+                                    // Only the direct entries of `pipeline.Options` get the
+                                    // descriptor exception. A nested block is executable step
+                                    // scope again and therefore returns to the default refusal.
+                                    here @ collectionOccurrences false step.Block)
+
+                            let postSteps (post: (PostCondition * Step list) list) =
+                                post |> List.collect (fun (_, steps) -> collectionOccurrences false steps)
+
+                            let unsupportedCollections =
+                                collectionOccurrences true pipeline.Options
+                                @ collectionOccurrences false (pipeline.Parameters @ pipeline.Triggers)
+                                @ (pipeline.Stages
+                                   |> Pipeline.flattenStages
+                                   |> List.collect (fun stage ->
+                                       collectionOccurrences false (stage.Options @ stage.Steps) @ postSteps stage.Post))
+                                @ postSteps pipeline.Post
+                                |> List.distinct
+
+                            if List.isEmpty unsupportedCollections then
+                                Result.Ok pipeline
+                            else
+                                Result.Error(
+                                    "unsupported_named_collection: named list/map arguments are parsed for admission but execution is refused "
+                                    + "until their step semantics are implemented; occurrences: "
+                                    + String.concat ", " unsupportedCollections
+                                )
 
     /// FG-103 persisted journals key steps by (stage name, step index), so their
     /// admissible name space is narrower than generic, non-durable execution. Keep
@@ -1606,7 +1609,6 @@ module FogellSide =
                     { Name = ""
                       Agent = None
                       Environment = []
-                      EnvironmentLiteralNames = Set.empty
                       Tools = []
                       Steps = []
                       Options = []

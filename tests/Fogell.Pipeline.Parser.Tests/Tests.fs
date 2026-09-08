@@ -3451,7 +3451,47 @@ let structure =
               let src =
                   "pipeline {\n  agent any\n  environment {\n    FOO = 'bar'\n  }\n  stages {\n    stage('a') { steps { echo 'x' } }\n  }\n}\n"
 
-              Expect.equal (ok src).Environment [ "FOO", "bar" ] "environment pair"
+              Expect.equal
+                  (ok src).Environment
+                  [ { Name = "FOO"
+                      Value = "bar"
+                      Kind = EnvironmentLiteral } ]
+                  "environment binding"
+          }
+
+          test "FG-260 environment bindings retain literal, GString and expression provenance" {
+              let source =
+                  "pipeline { agent any environment {\n"
+                  + "LITERAL = 'plain $VALUE'\n"
+                  + "GSTRING = \"prefix $VALUE\"\n"
+                  + "EXPRESSION = helper()\n"
+                  + "} stages { stage('a') { steps { echo 'x' } } } }"
+
+              Expect.equal
+                  (ok source).Environment
+                  [ { Name = "LITERAL"
+                      Value = "plain $VALUE"
+                      Kind = EnvironmentLiteral }
+                    { Name = "GSTRING"
+                      Value = "prefix $VALUE"
+                      Kind = EnvironmentGString }
+                    { Name = "EXPRESSION"
+                      Value = "helper()"
+                      Kind = EnvironmentExpression } ]
+                  "each RHS keeps its own executable provenance"
+          }
+
+          test "FG-260 compact and semicolon environment expressions stop at their section boundary" {
+              let source =
+                  "def helper() { return 'ok' }\n"
+                  + "pipeline { agent any environment { FIRST = helper(); SECOND = helper() } "
+                  + "stages { stage('a') { environment { THIRD = helper() } steps { echo 'x' } } } }"
+
+              let pipeline = ok source
+              Expect.equal (pipeline.Environment |> List.map (fun item -> item.Name, item.Value))
+                  [ "FIRST", "helper()"; "SECOND", "helper()" ]
+                  "semicolon entries retain only their expression"
+              Expect.equal pipeline.Stages.Head.Environment.Head.Value "helper()" "the closing brace is not consumed"
           }
 
           test "FG-014 balanced map and list named values retain structure and provenance" {

@@ -12072,6 +12072,246 @@ let dirWorkspaceLifecycle =
                           "deleteDir on a logical absent cwd is a no-op, not mkdir")
           } ]
 
+/// FG-260. Declarative environment RHS values are evaluated once per scope,
+/// against the environment visible before that scope. These controls isolate
+/// the helper boundary that rejected FG-259's corpus candidate.
+let environmentExpressionEvaluation =
+    let parse source =
+        match Fogell.Pipeline.Parser.Parser.parse source with
+        | Ok pipeline -> pipeline
+        | Error why -> failtestf "pipeline did not parse: %O" why
+
+    let helper =
+        "def getdockertag(){\n"
+        + "    return \"${env.GIT_BRANCH}\".replace(\"/\",\".\") + \".\"+\"${env.BUILD_ID}\"\n"
+        + "}    \n"
+
+    let pipeline environment steps =
+        helper
+        + "pipeline { agent any environment {\n"
+        + environment
+        + "\n} stages { stage('probe') { steps { "
+        + steps
+        + " } } } }"
+
+    testList
+        "FG-260 pipeline environment expression evaluation"
+        [ test "the exact helper sees the pre-block environment and replaces slashes" {
+              let parsed =
+                  parse (
+                      pipeline
+                          "GIT_BRANCH = 'sibling/poison'\nBUILD_ID = '99'\nDOCKER_TAG = getdockertag()"
+                          "echo \"$DOCKER_TAG\"")
+
+              let resolve =
+                  WalkerArgs.envForWith
+                      [ "GIT_BRANCH", "feature/owned"; "BUILD_ID", "7" ]
+                      parsed
+
+              let visible = resolve [] parsed.Stages.Head |> Map.ofList
+              Expect.equal visible["DOCKER_TAG"] "feature.owned.7" "siblings are invisible to the helper"
+              Expect.equal visible["GIT_BRANCH"] "sibling/poison" "the declared value still wins after evaluation"
+              Expect.equal visible["BUILD_ID"] "99" "the sibling declaration is installed after evaluation"
+          }
+
+          test "missing ambient branch and a late withEnv overlay cannot change the eager value" {
+              let root =
+                  IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg260-helper-" + Guid.NewGuid().ToString("N"))
+
+              let source =
+                  pipeline
+                      "DOCKER_REGISTRY = \"varunpalekar1/php-test\"\nDOCKER_TAG = getdockertag()"
+                      "withEnv(['GIT_BRANCH=late/poison', 'BUILD_ID=99']) { echo \"$DOCKER_TAG|$DOCKER_REGISTRY\" }"
+
+              try
+                  match FogellSide.run [] root "job" source with
+                  | Error why -> failtestf "the measured helper surface was refused: %s" why
+                  | Ok trace ->
+                      Expect.equal trace.Result "success" "the echo-only control completes"
+                      Expect.equal
+                          trace.Output
+                          [ "null.1|varunpalekar1/php-test" ]
+                          "the helper was evaluated before the late overlay"
+              finally
+                  if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "legacy GStrings see earlier siblings while expressions use the pre-block snapshot" {
+              let parsed =
+                  parse (
+                      "pipeline { agent any environment {\n"
+                      + "PATH = \"/owned:${PATH}\"\n"
+                      + "COPY = \"${PATH}\"\n"
+                      + "MISSING = \"$NOPE\"\n"
+                      + "RAW = '${PATH}'\n"
+                      + "} stages { stage('probe') { steps { echo 'ok' } } } }")
+
+              let visible =
+                  WalkerArgs.envForWith [ "PATH", "/ambient" ] parsed [] parsed.Stages.Head
+                  |> Map.ofList
+
+              Expect.equal visible["PATH"] "/owned:/ambient" "self-extension reads the ambient PATH"
+              Expect.equal visible["COPY"] "/owned:/ambient" "a quoted binding sees its earlier sibling"
+              Expect.equal visible["MISSING"] "" "legacy quoted-environment lookup still erases an absent name"
+              Expect.equal visible["RAW"] "${PATH}" "literal text is never interpolated"
+          }
+
+          test "effects, mutations, arity errors and non-scalars fail closed" {
+              let cases =
+                  [ "hosted step", "VALUE = sh('touch must-not-run.txt')", "", "Evaluation"
+                    "parse failure", "VALUE = getdockertag(", "", "Parse"
+                    "environment mutation",
+                    "VALUE = mutate()",
+                    "def mutate() { env.POISON = 'yes'; return 'ok' }\n",
+                    "Evaluation"
+                    "wrong arity", "VALUE = getdockertag('extra')", "", "Arity"
+                    "non-scalar", "VALUE = [one: 1]", "", "Coercion"
+                    "null arithmetic", "VALUE = null + 1", "", "Coercion"
+                    "boolean arithmetic", "VALUE = true + 1", "", "Coercion"
+                    "nullable replace receiver", "VALUE = env.MISSING.replace('a', 'b')", "", "Coercion"
+                    "empty replace search", "VALUE = 'abc'.replace('', '.')", "", "Coercion"
+                    "expanding replace", "VALUE = 'abc'.replace('a', 'long')", "", "Coercion"
+                    "shadowed env map",
+                    "VALUE = shadow('text')",
+                    "def shadow(env) { return env.MISSING.replace('a', 'b') }\n",
+                    "Evaluation"
+                    "return is not an RHS expression", "VALUE = return 'x'", "", "Evaluation" ]
+
+              for label, declaration, extraPreamble, kind in cases do
+                  let source =
+                      extraPreamble
+                      + helper
+                      + "pipeline { agent any environment {\n"
+                      + declaration
+                      + "\n} stages { stage('probe') { steps { sh 'touch must-not-run.txt' } } } }"
+
+                  let root =
+                      IO.Path.Combine(IO.Path.GetTempPath(), "fogell-fg260-refusal-" + Guid.NewGuid().ToString("N"))
+
+                  try
+                      match FogellSide.run [] root "job" source with
+                      | Ok trace -> failtestf "%s unexpectedly executed: %A" label trace
+                      | Error why ->
+                          Expect.stringContains why "environment" $"{label}: refusal names the environment boundary"
+                          Expect.stringContains why kind $"{label}: refusal retains its typed class"
+                          Expect.isFalse
+                              (IO.File.Exists(IO.Path.Combine(root, "job", "must-not-run.txt")))
+                              $"{label}: no successor effect runs"
+                          Expect.isFalse (IO.Directory.Exists root) $"{label}: preflight leaves the filesystem untouched"
+                  finally
+                      if IO.Directory.Exists root then IO.Directory.Delete(root, true)
+          }
+
+          test "only reachable helpers are validated and the first RHS failure wins" {
+              let unrelated =
+                  parse (
+                      "def deploy() { sh 'echo later' }\n"
+                      + "pipeline { agent any environment { VALUE = 1 } "
+                      + "stages { stage('probe') { steps { echo 'ok' } } } }")
+
+              Expect.equal
+                  (WalkerArgs.preflightEnvironmentExpressions unrelated)
+                  (Ok())
+                  "an unrelated scripted helper is outside the environment call graph"
+
+              let competing =
+                  parse (
+                      "pipeline { agent any environment {\n"
+                      + "FIRST = missingHelper()\n"
+                      + "SECOND = [one: 1]\n"
+                      + "} stages { stage('probe') { steps { echo 'ok' } } } }")
+
+              match WalkerArgs.preflightEnvironmentExpressionErrors competing with
+              | Error error ->
+                  Expect.equal error.Scope "pipeline" "the diagnostic structurally retains its scope"
+                  Expect.equal error.Name "FIRST" "source order selects the first failing binding"
+                  Expect.equal error.Kind WalkerArgs.Lookup "lookup precedes the later coercion failure"
+                  Expect.isFalse (error.Detail.Contains "SECOND") "the later failure cannot replace the first"
+              | Ok() -> failtest "competing invalid expressions unexpectedly passed preflight"
+          }
+
+          test "static helper traversal has a bounded work budget" {
+              let arity = 10
+
+              let helper index =
+                  if index = 0 then
+                      "def fan0() { return true }\n"
+                  else
+                      let arguments = [ 1 .. arity ] |> List.map (fun _ -> $"fan{index - 1}()") |> String.concat ", "
+                      let parameters = [ 1 .. arity ] |> List.map (fun parameter -> $"p{parameter}") |> String.concat ", "
+                      $"def sink{index}({parameters}) {{ return true }}\ndef fan{index}() {{ return sink{index}({arguments}) }}\n"
+
+              let preamble = [ 0 .. 7 ] |> List.map helper |> String.concat ""
+
+              let parsed =
+                  parse (
+                      preamble
+                      + "pipeline { agent any environment { VALUE = fan7() } "
+                      + "stages { stage('probe') { steps { echo 'ok' } } } }")
+
+              match WalkerArgs.preflightEnvironmentExpressions parsed with
+              | Error why -> Expect.stringContains why "static analysis work" "fan-out is stopped by named analysis fuel"
+              | Ok() -> failtest "exponential helper fan-out unexpectedly passed preflight"
+          }
+
+          test "nested stages inherit and share their enclosing stage environment" {
+              let parsed =
+                  parse (
+                      "def value() { return 'unused' }\n"
+                      + "pipeline { agent any stages { stage('outer') { environment { BASE = 'owned'; OUTER = value() } stages { "
+                      + "stage('inner') { environment { COPY = \"${BASE}\"; CHILD = value() } steps { echo 'ok' } } "
+                      + "} } } }")
+
+              let counts = Collections.Concurrent.ConcurrentDictionary<string, int>()
+              let evaluate (scope: string) (name: string) (visible: Map<string, string>) _ _ =
+                  counts.AddOrUpdate(scope + ":" + name, 1, fun _ count -> count + 1) |> ignore
+                  if name = "CHILD" then Map.find "BASE" visible else scope + ":" + name
+
+              let resolve = WalkerArgs.envForWithUsing evaluate [] parsed
+              let outer = parsed.Stages.Head
+              let inner = outer.Nested.Head
+              System.Threading.Tasks.Parallel.For(0, 32, fun _ -> resolve [] inner |> ignore) |> ignore
+
+              let visible = resolve [] inner |> Map.ofList
+              Expect.equal visible["BASE"] "owned" "the parent literal is inherited"
+              Expect.equal visible["COPY"] "owned" "the child GString sees its parent scope"
+              Expect.equal visible["CHILD"] "owned" "the child expression sees its parent scope"
+              Expect.equal counts["stage 'outer':OUTER"] 1 "the parent scope is shared across child consumers"
+              Expect.equal counts["stage 'inner':CHILD"] 1 "the child scope is evaluated once"
+          }
+
+          test "pipeline and stage scopes are evaluated once, cached per stage, and reset per build" {
+              let parsed =
+                  parse (
+                      "def value() { return 'unused' }\n"
+                      + "pipeline { agent any environment { PIPE = value() } stages {\n"
+                      + "stage('one') { environment { STAGE = value() } steps { echo 'one' } }\n"
+                      + "stage('two') { environment { STAGE = value() } steps { echo 'two' } }\n"
+                      + "} }")
+
+              let counts = Collections.Concurrent.ConcurrentDictionary<string, int>()
+              let evaluate scope name _ _ _ =
+                  counts.AddOrUpdate(scope + ":" + name, 1, fun _ count -> count + 1) |> ignore
+                  scope + ":" + name
+
+              let firstBuild = WalkerArgs.envForWithUsing evaluate [] parsed
+              Expect.equal counts["pipeline:PIPE"] 1 "pipeline scope resolves when the build resolver is created"
+
+              let one = parsed.Stages[0]
+              let two = parsed.Stages[1]
+              System.Threading.Tasks.Parallel.For(0, 32, fun _ -> firstBuild [] one |> ignore) |> ignore
+              firstBuild [ "OVERLAY", "late" ] one |> ignore
+              firstBuild [] two |> ignore
+
+              Expect.equal counts["stage 'one':STAGE"] 1 "all stage consumers share one lazy value"
+              Expect.equal counts["stage 'two':STAGE"] 1 "a distinct stage owns a distinct cache entry"
+
+              let secondBuild = WalkerArgs.envForWithUsing evaluate [] parsed
+              secondBuild [] one |> ignore
+              Expect.equal counts["pipeline:PIPE"] 2 "a new build receives a new pipeline lifetime"
+              Expect.equal counts["stage 'one':STAGE"] 2 "stage values never leak into the next build"
+          } ]
+
 [<EntryPoint>]
 let main argv =
 
@@ -12126,6 +12366,7 @@ let main argv =
               stashDefaultExcludes
               stashSymlinkContainment
               dirWorkspaceLifecycle
+              environmentExpressionEvaluation
               parallelsAlwaysFailFastArguments
               ansiColorTrailingBlocks
               timeoutUnitRefusals ])
