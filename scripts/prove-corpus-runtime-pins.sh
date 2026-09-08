@@ -398,6 +398,7 @@ audit_build_path_sources() {
   [ "$(rg -F -c '| Ok (_ :: _) ->' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'let firstUserShell (pipeline: Pipeline) =' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'let isClosedGuardedCommand command (shell: string) =' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'elif containsUnicodePreLexEscape then' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'first.When.IsNone' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'when isClosedGuardedCommand command shell -> Ok()' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c '| [ ("script", value) ], [] when step.LiteralNamedArgs.Contains "script" -> Ok value' "$jenkins")" = 1 ] || return 1
@@ -418,7 +419,12 @@ audit_build_path_sources() {
   [ "$(rg -F -c 'not (List.isEmpty stage.Post)' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'not (List.isEmpty stage.OpaqueSections)' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'not (List.isEmpty pipeline.Post)' "$jenkins")" = 1 ] || return 1
-  [ "$(rg -F -c 'not (String.IsNullOrWhiteSpace pipeline.Preamble)' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'not (ordinaryEnvironmentProfile || pureEnvironmentProfile)' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c 'WalkerArgs.preflightEnvironmentExpressions pipeline |> Result.isOk' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c '&& preambleIsExact' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c '&& pipelineEnvironmentIsExact' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c '&& stageValuesAreUnreachableConstants' "$jenkins")" = 1 ] || return 1
+  [ "$(rg -F -c '| EnvironmentGString -> not (binding.Value.Contains '\''$'\'')' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c 'not (String.IsNullOrWhiteSpace pipeline.Epilogue)' "$jenkins")" = 1 ] || return 1
   [ "$(rg -F -c '[ \"$PATH\" = \"{guard.BuildPath}\" ] || exit 90' "$jenkins")" = 2 ] || return 1
   [ "$(rg -F -c '[ \"$FOGELL_BUILD_TOKEN\" = \"{buildToken}\" ] || exit 93' "$jenkins")" = 1 ] || return 1
@@ -658,6 +664,7 @@ reject_fence_mutant "missing local removal ownership check" '/^  local_access_pr
 reject_jenkins_mutant "constant target nonce" 's/Convert.ToHexString(RandomNumberGenerator.GetBytes 16).ToLowerInvariant()/"constant"/'
 reject_jenkins_mutant "missing target-source environment validation" 's/match validateRuntimeGuardTargetSource guard script with/match Ok() with/'
 reject_jenkins_mutant "missing opaque-section refusal" 's/| Ok (_ :: _) ->/| Ok (_ :: _) when false ->/'
+reject_jenkins_mutant "unicode pre-lex escape accepted" 's/elif containsUnicodePreLexEscape then/elif false then/'
 reject_jenkins_mutant "missing closed-command binding" 's/when isClosedGuardedCommand command shell -> Ok()/-> Ok()/'
 reject_jenkins_mutant "extra first-shell option accepted" 's/\[ ("script", value) \], \[\]/("script", value) :: _, []/'
 reject_jenkins_mutant "effectful scripted echo accepted" 's/FreeCall "echo", \[ APos(EStr _) \], None/FreeCall "echo", _, None/'
@@ -669,7 +676,11 @@ reject_jenkins_mutant "missing stage-agent refusal" 's/stage.Agent.IsSome/false/
 reject_jenkins_mutant "missing pipeline-directive refusal" 's/not (List.isEmpty pipeline.Triggers)/false/'
 reject_jenkins_mutant "missing stage-option refusal" 's/not (List.isEmpty stage.Options)/false/'
 reject_jenkins_mutant "missing opaque-stage refusal" 's/not (List.isEmpty stage.OpaqueSections)/false/'
-reject_jenkins_mutant "missing preamble refusal" 's/not (String.IsNullOrWhiteSpace pipeline.Preamble)/false/'
+reject_jenkins_mutant "missing pure-helper preflight" 's/WalkerArgs.preflightEnvironmentExpressions pipeline |> Result.isOk/true/'
+reject_jenkins_mutant "non-governed preamble accepted" '/&& preambleIsExact/d'
+reject_jenkins_mutant "non-governed pipeline environment accepted" '/&& pipelineEnvironmentIsExact/d'
+reject_jenkins_mutant "reachable later-stage expression accepted" '/&& stageValuesAreUnreachableConstants/d'
+reject_jenkins_mutant "executable later-stage GString accepted" "s/| EnvironmentGString -> not (binding.Value.Contains '\$')/| EnvironmentGString -> true/"
 reject_jenkins_mutant "missing post refusal" 's/not (List.isEmpty stage.Post)/false/'
 reject_jenkins_mutant "missing target PATH check" '/          \[ \\"\$PATH\\" = \\"{guard.BuildPath}\\" \] || exit 90/d'
 reject_jenkins_mutant "missing target build-token check" '/\$FOGELL_BUILD_TOKEN.*exit 93/d'

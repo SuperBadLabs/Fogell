@@ -9935,12 +9935,78 @@ let compileRefusalDisposition =
                   (Jenkins.validateRuntimeGuardTargetSource
                       absentGuard
                       "pipeline { agent any environment { CLASSPATH = '/tmp/lib' } stages { stage('Build') { steps { sh 'composer install' } } } }")
-                  "runtime-pinned targets conservatively refuse every Declarative environment scope"
-              Expect.isError
-                  (Jenkins.validateRuntimeGuardTargetSource
-                      absentGuard
-                      "def getdockertag() { return \"${env.GIT_BRANCH}\" }; pipeline { agent any environment {\nDOCKER_TAG = getdockertag()\n} stages { stage('Build') { steps { script { echo 'install'; sh 'composer install' } } } } }")
-                  "the already-rejected Composer candidate remains safely outside runtime execution"
+                  "an arbitrary Declarative environment remains outside the guarded profile"
+
+              let composerEnvironmentTarget =
+                  "def getdockertag(){\n"
+                  + "  return \"${env.GIT_BRANCH}\".replace(\"/\",\".\") + \".\"+\"${env.BUILD_ID}\"\n"
+                  + "}\n"
+                  + "pipeline { agent any environment {\n"
+                  + "DOCKER_REGISTRY = \"varunpalekar1/php-test\"\n"
+                  + "DOCKER_TAG = getdockertag()\n"
+                  + "} stages {\n"
+                  + "stage('Build') { steps { script { echo \"install compose.json\"; sh 'composer install --prefer-source'; sh 'printenv' } } }\n"
+                  + "stage('UnitTest') { environment { DB_HOST = \"localhost\"; DB_PASSWORD = \"my_pass\" } steps { sh './vendor/bin/phpunit' } }\n"
+                  + "} }"
+
+              Expect.isOk
+                  (Jenkins.validateRuntimeGuardTargetSource absentGuard composerEnvironmentTarget)
+                  "the exact pure helper shape is admitted only behind terminal Composer absence"
+              Expect.isOk
+                  (Jenkins.injectTargetRuntimeGuard absentGuard "fedcba9876543210" absentMarker composerEnvironmentTarget)
+                  "the statically proven helper is followed by a target-side recheck before the first user shell"
+
+              let environmentGuardMutants =
+                  [ "extra preamble statement",
+                    "println 'early'; " + composerEnvironmentTarget
+                    "helper step",
+                    composerEnvironmentTarget.Replace(
+                        "return \"${env.GIT_BRANCH}\".replace(\"/\",\".\") + \".\"+\"${env.BUILD_ID}\"",
+                        "return sh('echo early')")
+                    "helper assignment",
+                    composerEnvironmentTarget.Replace(
+                        "return \"${env.GIT_BRANCH}\".replace(\"/\",\".\") + \".\"+\"${env.BUILD_ID}\"",
+                        "env.POISON = 'yes'; return 'tag'")
+                    "wrong helper arity",
+                    composerEnvironmentTarget.Replace("DOCKER_TAG = getdockertag()", "DOCKER_TAG = getdockertag('extra')")
+                    "non-scalar helper",
+                    composerEnvironmentTarget.Replace(
+                        "return \"${env.GIT_BRANCH}\".replace(\"/\",\".\") + \".\"+\"${env.BUILD_ID}\"",
+                        "return [tag: 'bad']")
+                    "pipeline executable GString",
+                    composerEnvironmentTarget.Replace(
+                        "DOCKER_REGISTRY = \"varunpalekar1/php-test\"",
+                        "DOCKER_REGISTRY = \"${sh('echo early')}\"")
+                    "extra process-control binding",
+                    composerEnvironmentTarget.Replace(
+                        "DOCKER_TAG = getdockertag()",
+                        "LD_PRELOAD = \"/tmp/attacker.so\"\nDOCKER_TAG = getdockertag()")
+                    "unicode-escaped interpolation",
+                    composerEnvironmentTarget.Replace(
+                        "DOCKER_REGISTRY = \"varunpalekar1/php-test\"",
+                        "DOCKER_REGISTRY = \"\\u0024{sh('echo early')}\"")
+                    "unicode line-comment escape",
+                    "// \\u000a sh 'touch escaped'\n" + composerEnvironmentTarget
+                    "unicode block-comment escape",
+                    "/* \\u002a/ sh 'touch escaped'; /* */\n" + composerEnvironmentTarget
+                    "first-stage environment",
+                    composerEnvironmentTarget.Replace(
+                        "stage('Build') { steps",
+                        "stage('Build') { environment { SAFE = 'not-before-guard' } steps")
+                    "later-stage expression",
+                    composerEnvironmentTarget.Replace(
+                        "DB_HOST = \"localhost\"",
+                        "DB_HOST = getdockertag()")
+                    "later-stage executable GString",
+                    composerEnvironmentTarget.Replace(
+                        "DB_HOST = \"localhost\"",
+                        "DB_HOST = \"${sh('touch escaped')}\"") ]
+
+              for label, mutant in environmentGuardMutants do
+                  Expect.isError
+                      (Jenkins.validateRuntimeGuardTargetSource absentGuard mutant)
+                      $"{label}: the pure-environment guard profile fails closed"
+
               Expect.isOk
                   (Jenkins.validateRuntimeGuardTargetSource
                       absentGuard
