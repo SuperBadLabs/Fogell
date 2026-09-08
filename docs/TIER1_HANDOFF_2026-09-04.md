@@ -446,7 +446,7 @@ Read with the two sections above; this is the second addendum.
 - **The rejected Composer candidate is now Tier-1 PROVEN.** Signed source
   `5246bf59`, private CLI closure `6d3f12b5…`, ran
   `varunpalekar_php-ci-cd` alone under both proven no-egress fences. Jenkins and
-  Fogell produced the same environment line, Composer exit-127 trace, five
+  Fogell produced the same initial echo, Composer exit-127 trace, six
   skipped stages and empty workspace. The disposable controller, home, tunnel
   and fences were removed. Receipt seal `eac6c6b5…` binds the comparison.
 - **Current generated accounting:** `tier1=16`, `admitted=184`, `tier3=28`;
