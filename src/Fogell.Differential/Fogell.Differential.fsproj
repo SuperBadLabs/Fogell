@@ -3,11 +3,11 @@
   <ItemGroup>
     <Compile Include="Trace.fs" />
     <Compile Include="WalkerRules.fs" />
-    <Compile Include="Jenkins.fs" />
     <Compile Include="GString.fs" />
     <Compile Include="WalkerCtx.fs" />
     <Compile Include="WalkerCancellation.fs" />
     <Compile Include="WalkerArgs.fs" />
+    <Compile Include="Jenkins.fs" />
     <Compile Include="WalkerStep.fs" />
     <Compile Include="WalkerWhen.fs" />
     <Compile Include="WalkerGit.fs" />

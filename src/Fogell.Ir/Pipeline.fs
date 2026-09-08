@@ -39,7 +39,7 @@ type Step =
       /// message and confirmation label — has to honour that. Shell steps get away
       /// without it because the shell performs its own `$VAR` expansion, which
       /// coincides with Groovy's for the common case; `input` has no shell.
-      /// Mirrors Stage.EnvironmentLiteralNames.
+      /// Mirrors the provenance carried by each Stage.Environment binding.
       LiteralNamedArgs: Set<string>
       /// Argument values with escaped dollars PRESERVED, for consumers that
       /// interpolate. Keyed by argument name, or `#0`, `#1`… for positionals.
@@ -120,22 +120,25 @@ type PostCondition =
     | Regression
     | NotBuilt
 
+/// The three Groovy forms accepted on the right-hand side of a Declarative
+/// `environment` entry. Keeping this on each binding prevents a later scope or
+/// duplicate name from inheriting another entry's quoting semantics.
+type EnvironmentValueKind =
+    | EnvironmentLiteral
+    | EnvironmentGString
+    | EnvironmentExpression
+
+type EnvironmentBinding =
+    { Name: string
+      Value: string
+      Kind: EnvironmentValueKind }
+
 type Stage =
     { Name: string
       Agent: AgentSpec option
-      Environment: (string * string) list
-      /// Names whose value was written with a LITERAL quote form: single-quoted
-      /// or triple-single-quoted, and ONLY those. Groovy does not interpolate
-      /// them, so neither may we — expanding `'$BUILD_NUMBER'` runs a different
-      /// value than Jenkins and can produce a false differential match.
-      ///
-      /// SLASHY IS NOT LITERAL, though this comment listed it as one until the
-      /// pre-push verifier's model review on PR #36. A slashy string is a
-      /// GString: `Lexeme.fs` marks it interpolating and the parser records a
-      /// name here only when `interpolates` is false, so no slashy value ever
-      /// entered this set. The prose claimed a behaviour the code did not have —
-      /// the same shape of drift FG-122 spent two rounds on.
-      EnvironmentLiteralNames: Set<string>
+      /// Per-entry provenance is load-bearing: an unquoted RHS is Groovy code,
+      /// while single-quoted text is literal and double/slashy text is a GString.
+      Environment: EnvironmentBinding list
       Tools: (string * string) list
       Steps: Step list
       /// FG-045. Stage-level `options { }`. Previously discarded outright, so a
@@ -159,9 +162,8 @@ type Stage =
 
 type Pipeline =
     { Agent: AgentSpec
-      Environment: (string * string) list
-      /// See Stage.EnvironmentLiteralNames.
-      EnvironmentLiteralNames: Set<string>
+      /// See Stage.Environment.
+      Environment: EnvironmentBinding list
       Options: Step list
       Parameters: Step list
       Triggers: Step list
@@ -192,7 +194,6 @@ module Pipeline =
     let empty =
         { Agent = AgentNone
           Environment = []
-          EnvironmentLiteralNames = Set.empty
           Options = []
           Parameters = []
           Triggers = []

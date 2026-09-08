@@ -422,7 +422,8 @@ Read with the two sections above; this is the second addendum.
   same three later-stage skip sentences, and retained the same empty workspace.
   Gradle, JUnit, archive, credential, Docker and network surfaces did not run
   and are not claimed. Receipt seal `514f943a…` binds the result.
-- **Generated accounting:** `tier1=15`, `admitted=185`, `tier3=28`; the
+- **Generated accounting at FG-258 publication:** Tier 1 was 15, admitted was
+  185, and `tier3=28`; the
   separate hand-written population remains 308 of 308 proven. All 323 receipt
   seals verify.
 - **Publication record.** Final signed source `90b87061`, tree `ab83993a`,
@@ -433,3 +434,28 @@ Read with the two sections above; this is the second addendum.
   GitHub-verified exact-tree commit `a7feafe8`; post-merge main runs
   `34130020987` and `34130020953` passed the fast and slow gates.
   [`tickets/FG-258.md`](tickets/FG-258.md) is the live record.
+
+## 2026-09-07 custodian addendum — FG-260/FG-261 promotion measured
+
+- **Environment expressions are now a bounded capability, not retained text.**
+  Pipeline and stage environment RHS values preserve literal, quoted GString,
+  or expression provenance. Reachable exact-arity helpers execute in a total,
+  effect-free scalar subset against immutable pre-block snapshots, once per
+  scope. Unsupported effects, coercions, recursion, expansion and ambiguous
+  calls refuse before workspace changes.
+- **The rejected Composer candidate is now Tier-1 PROVEN.** Signed source
+  `5246bf59`, private CLI closure `6d3f12b5…`, ran
+  `varunpalekar_php-ci-cd` alone under both proven no-egress fences. Jenkins and
+  Fogell produced the same initial echo, Composer exit-127 trace, six
+  skipped stages and empty workspace. The disposable controller, home, tunnel
+  and fences were removed. Receipt seal `eac6c6b5…` binds the comparison.
+- **Current generated accounting:** `tier1=16`, `admitted=184`, `tier3=28`;
+  the separate hand-written population is 311 of 311 proven. FG-247's exhausted
+  class remains the narrower no-tool empty-workspace-failure class; this file
+  belongs to a different environment-helper plus pinned-absence class.
+- **Publication is still gated.** The signed source passed all 1,154 project
+  tests and blocking proofs through FG-094 before the strict stale-reference
+  audit caught a removed generic local name. Signed follow-up `7058d5ab`
+  restores that audit identity; its strict audit and focused suites pass. The
+  grouped PR must still earn its protected exact-head gate and review before
+  FG-261 closes. [`tickets/FG-261.md`](tickets/FG-261.md) is the live record.

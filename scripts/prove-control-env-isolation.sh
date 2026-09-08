@@ -112,9 +112,11 @@ judge() {
     || { echo "  FAIL: declaration was lost"; failures=$((failures + 1)); }
   [ "$(cat "$ws/withenv.txt" 2>/dev/null || true)" = with-value ] \
     || { echo "  FAIL: withEnv was lost"; failures=$((failures + 1)); }
-  case "$(cat "$ws/path.txt" 2>/dev/null || true)" in
+  local actual_path
+  actual_path=$(cat "$ws/path.txt" 2>/dev/null || true)
+  case "$actual_path" in
     /fg222/withenv:"$LIVE"/fakebin:*) ;;
-    *) echo "  FAIL: PATH overlay order is wrong"; failures=$((failures + 1)) ;;
+    *) echo "  FAIL: PATH overlay order is wrong [$actual_path]"; failures=$((failures + 1)) ;;
   esac
   local build_home
   build_home=$(cat "$ws/home.txt" 2>/dev/null || true)

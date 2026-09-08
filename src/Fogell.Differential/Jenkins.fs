@@ -639,8 +639,13 @@ module Jenkins =
                 RegexOptions.CultureInvariant
             )
 
+        let containsUnicodePreLexEscape =
+            Regex.IsMatch(script, @"\\u+[0-9A-Fa-f]{4}", RegexOptions.CultureInvariant)
+
         if Regex.IsMatch(script, "(?<![A-Za-z0-9_])PATH(?=$|[^A-Za-z0-9_])", RegexOptions.CultureInvariant) then
             Error "runtime-guarded corpus definitions may not reference PATH"
+        elif containsUnicodePreLexEscape then
+            Error "runtime-guarded corpus definitions may not contain unmodelled Groovy Unicode pre-lex escapes"
         else
             match Fogell.Pipeline.Parser.Parser.topLevelOpaqueSections script with
             | Error refusal ->
@@ -653,9 +658,8 @@ module Jenkins =
                     Error $"runtime-guarded corpus definition did not parse: {refusal}"
                 | Ok pipeline ->
                     let stages = Pipeline.flattenStages pipeline.Stages
-                    let unsafeStage (stage: Stage) =
+                    let unsafeStageCore (stage: Stage) =
                         stage.Agent.IsSome
-                        || not (List.isEmpty stage.Environment)
                         || not (List.isEmpty stage.Tools)
                         || not (List.isEmpty stage.Options)
                         || unsafeSteps stage.Steps
@@ -663,19 +667,87 @@ module Jenkins =
                         || not (List.isEmpty stage.OpaqueSections)
                         || (stage.When |> Option.exists unsafeWhen)
 
+                    let guardedShell = firstUserShell pipeline
+
+                    // FG-261. The composer-absence case needs its exact measured
+                    // helper and two pipeline bindings before the injected guard.
+                    // This is a digest-backed exception, not general authority for
+                    // the broader total subset proven by FG-260. The absent command
+                    // remains the first closed literal shell; later environments are
+                    // unreachable after that terminal absence and remain constants.
+                    let pureEnvironmentProfile =
+                        let preambleIsExact =
+                            let expected =
+                                "def getdockertag() {\n"
+                                + "  return \"${env.GIT_BRANCH}\".replace(\"/\",\".\") + \".\" + \"${env.BUILD_ID}\"\n"
+                                + "}"
+
+                            match
+                                Fogell.Groovy.Parser.Parser.parse pipeline.Preamble,
+                                Fogell.Groovy.Parser.Parser.parse expected
+                            with
+                            | Ok actual, Ok governed -> actual = governed
+                            | _ -> false
+
+                        // The guard shell itself starts with pipeline environment
+                        // already installed. Bind this exception to the measured,
+                        // harmless pair instead of treating one safe expression as
+                        // authority for arbitrary process-control variables.
+                        let pipelineEnvironmentIsExact =
+                            match pipeline.Environment with
+                            | [ registry; tag ] ->
+                                registry.Name = "DOCKER_REGISTRY"
+                                && registry.Kind = EnvironmentGString
+                                && registry.Value = "varunpalekar1/php-test"
+                                && tag.Name = "DOCKER_TAG"
+                                && tag.Kind = EnvironmentExpression
+                                && tag.Value.Trim() = "getdockertag()"
+                            | _ -> false
+
+                        let stageValuesAreUnreachableConstants =
+                            let isNonExecutableConstant binding =
+                                match binding.Kind with
+                                | EnvironmentLiteral -> true
+                                | EnvironmentGString -> not (binding.Value.Contains '$')
+                                | EnvironmentExpression -> false
+
+                            stages
+                            |> List.mapi (fun index stage ->
+                                if index = 0 then
+                                    List.isEmpty stage.Environment
+                                else
+                                    stage.Environment |> List.forall isNonExecutableConstant)
+                            |> List.forall id
+
+                        match guard.Requirements, guardedShell with
+                        | [ AbsentCommand command ], Ok shell
+                            when isClosedGuardedCommand command shell
+                                 && not (List.isEmpty pipeline.Environment)
+                                 && (pipeline.Environment
+                                     |> List.exists (fun binding -> binding.Kind = EnvironmentExpression))
+                                 && preambleIsExact
+                                 && pipelineEnvironmentIsExact
+                                 && stageValuesAreUnreachableConstants ->
+                            WalkerArgs.preflightEnvironmentExpressions pipeline |> Result.isOk
+                        | _ -> false
+
+                    let ordinaryEnvironmentProfile =
+                        List.isEmpty pipeline.Environment
+                        && (stages |> List.forall (fun stage -> List.isEmpty stage.Environment))
+                        && String.IsNullOrWhiteSpace pipeline.Preamble
+
                     if pipeline.Agent <> AgentAny
-                       || not (List.isEmpty pipeline.Environment)
                        || not (List.isEmpty pipeline.Tools)
                        || not (List.isEmpty pipeline.Options)
                        || not (List.isEmpty pipeline.Parameters)
                        || not (List.isEmpty pipeline.Triggers)
                        || not (List.isEmpty pipeline.Post)
-                       || (stages |> List.exists unsafeStage)
-                       || not (String.IsNullOrWhiteSpace pipeline.Preamble)
+                       || (stages |> List.exists unsafeStageCore)
+                       || not (ordinaryEnvironmentProfile || pureEnvironmentProfile)
                        || not (String.IsNullOrWhiteSpace pipeline.Epilogue) then
                         Error "runtime-guarded corpus definition can change a shell environment"
                     else
-                        match guard.Requirements, firstUserShell pipeline with
+                        match guard.Requirements, guardedShell with
                         | [ PresentAtPath(command, _) ], Ok shell
                         | [ AbsentCommand command ], Ok shell when isClosedGuardedCommand command shell -> Ok()
                         | [ _ ], Ok _ ->

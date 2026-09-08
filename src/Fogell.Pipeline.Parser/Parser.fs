@@ -940,8 +940,31 @@ let private keyValueBodyWithKind: P<(string * string * bool) list> =
 let private keyValueBody: P<(string * string) list> =
     keyValueBodyWithKind |>> List.map (fun (n, v, _) -> n, v)
 
-let private environmentSection: P<(string * string * bool) list> =
-    keyword "environment" >>. between (symbol "{") (symbol "}") keyValueBodyWithKind
+/// FG-260. Environment values need three-way provenance. The former boolean
+/// merged an unquoted expression with an interpolating string, so
+/// `DOCKER_TAG = getdockertag()` reached execution as the literal call text.
+let private environmentBody: P<EnvironmentBinding list> =
+    many (
+        attempt (
+            ws
+            >>. identifier
+            .>> symbol "="
+            .>>. (attempt (
+                      wholeValue stringLiteralWithKind
+                      |>> fun (value, interpolates) ->
+                              value,
+                              if interpolates then EnvironmentGString else EnvironmentLiteral)
+                  <|> (rawArgValue false [ '\r'; '\n'; '}'; ';' ]
+                       |>> fun source -> source.Trim(), EnvironmentExpression))
+            .>> opt (pchar ';')
+            .>> ws
+            |>> fun (name, (value, kind)) ->
+                    { Name = name
+                      Value = value
+                      Kind = kind }))
+
+let private environmentSection: P<EnvironmentBinding list> =
+    keyword "environment" >>. between (symbol "{") (symbol "}") environmentBody
 
 /// Declarative `tools` entries use command form, not environment assignment form:
 ///
@@ -1507,7 +1530,7 @@ let private failFastDirective: P<bool> =
 /// generic syntax error.
 type private StageSection =
     | SecAgent of AgentSpec
-    | SecEnv of (string * string * bool) list
+    | SecEnv of EnvironmentBinding list
     | SecTools of (string * string) list
     | SecSteps of Step list
     | SecWhen of WhenCondition
@@ -1605,14 +1628,7 @@ stageRef.Value <-
             let pick f = sections |> List.tryPick f
             { Name = name
               Agent = pick (function SecAgent a -> Some a | _ -> None)
-              Environment =
-                defaultArg (pick (function SecEnv e -> Some(e |> List.map (fun (n, v, _) -> n, v)) | _ -> None)) []
-              EnvironmentLiteralNames =
-                defaultArg
-                    (pick (function
-                        | SecEnv e -> Some(e |> List.choose (fun (n, _, i) -> if i then None else Some n) |> Set.ofList)
-                        | _ -> None))
-                    Set.empty
+              Environment = defaultArg (pick (function SecEnv e -> Some e | _ -> None)) []
               Tools = defaultArg (pick (function SecTools t -> Some t | _ -> None)) []
               Steps = defaultArg (pick (function SecSteps s -> Some s | _ -> None)) []
             // EVERY `options` SECTION, not the first. `pick` is `tryPick`, so a
@@ -1643,7 +1659,7 @@ stageRef.Value <-
 
 type private TopSection =
     | TopAgent of AgentSpec
-    | TopEnv of (string * string * bool) list
+    | TopEnv of EnvironmentBinding list
     | TopTools of (string * string) list
     | TopOptions of Step list
     | TopParameters of Step list
@@ -1769,20 +1785,7 @@ let private pipelineParser: P<Pipeline * int64 * string list> =
 
             let pipeline =
                 { Agent = defaultArg (pick (function TopAgent a -> Some a | _ -> None)) AgentNone
-                  Environment =
-                    defaultArg
-                        (pick (function TopEnv e -> Some(e |> List.map (fun (n, v, _) -> n, v)) | _ -> None))
-                        []
-                  EnvironmentLiteralNames =
-                    defaultArg
-                        (pick (function
-                            | TopEnv e ->
-                                Some(
-                                    e
-                                    |> List.choose (fun (n, _, i) -> if i then None else Some n)
-                                    |> Set.ofList)
-                            | _ -> None))
-                        Set.empty
+                  Environment = defaultArg (pick (function TopEnv e -> Some e | _ -> None)) []
                   Tools = defaultArg (pick (function TopTools t -> Some t | _ -> None)) []
                 // A duplicate top-level `options` section is REFUSED at collection
                 // (FG-132), so at most one reaches this projection. `collect` stays
