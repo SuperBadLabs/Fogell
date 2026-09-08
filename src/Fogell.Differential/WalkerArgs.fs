@@ -379,29 +379,28 @@ module WalkerArgs =
 
         let resolve scope (visible: (string * string) list) (bindings: EnvironmentBinding list) =
             let snapshot = visible |> Map.ofList
+            let scoped = ResizeArray<string * string>(List.length bindings)
+            let mutable quotedVisible = snapshot
 
-            let scoped =
-                bindings
-                |> List.fold
-                    (fun accumulated binding ->
-                        let value =
-                            match binding.Kind with
-                            | EnvironmentLiteral -> binding.Value
-                            | EnvironmentGString ->
-                                // Preserve the historical/measured Declarative
-                                // resolver: quoted entries can see earlier quoted
-                                // siblings. Quote provenance must not opt them into
-                                // the strict expression snapshot below.
-                                interpolate (visible @ accumulated |> Map.ofList) binding.Value
-                            | EnvironmentExpression ->
-                                evaluate scope binding.Name snapshot functions binding.Value
+            for binding in bindings do
+                let value =
+                    match binding.Kind with
+                    | EnvironmentLiteral -> binding.Value
+                    | EnvironmentGString ->
+                        // Preserve the historical/measured Declarative
+                        // resolver: quoted entries can see earlier quoted
+                        // siblings. Quote provenance must not opt them into
+                        // the strict expression snapshot below.
+                        interpolate quotedVisible binding.Value
+                    | EnvironmentExpression ->
+                        evaluate scope binding.Name snapshot functions binding.Value
 
-                        accumulated @ [ binding.Name, value ])
-                    []
+                scoped.Add(binding.Name, value)
+                quotedVisible <- Map.add binding.Name value quotedVisible
 
             // Preserve declaration order for callers that layer withEnv values;
             // Map.ofList at the consumption boundary provides last-wins lookup.
-            visible @ scoped
+            visible @ List.ofSeq scoped
 
         let pipelineResolved = resolve "pipeline" jenkinsProvided pipeline.Environment
         let stages = ConcurrentDictionary<int64 * int64 * string, Lazy<(string * string) list>>()
