@@ -69,6 +69,18 @@ module WalkerArgs =
     let private failEnvironment kind scope name detail =
         raise (EnvironmentEvaluationException(scope, name, kind, detail))
 
+    let private environmentExpressions (pipeline: Pipeline) =
+        [ "pipeline", pipeline.Environment
+          for stage in Pipeline.flattenStages pipeline.Stages do
+              $"stage '{stage.Name}'", stage.Environment ]
+        |> List.collect (fun (scope, bindings) ->
+            bindings
+            |> List.choose (fun binding ->
+                if binding.Kind = EnvironmentExpression then
+                    Some(scope, binding)
+                else
+                    None))
+
     let private preambleFunctions (pipeline: Pipeline) =
         if String.IsNullOrWhiteSpace pipeline.Preamble then
             []
@@ -90,7 +102,8 @@ module WalkerArgs =
         (pipeline: Pipeline)
         : Result<unit, EnvironmentExpressionError> =
         try
-            let functions = preambleFunctions pipeline
+            let expressions = environmentExpressions pipeline
+            let functions = if List.isEmpty expressions then [] else preambleFunctions pipeline
             let maxAmplification = 16
             let maxConstantChars = 64 * 1024
             let maxHelperDepth = 16
@@ -243,18 +256,6 @@ module WalkerArgs =
                     | Fogell.Groovy.EElvis _
                     | Fogell.Groovy.EClosure _ -> unsupported "construct is not in the total environment-expression subset"
 
-            let expressions =
-                [ "pipeline", pipeline.Environment
-                  for stage in Pipeline.flattenStages pipeline.Stages do
-                      $"stage '{stage.Name}'", stage.Environment ]
-                |> List.collect (fun (scope, bindings) ->
-                    bindings
-                    |> List.choose (fun binding ->
-                        if binding.Kind = EnvironmentExpression then
-                            Some(scope, binding)
-                        else
-                            None))
-
             expressions
             |> List.fold
                 (fun state (scope, binding) ->
@@ -375,7 +376,11 @@ module WalkerArgs =
         (jenkinsProvided: (string * string) list)
         (pipeline: Pipeline)
         : ((string * string) list -> Stage -> (string * string) list) =
-        let functions = preambleFunctions pipeline
+        let functions =
+            if environmentExpressions pipeline |> List.isEmpty then
+                []
+            else
+                preambleFunctions pipeline
 
         let resolve scope (visible: (string * string) list) (bindings: EnvironmentBinding list) =
             let snapshot = visible |> Map.ofList

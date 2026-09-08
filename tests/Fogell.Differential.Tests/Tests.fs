@@ -12269,6 +12269,26 @@ let environmentExpressionEvaluation =
           }
 
           test "only reachable helpers are validated and the first RHS failure wins" {
+              let unrelatedUnsupported =
+                  parse (
+                      "def unrelated(value = 'x') { return value }\n"
+                      + "pipeline { agent any environment { RAW = 'owned'; COPY = \"$RAW\" } "
+                      + "stages { stage('probe') { steps { echo 'ok' } } } }")
+
+              Expect.equal
+                  (WalkerArgs.preflightEnvironmentExpressions unrelatedUnsupported)
+                  (Ok())
+                  "an unused environment-expression subsystem does not parse an unrelated preamble"
+
+              let unrelatedVisible =
+                  WalkerArgs.envForWith [] unrelatedUnsupported [] unrelatedUnsupported.Stages.Head
+                  |> Map.ofList
+
+              Expect.equal
+                  unrelatedVisible["COPY"]
+                  "owned"
+                  "literal and quoted environment resolution remains independent of the preamble"
+
               let unrelated =
                   parse (
                       "def deploy() { sh 'echo later' }\n"
