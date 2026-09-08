@@ -380,7 +380,7 @@ module WalkerArgs =
         let resolve scope (visible: (string * string) list) (bindings: EnvironmentBinding list) =
             let snapshot = visible |> Map.ofList
 
-            let resolved =
+            let scoped =
                 bindings
                 |> List.fold
                     (fun accumulated binding ->
@@ -401,7 +401,7 @@ module WalkerArgs =
 
             // Preserve declaration order for callers that layer withEnv values;
             // Map.ofList at the consumption boundary provides last-wins lookup.
-            visible @ resolved
+            visible @ scoped
 
         let pipelineResolved = resolve "pipeline" jenkinsProvided pipeline.Environment
         let stages = ConcurrentDictionary<int64 * int64 * string, Lazy<(string * string) list>>()
