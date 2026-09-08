@@ -223,7 +223,7 @@ sixeyed_jenkins-pipeline-demos.Jenkinsfile	1	-	receipt:sixeyed_jenkins-pipeline-
 stakater_GitWebhookProxy.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 tknerr_jenkins-pipes-helloworld.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 tomasbjerre_bitbucket-server-jenkins-release-tags.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
-varunpalekar_php-ci-cd.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
+varunpalekar_php-ci-cd.Jenkinsfile	1	-	receipt:varunpalekar_php-ci-cd
 vineet68sharma_CI-CD-Docker.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 vinsguru_docker-selenium-jenkinsfile.Jenkinsfile	admitted	-	parsed; execution NOT attempted (untrusted corpus) — not ADR tier 2
 vskurikhin_DayBook3.Jenkinsfile	1	-	receipt:vskurikhin_DayBook3
