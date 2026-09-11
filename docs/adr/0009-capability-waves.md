@@ -67,8 +67,11 @@ receipt never arrives falsifies its count, and the count moves.
 - **Top-level Scripted Pipeline becomes a capability, not a refusal.** A
   bounded scripted walker executes `node`, `stage` and map-form `parallel` as
   hosted wrappers over the interpreter that already executes `script { }`
-  bodies (FG-265). Every scripted construct the walker does not model refuses
-  by name before any step effect, exactly as the Declarative walker does. This
+  bodies (FG-265). It reaches only the files the existing Groovy parser admits
+  (the scorer's `scripted-ok` verdict); the `scripted-err` files fail that
+  parser and wait on grammar work this decision does not include. Every
+  scripted construct the walker does not model refuses by name before any
+  step effect, exactly as the Declarative walker does. This
   extends ADR 0002's interpret-not-lower decision to the scripted form; it does
   not promise general Scripted Pipeline, and no receipt for a scripted file
   exists until FG-265 produces one.
