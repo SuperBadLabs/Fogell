@@ -142,6 +142,21 @@ type RetryPersistenceError =
     | RetryDecisionCorrupt of string
     | RetryStorageFailure of string
 
+/// FG-026b (Codex #424 round 12). The second key of the per-organization
+/// classification advisory lock, `pg_advisory_xact_lock(hashtext(org), tag)`,
+/// which every classification transaction takes first and holds to commit:
+/// a trigger chunk, the FG-026 primitive, the restore path, in any process.
+/// A fixed constant, derived from nothing at runtime, so every classifier of
+/// one organization names the same lock. The two-key (int, int) form is a
+/// separate key space from the one-key bigint form
+/// `pg_advisory_xact_lock(hashtext(org))` that ClaimNext serialises on, so
+/// classification never contends with claiming and no transaction takes both.
+/// 26 for FG-026; the only two-key advisory lock in the store. Public so a
+/// test can hold the lock a classifier of that organization must wait behind.
+module EffectClassification =
+    [<Literal>]
+    let classificationLockTag = 26
+
 /// FG-021/FG-022. The controller's durable truth.
 type Store(connectionString: string, ?maintenanceConnectionString: string) =
 
@@ -722,6 +737,24 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             match reason with
             | None -> "0::bigint, 0::bigint"
             | Some _ -> "(SELECT count(*) FROM emitted_events), (SELECT count(*) FROM emitted_outbox)"
+
+        // Codex #424 round 12: classification is commit-ordered per
+        // organization. Every classification transaction — a trigger chunk,
+        // the FG-026 primitive, the restore path — takes this advisory lock
+        // first and holds it to commit, so no two classifications of one
+        // organization overlap and uncertain_at (statement_timestamp, assigned
+        // after the lock is granted) is monotone with commit order for that
+        // organization. The listing cursor's strict keyset rests on exactly
+        // that; without it a first-started transaction could commit after a
+        // second and a cursor issued in between would skip its rows forever.
+        // The lock is per organization across classifiers, never per attempt:
+        // a live attempt is still never waited on.
+        use serialize = conn.CreateCommand()
+        serialize.Transaction <- tx
+        serialize.CommandText <- "SELECT pg_advisory_xact_lock(hashtext(@o), @tag)"
+        serialize.Parameters.AddWithValue("o", org.Value.ToString()) |> ignore
+        serialize.Parameters.AddWithValue("tag", EffectClassification.classificationLockTag) |> ignore
+        serialize.ExecuteNonQuery() |> ignore
 
         let locked = if skipLocked then " SKIP LOCKED" else ""
         use classify = conn.CreateCommand()

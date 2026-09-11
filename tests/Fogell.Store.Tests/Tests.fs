@@ -4190,6 +4190,180 @@ let effectReconciliation =
               holderTx.Commit()
               Expect.equal (reconcileOk org "lease_expired" |> List.map (fun c -> c.AttemptId) |> List.sort) (List.sort heldPrefix) "the next pass classifies the released hundred"
               Expect.equal (reconcileOk org "lease_expired") [] "and the pass after that finds nothing"
+          }
+
+          test "classification is commit-ordered per organization: a classifier waits behind a held classification of the same organization, its rows carry the later uncertain_at, a cursor issued from the earlier rows reaches them, and a held live attempt is still never waited on" {
+              // Codex #424 round 12 (thread fnRCC): uncertain_at is assigned at
+              // statement time, so two overlapping classifications of one
+              // organization could commit in the other order, and a cursor
+              // issued between the commits skipped the late-committing rows
+              // forever (strict keyset). Every classification transaction now
+              // takes the organization's advisory lock first and holds it to
+              // commit, so commit order is uncertain_at order. The lock is per
+              // organization, never per attempt: a held live row is still
+              // never waited on.
+              let waitingOnClassificationLock (org: OrganizationId) =
+                  use conn = new Npgsql.NpgsqlConnection(connectionString)
+                  conn.Open()
+                  use waiting = conn.CreateCommand()
+                  waiting.CommandText <-
+                      "SELECT count(*) FROM pg_locks
+                        WHERE locktype = 'advisory'
+                          AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                          AND classid = hashtext(@o)::oid
+                          AND objid = @tag::oid
+                          AND objsubid = 2
+                          AND NOT granted"
+                  waiting.Parameters.AddWithValue("o", org.Value.ToString()) |> ignore
+                  waiting.Parameters.AddWithValue("tag", EffectClassification.classificationLockTag) |> ignore
+                  waiting.ExecuteScalar() :?> int64
+
+              let scenario (label: string) (withLive: bool) (classify: OrganizationId -> AttemptId list -> EffectCheckpoint list) =
+                  let org, project = freshProject ()
+                  let payload = [| 1uy; 2uy |]
+                  let stale =
+                      [ for index in 1..6 do
+                            let attempt, fence = runningAttempt org project $"fg026b-order-{label}-{index}" "agent-stale" 60
+                            prepareEffectOk org attempt.AttemptId fence "agent-stale" $"file-drop-receipt:o{index}" payload |> ignore
+                            attempt.AttemptId ]
+                  expireLeases org stale
+                  let sorted = stale |> List.sortBy (fun a -> a.Value)
+                  let early = List.take 3 sorted
+                  let late = List.skip 3 sorted
+                  let ids (attempts: AttemptId list) = attempts |> List.map (fun a -> a.Value) |> Array.ofList
+
+                  // Another connection holds the LIVE attempt's row for the whole
+                  // scenario. The restore path invalidates every lease, so a
+                  // live attempt has no meaning there and that arm runs without one.
+                  let live =
+                      if withLive then
+                          let attempt, fence = runningAttempt org project $"fg026b-order-live-{label}" "agent-live" 60
+                          prepareEffectOk org attempt.AttemptId fence "agent-live" "file-drop-receipt:live" payload |> ignore
+                          Some(attempt.AttemptId, fence)
+                      else
+                          None
+                  use liveHolder = new Npgsql.NpgsqlConnection(connectionString)
+                  liveHolder.Open()
+                  use liveTx = liveHolder.BeginTransaction()
+                  live
+                  |> Option.iter (fun (attempt, _) ->
+                      use hold = liveHolder.CreateCommand()
+                      hold.Transaction <- liveTx
+                      hold.CommandText <- "SELECT id FROM attempts WHERE organization_id = @o AND id = @a FOR UPDATE"
+                      hold.Parameters.AddWithValue("o", org.Value) |> ignore
+                      hold.Parameters.AddWithValue("a", attempt.Value) |> ignore
+                      Expect.equal (hold.ExecuteScalar() :?> Guid) attempt.Value $"{label}: the live attempt's row is held")
+
+                  // The first-started classification: it takes the organization's
+                  // classification lock exactly as the store does, flips the three
+                  // lowest rows with the store's statement-time uncertain_at, and
+                  // is held open past the point the second would have committed.
+                  use first = new Npgsql.NpgsqlConnection(connectionString)
+                  first.Open()
+                  use firstTx = first.BeginTransaction()
+                  use lockFirst = first.CreateCommand()
+                  lockFirst.Transaction <- firstTx
+                  lockFirst.CommandText <- "SELECT pg_advisory_xact_lock(hashtext(@o), @tag)"
+                  lockFirst.Parameters.AddWithValue("o", org.Value.ToString()) |> ignore
+                  lockFirst.Parameters.AddWithValue("tag", EffectClassification.classificationLockTag) |> ignore
+                  lockFirst.ExecuteNonQuery() |> ignore
+                  use classifyFirst = first.CreateCommand()
+                  classifyFirst.Transaction <- firstTx
+                  classifyFirst.CommandText <-
+                      "UPDATE effect_checkpoints
+                          SET uncertain_from = state, state = 'uncertain', uncertain_at = statement_timestamp()
+                        WHERE organization_id = @o AND attempt_id = ANY(@ids) AND state = 'prepared'"
+                  classifyFirst.Parameters.AddWithValue("o", org.Value) |> ignore
+                  classifyFirst.Parameters.AddWithValue("ids", ids early) |> ignore
+                  Expect.equal (classifyFirst.ExecuteNonQuery()) 3 $"{label}: the first classification flipped the three lowest rows"
+
+                  // The second classifier — the store's own — starts while the
+                  // first is open. It must queue on the classification lock (an
+                  // ungranted request on exactly this organization's key), not
+                  // run past the first.
+                  let second = Async.StartAsTask(async { return classify org late })
+                  let queued = Diagnostics.Stopwatch.StartNew()
+                  while waitingOnClassificationLock org = 0L && queued.Elapsed < TimeSpan.FromSeconds 20.0 do
+                      System.Threading.Thread.Sleep 25
+                  Expect.equal (waitingOnClassificationLock org) 1L $"{label}: the second classification is queued on the organization's classification lock"
+                  Expect.isFalse (second.Wait(TimeSpan.FromSeconds 2.0)) $"{label}: and does not complete while the first is held open"
+
+                  use conn = new Npgsql.NpgsqlConnection(connectionString)
+                  conn.Open()
+                  use now = conn.CreateCommand()
+                  now.CommandText <- "SELECT clock_timestamp()"
+                  let beforeFirstCommit = now.ExecuteScalar() :?> DateTime
+                  firstTx.Commit()
+
+                  Expect.isTrue (second.Wait(TimeSpan.FromSeconds 20.0)) $"{label}: the second classification completes once the first commits, without waiting on the held live row"
+                  let classified = second.Result
+                  Expect.equal (classified |> List.map (fun c -> c.AttemptId) |> List.sort) (List.sort late) $"{label}: the second classification moved exactly the three rows the first left"
+                  Expect.isFalse (classified |> List.exists (fun c -> List.contains c.AttemptId early)) $"{label}: and none of the first's rows"
+
+                  // The later-committing rows carry the later uncertain_at: the
+                  // second's statement started after the first's commit, so its
+                  // instant is past the instant read just before that commit.
+                  // Without the lock the second's instant would have preceded it.
+                  use order = conn.CreateCommand()
+                  order.CommandText <-
+                      "SELECT (SELECT max(uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = ANY(@early))
+                            < (SELECT min(uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = ANY(@late)),
+                              (SELECT min(uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = ANY(@late)) > @before,
+                              (SELECT count(DISTINCT uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND state = 'uncertain')"
+                  order.Parameters.AddWithValue("o", org.Value) |> ignore
+                  order.Parameters.AddWithValue("early", ids early) |> ignore
+                  order.Parameters.AddWithValue("late", ids late) |> ignore
+                  order.Parameters.AddWithValue("before", beforeFirstCommit) |> ignore
+                  use ordering = order.ExecuteReader()
+                  Expect.isTrue (ordering.Read()) "ordering row"
+                  Expect.isTrue (ordering.GetBoolean 0) $"{label}: the later-committing rows carry the later uncertain_at"
+                  Expect.isTrue (ordering.GetBoolean 1) $"{label}: the second's instant was assigned after the first's commit, not while it was open"
+                  Expect.equal (ordering.GetInt64 2) 2L $"{label}: two classifications, two instants"
+                  ordering.Close()
+
+                  // A cursor issued from the first's rows — what a reader who
+                  // listed between the two commits would hold — reaches the
+                  // second's rows instead of skipping them forever.
+                  let page limit cursor =
+                      match store.ListUncertainEffectsPage(org, cursor, limit) with
+                      | Ok page -> page
+                      | Error error -> failtestf "%s: page failed: %s" label error
+                  let attempts (page: UncertainEffectPage) = page.Effects |> List.map (fun entry -> entry.Checkpoint.AttemptId) |> List.sort
+                  let pageOne = page 3 None
+                  Expect.equal (attempts pageOne) (List.sort early) $"{label}: the first page holds the first's rows"
+                  Expect.isSome pageOne.NextCursor $"{label}: with a cursor behind them"
+                  let pageTwo = page 3 pageOne.NextCursor
+                  Expect.equal (attempts pageTwo) (List.sort late) $"{label}: following the cursor reaches the second's rows"
+                  Expect.isNone pageTwo.NextCursor $"{label}: and nothing is behind them"
+
+                  liveTx.Commit()
+                  live
+                  |> Option.iter (fun (attempt, fence) ->
+                      Expect.isTrue (store.RenewLease(org, attempt, fence, "agent-live", 60)) $"{label}: the live attempt renews its lease after both classifications"
+                      Expect.equal
+                          (store.AdvanceEffect(org, attempt, fence, "agent-live", "file-drop-receipt:live", payload, RecordApplied) |> Result.map (fun o -> o.Checkpoint.State))
+                          (Ok EffectApplied)
+                          $"{label}: the live checkpoint is untouched and still advances")
+                  Expect.equal (reconcileOk org "lease_expired") [] $"{label}: a further pass finds nothing"
+
+              // The production trigger: one ReadCommitted chunk transaction.
+              scenario "trigger" true (fun org _ -> reconcileOk org "lease_expired")
+
+              // The FG-026 primitive: its RepeatableRead snapshot predates the
+              // wait, so the rows the first flipped raise a serialization
+              // failure that retrySerializationFailure restarts with a fresh
+              // snapshot; the result is still exactly the rows the first left.
+              scenario "primitive" true (fun org _ ->
+                  match store.MarkStaleEffectsUncertain org with
+                  | Ok checkpoints -> checkpoints
+                  | Error error -> failtestf "primitive: the pass failed: %s" error)
+
+              // The restore path classifies inside ActivateRestore's own
+              // transaction; it reports nothing per organization, so its
+              // effect is read back from the rows it left uncertain.
+              scenario "restore" false (fun org late ->
+                  store.ActivateRestore() |> ignore
+                  store.ListUncertainEffects org |> List.filter (fun c -> List.contains c.AttemptId late))
           } ]
 
 /// FG-027b Store foundation. This proves durable retry arbitration and replay;
