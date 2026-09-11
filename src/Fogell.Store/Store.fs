@@ -649,6 +649,8 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
     /// FG-026b. One bounded chunk of the classification pass for one
     /// organization, as one statement (Codex #424 round 10, thread fl7EL):
     ///
+    ///   0. the organization's advisory classification lock is taken first
+    ///      (round 12), so classification is commit-ordered per organization;
     ///   1. `candidates` selects, without locking, at most `chunk`
     ///      prepared/applied checkpoints whose captured authority is already
     ///      not live (fence, owner, lease, state, restore epoch);
@@ -1518,9 +1520,10 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
     /// effects for one organization exactly as MarkStaleEffectsUncertain does and,
     /// in the same statement, publishes one `effect.uncertain` event and outbox
     /// row per newly uncertain checkpoint carrying the trigger reason. Chunked:
-    /// at most classificationChunk rows per short transaction, candidates
-    /// selected by staleness before any lock, attempt rows taken FOR UPDATE SKIP
-    /// LOCKED so a live worker's renewal never waits on the pass. Idempotent: a
+    /// at most classificationChunk rows per short transaction, the
+    /// organization's classification lock taken first, then candidates
+    /// selected by staleness before any row lock, attempt rows taken FOR UPDATE
+    /// SKIP LOCKED so a live worker's renewal never waits on the pass. Idempotent: a
     /// second pass finds nothing stale and publishes nothing. Nothing here ever
     /// re-invokes an effect; the surface exists so an operator can.
     member _.ReconcileStaleEffects(org: OrganizationId, reason: string) : Result<EffectCheckpoint list, string> =

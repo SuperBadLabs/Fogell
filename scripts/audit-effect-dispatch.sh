@@ -165,7 +165,8 @@ observed=$(
 # readiness probes in Config.fs, the FG-251 secure
 # token-file reader in Config.fs, the artifact reader in Router.fs, and the
 # staging -> snapshot move in ArtifactSnapshots.fs, and the FG-254 PID1
-# attestation writer in Program.fs (one FileStream, one File.Move): a
+# attestation writer in Program.fs (one FileStream, one File.Move; its
+# failure-path File.Delete is outside this pattern): a
 # process-local file the host publishes at startup before the Store exists,
 # under no attempt authority — a self-attestation, not an external effect.
 expected=$(printf '%s\n' \
