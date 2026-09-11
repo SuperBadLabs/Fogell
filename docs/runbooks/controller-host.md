@@ -79,7 +79,10 @@ does not wait on claim execution, on every worker scan, and at startup; each
 classification publishes one `effect.uncertain` event and outbox row and never
 re-invokes. `GET /api/v1/organizations/{org}/effects/uncertain?limit=N&cursor=C`
 lists them read-only in pages (`limit` 1..1000, default 200; `next_cursor` in
-the response continues the listing and is bound to the organization). The kill
+the response continues the listing and is bound to the organization and to the
+restore epoch: after a database restore every cursor issued before it is
+refused with 400 `invalid_cursor`, "cursor predates a database restore; restart
+the listing" — restart from the first page). The kill
 hook exists only for `scripts/prove-fg026b-effect-dispatch.sh` and must never
 be set on a service.
 

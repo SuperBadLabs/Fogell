@@ -1581,8 +1581,10 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
     /// uncertain effects in the same order as ListUncertainEffects, continued
     /// through an opaque keyset cursor over the classification sequence
     /// (`uncertain_seq`, 0014). The cursor carries the organization it was
-    /// issued for and is refused for any other, so a cursor can neither leak
-    /// nor skip across tenants.
+    /// issued for and the restore epoch it was issued under, and is refused
+    /// for any other organization or epoch, so a cursor can neither leak nor
+    /// skip across tenants, and a cursor retained across a database restore
+    /// cannot hide the restored timeline's classifications.
     member _.ListUncertainEffectsPage
         (org: OrganizationId, cursor: string option, limit: int)
         : Result<UncertainEffectPage, string> =
@@ -1595,45 +1597,70 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         // uncertain_seq is assigned by the classification statement under the
         // lock, so it is monotone with commit order whatever the clock does,
         // and it is unique, so the cursor is one key.
-        let cursorVersion = "fg026b-3"
+        //
+        // Codex #424 round 14: the cursor is bound to the database timeline.
+        // A restore from an older snapshot brings back a sequence behind a
+        // cursor a client still holds, so every classification until the
+        // sequence caught up would draw a value below the cursor and the
+        // strict keyset would hide it. The cursor therefore carries the
+        // restore epoch (controller_metadata.restore_epoch, the value the
+        // ledger's authority check compares; ActivateRestore bumps it) and is
+        // refused, inside the page's own transaction, when the current epoch
+        // differs. The sequence's own position is checked in the same
+        // transaction as the direct test of the mechanism: a cursor past the
+        // last value the sequence has issued cannot have been issued on this
+        // timeline, whatever epoch it claims (a restore retried from the same
+        // pre-restore backup lands on the epoch the first restore produced).
+        let cursorVersion = "fg026b-4"
+        let restoreRefusal = "cursor predates a database restore; restart the listing"
 
-        let encode (uncertainSeq: int64) =
-            let text = String.concat "|" [ cursorVersion; org.Value.ToString(); string uncertainSeq ]
+        let encode (restoreEpoch: int64) (uncertainSeq: int64) =
+            let text =
+                String.concat
+                    "|"
+                    [ cursorVersion; org.Value.ToString(); string restoreEpoch; string uncertainSeq ]
+
             Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes text)
 
         // Codex #424 round 5: a well-formed base64 cursor whose decoded key is
         // hostile must be a refusal before any connection, never a database
-        // error. Every field is validated here: exactly three fields, the
-        // current version, a GUID organization, and a plain positive decimal
-        // sequence (no sign, no whitespace, within bigint). A cursor of any
-        // earlier version is malformed, not translated.
+        // error. Every field is validated here: exactly four fields, the
+        // current version, a GUID organization, a plain decimal restore epoch
+        // (no sign, no whitespace, within bigint; the epoch starts at 0) and a
+        // plain positive decimal sequence. A cursor of any earlier version is
+        // malformed, not translated. The epoch and sequence-position checks
+        // need the database and happen inside the page's transaction below.
         let decode (raw: string) =
             try
                 let strictUtf8 = System.Text.UTF8Encoding(false, true)
                 let text = strictUtf8.GetString(Convert.FromBase64String raw)
 
-                match text.Split '|' with
-                | [| version; cursorOrg; sequence |] when version = cursorVersion ->
-                    // .NET's number parser tolerates trailing NUL characters, so
-                    // the sequence is held to ASCII digits before it is parsed.
-                    let digitsOnly = sequence.Length >= 1 && sequence |> Seq.forall Char.IsAsciiDigit
+                // .NET's number parser tolerates trailing NUL characters, so
+                // every number is held to ASCII digits before it is parsed.
+                let plainDecimal (field: string) =
+                    if field.Length >= 1 && field |> Seq.forall Char.IsAsciiDigit then
+                        match
+                            Int64.TryParse(
+                                field,
+                                Globalization.NumberStyles.None,
+                                Globalization.CultureInfo.InvariantCulture
+                            )
+                        with
+                        | true, value -> Some value
+                        | _ -> None
+                    else
+                        None
 
-                    match
-                        Guid.TryParse cursorOrg,
-                        digitsOnly,
-                        Int64.TryParse(
-                            sequence,
-                            Globalization.NumberStyles.None,
-                            Globalization.CultureInfo.InvariantCulture
-                        )
-                    with
-                    | (true, cursorOrganization), true, (true, uncertainSeq) ->
+                match text.Split '|' with
+                | [| version; cursorOrg; restoreEpoch; sequence |] when version = cursorVersion ->
+                    match Guid.TryParse cursorOrg, plainDecimal restoreEpoch, plainDecimal sequence with
+                    | (true, cursorOrganization), Some cursorEpoch, Some uncertainSeq ->
                         if cursorOrganization <> org.Value then
                             Error "cursor belongs to another organization"
                         elif uncertainSeq < 1L then
                             Error "cursor is malformed"
                         else
-                            Ok(Some uncertainSeq)
+                            Ok(Some(cursorEpoch, uncertainSeq))
                     | _ -> Error "cursor is malformed"
                 | _ -> Error "cursor is malformed"
             with _ ->
@@ -1647,49 +1674,74 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             | Ok after ->
                 use conn = openConn ()
                 use tx = beginTenantTransaction conn org
-                use cmd = conn.CreateCommand()
-                cmd.Transaction <- tx
 
-                let keyset =
-                    match after with
-                    | None -> ""
-                    | Some _ -> " AND uncertain_seq > @after"
+                // The timeline is read before the page, so a cursor issued from
+                // this page never carries an epoch later than the rows it was
+                // issued from; a restore committing between the two reads costs
+                // the client one refusal and a restart, never a hidden row.
+                use timeline = conn.CreateCommand()
+                timeline.Transaction <- tx
+                timeline.CommandText <-
+                    "SELECT (SELECT restore_epoch FROM controller_metadata WHERE singleton),
+                            (SELECT CASE WHEN is_called THEN last_value ELSE 0 END
+                               FROM effect_checkpoints_uncertain_seq)"
+                use timelineReader = timeline.ExecuteReader()
 
-                cmd.CommandText <-
-                    $"SELECT {effectProjection}, uncertain_at, uncertain_seq
-                      FROM effect_checkpoints
-                      WHERE organization_id = @o AND state = 'uncertain'{keyset}
-                      ORDER BY uncertain_seq
-                      LIMIT @limit"
-                cmd.Parameters.AddWithValue("o", org.Value) |> ignore
-                // One row past the page decides whether a next cursor exists.
-                cmd.Parameters.AddWithValue("limit", limit + 1) |> ignore
+                if not (timelineReader.Read()) then
+                    failwith "controller_metadata singleton is missing"
+
+                let currentEpoch = timelineReader.GetInt64 0
+                let lastIssuedSeq = timelineReader.GetInt64 1
+                timelineReader.Close()
 
                 match after with
-                | None -> ()
-                | Some uncertainSeq -> cmd.Parameters.AddWithValue("after", uncertainSeq) |> ignore
+                | Some(cursorEpoch, uncertainSeq) when cursorEpoch <> currentEpoch || uncertainSeq > lastIssuedSeq ->
+                    tx.Rollback()
+                    Error restoreRefusal
+                | _ ->
+                    use cmd = conn.CreateCommand()
+                    cmd.Transaction <- tx
 
-                use reader = cmd.ExecuteReader()
+                    let keyset =
+                        match after with
+                        | None -> ""
+                        | Some _ -> " AND uncertain_seq > @after"
 
-                let rows =
-                    [ while reader.Read() do
-                          yield
-                              { Checkpoint = readCheckpoint reader
-                                UncertainAt = reader.GetDateTime 9
-                                UncertainSeq = reader.GetInt64 10 } ]
+                    cmd.CommandText <-
+                        $"SELECT {effectProjection}, uncertain_at, uncertain_seq
+                          FROM effect_checkpoints
+                          WHERE organization_id = @o AND state = 'uncertain'{keyset}
+                          ORDER BY uncertain_seq
+                          LIMIT @limit"
+                    cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                    // One row past the page decides whether a next cursor exists.
+                    cmd.Parameters.AddWithValue("limit", limit + 1) |> ignore
 
-                reader.Close()
-                tx.Commit()
+                    match after with
+                    | None -> ()
+                    | Some(_, uncertainSeq) -> cmd.Parameters.AddWithValue("after", uncertainSeq) |> ignore
 
-                let page = rows |> List.truncate limit
+                    use reader = cmd.ExecuteReader()
 
-                let next =
-                    if rows.Length > limit then
-                        Some(encode (List.last page).UncertainSeq)
-                    else
-                        None
+                    let rows =
+                        [ while reader.Read() do
+                              yield
+                                  { Checkpoint = readCheckpoint reader
+                                    UncertainAt = reader.GetDateTime 9
+                                    UncertainSeq = reader.GetInt64 10 } ]
 
-                Ok { Effects = page; NextCursor = next }
+                    reader.Close()
+                    tx.Commit()
+
+                    let page = rows |> List.truncate limit
+
+                    let next =
+                        if rows.Length > limit then
+                            Some(encode currentEpoch (List.last page).UncertainSeq)
+                        else
+                            None
+
+                    Ok { Effects = page; NextCursor = next }
 
     /// Read-only idempotency probe for admission compatibility across stricter
     /// execution preflights. An exact durable result may be replayed without

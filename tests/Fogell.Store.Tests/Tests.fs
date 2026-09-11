@@ -3999,30 +3999,40 @@ let effectReconciliation =
               // Codex #424 round 5: a well-formed cursor with a hostile payload
               // must be a refusal before any connection, never a database error.
               // The unreachable store proves no round trip was attempted. Round
-              // 13: the cursor is (version, organization, sequence); a plain
-              // positive decimal within bigint is the only accepted sequence,
-              // and an earlier version's shape is malformed, never translated.
+              // 13 and 14: the cursor is (version, organization, epoch, sequence);
+              // a plain decimal within bigint is the only
+              // accepted epoch, a plain positive decimal within bigint the only
+              // accepted sequence, and an earlier version's shape is malformed,
+              // never translated.
               let unreachable = Store("Host=127.0.0.1;Port=9;Username=nobody;Database=nowhere;Timeout=1")
               let orgText = org.Value.ToString()
               let forged (fields: string list) =
-                  Convert.ToBase64String(Text.Encoding.UTF8.GetBytes(String.concat "|" ("fg026b-3" :: fields)))
+                  Convert.ToBase64String(Text.Encoding.UTF8.GetBytes(String.concat "|" ("fg026b-4" :: fields)))
               let ticks = string DateTime.UtcNow.Ticks
               let attempt = Guid.NewGuid().ToString()
               let tampered =
-                  [ "a garbage sequence", forged [ orgText; "yesterday" ]
-                    "a zero sequence", forged [ orgText; "0" ]
-                    "a negative sequence", forged [ orgText; "-1" ]
-                    "a signed sequence", forged [ orgText; "+7" ]
-                    "a sequence with whitespace", forged [ orgText; " 7" ]
-                    "an out-of-range sequence", forged [ orgText; "9223372036854775808" ]
-                    "a NUL in the sequence", forged [ orgText; "7\000" ]
-                    "an empty sequence", forged [ orgText; "" ]
-                    "a non-GUID organization", forged [ "nope"; "7" ]
-                    "a missing field", forged [ orgText ]
-                    "an extra field", forged [ orgText; "7"; "7" ]
-                    "invalid UTF-8", Convert.ToBase64String(Array.append (Text.Encoding.UTF8.GetBytes $"fg026b-3|{orgText}|7") [| 0xFFuy; 0xFEuy |])
+                  [ "a garbage sequence", forged [ orgText; "0"; "yesterday" ]
+                    "a zero sequence", forged [ orgText; "0"; "0" ]
+                    "a negative sequence", forged [ orgText; "0"; "-1" ]
+                    "a signed sequence", forged [ orgText; "0"; "+7" ]
+                    "a sequence with whitespace", forged [ orgText; "0"; " 7" ]
+                    "an out-of-range sequence", forged [ orgText; "0"; "9223372036854775808" ]
+                    "a NUL in the sequence", forged [ orgText; "0"; "7\000" ]
+                    "an empty sequence", forged [ orgText; "0"; "" ]
+                    "a garbage epoch", forged [ orgText; "now"; "7" ]
+                    "a negative epoch", forged [ orgText; "-1"; "7" ]
+                    "a signed epoch", forged [ orgText; "+0"; "7" ]
+                    "an epoch with whitespace", forged [ orgText; "0 "; "7" ]
+                    "an out-of-range epoch", forged [ orgText; "9223372036854775808"; "7" ]
+                    "a NUL in the epoch", forged [ orgText; "0\000"; "7" ]
+                    "an empty epoch", forged [ orgText; ""; "7" ]
+                    "a non-GUID organization", forged [ "nope"; "0"; "7" ]
+                    "a missing field", forged [ orgText; "7" ]
+                    "an extra field", forged [ orgText; "0"; "7"; "7" ]
+                    "invalid UTF-8", Convert.ToBase64String(Array.append (Text.Encoding.UTF8.GetBytes $"fg026b-4|{orgText}|0|7") [| 0xFFuy; 0xFEuy |])
                     "the round-12 cursor shape", Convert.ToBase64String(Text.Encoding.UTF8.GetBytes $"fg026b-2|{orgText}|{ticks}|{ticks}|{attempt}|file-drop-receipt:x")
-                    "an unknown version with the right shape", Convert.ToBase64String(Text.Encoding.UTF8.GetBytes $"fg026b-4|{orgText}|7") ]
+                    "the round-13 cursor shape", Convert.ToBase64String(Text.Encoding.UTF8.GetBytes $"fg026b-3|{orgText}|7")
+                    "an unknown version with the right shape", Convert.ToBase64String(Text.Encoding.UTF8.GetBytes $"fg026b-5|{orgText}|0|7") ]
 
               for label, cursor in tampered do
                   match unreachable.ListUncertainEffectsPage(org, Some cursor, 10) with
@@ -4034,6 +4044,105 @@ let effectReconciliation =
               Expect.equal (page 2 first.NextCursor).Effects.Length 1 "a genuine cursor is still accepted after the validator"
           }
 
+
+          test "the cursor is bound to the restore epoch: a restore refuses every cursor issued before it, a fresh cursor works, and nothing classified after the restore is hidden" {
+              // Codex #424 round 14 (thread hVh8J): a client's retained cursor
+              // survives a database restore from an older snapshot, but the
+              // restored classification sequence is behind it, so every
+              // classification until the sequence caught up drew a value below
+              // the cursor and the strict keyset hid it. The cursor now carries
+              // controller_metadata.restore_epoch — the value the ledger's
+              // authority check compares and ActivateRestore bumps — and is
+              // refused when the current epoch differs; a cursor past the
+              // sequence's last issued value, which is what a retained cursor
+              // looks like on a restored timeline whatever epoch it claims, is
+              // refused the same way. The snapshot restore itself cannot be
+              // replayed here (the suite shares one database), so the two
+              // halves are proven from the store's side: ActivateRestore for
+              // the epoch, a forged cursor ahead of the sequence for the
+              // position.
+              let org, project = freshProject ()
+              let payload = [| 14uy |]
+              let prepare name =
+                  let attempt, fence = runningAttempt org project $"fg026b-epoch-{name}" "agent-epoch" 60
+                  prepareEffectOk org attempt.AttemptId fence "agent-epoch" $"file-drop-receipt:{name}" payload |> ignore
+                  System.Threading.Thread.Sleep 5
+                  attempt.AttemptId
+              let classify attempt =
+                  expireLeases org [ attempt ]
+                  Expect.equal (reconcileOk org "lease_expired").Length 1 "one row classified"
+                  System.Threading.Thread.Sleep 5
+              prepare "one" |> classify
+              prepare "two" |> classify
+              prepare "three" |> ignore
+
+              let page limit cursor =
+                  match store.ListUncertainEffectsPage(org, cursor, limit) with
+                  | Ok page -> page
+                  | Error error -> failtestf "page failed: %s" error
+              let keys (page: UncertainEffectPage) = page.Effects |> List.map (fun entry -> entry.Checkpoint.EffectKey)
+              let refused label cursor =
+                  match store.ListUncertainEffectsPage(org, Some cursor, 10) with
+                  | Error error ->
+                      Expect.equal error "cursor predates a database restore; restart the listing" $"{label} is refused as predating a restore"
+                  | Ok page -> failtestf "%s was accepted: %A" label page
+              let fieldsOf (cursor: string) = (Text.Encoding.UTF8.GetString(Convert.FromBase64String cursor)).Split '|'
+              let forge (fields: string list) =
+                  Convert.ToBase64String(Text.Encoding.UTF8.GetBytes(String.concat "|" ("fg026b-4" :: org.Value.ToString() :: fields)))
+
+              let epochBefore = (store.CurrentRestoreEpoch()).Value
+              let pageOne = page 1 None
+              Expect.equal (keys pageOne) [ "file-drop-receipt:one" ] "page 1 holds the first classified row"
+              let retained = Expect.wantSome pageOne.NextCursor "with the second behind it"
+              let issuedSeq = pageOne.Effects.Head.UncertainSeq
+              let fields = fieldsOf retained
+              Expect.equal fields.[0] "fg026b-4" "the cursor version binds the timeline"
+              Expect.equal fields.[2] (string epochBefore) "the cursor carries the restore epoch the ledger's authority check compares"
+              Expect.equal fields.[3] (string issuedSeq) "and the page's last classification sequence value"
+              Expect.equal (keys (page 1 (Some retained))) [ "file-drop-receipt:two" ] "before the restore the cursor continues the listing"
+
+              // The mechanism, from the store's side: a value the sequence has
+              // not issued yet cannot have come from this timeline.
+              refused "a cursor ahead of the sequence" (forge [ string epochBefore; string (issuedSeq + 1000L) ])
+              refused "a cursor from a later epoch" (forge [ string (epochBefore + 1L); string issuedSeq ])
+              if epochBefore > 0L then
+                  refused "a cursor from an earlier epoch" (forge [ string (epochBefore - 1L); string issuedSeq ])
+
+              // The restore. It classifies the prepared third row itself.
+              let epochAfter = (store.ActivateRestore()).Value
+              Expect.equal epochAfter (epochBefore + 1L) "the restore advanced the epoch"
+              refused "the cursor retained across the restore" retained
+
+              // Restarting the listing works, its cursor carries the new
+              // epoch, and following it reaches every row, including the one
+              // the restore classified.
+              let restarted = page 1 None
+              Expect.equal (keys restarted) [ "file-drop-receipt:one" ] "the restarted listing starts over"
+              let fresh = Expect.wantSome restarted.NextCursor "with a fresh cursor"
+              Expect.equal (fieldsOf fresh).[2] (string epochAfter) "the fresh cursor carries the new epoch"
+              let rec follow cursor collected =
+                  match cursor with
+                  | None -> List.rev collected
+                  | Some _ ->
+                      let next = page 1 cursor
+                      follow next.NextCursor (List.rev (keys next) @ collected)
+              Expect.equal
+                  (follow (Some fresh) [])
+                  [ "file-drop-receipt:two"; "file-drop-receipt:three" ]
+                  "following the fresh cursor reaches the row the restore classified"
+
+              // A classification after the restore lands behind the fresh
+              // cursor, never hidden by it.
+              prepare "four" |> classify
+              Expect.equal
+                  (follow (Some fresh) [])
+                  [ "file-drop-receipt:two"; "file-drop-receipt:three"; "file-drop-receipt:four" ]
+                  "a classification after the restore is reached from the fresh cursor"
+              Expect.equal
+                  (store.ListUncertainEffects org |> List.map (fun c -> c.EffectKey))
+                  [ "file-drop-receipt:one"; "file-drop-receipt:two"; "file-drop-receipt:three"; "file-drop-receipt:four" ]
+                  "the unbounded listing agrees"
+          }
           test "the cursor survives a wall clock that steps backward or repeats: a later classification stamped with an earlier or equal uncertain_at is still reached, in classification-sequence order" {
               // Codex #424 round 13 (thread hVDpf): the round-12 lock orders
               // classification transactions, but statement_timestamp() is

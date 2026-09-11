@@ -3674,27 +3674,59 @@ let effectDispatch =
                   Expect.stringContains garbageBody "invalid_cursor" "with the stable code"
 
                   // Codex round 5: well-formed base64 with a hostile payload is
-                  // the same 400, decided before any database statement. Round
-                  // 13: the cursor is (version, organization, sequence); a
-                  // round-12 (fg026b-2) cursor is refused, never translated.
+                  // the same 400, decided before any database statement. Rounds
+                  // 13 and 14: the cursor is (version, organization, epoch,
+                  // sequence); a round-12 (fg026b-2) or round-13 (fg026b-3)
+                  // cursor is refused, never translated.
                   let encoded (text: string) =
                       Uri.EscapeDataString(Convert.ToBase64String(Text.Encoding.UTF8.GetBytes text))
                   let forged (fields: string list) =
-                      encoded (String.concat "|" ("fg026b-3" :: org.Value.ToString() :: fields))
+                      encoded (String.concat "|" ("fg026b-4" :: org.Value.ToString() :: fields))
                   let ticks = string DateTime.UtcNow.Ticks
                   for label, cursor in
-                      [ "garbage sequence", forged [ "now" ]
-                        "zero sequence", forged [ "0" ]
-                        "negative sequence", forged [ "-1" ]
-                        "out-of-range sequence", forged [ "9223372036854775808" ]
-                        "NUL in the sequence", forged [ "1\000" ]
-                        "missing sequence", forged []
-                        "extra field", forged [ "1"; "1" ]
-                        "non-GUID organization", encoded "fg026b-3|nope|1"
-                        "round-12 (fg026b-2) cursor", encoded $"fg026b-2|{org.Value}|{ticks}|{ticks}|{claim.AttemptId.Value}|{key}" ] do
+                      [ "garbage sequence", forged [ "0"; "now" ]
+                        "zero sequence", forged [ "0"; "0" ]
+                        "negative sequence", forged [ "0"; "-1" ]
+                        "out-of-range sequence", forged [ "0"; "9223372036854775808" ]
+                        "NUL in the sequence", forged [ "0"; "1\000" ]
+                        "garbage epoch", forged [ "now"; "1" ]
+                        "negative epoch", forged [ "-1"; "1" ]
+                        "missing field", forged [ "1" ]
+                        "extra field", forged [ "0"; "1"; "1" ]
+                        "non-GUID organization", encoded "fg026b-4|nope|0|1"
+                        "round-12 (fg026b-2) cursor", encoded $"fg026b-2|{org.Value}|{ticks}|{ticks}|{claim.AttemptId.Value}|{key}"
+                        "round-13 (fg026b-3) cursor", encoded $"fg026b-3|{org.Value}|1" ] do
                       let tamperedCode, tamperedBody = send HttpMethod.Get $"{url org}?cursor={cursor}" (Some token) None None
                       Expect.equal tamperedCode 400 $"a tampered cursor with {label} is refused"
                       Expect.stringContains tamperedBody "invalid_cursor" $"{label}: with the stable code, not a 500"
+
+                  // Codex round 14: a cursor retained across a database restore
+                  // reaches the caller as its own documented 400 — the same
+                  // stable code, a reason that says to restart — rather than
+                  // being served with the restored timeline's classifications
+                  // hidden behind it. ActivateRestore bumps the epoch the
+                  // cursor carries; restarting the listing issues a cursor
+                  // under the new epoch that continues as before.
+                  store.ActivateRestore() |> ignore
+                  let restoredCode, restoredBody =
+                      send HttpMethod.Get $"{url org}?limit=1&cursor={Uri.EscapeDataString nextCursor}" (Some token) None None
+                  Expect.equal restoredCode 400 "a cursor issued before a restore is refused after it"
+                  Expect.stringContains restoredBody "invalid_cursor" "with the stable code"
+                  Expect.stringContains restoredBody "cursor predates a database restore; restart the listing" "and the restore reason"
+                  Expect.isFalse (restoredBody.Contains key) "and leaks nothing"
+                  let restartedCode, restartedBody = send HttpMethod.Get $"{url org}?limit=1" (Some token) None None
+                  Expect.equal restartedCode 200 "restarting the listing is served"
+                  use restarted = JsonDocument.Parse restartedBody
+                  let freshCursor = restarted.RootElement.GetProperty("next_cursor").GetString()
+                  Expect.isNotNull freshCursor "with a fresh cursor"
+                  Expect.notEqual freshCursor nextCursor "that differs from the one the restore invalidated"
+                  let freshCode, freshBody =
+                      send HttpMethod.Get $"{url org}?limit=1&cursor={Uri.EscapeDataString freshCursor}" (Some token) None None
+                  Expect.equal freshCode 200 "the fresh cursor continues the listing"
+                  use freshPage = JsonDocument.Parse freshBody
+                  let freshEffects = freshPage.RootElement.GetProperty("effects").EnumerateArray() |> List.ofSeq
+                  Expect.equal freshEffects.Length 1 "to the remaining row"
+                  Expect.equal (freshEffects.Head.GetProperty("attempt_id").GetString()) (secondClaim.AttemptId.Value.ToString()) "without skipping or repeating"
 
                   for badLimit in [ "0"; "1001"; "abc"; "-5" ] do
                       let badCode, badBody = send HttpMethod.Get $"{url org}?limit={badLimit}" (Some token) None None

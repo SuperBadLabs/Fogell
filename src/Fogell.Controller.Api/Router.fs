@@ -689,6 +689,10 @@ module Router =
                         return! fail ctx 400 "invalid_limit" "limit must be an integer from 1 through 1000" None
                     | Ok limit ->
                         match state.Store.ListUncertainEffectsPage(OrganizationId org, cursor, limit) with
+                        // Every cursor refusal is the one stable code; the message
+                        // says which: malformed, another organization's, or (Codex
+                        // round 14) issued before a database restore — "cursor
+                        // predates a database restore; restart the listing".
                         | Error error -> return! fail ctx 400 "invalid_cursor" error None
                         | Ok page ->
                             let effects =
