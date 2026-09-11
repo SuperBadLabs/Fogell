@@ -164,7 +164,10 @@ observed=$(
 # worker's atomic definition write, child launch and event-stream reader, the
 # readiness probes in Config.fs, the FG-251 secure
 # token-file reader in Config.fs, the artifact reader in Router.fs, and the
-# staging -> snapshot move in ArtifactSnapshots.fs.
+# staging -> snapshot move in ArtifactSnapshots.fs, and the FG-254 PID1
+# attestation writer in Program.fs (one FileStream, one File.Move): a
+# process-local file the host publishes at startup before the Store exists,
+# under no attempt authority — a self-attestation, not an external effect.
 expected=$(printf '%s\n' \
   "1 $dispatch_fs .Kill()" \
   "7 $registry_fs DllImport" \
@@ -172,6 +175,8 @@ expected=$(printf '%s\n' \
   "1 $worker_fs File.WriteAllBytes" \
   "1 $worker_fs FileStream" \
   "1 $worker_fs new Process" \
+  "1 $host_dir/Program.fs File.Move" \
+  "1 $host_dir/Program.fs FileStream" \
   "2 $host_dir/Config.fs File.Open" \
   "4 $host_dir/Config.fs DllImport" \
   "4 $host_dir/ProcessGroup.fs DllImport" \
