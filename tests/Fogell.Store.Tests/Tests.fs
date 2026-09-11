@@ -526,7 +526,7 @@ let migrations =
                           (applied
                            |> List.filter (fun item -> not item.AlreadyPresent)
                            |> List.map (fun item -> item.Version))
-                          [ "0009"; "0010"; "0011" ]
+                          [ "0009"; "0010"; "0011"; "0012"; "0013"; "0014" ]
                           "only the forward repair and invariant guard migrations are pending"
 
                   use repaired = target.CreateCommand()
@@ -828,7 +828,7 @@ let tenantIsolation =
                           build_definitions
                         TO {roleName};
                         GRANT SELECT ON organization_work_roots TO {roleName};
-                        GRANT USAGE ON events_id_seq, outbox_id_seq, log_chunks_id_seq TO {roleName}"
+                        GRANT USAGE ON events_id_seq, outbox_id_seq, log_chunks_id_seq, effect_checkpoints_uncertain_seq TO {roleName}"
 
                   // Deliberately disable Npgsql's pool reset and force one physical
                   // connection. Otherwise a session-scoped set_config mutant is
@@ -853,7 +853,7 @@ let tenantIsolation =
                       (runtimeStore.RuntimeCapabilities())
                       "sequence USAGE without SELECT is not the full sequence capability"
 
-                  admin $"GRANT SELECT ON events_id_seq, outbox_id_seq, log_chunks_id_seq TO {roleName}"
+                  admin $"GRANT SELECT ON events_id_seq, outbox_id_seq, log_chunks_id_seq, effect_checkpoints_uncertain_seq TO {roleName}"
 
                   Expect.isFalse
                       (runtimeStore.RuntimeCapabilities())
@@ -1150,8 +1150,9 @@ let tenantIsolation =
                         GRANT SELECT, UPDATE (restore_epoch) ON controller_metadata TO {roleName};
                         GRANT SELECT ON organization_work_roots TO {roleName};
                         GRANT SELECT, UPDATE ON attempts, nodes, builds TO {roleName};
+                        GRANT SELECT, UPDATE ON effect_checkpoints TO {roleName};
                         GRANT INSERT ON events, outbox TO {roleName};
-                        GRANT USAGE ON SEQUENCE events_id_seq, outbox_id_seq TO {roleName}"
+                        GRANT USAGE ON SEQUENCE events_id_seq, outbox_id_seq, effect_checkpoints_uncertain_seq TO {roleName}"
 
                   let maintenanceBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
                   maintenanceBuilder.Options <- $"-c role={roleName}"
@@ -3706,6 +3707,924 @@ let effectCheckpoints =
               Expect.equal (checkpointCount org admitted.AttemptId) 0 "invalid inputs are side-effect free"
           } ]
 
+/// FG-026b. The bounded reconciliation trigger and its operator surface. This
+/// list is deliberately separate from the ten-test FG-026 slice above, which the
+/// gate's effect-ledger proof pins by name and count.
+let effectReconciliation =
+    let uncertaintySurface (org: OrganizationId) (attempt: AttemptId) =
+        use conn = new Npgsql.NpgsqlConnection(connectionString)
+        conn.Open()
+        use cmd = conn.CreateCommand()
+        cmd.CommandText <-
+            "SELECT (SELECT count(*) FROM events e
+                      WHERE e.organization_id = @o AND e.attempt_id = @a AND e.kind = 'effect.uncertain'),
+                    (SELECT count(*) FROM outbox o
+                      WHERE o.organization_id = @o AND o.topic = 'effect.uncertain'
+                        AND o.body->>'attempt' = @a::text),
+                    (SELECT string_agg(e.payload->>'effect_key' || '|' || (e.payload->>'uncertain_from') || '|' || (e.payload->>'reason'), ',' ORDER BY e.id)
+                       FROM events e
+                      WHERE e.organization_id = @o AND e.attempt_id = @a AND e.kind = 'effect.uncertain'),
+                    (SELECT string_agg(o.body->>'effect_key' || '|' || (o.body->>'uncertain_from') || '|' || (o.body->>'reason') || '|' || (o.body->>'build'), ',' ORDER BY o.id)
+                       FROM outbox o
+                      WHERE o.organization_id = @o AND o.topic = 'effect.uncertain'
+                        AND o.body->>'attempt' = @a::text)"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+        use reader = cmd.ExecuteReader()
+        Expect.isTrue (reader.Read()) "surface query returned a row"
+        let events = reader.GetInt64 0
+        let outbox = reader.GetInt64 1
+        let eventBodies = if reader.IsDBNull 2 then "" else reader.GetString 2
+        let outboxBodies = if reader.IsDBNull 3 then "" else reader.GetString 3
+        reader.Close()
+        events, outbox, eventBodies, outboxBodies
+
+    let expireLeases (org: OrganizationId) (attempts: AttemptId list) =
+        use conn = new Npgsql.NpgsqlConnection(connectionString)
+        conn.Open()
+        use expire = conn.CreateCommand()
+        expire.CommandText <-
+            "UPDATE attempts SET lease_expires_at = clock_timestamp() - interval '1 second'
+             WHERE organization_id = @o AND id = ANY(@ids)"
+        expire.Parameters.AddWithValue("o", org.Value) |> ignore
+        expire.Parameters.AddWithValue("ids", attempts |> List.map (fun a -> a.Value) |> Array.ofList) |> ignore
+        Expect.equal (expire.ExecuteNonQuery()) attempts.Length "every named authority expired"
+
+    let reconcileOk org reason =
+        match store.ReconcileStaleEffects(org, reason) with
+        | Ok checkpoints -> checkpoints
+        | Error error -> failtestf "effect reconciliation failed: %s" error
+
+    testList
+        "FG-026b effect reconciliation"
+        [ test "a lease-expiry pass classifies stale work once and publishes one effect.uncertain event and outbox row per checkpoint" {
+              let org, project = freshProject ()
+              let preparedAttempt, preparedFence = runningAttempt org project "fg026b-prepared" "agent-p" 60
+              let appliedAttempt, appliedFence = runningAttempt org project "fg026b-applied" "agent-a" 60
+              let liveAttempt, liveFence = runningAttempt org project "fg026b-live" "agent-live" 60
+              let payload = [| 2uy; 6uy; 98uy |]
+
+              prepareEffectOk org preparedAttempt.AttemptId preparedFence "agent-p" "file-drop-receipt:p" payload |> ignore
+              prepareEffectOk org appliedAttempt.AttemptId appliedFence "agent-a" "file-drop-receipt:a" payload |> ignore
+              advanceEffectOk org appliedAttempt.AttemptId appliedFence "agent-a" "file-drop-receipt:a" payload RecordApplied |> ignore
+              prepareEffectOk org liveAttempt.AttemptId liveFence "agent-live" "file-drop-receipt:live" payload |> ignore
+
+              let foreignOrg, foreignProject = freshProject ()
+              let foreignAttempt, foreignFence =
+                  runningAttempt foreignOrg foreignProject "fg026b-foreign" "agent-foreign" 60
+              prepareEffectOk foreignOrg foreignAttempt.AttemptId foreignFence "agent-foreign" "file-drop-receipt:f" payload |> ignore
+
+              expireLeases org [ preparedAttempt.AttemptId; appliedAttempt.AttemptId ]
+              expireLeases foreignOrg [ foreignAttempt.AttemptId ]
+
+              let classified = reconcileOk org "lease_expired"
+              Expect.equal classified.Length 2 "only the stale effects in the requested organization"
+              let origins = classified |> List.map (fun c -> c.EffectKey, c.UncertainOrigin) |> Map.ofList
+              Expect.equal origins.["file-drop-receipt:p"] (Some UncertainAfterPrepare) "prepared origin retained"
+              Expect.equal origins.["file-drop-receipt:a"] (Some UncertainAfterApply) "applied origin retained"
+
+              let pEvents, pOutbox, pEventBody, pOutboxBody = uncertaintySurface org preparedAttempt.AttemptId
+              Expect.equal (pEvents, pOutbox) (1L, 1L) "exactly one event and one outbox row for the prepared checkpoint"
+              Expect.equal pEventBody "file-drop-receipt:p|prepared|lease_expired" "event names key, origin and trigger reason"
+              Expect.equal
+                  pOutboxBody
+                  $"file-drop-receipt:p|prepared|lease_expired|{preparedAttempt.BuildId.Value}"
+                  "outbox names key, origin, reason and build lineage"
+
+              let aEvents, aOutbox, aEventBody, _ = uncertaintySurface org appliedAttempt.AttemptId
+              Expect.equal (aEvents, aOutbox) (1L, 1L) "exactly one event and one outbox row for the applied checkpoint"
+              Expect.equal aEventBody "file-drop-receipt:a|applied|lease_expired" "applied origin is observable"
+
+              let liveEvents, liveOutbox, _, _ = uncertaintySurface org liveAttempt.AttemptId
+              Expect.equal (liveEvents, liveOutbox) (0L, 0L) "a live checkpoint is neither classified nor surfaced"
+              let foreignEvents, foreignOutbox, _, _ = uncertaintySurface foreignOrg foreignAttempt.AttemptId
+              Expect.equal (foreignEvents, foreignOutbox) (0L, 0L) "another organization's stale work is untouched by this tenant's pass"
+              Expect.isEmpty (store.ListUncertainEffects foreignOrg) "the foreign organization lists nothing"
+
+              Expect.equal (reconcileOk org "lease_expired") [] "a second pass finds nothing stale"
+              let pEventsAgain, pOutboxAgain, _, _ = uncertaintySurface org preparedAttempt.AttemptId
+              Expect.equal (pEventsAgain, pOutboxAgain) (1L, 1L) "a second pass publishes nothing more"
+
+              // Both rows entered the set in one pass, so their uncertain_at may
+              // tie; the listing is asserted as a set here, not an order.
+              let listed = store.ListUncertainEffects org |> List.map (fun c -> c.EffectKey) |> List.sort
+              Expect.equal listed [ "file-drop-receipt:a"; "file-drop-receipt:p" ] "the tenant listing carries both classified effects"
+
+              match store.AdvanceEffect(org, preparedAttempt.AttemptId, preparedFence, "agent-p", "file-drop-receipt:p", payload, RecordApplied) with
+              | Error _ -> ()
+              | Ok _ -> failtest "an uncertain checkpoint must never advance again"
+
+              Expect.equal (reconcileOk org "lease_expired") [] "a third pass after the refused advance still publishes nothing"
+          }
+
+          test "a reconciliation reason must be a stable lowercase code" {
+              let org, _ = freshProject ()
+
+              Expect.throwsT<ArgumentException>
+                  (fun () -> store.ReconcileStaleEffects(org, "Lease Expired") |> ignore)
+                  "mixed case and whitespace are refused before any transaction"
+
+              Expect.throwsT<ArgumentException>
+                  (fun () -> store.ReconcileStaleEffects(org, "") |> ignore)
+                  "an empty reason is refused"
+          }
+
+          test "activating a restore classifies pre-restore prepared and applied effects atomically with the epoch bump" {
+              let org, project = freshProject ()
+              let preparedAttempt, preparedFence = runningAttempt org project "fg026b-restore-p" "agent-p" 300
+              let appliedAttempt, appliedFence = runningAttempt org project "fg026b-restore-a" "agent-a" 300
+              let confirmedAttempt, confirmedFence = runningAttempt org project "fg026b-restore-c" "agent-c" 300
+              let payload = [| 42uy |]
+
+              prepareEffectOk org preparedAttempt.AttemptId preparedFence "agent-p" "file-drop-receipt:p" payload |> ignore
+              prepareEffectOk org appliedAttempt.AttemptId appliedFence "agent-a" "file-drop-receipt:a" payload |> ignore
+              advanceEffectOk org appliedAttempt.AttemptId appliedFence "agent-a" "file-drop-receipt:a" payload RecordApplied |> ignore
+              prepareEffectOk org confirmedAttempt.AttemptId confirmedFence "agent-c" "file-drop-receipt:c" payload |> ignore
+              advanceEffectOk org confirmedAttempt.AttemptId confirmedFence "agent-c" "file-drop-receipt:c" payload RecordApplied |> ignore
+              advanceEffectOk org confirmedAttempt.AttemptId confirmedFence "agent-c" "file-drop-receipt:c" payload RecordConfirmed |> ignore
+
+              Expect.isEmpty (store.ListUncertainEffects org) "every checkpoint is live before the restore"
+
+              let before = store.CurrentRestoreEpoch()
+              let after = store.ActivateRestore()
+              Expect.isGreaterThan after.Value before.Value "epoch advanced"
+
+              let listed =
+                  store.ListUncertainEffects org
+                  |> List.map (fun c -> c.EffectKey, c.UncertainOrigin)
+                  |> Map.ofList
+              Expect.equal listed.Count 2 "the prepared and applied checkpoints became uncertain in the restore"
+              Expect.equal listed.["file-drop-receipt:p"] (Some UncertainAfterPrepare) "prepared origin retained across restore"
+              Expect.equal listed.["file-drop-receipt:a"] (Some UncertainAfterApply) "applied origin retained across restore"
+
+              let pEvents, pOutbox, pEventBody, _ = uncertaintySurface org preparedAttempt.AttemptId
+              Expect.equal (pEvents, pOutbox) (1L, 1L) "the restore published one event and one outbox row for the prepared checkpoint"
+              Expect.equal pEventBody "file-drop-receipt:p|prepared|restore_epoch_advanced" "the restore reason is carried"
+              let aEvents, aOutbox, _, aOutboxBody = uncertaintySurface org appliedAttempt.AttemptId
+              Expect.equal (aEvents, aOutbox) (1L, 1L) "the restore published one pair for the applied checkpoint"
+              Expect.equal
+                  aOutboxBody
+                  $"file-drop-receipt:a|applied|restore_epoch_advanced|{appliedAttempt.BuildId.Value}"
+                  "the outbox binds the build lineage"
+              let cEvents, cOutbox, _, _ = uncertaintySurface org confirmedAttempt.AttemptId
+              Expect.equal (cEvents, cOutbox) (0L, 0L) "a confirmed checkpoint is final and surfaces nothing"
+
+              Expect.equal (reconcileOk org "controller_startup") [] "the startup pass after a restore finds nothing left to classify"
+              let pEventsAgain, _, _, _ = uncertaintySurface org preparedAttempt.AttemptId
+              Expect.equal pEventsAgain 1L "the startup pass published nothing more"
+          }
+
+          test "the FG-026 marking primitive still publishes no operator surface" {
+              let org, project = freshProject ()
+              let attempt, fence = runningAttempt org project "fg026b-mark-only" "agent-m" 60
+              let payload = [| 1uy |]
+              prepareEffectOk org attempt.AttemptId fence "agent-m" "file-drop-receipt:m" payload |> ignore
+              expireLeases org [ attempt.AttemptId ]
+
+              match store.MarkStaleEffectsUncertain org with
+              | Ok [ marked ] -> Expect.equal marked.State EffectUncertain "marked uncertain"
+              | Ok other -> failtestf "expected one marked checkpoint, observed %A" other
+              | Error error -> failtestf "marking failed: %s" error
+
+              let events, outbox, _, _ = uncertaintySurface org attempt.AttemptId
+              Expect.equal (events, outbox) (0L, 0L) "MarkStaleEffectsUncertain is the surface-free primitive FG-026 closed"
+              Expect.equal (reconcileOk org "lease_expired") [] "a trigger pass after the primitive has nothing left and stays silent"
+          }
+
+          test "the uncertain listing pages by keyset in listing order, refuses another organization's cursor, and bounds the limit" {
+              let org, project = freshProject ()
+              let payload = [| 7uy |]
+              // Prepared in order 1, 2, 3 but classified in order 3, 1, 2, one
+              // pass each: the listing follows the classification instant
+              // (uncertain_at), never the preparation instant.
+              let attempts =
+                  [ for index in 1..3 do
+                        let attempt, fence = runningAttempt org project $"fg026b-page-{index}" "agent-page" 60
+                        prepareEffectOk org attempt.AttemptId fence "agent-page" $"file-drop-receipt:{index}" payload |> ignore
+                        System.Threading.Thread.Sleep 5
+                        attempt.AttemptId ]
+              for index in [ 3; 1; 2 ] do
+                  expireLeases org [ attempts.[index - 1] ]
+                  Expect.equal (reconcileOk org "lease_expired").Length 1 $"row {index} classified alone"
+                  System.Threading.Thread.Sleep 5
+
+              let page limit cursor =
+                  match store.ListUncertainEffectsPage(org, cursor, limit) with
+                  | Ok page -> page
+                  | Error error -> failtestf "page failed: %s" error
+
+              let keys (page: UncertainEffectPage) = page.Effects |> List.map (fun entry -> entry.Checkpoint.EffectKey)
+
+              let expectedOrder = store.ListUncertainEffects org |> List.map (fun c -> c.EffectKey)
+              Expect.equal expectedOrder [ "file-drop-receipt:3"; "file-drop-receipt:1"; "file-drop-receipt:2" ] "the unbounded listing is in classification order, not preparation order"
+
+              let first = page 2 None
+              Expect.equal (keys first) [ "file-drop-receipt:3"; "file-drop-receipt:1" ] "the first page holds the first two classified, in order"
+              Expect.isSome first.NextCursor "a full page with a row behind it carries a cursor"
+              Expect.isTrue (first.Effects.[0].UncertainAt <= first.Effects.[1].UncertainAt) "uncertain_at is non-decreasing down the page"
+
+              let second = page 2 first.NextCursor
+              Expect.equal (keys second) [ "file-drop-receipt:2" ] "the cursor continues without skipping or repeating"
+              Expect.isNone second.NextCursor "the last page carries no cursor"
+
+              let exact = page 3 None
+              Expect.equal exact.Effects.Length 3 "a page that exactly fits holds every row"
+              Expect.isNone exact.NextCursor "and carries no cursor when nothing is behind it"
+
+              let single = page 1 None
+              Expect.equal (keys single) [ "file-drop-receipt:3" ] "limit 1"
+              let singleNext = page 1 single.NextCursor
+              Expect.equal (keys singleNext) [ "file-drop-receipt:1" ] "limit 1, page 2"
+
+              // Codex #424 round 6: a row that becomes uncertain behind an issued
+              // cursor must appear on the next page. Row A was prepared before
+              // row B, so a prepared_at keyset would have left A behind the
+              // cursor issued after B; uncertain_at cannot.
+              let lateOrg, lateProject = freshProject ()
+              let prepareLate name =
+                  let attempt, fence = runningAttempt lateOrg lateProject $"fg026b-late-{name}" "agent-late" 60
+                  prepareEffectOk lateOrg attempt.AttemptId fence "agent-late" $"file-drop-receipt:{name}" payload |> ignore
+                  System.Threading.Thread.Sleep 5
+                  attempt.AttemptId
+              let rowA = prepareLate "a"
+              let rowB = prepareLate "b"
+              let rowC = prepareLate "c"
+              let classify attempt =
+                  expireLeases lateOrg [ attempt ]
+                  Expect.equal (reconcileOk lateOrg "lease_expired").Length 1 "one row classified"
+                  System.Threading.Thread.Sleep 5
+              classify rowB
+              classify rowC
+              let latePage limit cursor =
+                  match store.ListUncertainEffectsPage(lateOrg, cursor, limit) with
+                  | Ok page -> page
+                  | Error error -> failtestf "late page failed: %s" error
+              let pageOne = latePage 1 None
+              Expect.equal (keys pageOne) [ "file-drop-receipt:b" ] "page 1 holds B, the first to enter the set"
+              Expect.isSome pageOne.NextCursor "with C behind it"
+              // A, prepared before B and C, enters the set only now — behind the
+              // cursor the reader already holds.
+              classify rowA
+              let rec follow cursor collected =
+                  match cursor with
+                  | None -> List.rev collected
+                  | Some _ ->
+                      let next = latePage 1 cursor
+                      follow next.NextCursor (List.rev (keys next) @ collected)
+              Expect.equal
+                  (follow pageOne.NextCursor [])
+                  [ "file-drop-receipt:c"; "file-drop-receipt:a" ]
+                  "following the cursor reaches C and then A: a prepared_at keyset would have left A behind the cursor"
+              let allLate = latePage 10 None
+              Expect.equal (keys allLate) [ "file-drop-receipt:b"; "file-drop-receipt:c"; "file-drop-receipt:a" ] "the full listing is in classification order"
+              Expect.isTrue
+                  (allLate.Effects |> List.pairwise |> List.forall (fun (x, y) -> x.UncertainAt <= y.UncertainAt))
+                  "uncertain_at is non-decreasing down the listing"
+
+              let foreignOrg, _ = freshProject ()
+              match store.ListUncertainEffectsPage(foreignOrg, first.NextCursor, 10) with
+              | Error error -> Expect.stringContains error "another organization" "a cursor is bound to the organization it was issued for"
+              | Ok page -> failtestf "another organization accepted this tenant's cursor: %A" page
+
+              match store.ListUncertainEffectsPage(org, Some "not-a-cursor", 10) with
+              | Error error -> Expect.stringContains error "malformed" "garbage is refused"
+              | Ok page -> failtestf "garbage cursor accepted: %A" page
+
+              for badLimit in [ 0; -1; 1001 ] do
+                  match store.ListUncertainEffectsPage(org, None, badLimit) with
+                  | Error error -> Expect.stringContains error "1 through 1000" $"limit {badLimit} is refused"
+                  | Ok page -> failtestf "limit %d accepted: %A" badLimit page
+
+              Expect.equal (page 1000 None).Effects.Length 3 "the maximum limit is accepted"
+              // Codex #424 round 5: a well-formed cursor with a hostile payload
+              // must be a refusal before any connection, never a database error.
+              // The unreachable store proves no round trip was attempted. Round
+              // 13 and 14: the cursor is (version, organization, epoch, sequence);
+              // a plain decimal within bigint is the only
+              // accepted epoch, a plain positive decimal within bigint the only
+              // accepted sequence, and an earlier version's shape is malformed,
+              // never translated.
+              let unreachable = Store("Host=127.0.0.1;Port=9;Username=nobody;Database=nowhere;Timeout=1")
+              let orgText = org.Value.ToString()
+              let forged (fields: string list) =
+                  Convert.ToBase64String(Text.Encoding.UTF8.GetBytes(String.concat "|" ("fg026b-4" :: fields)))
+              let ticks = string DateTime.UtcNow.Ticks
+              let attempt = Guid.NewGuid().ToString()
+              let tampered =
+                  [ "a garbage sequence", forged [ orgText; "0"; "yesterday" ]
+                    "a zero sequence", forged [ orgText; "0"; "0" ]
+                    "a negative sequence", forged [ orgText; "0"; "-1" ]
+                    "a signed sequence", forged [ orgText; "0"; "+7" ]
+                    "a sequence with whitespace", forged [ orgText; "0"; " 7" ]
+                    "an out-of-range sequence", forged [ orgText; "0"; "9223372036854775808" ]
+                    "a NUL in the sequence", forged [ orgText; "0"; "7\000" ]
+                    "an empty sequence", forged [ orgText; "0"; "" ]
+                    "a garbage epoch", forged [ orgText; "now"; "7" ]
+                    "a negative epoch", forged [ orgText; "-1"; "7" ]
+                    "a signed epoch", forged [ orgText; "+0"; "7" ]
+                    "an epoch with whitespace", forged [ orgText; "0 "; "7" ]
+                    "an out-of-range epoch", forged [ orgText; "9223372036854775808"; "7" ]
+                    "a NUL in the epoch", forged [ orgText; "0\000"; "7" ]
+                    "an empty epoch", forged [ orgText; ""; "7" ]
+                    "a non-GUID organization", forged [ "nope"; "0"; "7" ]
+                    "a missing field", forged [ orgText; "7" ]
+                    "an extra field", forged [ orgText; "0"; "7"; "7" ]
+                    "invalid UTF-8", Convert.ToBase64String(Array.append (Text.Encoding.UTF8.GetBytes $"fg026b-4|{orgText}|0|7") [| 0xFFuy; 0xFEuy |])
+                    "the round-12 cursor shape", Convert.ToBase64String(Text.Encoding.UTF8.GetBytes $"fg026b-2|{orgText}|{ticks}|{ticks}|{attempt}|file-drop-receipt:x")
+                    "the round-13 cursor shape", Convert.ToBase64String(Text.Encoding.UTF8.GetBytes $"fg026b-3|{orgText}|7")
+                    "an unknown version with the right shape", Convert.ToBase64String(Text.Encoding.UTF8.GetBytes $"fg026b-5|{orgText}|0|7") ]
+
+              for label, cursor in tampered do
+                  match unreachable.ListUncertainEffectsPage(org, Some cursor, 10) with
+                  | Error error -> Expect.stringContains error "malformed" $"{label} is refused as malformed without a database round trip"
+                  | Ok page -> failtestf "%s was accepted: %A" label page
+
+              // The genuine cursor still works, proving the validator is not
+              // simply refusing everything.
+              Expect.equal (page 2 first.NextCursor).Effects.Length 1 "a genuine cursor is still accepted after the validator"
+          }
+
+
+          test "the cursor is bound to the restore epoch: a restore refuses every cursor issued before it, a fresh cursor works, and nothing classified after the restore is hidden" {
+              // Codex #424 round 14 (thread hVh8J): a client's retained cursor
+              // survives a database restore from an older snapshot, but the
+              // restored classification sequence is behind it, so every
+              // classification until the sequence caught up drew a value below
+              // the cursor and the strict keyset hid it. The cursor now carries
+              // controller_metadata.restore_epoch — the value the ledger's
+              // authority check compares and ActivateRestore bumps — and is
+              // refused when the current epoch differs; a cursor past the
+              // sequence's last issued value, which is what a retained cursor
+              // looks like on a restored timeline whatever epoch it claims, is
+              // refused the same way. The snapshot restore itself cannot be
+              // replayed here (the suite shares one database), so the two
+              // halves are proven from the store's side: ActivateRestore for
+              // the epoch, a forged cursor ahead of the sequence for the
+              // position.
+              let org, project = freshProject ()
+              let payload = [| 14uy |]
+              let prepare name =
+                  let attempt, fence = runningAttempt org project $"fg026b-epoch-{name}" "agent-epoch" 60
+                  prepareEffectOk org attempt.AttemptId fence "agent-epoch" $"file-drop-receipt:{name}" payload |> ignore
+                  System.Threading.Thread.Sleep 5
+                  attempt.AttemptId
+              let classify attempt =
+                  expireLeases org [ attempt ]
+                  Expect.equal (reconcileOk org "lease_expired").Length 1 "one row classified"
+                  System.Threading.Thread.Sleep 5
+              prepare "one" |> classify
+              prepare "two" |> classify
+              prepare "three" |> ignore
+
+              let page limit cursor =
+                  match store.ListUncertainEffectsPage(org, cursor, limit) with
+                  | Ok page -> page
+                  | Error error -> failtestf "page failed: %s" error
+              let keys (page: UncertainEffectPage) = page.Effects |> List.map (fun entry -> entry.Checkpoint.EffectKey)
+              let refused label cursor =
+                  match store.ListUncertainEffectsPage(org, Some cursor, 10) with
+                  | Error error ->
+                      Expect.equal error "cursor predates a database restore; restart the listing" $"{label} is refused as predating a restore"
+                  | Ok page -> failtestf "%s was accepted: %A" label page
+              let fieldsOf (cursor: string) = (Text.Encoding.UTF8.GetString(Convert.FromBase64String cursor)).Split '|'
+              let forge (fields: string list) =
+                  Convert.ToBase64String(Text.Encoding.UTF8.GetBytes(String.concat "|" ("fg026b-4" :: org.Value.ToString() :: fields)))
+
+              let epochBefore = (store.CurrentRestoreEpoch()).Value
+              let pageOne = page 1 None
+              Expect.equal (keys pageOne) [ "file-drop-receipt:one" ] "page 1 holds the first classified row"
+              let retained = Expect.wantSome pageOne.NextCursor "with the second behind it"
+              let issuedSeq = pageOne.Effects.Head.UncertainSeq
+              let fields = fieldsOf retained
+              Expect.equal fields.[0] "fg026b-4" "the cursor version binds the timeline"
+              Expect.equal fields.[2] (string epochBefore) "the cursor carries the restore epoch the ledger's authority check compares"
+              Expect.equal fields.[3] (string issuedSeq) "and the page's last classification sequence value"
+              Expect.equal (keys (page 1 (Some retained))) [ "file-drop-receipt:two" ] "before the restore the cursor continues the listing"
+
+              // The mechanism, from the store's side: a value the sequence has
+              // not issued yet cannot have come from this timeline.
+              refused "a cursor ahead of the sequence" (forge [ string epochBefore; string (issuedSeq + 1000L) ])
+              refused "a cursor from a later epoch" (forge [ string (epochBefore + 1L); string issuedSeq ])
+              if epochBefore > 0L then
+                  refused "a cursor from an earlier epoch" (forge [ string (epochBefore - 1L); string issuedSeq ])
+
+              // The restore. It classifies the prepared third row itself.
+              let epochAfter = (store.ActivateRestore()).Value
+              Expect.equal epochAfter (epochBefore + 1L) "the restore advanced the epoch"
+              refused "the cursor retained across the restore" retained
+
+              // Restarting the listing works, its cursor carries the new
+              // epoch, and following it reaches every row, including the one
+              // the restore classified.
+              let restarted = page 1 None
+              Expect.equal (keys restarted) [ "file-drop-receipt:one" ] "the restarted listing starts over"
+              let fresh = Expect.wantSome restarted.NextCursor "with a fresh cursor"
+              Expect.equal (fieldsOf fresh).[2] (string epochAfter) "the fresh cursor carries the new epoch"
+              let rec follow cursor collected =
+                  match cursor with
+                  | None -> List.rev collected
+                  | Some _ ->
+                      let next = page 1 cursor
+                      follow next.NextCursor (List.rev (keys next) @ collected)
+              Expect.equal
+                  (follow (Some fresh) [])
+                  [ "file-drop-receipt:two"; "file-drop-receipt:three" ]
+                  "following the fresh cursor reaches the row the restore classified"
+
+              // A classification after the restore lands behind the fresh
+              // cursor, never hidden by it.
+              prepare "four" |> classify
+              Expect.equal
+                  (follow (Some fresh) [])
+                  [ "file-drop-receipt:two"; "file-drop-receipt:three"; "file-drop-receipt:four" ]
+                  "a classification after the restore is reached from the fresh cursor"
+              Expect.equal
+                  (store.ListUncertainEffects org |> List.map (fun c -> c.EffectKey))
+                  [ "file-drop-receipt:one"; "file-drop-receipt:two"; "file-drop-receipt:three"; "file-drop-receipt:four" ]
+                  "the unbounded listing agrees"
+          }
+          test "the cursor survives a wall clock that steps backward or repeats: a later classification stamped with an earlier or equal uncertain_at is still reached, in classification-sequence order" {
+              // Codex #424 round 13 (thread hVDpf): the round-12 lock orders
+              // classification transactions, but statement_timestamp() is
+              // wall-clock — an NTP or VM clock step backward, or two
+              // classifications inside timestamp precision, can give a LATER
+              // serialized classification an uncertain_at at or before a cursor
+              // already issued, and the old strict keyset over (uncertain_at,
+              // prepared_at, attempt_id, effect_key) skipped that row forever.
+              // The cursor now leads with uncertain_seq, drawn from a database
+              // sequence by the classification statement under the lock.
+              //
+              // The 0003 guard refuses a future uncertain_at and refuses every
+              // update of an already-uncertain row, so the clock step is
+              // modelled from the other side: the later classifications are
+              // flipped directly the way the store's statement does it (the
+              // organization's classification lock, then the next sequence
+              // value per row) but stamped with an instant the clock had
+              // already passed — one equal to the first row's instant with an
+              // earlier prepared_at (the precision case), one earlier still
+              // (its own prepared_at, the earliest the guard allows: the
+              // step-backward case). Both sort before the issued cursor under
+              // the old composite key.
+              let org, project = freshProject ()
+              let payload = [| 13uy |]
+              let prepare name =
+                  let attempt, fence = runningAttempt org project $"fg026b-clock-{name}" "agent-clock" 60
+                  prepareEffectOk org attempt.AttemptId fence "agent-clock" $"file-drop-receipt:{name}" payload |> ignore
+                  System.Threading.Thread.Sleep 5
+                  attempt.AttemptId
+              let rowEqual = prepare "equal"
+              let rowEarlier = prepare "earlier"
+              let rowFirst = prepare "first"
+              let rowSecond = prepare "second"
+              for row in [ rowFirst; rowSecond ] do
+                  expireLeases org [ row ]
+                  Expect.equal (reconcileOk org "lease_expired").Length 1 "one row classified by the store"
+                  System.Threading.Thread.Sleep 5
+
+              let page limit cursor =
+                  match store.ListUncertainEffectsPage(org, cursor, limit) with
+                  | Ok page -> page
+                  | Error error -> failtestf "page failed: %s" error
+              let keys (page: UncertainEffectPage) = page.Effects |> List.map (fun entry -> entry.Checkpoint.EffectKey)
+
+              // The reader holds a cursor issued after the first row.
+              let pageOne = page 1 None
+              Expect.equal (keys pageOne) [ "file-drop-receipt:first" ] "page 1 holds the first row the store classified"
+              Expect.isSome pageOne.NextCursor "with the second behind it"
+              let firstEntry = pageOne.Effects.Head
+
+              // Later classifications, stamped as a stepped or repeating clock
+              // would stamp them.
+              expireLeases org [ rowEarlier; rowEqual ]
+              use later = new Npgsql.NpgsqlConnection(connectionString)
+              later.Open()
+              use laterTx = later.BeginTransaction()
+              use lockLater = later.CreateCommand()
+              lockLater.Transaction <- laterTx
+              lockLater.CommandText <- "SELECT pg_advisory_xact_lock(hashtext(@o), @tag)"
+              lockLater.Parameters.AddWithValue("o", org.Value.ToString()) |> ignore
+              lockLater.Parameters.AddWithValue("tag", EffectClassification.classificationLockTag) |> ignore
+              lockLater.ExecuteNonQuery() |> ignore
+              let flip (attempt: AttemptId) (instant: string) (extra: (string * Guid) list) =
+                  use cmd = later.CreateCommand()
+                  cmd.Transaction <- laterTx
+                  cmd.CommandText <-
+                      $"UPDATE effect_checkpoints
+                           SET uncertain_from = state, state = 'uncertain',
+                               uncertain_at = ({instant}),
+                               uncertain_seq = nextval('effect_checkpoints_uncertain_seq')
+                         WHERE organization_id = @o AND attempt_id = @a AND state = 'prepared'"
+                  cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                  cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+                  for name, value in extra do
+                      cmd.Parameters.AddWithValue(name, value) |> ignore
+                  Expect.equal (cmd.ExecuteNonQuery()) 1 "the later classification flipped its row"
+              flip rowEarlier "SELECT prepared_at FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = @a" []
+              flip rowEqual "SELECT uncertain_at FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = @first" [ "first", rowFirst.Value ]
+              laterTx.Commit()
+
+              // Both later rows sort before the issued cursor under the old
+              // composite key: the keyset the cursor used to carry would have
+              // reached only the second row and lost the other two forever.
+              use probe = new Npgsql.NpgsqlConnection(connectionString)
+              probe.Open()
+              use oldKeyset = probe.CreateCommand()
+              oldKeyset.CommandText <-
+                  "SELECT (SELECT count(*) FROM effect_checkpoints
+                            WHERE organization_id = @o AND state = 'uncertain'
+                              AND (uncertain_at, prepared_at, attempt_id, effect_key)
+                                > (SELECT uncertain_at, prepared_at, attempt_id, effect_key
+                                     FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = @first)),
+                          (SELECT uncertain_at FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = @earlier)
+                            < (SELECT uncertain_at FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = @first),
+                          (SELECT uncertain_at FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = @equal)
+                            = (SELECT uncertain_at FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = @first)"
+              oldKeyset.Parameters.AddWithValue("o", org.Value) |> ignore
+              oldKeyset.Parameters.AddWithValue("first", rowFirst.Value) |> ignore
+              oldKeyset.Parameters.AddWithValue("earlier", rowEarlier.Value) |> ignore
+              oldKeyset.Parameters.AddWithValue("equal", rowEqual.Value) |> ignore
+              use trap = oldKeyset.ExecuteReader()
+              Expect.isTrue (trap.Read()) "trap row"
+              Expect.equal (trap.GetInt64 0) 1L "under the old (uncertain_at, ...) keyset only the second row lies past the cursor"
+              Expect.isTrue (trap.GetBoolean 1) "the stepped-back row carries an uncertain_at earlier than the cursor's"
+              Expect.isTrue (trap.GetBoolean 2) "the repeated-instant row carries the cursor's own uncertain_at"
+              trap.Close()
+
+              // Following the cursor reaches every later classification, in
+              // classification-sequence order, with no skip and no repeat.
+              let rec follow cursor collected =
+                  match cursor with
+                  | None -> List.rev collected
+                  | Some _ ->
+                      let next = page 1 cursor
+                      follow next.NextCursor (List.rev next.Effects @ collected)
+              let followed = follow pageOne.NextCursor []
+              Expect.equal
+                  (followed |> List.map (fun entry -> entry.Checkpoint.EffectKey))
+                  [ "file-drop-receipt:second"; "file-drop-receipt:earlier"; "file-drop-receipt:equal" ]
+                  "the cursor reaches the second row, then both clock-stepped classifications, in sequence order"
+              Expect.isTrue
+                  (firstEntry :: followed |> List.pairwise |> List.forall (fun (x, y) -> x.UncertainSeq < y.UncertainSeq))
+                  "uncertain_seq strictly increases along the pages"
+              Expect.isTrue
+                  (followed |> List.exists (fun entry -> entry.UncertainAt < firstEntry.UncertainAt))
+                  "and the pages carried a row whose uncertain_at precedes the cursor's, which the old keyset could never return"
+              Expect.equal
+                  (store.ListUncertainEffects org |> List.map (fun c -> c.EffectKey))
+                  [ "file-drop-receipt:first"; "file-drop-receipt:second"; "file-drop-receipt:earlier"; "file-drop-receipt:equal" ]
+                  "the unbounded listing is in classification-sequence order"
+              let wide = page 10 None
+              Expect.equal wide.Effects.Length 4 "one wide page holds all four"
+              Expect.isNone wide.NextCursor "and nothing is behind it"
+          }
+
+          test "the production trigger never waits on a live attempt: chunked, SKIP LOCKED, a held live row is untouched, a held stale row is skipped whether it sorts first or last, and an all-held remainder terminates" {
+              // Codex #424 round 10 (thread fl7EL): the pass used to lock every
+              // prepared/applied checkpoint's attempt and hold the locks while
+              // emitting row by row, so a slow pass blocked a live worker's
+              // RenewLease until its lease expired. Hosted run 33989057339 then
+              // caught the first chunk loop terminating on the moved count: a
+              // held row that sorted into the first chunk made it "short" and
+              // 50 stale rows were left behind. The loop now terminates on
+              // candidate exhaustion, so both orderings are asserted here.
+              let scenario (label: string) (choose: AttemptId list -> AttemptId) =
+                  let org, project = freshProject ()
+                  let payload = [| 1uy; 0uy |]
+                  let liveAttempt, liveFence = runningAttempt org project $"fg026b-live-lock-{label}" "agent-live" 60
+                  prepareEffectOk org liveAttempt.AttemptId liveFence "agent-live" "file-drop-receipt:live" payload |> ignore
+
+                  // 150 stale rows: more than one chunk of 100.
+                  let stale =
+                      [ for index in 1..150 do
+                            let attempt, fence = runningAttempt org project $"fg026b-stale-{label}-{index}" "agent-stale" 60
+                            prepareEffectOk org attempt.AttemptId fence "agent-stale" $"file-drop-receipt:s{index}" payload |> ignore
+                            attempt.AttemptId ]
+                  expireLeases org stale
+
+                  // Another connection holds the LIVE attempt's row lock for the
+                  // whole pass, and one STALE attempt's row too — chosen so that
+                  // it sorts where the caller wants it in the candidate order.
+                  let heldStale = choose stale
+                  use holder = new Npgsql.NpgsqlConnection(connectionString)
+                  holder.Open()
+                  use holderTx = holder.BeginTransaction()
+                  use hold = holder.CreateCommand()
+                  hold.Transaction <- holderTx
+                  hold.CommandText <-
+                      "SELECT id FROM attempts WHERE organization_id = @o AND id IN (@live, @stale) ORDER BY id FOR UPDATE"
+                  hold.Parameters.AddWithValue("o", org.Value) |> ignore
+                  hold.Parameters.AddWithValue("live", liveAttempt.AttemptId.Value) |> ignore
+                  hold.Parameters.AddWithValue("stale", heldStale.Value) |> ignore
+                  use heldRows = hold.ExecuteReader()
+                  let held = [ while heldRows.Read() do yield heldRows.GetGuid 0 ]
+                  heldRows.Close()
+                  Expect.equal held.Length 2 $"{label}: the test holds both row locks"
+
+                  let pass = Async.StartAsTask(async { return Store(connectionString).ReconcileStaleEffects(org, "lease_expired") })
+                  Expect.isTrue (pass.Wait(TimeSpan.FromSeconds 20.0)) $"{label}: the pass completed without waiting on the held rows"
+                  let classified =
+                      match pass.Result with
+                      | Ok checkpoints -> checkpoints
+                      | Error error -> failtestf "%s: the pass failed: %s" label error
+                  Expect.equal classified.Length 149 $"{label}: every stale row except the one whose attempt is held was classified, across two chunks"
+                  Expect.isFalse (classified |> List.exists (fun c -> c.AttemptId = liveAttempt.AttemptId)) $"{label}: the live row was never a candidate"
+                  Expect.isFalse (classified |> List.exists (fun c -> c.AttemptId = heldStale)) $"{label}: the held stale row was skipped, not waited on"
+
+                  holderTx.Commit()
+                  Expect.isTrue (store.RenewLease(org, liveAttempt.AttemptId, liveFence, "agent-live", 60)) $"{label}: the live attempt renews its lease after the pass"
+                  Expect.equal
+                      (store.AdvanceEffect(org, liveAttempt.AttemptId, liveFence, "agent-live", "file-drop-receipt:live", payload, RecordApplied) |> Result.map (fun o -> o.Checkpoint.State))
+                      (Ok EffectApplied)
+                      $"{label}: the live checkpoint is untouched and still advances"
+
+                  use conn = new Npgsql.NpgsqlConnection(connectionString)
+                  conn.Open()
+                  use surface = conn.CreateCommand()
+                  surface.CommandText <-
+                      "SELECT (SELECT count(*) FROM events WHERE organization_id = @o AND kind = 'effect.uncertain'),
+                              (SELECT count(*) FROM outbox WHERE organization_id = @o AND topic = 'effect.uncertain'),
+                              (SELECT count(DISTINCT uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND state = 'uncertain')"
+                  surface.Parameters.AddWithValue("o", org.Value) |> ignore
+                  use counts = surface.ExecuteReader()
+                  Expect.isTrue (counts.Read()) "surface row"
+                  Expect.equal (counts.GetInt64 0, counts.GetInt64 1) (149L, 149L) $"{label}: exactly one event and one outbox row per classified row"
+                  Expect.equal (counts.GetInt64 2) 2L $"{label}: two chunks, two classification instants"
+                  counts.Close()
+
+                  // The skipped stale row is picked up by the next bounded pass,
+                  // and the pass after that publishes nothing more.
+                  Expect.equal (reconcileOk org "lease_expired" |> List.map (fun c -> c.AttemptId)) [ heldStale ] $"{label}: the next pass classifies the previously held stale row"
+                  Expect.equal (reconcileOk org "lease_expired") [] $"{label}: and the pass after that finds nothing"
+
+              // Candidates are ordered by attempt_id: hold the lowest (it lands
+              // in the FIRST chunk, which is then short by one) and the highest
+              // (it lands in the second).
+              scenario "held-first" (List.minBy (fun (a: AttemptId) -> a.Value))
+              scenario "held-last" (List.maxBy (fun (a: AttemptId) -> a.Value))
+
+              // Every remaining candidate held: the pass terminates with zero
+              // moved instead of spinning, and the next pass classifies them.
+              let org, project = freshProject ()
+              let payload = [| 3uy |]
+              let allHeld =
+                  [ for index in 1..3 do
+                        let attempt, fence = runningAttempt org project $"fg026b-all-held-{index}" "agent-stale" 60
+                        prepareEffectOk org attempt.AttemptId fence "agent-stale" $"file-drop-receipt:h{index}" payload |> ignore
+                        attempt.AttemptId ]
+              expireLeases org allHeld
+              use holder = new Npgsql.NpgsqlConnection(connectionString)
+              holder.Open()
+              use holderTx = holder.BeginTransaction()
+              use hold = holder.CreateCommand()
+              hold.Transaction <- holderTx
+              hold.CommandText <- "SELECT id FROM attempts WHERE organization_id = @o AND id = ANY(@ids) ORDER BY id FOR UPDATE"
+              hold.Parameters.AddWithValue("o", org.Value) |> ignore
+              hold.Parameters.AddWithValue("ids", allHeld |> List.map (fun a -> a.Value) |> Array.ofList) |> ignore
+              use heldRows = hold.ExecuteReader()
+              let held = [ while heldRows.Read() do yield heldRows.GetGuid 0 ]
+              heldRows.Close()
+              Expect.equal held.Length 3 "all three stale attempts are held"
+
+              let watch = Diagnostics.Stopwatch.StartNew()
+              Expect.equal (reconcileOk org "lease_expired") [] "a pass whose every candidate is held moves nothing and terminates"
+              Expect.isLessThan watch.ElapsedMilliseconds 5000L "and does not spin"
+              holderTx.Commit()
+              Expect.equal (reconcileOk org "lease_expired" |> List.map (fun c -> c.AttemptId) |> List.sort) (List.sort allHeld) "the next pass classifies all three once they are released"
+          }
+
+          test "a held prefix of the candidate window is skipped, not counted: 250 stale rows with the 100 lowest held are classified past them in one pass" {
+              // Codex #424 round 11 (thread fmyYR): with LIMIT applied before
+              // SKIP LOCKED, a held first hundred filled the window every pass,
+              // moved nothing, and the unlocked tail was never reached. The
+              // lock now sits inside the window, so a held row never counts
+              // toward it.
+              let org, project = freshProject ()
+              let payload = [| 2uy; 5uy; 0uy |]
+              let stale =
+                  [ for index in 1..250 do
+                        let attempt, fence = runningAttempt org project $"fg026b-prefix-{index}" "agent-stale" 60
+                        prepareEffectOk org attempt.AttemptId fence "agent-stale" $"file-drop-receipt:p{index}" payload |> ignore
+                        attempt.AttemptId ]
+              expireLeases org stale
+              let heldPrefix = stale |> List.sortBy (fun a -> a.Value) |> List.take 100
+              let tail = stale |> List.filter (fun a -> not (List.contains a heldPrefix))
+
+              use holder = new Npgsql.NpgsqlConnection(connectionString)
+              holder.Open()
+              use holderTx = holder.BeginTransaction()
+              use hold = holder.CreateCommand()
+              hold.Transaction <- holderTx
+              hold.CommandText <- "SELECT id FROM attempts WHERE organization_id = @o AND id = ANY(@ids) ORDER BY id FOR UPDATE"
+              hold.Parameters.AddWithValue("o", org.Value) |> ignore
+              hold.Parameters.AddWithValue("ids", heldPrefix |> List.map (fun a -> a.Value) |> Array.ofList) |> ignore
+              use heldRows = hold.ExecuteReader()
+              let held = [ while heldRows.Read() do yield heldRows.GetGuid 0 ]
+              heldRows.Close()
+              Expect.equal held.Length 100 "the hundred lowest attempt ids are held"
+
+              let pass = Async.StartAsTask(async { return Store(connectionString).ReconcileStaleEffects(org, "lease_expired") })
+              Expect.isTrue (pass.Wait(TimeSpan.FromSeconds 20.0)) "the pass completed without waiting on the held prefix"
+              let classified =
+                  match pass.Result with
+                  | Ok checkpoints -> checkpoints
+                  | Error error -> failtestf "the pass failed: %s" error
+              Expect.equal (classified |> List.map (fun c -> c.AttemptId) |> List.sort) (List.sort tail) "a single pass classified the 150 unlocked rows past the held prefix"
+              Expect.isFalse (classified |> List.exists (fun c -> List.contains c.AttemptId heldPrefix)) "no held row was touched"
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use instants = conn.CreateCommand()
+              instants.CommandText <- "SELECT count(DISTINCT uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND state = 'uncertain'"
+              instants.Parameters.AddWithValue("o", org.Value) |> ignore
+              Expect.equal (instants.ExecuteScalar() :?> int64) 2L "the 150 rows took two chunks (100 + 50): the window was full of unlocked rows, not of held ones"
+
+              holderTx.Commit()
+              Expect.equal (reconcileOk org "lease_expired" |> List.map (fun c -> c.AttemptId) |> List.sort) (List.sort heldPrefix) "the next pass classifies the released hundred"
+              Expect.equal (reconcileOk org "lease_expired") [] "and the pass after that finds nothing"
+          }
+
+          test "classification is commit-ordered per organization: a classifier waits behind a held classification of the same organization, its rows carry the later uncertain_at, a cursor issued from the earlier rows reaches them, and a held live attempt is still never waited on" {
+              // Codex #424 round 12 (thread fnRCC): uncertain_at is assigned at
+              // statement time, so two overlapping classifications of one
+              // organization could commit in the other order, and a cursor
+              // issued between the commits skipped the late-committing rows
+              // forever (strict keyset). Every classification transaction now
+              // takes the organization's advisory lock first and holds it to
+              // commit, so commit order is uncertain_at order. The lock is per
+              // organization, never per attempt: a held live row is still
+              // never waited on.
+              let waitingOnClassificationLock (org: OrganizationId) =
+                  use conn = new Npgsql.NpgsqlConnection(connectionString)
+                  conn.Open()
+                  use waiting = conn.CreateCommand()
+                  waiting.CommandText <-
+                      "SELECT count(*) FROM pg_locks
+                        WHERE locktype = 'advisory'
+                          AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                          AND classid = hashtext(@o)::oid
+                          AND objid = @tag::oid
+                          AND objsubid = 2
+                          AND NOT granted"
+                  waiting.Parameters.AddWithValue("o", org.Value.ToString()) |> ignore
+                  waiting.Parameters.AddWithValue("tag", EffectClassification.classificationLockTag) |> ignore
+                  waiting.ExecuteScalar() :?> int64
+
+              let scenario (label: string) (withLive: bool) (classify: OrganizationId -> AttemptId list -> EffectCheckpoint list) =
+                  let org, project = freshProject ()
+                  let payload = [| 1uy; 2uy |]
+                  let stale =
+                      [ for index in 1..6 do
+                            let attempt, fence = runningAttempt org project $"fg026b-order-{label}-{index}" "agent-stale" 60
+                            prepareEffectOk org attempt.AttemptId fence "agent-stale" $"file-drop-receipt:o{index}" payload |> ignore
+                            attempt.AttemptId ]
+                  expireLeases org stale
+                  let sorted = stale |> List.sortBy (fun a -> a.Value)
+                  let early = List.take 3 sorted
+                  let late = List.skip 3 sorted
+                  let ids (attempts: AttemptId list) = attempts |> List.map (fun a -> a.Value) |> Array.ofList
+
+                  // Another connection holds the LIVE attempt's row for the whole
+                  // scenario. The restore path invalidates every lease, so a
+                  // live attempt has no meaning there and that arm runs without one.
+                  let live =
+                      if withLive then
+                          let attempt, fence = runningAttempt org project $"fg026b-order-live-{label}" "agent-live" 60
+                          prepareEffectOk org attempt.AttemptId fence "agent-live" "file-drop-receipt:live" payload |> ignore
+                          Some(attempt.AttemptId, fence)
+                      else
+                          None
+                  use liveHolder = new Npgsql.NpgsqlConnection(connectionString)
+                  liveHolder.Open()
+                  use liveTx = liveHolder.BeginTransaction()
+                  live
+                  |> Option.iter (fun (attempt, _) ->
+                      use hold = liveHolder.CreateCommand()
+                      hold.Transaction <- liveTx
+                      hold.CommandText <- "SELECT id FROM attempts WHERE organization_id = @o AND id = @a FOR UPDATE"
+                      hold.Parameters.AddWithValue("o", org.Value) |> ignore
+                      hold.Parameters.AddWithValue("a", attempt.Value) |> ignore
+                      Expect.equal (hold.ExecuteScalar() :?> Guid) attempt.Value $"{label}: the live attempt's row is held")
+
+                  // The first-started classification: it takes the organization's
+                  // classification lock exactly as the store does, flips the three
+                  // lowest rows with the store's statement-time uncertain_at, and
+                  // is held open past the point the second would have committed.
+                  use first = new Npgsql.NpgsqlConnection(connectionString)
+                  first.Open()
+                  use firstTx = first.BeginTransaction()
+                  use lockFirst = first.CreateCommand()
+                  lockFirst.Transaction <- firstTx
+                  lockFirst.CommandText <- "SELECT pg_advisory_xact_lock(hashtext(@o), @tag)"
+                  lockFirst.Parameters.AddWithValue("o", org.Value.ToString()) |> ignore
+                  lockFirst.Parameters.AddWithValue("tag", EffectClassification.classificationLockTag) |> ignore
+                  lockFirst.ExecuteNonQuery() |> ignore
+                  use classifyFirst = first.CreateCommand()
+                  classifyFirst.Transaction <- firstTx
+                  classifyFirst.CommandText <-
+                      "UPDATE effect_checkpoints
+                          SET uncertain_from = state, state = 'uncertain', uncertain_at = statement_timestamp(),
+                              uncertain_seq = nextval('effect_checkpoints_uncertain_seq')
+                        WHERE organization_id = @o AND attempt_id = ANY(@ids) AND state = 'prepared'"
+                  classifyFirst.Parameters.AddWithValue("o", org.Value) |> ignore
+                  classifyFirst.Parameters.AddWithValue("ids", ids early) |> ignore
+                  Expect.equal (classifyFirst.ExecuteNonQuery()) 3 $"{label}: the first classification flipped the three lowest rows"
+
+                  // The second classifier — the store's own — starts while the
+                  // first is open. It must queue on the classification lock (an
+                  // ungranted request on exactly this organization's key), not
+                  // run past the first.
+                  let second = Async.StartAsTask(async { return classify org late })
+                  let queued = Diagnostics.Stopwatch.StartNew()
+                  while waitingOnClassificationLock org = 0L && queued.Elapsed < TimeSpan.FromSeconds 20.0 do
+                      System.Threading.Thread.Sleep 25
+                  Expect.equal (waitingOnClassificationLock org) 1L $"{label}: the second classification is queued on the organization's classification lock"
+                  Expect.isFalse (second.Wait(TimeSpan.FromSeconds 2.0)) $"{label}: and does not complete while the first is held open"
+
+                  use conn = new Npgsql.NpgsqlConnection(connectionString)
+                  conn.Open()
+                  use now = conn.CreateCommand()
+                  now.CommandText <- "SELECT clock_timestamp()"
+                  let beforeFirstCommit = now.ExecuteScalar() :?> DateTime
+                  firstTx.Commit()
+
+                  Expect.isTrue (second.Wait(TimeSpan.FromSeconds 20.0)) $"{label}: the second classification completes once the first commits, without waiting on the held live row"
+                  let classified = second.Result
+                  Expect.equal (classified |> List.map (fun c -> c.AttemptId) |> List.sort) (List.sort late) $"{label}: the second classification moved exactly the three rows the first left"
+                  Expect.isFalse (classified |> List.exists (fun c -> List.contains c.AttemptId early)) $"{label}: and none of the first's rows"
+
+                  // The later-committing rows carry the later uncertain_at: the
+                  // second's statement started after the first's commit, so its
+                  // instant is past the instant read just before that commit.
+                  // Without the lock the second's instant would have preceded it.
+                  use order = conn.CreateCommand()
+                  order.CommandText <-
+                      "SELECT (SELECT max(uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = ANY(@early))
+                            < (SELECT min(uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = ANY(@late)),
+                              (SELECT min(uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = ANY(@late)) > @before,
+                              (SELECT count(DISTINCT uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND state = 'uncertain'),
+                              (SELECT max(uncertain_seq) FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = ANY(@early))
+                            < (SELECT min(uncertain_seq) FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = ANY(@late))"
+                  order.Parameters.AddWithValue("o", org.Value) |> ignore
+                  order.Parameters.AddWithValue("early", ids early) |> ignore
+                  order.Parameters.AddWithValue("late", ids late) |> ignore
+                  order.Parameters.AddWithValue("before", beforeFirstCommit) |> ignore
+                  use ordering = order.ExecuteReader()
+                  Expect.isTrue (ordering.Read()) "ordering row"
+                  Expect.isTrue (ordering.GetBoolean 0) $"{label}: the later-committing rows carry the later uncertain_at"
+                  Expect.isTrue (ordering.GetBoolean 1) $"{label}: the second's instant was assigned after the first's commit, not while it was open"
+                  Expect.equal (ordering.GetInt64 2) 2L $"{label}: two classifications, two instants"
+                  // Round 13: the cursor key is the classification sequence, and
+                  // under the lock it is commit order — every sequence value of
+                  // the first-committing classification precedes every value of
+                  // the second's.
+                  Expect.isTrue (ordering.GetBoolean 3) $"{label}: the classification sequence order is the commit order"
+                  ordering.Close()
+
+                  // A cursor issued from the first's rows — what a reader who
+                  // listed between the two commits would hold — reaches the
+                  // second's rows instead of skipping them forever.
+                  let page limit cursor =
+                      match store.ListUncertainEffectsPage(org, cursor, limit) with
+                      | Ok page -> page
+                      | Error error -> failtestf "%s: page failed: %s" label error
+                  let attempts (page: UncertainEffectPage) = page.Effects |> List.map (fun entry -> entry.Checkpoint.AttemptId) |> List.sort
+                  let pageOne = page 3 None
+                  Expect.equal (attempts pageOne) (List.sort early) $"{label}: the first page holds the first's rows"
+                  Expect.isSome pageOne.NextCursor $"{label}: with a cursor behind them"
+                  let pageTwo = page 3 pageOne.NextCursor
+                  Expect.equal (attempts pageTwo) (List.sort late) $"{label}: following the cursor reaches the second's rows"
+                  Expect.isNone pageTwo.NextCursor $"{label}: and nothing is behind them"
+
+                  liveTx.Commit()
+                  live
+                  |> Option.iter (fun (attempt, fence) ->
+                      Expect.isTrue (store.RenewLease(org, attempt, fence, "agent-live", 60)) $"{label}: the live attempt renews its lease after both classifications"
+                      Expect.equal
+                          (store.AdvanceEffect(org, attempt, fence, "agent-live", "file-drop-receipt:live", payload, RecordApplied) |> Result.map (fun o -> o.Checkpoint.State))
+                          (Ok EffectApplied)
+                          $"{label}: the live checkpoint is untouched and still advances")
+                  Expect.equal (reconcileOk org "lease_expired") [] $"{label}: a further pass finds nothing"
+
+              // The production trigger: one ReadCommitted chunk transaction.
+              scenario "trigger" true (fun org _ -> reconcileOk org "lease_expired")
+
+              // The FG-026 primitive: its RepeatableRead snapshot predates the
+              // wait, so the rows the first flipped raise a serialization
+              // failure that retrySerializationFailure restarts with a fresh
+              // snapshot; the result is still exactly the rows the first left.
+              scenario "primitive" true (fun org _ ->
+                  match store.MarkStaleEffectsUncertain org with
+                  | Ok checkpoints -> checkpoints
+                  | Error error -> failtestf "primitive: the pass failed: %s" error)
+
+              // The restore path classifies inside ActivateRestore's own
+              // transaction; it reports nothing per organization, so its
+              // effect is read back from the rows it left uncertain.
+              scenario "restore" false (fun org late ->
+                  store.ActivateRestore() |> ignore
+                  store.ListUncertainEffects org |> List.filter (fun c -> List.contains c.AttemptId late))
+          } ]
+
 /// FG-027b Store foundation. This proves durable retry arbitration and replay;
 /// scheduler/controller retry policy and dispatch remain deliberately outside
 /// this package.
@@ -4978,6 +5897,7 @@ let main argv =
                           admission
                           fencing
                           effectCheckpoints
+                          effectReconciliation
                           retryDecisions
                           scheduling
                           logs ]))

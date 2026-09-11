@@ -105,6 +105,27 @@ type EffectAdvance =
     | RecordApplied
     | RecordConfirmed
 
+/// FG-026b. One listed row with the instant it entered the uncertain set and
+/// its classification sequence. `uncertain_seq` (0014) is the listing's only
+/// order key and the cursor key: it is drawn from a database sequence by the
+/// classification statement under the organization's classification lock, so
+/// within an organization it is monotone with commit order whatever the wall
+/// clock does (Codex #424 round 13) — `uncertain_at` is statement_timestamp()
+/// and can step backward or repeat, which a strict keyset would skip forever.
+/// `uncertain_at` is kept for humans. The 0014 check makes uncertain_seq NOT
+/// NULL for exactly the uncertain rows.
+type UncertainEffectEntry =
+    { Checkpoint: EffectCheckpoint
+      UncertainAt: DateTime
+      UncertainSeq: int64 }
+
+/// One bounded page of an organization's uncertain effects in classification
+/// order. `NextCursor` is an opaque keyset cursor bound to the organization;
+/// None means the page was the last.
+type UncertainEffectPage =
+    { Effects: UncertainEffectEntry list
+      NextCursor: string option }
+
 /// FG-027b. The immutable decision snapshot read from durable storage.  The
 /// embedded Domain value is the exact value originally decided: a child is
 /// reconstructed as queued even after its live attempt has advanced.
@@ -123,6 +144,21 @@ type RetryPersistenceError =
     | RetryLawRejected of RetryDecisionError
     | RetryDecisionCorrupt of string
     | RetryStorageFailure of string
+
+/// FG-026b (Codex #424 round 12). The second key of the per-organization
+/// classification advisory lock, `pg_advisory_xact_lock(hashtext(org), tag)`,
+/// which every classification transaction takes first and holds to commit:
+/// a trigger chunk, the FG-026 primitive, the restore path, in any process.
+/// A fixed constant, derived from nothing at runtime, so every classifier of
+/// one organization names the same lock. The two-key (int, int) form is a
+/// separate key space from the one-key bigint form
+/// `pg_advisory_xact_lock(hashtext(org))` that ClaimNext serialises on, so
+/// classification never contends with claiming and no transaction takes both.
+/// 26 for FG-026; the only two-key advisory lock in the store. Public so a
+/// test can hold the lock a classifier of that organization must wait behind.
+module EffectClassification =
+    [<Literal>]
+    let classificationLockTag = 26
 
 /// FG-021/FG-022. The controller's durable truth.
 type Store(connectionString: string, ?maintenanceConnectionString: string) =
@@ -613,6 +649,285 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         else
             None
 
+    /// FG-026b. One bounded chunk of the classification pass for one
+    /// organization, as one statement (Codex #424 round 10, thread fl7EL):
+    ///
+    ///   0. the organization's advisory classification lock is taken first
+    ///      (round 12), so classification is commit-ordered per organization;
+    ///   1. `candidates` selects, without locking, at most `chunk`
+    ///      prepared/applied checkpoints whose captured authority is already
+    ///      not live (fence, owner, lease, state, restore epoch);
+    ///   2. `locked` takes FOR UPDATE SKIP LOCKED on those candidates'
+    ///      attempts only — a live attempt is never selected, and one whose
+    ///      row another transaction holds (a renewal, a requeue) is skipped
+    ///      for this chunk rather than waited on;
+    ///   3. `sequenced` draws one `effect_checkpoints_uncertain_seq` value per
+    ///      candidate in (prepared_at, attempt_id, effect_key) order (round
+    ///      13) — the listing's cursor key, monotone with commit order under
+    ///      the lock whatever the wall clock does; a candidate the re-check
+    ///      drops leaves a gap, which is harmless;
+    ///   4. `moved` re-checks staleness under the lock and flips the rows,
+    ///      stamping each with its sequence value;
+    ///   5. with a reason, `emitted_events`/`emitted_outbox` publish exactly
+    ///      one row each per moved checkpoint from the same statement.
+    ///
+    /// Every row of one chunk shares one uncertain_at (statement_timestamp);
+    /// their sequence values follow preparation order, so a chunk lists in
+    /// preparation order. Callers loop chunks until one returns fewer than
+    /// `chunk`, so no lock outlives one chunk's transaction, a live worker's
+    /// RenewLease never waits on the pass, and a second pass finds nothing
+    /// (idempotent).
+    [<Literal>]
+    let classificationChunk = 100
+
+    /// The same live-authority test against an already joined attempt row
+    /// `a`. `IS NOT TRUE` so a NULL lease owner or expiry reads as stale, not
+    /// as unknown.
+    let liveAuthorityJoinedAbsent =
+        "(a.fence = e.fence
+          AND a.lease_owner = e.authority_owner
+          AND a.lease_expires_at > clock_timestamp()
+          AND a.state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
+          AND a.restore_epoch = e.restore_epoch
+          AND a.restore_epoch = (
+              SELECT restore_epoch FROM controller_metadata WHERE singleton
+          )) IS NOT TRUE"
+
+    let liveAuthorityAbsent =
+        "NOT EXISTS (
+             SELECT 1
+             FROM attempts a
+             WHERE a.organization_id = e.organization_id
+               AND a.id = e.attempt_id
+               AND a.fence = e.fence
+               AND a.lease_owner = e.authority_owner
+               AND a.lease_expires_at > clock_timestamp()
+               AND a.state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
+               AND a.restore_epoch = e.restore_epoch
+               AND a.restore_epoch = (
+                   SELECT restore_epoch FROM controller_metadata WHERE singleton
+               )
+         )"
+
+    let classifyChunk
+        (conn: NpgsqlConnection)
+        (tx: NpgsqlTransaction)
+        (org: OrganizationId)
+        (reason: string option)
+        (skipLocked: bool)
+        =
+        let emit =
+            match reason with
+            | None -> ""
+            | Some _ ->
+                ", emitted_events AS (
+                     INSERT INTO events (organization_id, build_id, attempt_id, kind, payload)
+                     SELECT m.organization_id, n.build_id, m.attempt_id, 'effect.uncertain',
+                            jsonb_build_object(
+                                'effect_key', m.effect_key,
+                                'uncertain_from', m.uncertain_from,
+                                'reason', @reason)
+                       FROM moved m
+                       JOIN attempts a ON a.organization_id = m.organization_id AND a.id = m.attempt_id
+                       JOIN nodes n ON n.organization_id = a.organization_id AND n.id = a.node_id
+                     RETURNING 1
+                 ), emitted_outbox AS (
+                     INSERT INTO outbox (organization_id, topic, body)
+                     SELECT m.organization_id, 'effect.uncertain',
+                            jsonb_build_object(
+                                'build', n.build_id::text,
+                                'attempt', m.attempt_id::text,
+                                'effect_key', m.effect_key,
+                                'uncertain_from', m.uncertain_from,
+                                'reason', @reason)
+                       FROM moved m
+                       JOIN attempts a ON a.organization_id = m.organization_id AND a.id = m.attempt_id
+                       JOIN nodes n ON n.organization_id = a.organization_id AND n.id = a.node_id
+                     RETURNING 1
+                 )"
+
+        let counts =
+            match reason with
+            | None -> "0::bigint, 0::bigint"
+            | Some _ -> "(SELECT count(*) FROM emitted_events), (SELECT count(*) FROM emitted_outbox)"
+
+        // Codex #424 round 12: classification is commit-ordered per
+        // organization. Every classification transaction — a trigger chunk,
+        // the FG-026 primitive, the restore path — takes this advisory lock
+        // first and holds it to commit, so no two classifications of one
+        // organization overlap and uncertain_at (statement_timestamp, assigned
+        // after the lock is granted) is monotone with commit order for that
+        // organization. The listing cursor's strict keyset rests on exactly
+        // that; without it a first-started transaction could commit after a
+        // second and a cursor issued in between would skip its rows forever.
+        // The lock is per organization across classifiers, never per attempt:
+        // a live attempt is still never waited on.
+        use serialize = conn.CreateCommand()
+        serialize.Transaction <- tx
+        serialize.CommandText <- "SELECT pg_advisory_xact_lock(hashtext(@o), @tag)"
+        serialize.Parameters.AddWithValue("o", org.Value.ToString()) |> ignore
+        serialize.Parameters.AddWithValue("tag", EffectClassification.classificationLockTag) |> ignore
+        serialize.ExecuteNonQuery() |> ignore
+
+        let locked = if skipLocked then " SKIP LOCKED" else ""
+        use classify = conn.CreateCommand()
+        classify.Transaction <- tx
+        classify.CommandText <-
+            $"WITH candidates AS (
+                  SELECT /* FG026_MARKER_SNAPSHOT */ e.organization_id, e.attempt_id, e.effect_key, e.prepared_at
+                    FROM effect_checkpoints e
+                    JOIN attempts a
+                      ON a.organization_id = e.organization_id AND a.id = e.attempt_id
+                   WHERE e.organization_id = @o
+                     AND e.state IN ('prepared', 'applied')
+                     AND {liveAuthorityJoinedAbsent}
+                   ORDER BY e.attempt_id
+                     FOR UPDATE OF a{locked}
+                   LIMIT @chunk
+              ), sequenced AS (
+                  SELECT c.organization_id, c.attempt_id, c.effect_key,
+                         nextval('effect_checkpoints_uncertain_seq') AS uncertain_seq
+                    FROM (SELECT organization_id, attempt_id, effect_key
+                            FROM candidates
+                           ORDER BY prepared_at, attempt_id, effect_key) c
+              ), moved AS (
+                  UPDATE effect_checkpoints e
+                     SET uncertain_from = e.state,
+                         state = 'uncertain',
+                         uncertain_at = statement_timestamp(),
+                         uncertain_seq = c.uncertain_seq
+                    FROM sequenced c
+                   WHERE e.organization_id = c.organization_id
+                     AND e.attempt_id = c.attempt_id
+                     AND e.effect_key = c.effect_key
+                     AND e.state IN ('prepared', 'applied')
+                     AND {liveAuthorityAbsent}
+                  RETURNING e.organization_id, e.attempt_id, e.effect_key, e.fence, e.authority_owner,
+                            e.restore_epoch, encode(e.payload_digest, 'hex') AS encode, e.state, e.uncertain_from
+              ){emit}
+              SELECT m.organization_id, m.attempt_id, m.effect_key, m.fence, m.authority_owner,
+                     m.restore_epoch, m.encode, m.state, m.uncertain_from, {counts},
+                     c.candidate_count
+                FROM (SELECT count(*) AS candidate_count FROM candidates) c
+                LEFT JOIN moved m ON true"
+        classify.Parameters.AddWithValue("o", org.Value) |> ignore
+        classify.Parameters.AddWithValue("chunk", classificationChunk) |> ignore
+        reason |> Option.iter (fun value -> classify.Parameters.AddWithValue("reason", value) |> ignore)
+        use reader = classify.ExecuteReader()
+
+        // The candidate-count row is always present (LEFT JOIN), so a chunk
+        // that moved nothing still reports how many candidates it saw: the
+        // loops terminate on candidate exhaustion, never on the moved count,
+        // because a skipped (held) row makes a chunk short without exhausting
+        // anything (hosted run 33989057339 on f19a35e7 caught exactly that).
+        let mutable candidates = 0L
+
+        let rows =
+            [ while reader.Read() do
+                  candidates <- reader.GetInt64 11
+
+                  if not (reader.IsDBNull 0) then
+                      yield readCheckpoint reader, reader.GetInt64 9, reader.GetInt64 10 ]
+
+        reader.Close()
+
+        match reason, rows with
+        | Some _, (_, events, outbox) :: _ when events <> int64 rows.Length || outbox <> int64 rows.Length ->
+            failwith "effect uncertainty truth was not emitted exactly once per classified checkpoint"
+        | _ -> ()
+
+        let moved =
+            rows
+            |> List.map (fun (checkpoint, _, _) -> checkpoint)
+            |> List.sortBy (fun checkpoint -> checkpoint.AttemptId.Value, checkpoint.EffectKey)
+
+        moved, int candidates
+
+    /// The chunk loops stop when the candidate selection came up short (the
+    /// stale set is exhausted) or when a chunk moved nothing (everything left
+    /// is held or became live); a bounded cap turns a pathological spin into a
+    /// named refusal instead of an unbounded loop.
+    [<Literal>]
+    let classificationChunkCap = 10000
+
+    let exhausted (moved: EffectCheckpoint list) (candidates: int) =
+        candidates < classificationChunk || moved.IsEmpty
+
+    /// Every stale row, chunk after chunk, inside the caller's transaction;
+    /// no operator surface (the FG-026 primitive's contract).
+    let markStaleEffects (conn: NpgsqlConnection) (tx: NpgsqlTransaction) (org: OrganizationId) =
+        let rec loop acc iteration =
+            if iteration >= classificationChunkCap then
+                failwith $"effect classification did not converge within {classificationChunkCap} chunks"
+
+            let chunk, candidates = classifyChunk conn tx org None false
+
+            if exhausted chunk candidates then
+                List.rev acc @ chunk
+            else
+                loop (List.rev chunk @ acc) (iteration + 1)
+
+        loop [] 0 |> List.sortBy (fun checkpoint -> checkpoint.AttemptId.Value, checkpoint.EffectKey)
+
+    /// FG-026b. Classification with its operator surface, chunk after chunk,
+    /// inside the caller's transaction (ActivateRestore); the trigger members
+    /// run one chunk per transaction instead so no lock outlives a chunk.
+    let reconcileStaleEffectsIn
+        (conn: NpgsqlConnection)
+        (tx: NpgsqlTransaction)
+        (org: OrganizationId)
+        (reason: string)
+        =
+        let rec loop acc iteration =
+            if iteration >= classificationChunkCap then
+                failwith $"effect classification did not converge within {classificationChunkCap} chunks"
+
+            let chunk, candidates = classifyChunk conn tx org (Some reason) false
+
+            if exhausted chunk candidates then
+                List.rev acc @ chunk
+            else
+                loop (List.rev chunk @ acc) (iteration + 1)
+
+        loop [] 0 |> List.sortBy (fun checkpoint -> checkpoint.AttemptId.Value, checkpoint.EffectKey)
+
+    /// One chunk in its own short transaction, for the trigger members.
+    let classifyOneChunk (openConnection: unit -> NpgsqlConnection) (org: OrganizationId) (reason: string option) =
+        use conn = openConnection ()
+        use tx = beginTenantTransaction conn org
+
+        try
+            let chunk = classifyChunk conn tx org reason true
+            tx.Commit()
+            chunk
+        with _ ->
+            (try tx.Rollback() with _ -> ())
+            reraise ()
+
+    let validateReconciliationReason (reason: string) =
+        if
+            String.IsNullOrWhiteSpace reason
+            || reason.Length > 128
+            || not (reason |> Seq.forall (fun c -> Char.IsLower c || Char.IsDigit c || c = '_'))
+        then
+            invalidArg (nameof reason) "reconciliation reason must be a stable lowercase code of at most 128 characters"
+
+    /// A RepeatableRead pass can lose a serialization or deadlock race against a
+    /// concurrent prepare/advance; that is retried a bounded number of times and
+    /// every other failure is returned as-is.
+    let retrySerializationFailure (action: unit -> 'a) : Result<'a, string> =
+        let rec run attemptNumber =
+            try
+                action () |> Ok
+            with
+            | :? PostgresException as error
+                when (error.SqlState = "40001" || error.SqlState = "40P01")
+                     && attemptNumber < 3 ->
+                run (attemptNumber + 1)
+            | ex -> Error ex.Message
+
+        run 1
+
     member _.Migrate() = Migrations.run maintenanceConnectionString
 
     member _.Ping() =
@@ -732,7 +1047,8 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                      AND NOT EXISTS (
                          SELECT 1
                            FROM unnest(ARRAY[
-                             'events_id_seq', 'outbox_id_seq', 'log_chunks_id_seq'
+                             'events_id_seq', 'outbox_id_seq', 'log_chunks_id_seq',
+                             'effect_checkpoints_uncertain_seq'
                            ]) AS required_sequence(name)
                            CROSS JOIN unnest(ARRAY['USAGE', 'SELECT'])
                              AS required_privilege(name)
@@ -1195,80 +1511,54 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
     /// Moves only checkpoints whose captured authority is no longer live into
     /// the reconciliation queue. The origin records whether the external call
     /// might have happened before authority was lost.
+    /// Moves only checkpoints whose captured authority is no longer live into
+    /// the reconciliation queue. The origin records whether the external call
+    /// might have happened before authority was lost. This is the FG-026
+    /// primitive: one RepeatableRead transaction (a stable marker snapshot),
+    /// only stale candidates' attempts locked, waiting for a held one; the
+    /// production trigger below is the chunked, non-waiting variant.
     member _.MarkStaleEffectsUncertain(org: OrganizationId) : Result<EffectCheckpoint list, string> =
         let markOnce () =
             use conn = openConn ()
+            // RepeatableRead gives every chunk one stable marker snapshot. A
+            // checkpoint committed after this query began is deliberately left
+            // for the next bounded reconciliation pass.
             use tx = beginTenantTransactionAt conn org System.Data.IsolationLevel.RepeatableRead
 
             try
-                // RepeatableRead gives the lock and update statements one stable
-                // marker snapshot. A checkpoint committed after this query began
-                // is deliberately left for the next bounded reconciliation pass.
-                // Lock attempts first so prepare/advance and reconciliation never
-                // invert the attempt -> checkpoint order.
-                use authorityLocks = conn.CreateCommand()
-                authorityLocks.Transaction <- tx
-                authorityLocks.CommandText <-
-                    "SELECT /* FG026_MARKER_SNAPSHOT */ a.id
-                     FROM attempts a
-                     JOIN effect_checkpoints e
-                       ON e.organization_id = a.organization_id AND e.attempt_id = a.id
-                     WHERE e.organization_id = @o AND e.state IN ('prepared', 'applied')
-                     ORDER BY a.id
-                     FOR UPDATE OF a"
-                authorityLocks.Parameters.AddWithValue("o", org.Value) |> ignore
-                use locked = authorityLocks.ExecuteReader()
-                while locked.Read() do ()
-                locked.Close()
-
-                use update = conn.CreateCommand()
-                update.Transaction <- tx
-                update.CommandText <-
-                    $"UPDATE effect_checkpoints e
-                      SET uncertain_from = e.state,
-                          state = 'uncertain',
-                          uncertain_at = clock_timestamp()
-                      WHERE e.organization_id = @o
-                        AND e.state IN ('prepared', 'applied')
-                        AND NOT EXISTS (
-                            SELECT 1
-                            FROM attempts a
-                            WHERE a.organization_id = e.organization_id
-                              AND a.id = e.attempt_id
-                              AND a.fence = e.fence
-                              AND a.lease_owner = e.authority_owner
-                              AND a.lease_expires_at > clock_timestamp()
-                              AND a.state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
-                              AND a.restore_epoch = e.restore_epoch
-                              AND a.restore_epoch = (
-                                  SELECT restore_epoch FROM controller_metadata WHERE singleton
-                              )
-                        )
-                      RETURNING {effectProjection}"
-                update.Parameters.AddWithValue("o", org.Value) |> ignore
-                use reader = update.ExecuteReader()
-                let checkpoints = [ while reader.Read() do yield readCheckpoint reader ]
-                reader.Close()
+                let checkpoints = markStaleEffects conn tx org
                 tx.Commit()
-
                 checkpoints
-                |> List.sortBy (fun checkpoint ->
-                    checkpoint.AttemptId.Value, checkpoint.EffectKey)
             with _ ->
                 (try tx.Rollback() with _ -> ())
                 reraise ()
 
-        let rec run attemptNumber =
-            try
-                markOnce () |> Ok
-            with
-            | :? PostgresException as error
-                when (error.SqlState = "40001" || error.SqlState = "40P01")
-                     && attemptNumber < 3 ->
-                run (attemptNumber + 1)
-            | ex -> Error ex.Message
+        retrySerializationFailure markOnce
 
-        run 1
+    /// FG-026b. The bounded production trigger. Classifies stale prepared/applied
+    /// effects for one organization exactly as MarkStaleEffectsUncertain does and,
+    /// in the same statement, publishes one `effect.uncertain` event and outbox
+    /// row per newly uncertain checkpoint carrying the trigger reason. Chunked:
+    /// at most classificationChunk rows per short transaction, the
+    /// organization's classification lock taken first, then candidates
+    /// selected by staleness before any row lock, attempt rows taken FOR UPDATE
+    /// SKIP LOCKED so a live worker's renewal never waits on the pass. Idempotent: a
+    /// second pass finds nothing stale and publishes nothing. Nothing here ever
+    /// re-invokes an effect; the surface exists so an operator can.
+    member _.ReconcileStaleEffects(org: OrganizationId, reason: string) : Result<EffectCheckpoint list, string> =
+        validateReconciliationReason reason
+
+        let rec loop acc iteration =
+            if iteration >= classificationChunkCap then
+                Error $"effect classification did not converge within {classificationChunkCap} chunks; the remaining candidates stay for the next pass"
+            else
+                match retrySerializationFailure (fun () -> classifyOneChunk openConn org (Some reason)) with
+                | Error error -> Error error
+                | Ok(chunk, candidates) when exhausted chunk candidates ->
+                    Ok(List.rev acc @ chunk |> List.sortBy (fun checkpoint -> checkpoint.AttemptId.Value, checkpoint.EffectKey))
+                | Ok(chunk, _) -> loop (List.rev chunk @ acc) (iteration + 1)
+
+        loop [] 0
 
     member _.ListUncertainEffects(org: OrganizationId) : EffectCheckpoint list =
         use conn = openConn ()
@@ -1279,13 +1569,179 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             $"SELECT {effectProjection}
               FROM effect_checkpoints
               WHERE organization_id = @o AND state = 'uncertain'
-              ORDER BY prepared_at, attempt_id, effect_key"
+              ORDER BY uncertain_seq"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
         use reader = cmd.ExecuteReader()
         let checkpoints = [ while reader.Read() do yield readCheckpoint reader ]
         reader.Close()
         tx.Commit()
         checkpoints
+
+    /// FG-026b. The bounded operator listing: at most `limit` (1..1000)
+    /// uncertain effects in the same order as ListUncertainEffects, continued
+    /// through an opaque keyset cursor over the classification sequence
+    /// (`uncertain_seq`, 0014). The cursor carries the organization it was
+    /// issued for and the restore epoch it was issued under, and is refused
+    /// for any other organization or epoch, so a cursor can neither leak nor
+    /// skip across tenants, and a cursor retained across a database restore
+    /// cannot hide the restored timeline's classifications.
+    member _.ListUncertainEffectsPage
+        (org: OrganizationId, cursor: string option, limit: int)
+        : Result<UncertainEffectPage, string> =
+        // Codex #424 round 13: the cursor key is the database-generated
+        // classification sequence, not uncertain_at. The per-organization lock
+        // orders classification transactions, but statement_timestamp() is
+        // wall-clock — a clock step backward or two classifications inside
+        // timestamp precision could hand a later-committing row an instant at
+        // or before an issued cursor, and the strict keyset skipped it forever.
+        // uncertain_seq is assigned by the classification statement under the
+        // lock, so it is monotone with commit order whatever the clock does,
+        // and it is unique, so the cursor is one key.
+        //
+        // Codex #424 round 14: the cursor is bound to the database timeline.
+        // A restore from an older snapshot brings back a sequence behind a
+        // cursor a client still holds, so every classification until the
+        // sequence caught up would draw a value below the cursor and the
+        // strict keyset would hide it. The cursor therefore carries the
+        // restore epoch (controller_metadata.restore_epoch, the value the
+        // ledger's authority check compares; ActivateRestore bumps it) and is
+        // refused, inside the page's own transaction, when the current epoch
+        // differs. The sequence's own position is checked in the same
+        // transaction as the direct test of the mechanism: a cursor past the
+        // last value the sequence has issued cannot have been issued on this
+        // timeline, whatever epoch it claims (a restore retried from the same
+        // pre-restore backup lands on the epoch the first restore produced).
+        let cursorVersion = "fg026b-4"
+        let restoreRefusal = "cursor predates a database restore; restart the listing"
+
+        let encode (restoreEpoch: int64) (uncertainSeq: int64) =
+            let text =
+                String.concat
+                    "|"
+                    [ cursorVersion; org.Value.ToString(); string restoreEpoch; string uncertainSeq ]
+
+            Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes text)
+
+        // Codex #424 round 5: a well-formed base64 cursor whose decoded key is
+        // hostile must be a refusal before any connection, never a database
+        // error. Every field is validated here: exactly four fields, the
+        // current version, a GUID organization, a plain decimal restore epoch
+        // (no sign, no whitespace, within bigint; the epoch starts at 0) and a
+        // plain positive decimal sequence. A cursor of any earlier version is
+        // malformed, not translated. The epoch and sequence-position checks
+        // need the database and happen inside the page's transaction below.
+        let decode (raw: string) =
+            try
+                let strictUtf8 = System.Text.UTF8Encoding(false, true)
+                let text = strictUtf8.GetString(Convert.FromBase64String raw)
+
+                // .NET's number parser tolerates trailing NUL characters, so
+                // every number is held to ASCII digits before it is parsed.
+                let plainDecimal (field: string) =
+                    if field.Length >= 1 && field |> Seq.forall Char.IsAsciiDigit then
+                        match
+                            Int64.TryParse(
+                                field,
+                                Globalization.NumberStyles.None,
+                                Globalization.CultureInfo.InvariantCulture
+                            )
+                        with
+                        | true, value -> Some value
+                        | _ -> None
+                    else
+                        None
+
+                match text.Split '|' with
+                | [| version; cursorOrg; restoreEpoch; sequence |] when version = cursorVersion ->
+                    match Guid.TryParse cursorOrg, plainDecimal restoreEpoch, plainDecimal sequence with
+                    | (true, cursorOrganization), Some cursorEpoch, Some uncertainSeq ->
+                        if cursorOrganization <> org.Value then
+                            Error "cursor belongs to another organization"
+                        elif uncertainSeq < 1L then
+                            Error "cursor is malformed"
+                        else
+                            Ok(Some(cursorEpoch, uncertainSeq))
+                    | _ -> Error "cursor is malformed"
+                | _ -> Error "cursor is malformed"
+            with _ ->
+                Error "cursor is malformed"
+
+        if limit < 1 || limit > 1000 then
+            Error "page limit must be an integer from 1 through 1000"
+        else
+            match (match cursor with None -> Ok None | Some raw -> decode raw) with
+            | Error error -> Error error
+            | Ok after ->
+                use conn = openConn ()
+                use tx = beginTenantTransaction conn org
+
+                // The timeline is read before the page, so a cursor issued from
+                // this page never carries an epoch later than the rows it was
+                // issued from; a restore committing between the two reads costs
+                // the client one refusal and a restart, never a hidden row.
+                use timeline = conn.CreateCommand()
+                timeline.Transaction <- tx
+                timeline.CommandText <-
+                    "SELECT (SELECT restore_epoch FROM controller_metadata WHERE singleton),
+                            (SELECT CASE WHEN is_called THEN last_value ELSE 0 END
+                               FROM effect_checkpoints_uncertain_seq)"
+                use timelineReader = timeline.ExecuteReader()
+
+                if not (timelineReader.Read()) then
+                    failwith "controller_metadata singleton is missing"
+
+                let currentEpoch = timelineReader.GetInt64 0
+                let lastIssuedSeq = timelineReader.GetInt64 1
+                timelineReader.Close()
+
+                match after with
+                | Some(cursorEpoch, uncertainSeq) when cursorEpoch <> currentEpoch || uncertainSeq > lastIssuedSeq ->
+                    tx.Rollback()
+                    Error restoreRefusal
+                | _ ->
+                    use cmd = conn.CreateCommand()
+                    cmd.Transaction <- tx
+
+                    let keyset =
+                        match after with
+                        | None -> ""
+                        | Some _ -> " AND uncertain_seq > @after"
+
+                    cmd.CommandText <-
+                        $"SELECT {effectProjection}, uncertain_at, uncertain_seq
+                          FROM effect_checkpoints
+                          WHERE organization_id = @o AND state = 'uncertain'{keyset}
+                          ORDER BY uncertain_seq
+                          LIMIT @limit"
+                    cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                    // One row past the page decides whether a next cursor exists.
+                    cmd.Parameters.AddWithValue("limit", limit + 1) |> ignore
+
+                    match after with
+                    | None -> ()
+                    | Some(_, uncertainSeq) -> cmd.Parameters.AddWithValue("after", uncertainSeq) |> ignore
+
+                    use reader = cmd.ExecuteReader()
+
+                    let rows =
+                        [ while reader.Read() do
+                              yield
+                                  { Checkpoint = readCheckpoint reader
+                                    UncertainAt = reader.GetDateTime 9
+                                    UncertainSeq = reader.GetInt64 10 } ]
+
+                    reader.Close()
+                    tx.Commit()
+
+                    let page = rows |> List.truncate limit
+
+                    let next =
+                        if rows.Length > limit then
+                            Some(encode currentEpoch (List.last page).UncertainSeq)
+                        else
+                            None
+
+                    Ok { Effects = page; NextCursor = next }
 
     /// Read-only idempotency probe for admission compatibility across stricter
     /// execution preflights. An exact durable result may be replayed without
@@ -1858,6 +2314,12 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                     failwith "restore reconciliation truth was not emitted exactly once per invalidated attempt"
 
                 invalidated.Close()
+
+                // FG-026b. The epoch bump above is visible inside this transaction,
+                // so every prepared/applied checkpoint captured under the previous
+                // epoch is classified here, atomically with the restore, and its
+                // operator surface carries the restore reason.
+                reconcileStaleEffectsIn conn tx org "restore_epoch_advanced" |> ignore
 
             tx.Commit()
             RestoreEpoch epoch

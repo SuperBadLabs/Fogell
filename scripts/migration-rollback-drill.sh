@@ -177,11 +177,11 @@ INSERT INTO projects (id, organization_id, slug)
 VALUES ('20000000-0000-0000-0000-000000000081', '10000000-0000-0000-0000-000000000081', 'fg081-project');
 INSERT INTO builds (id, organization_id, project_id, number, idempotency_key, status, cancellation_requested, next_log_sequence, created_at)
 VALUES ('30000000-0000-0000-0000-000000000081', '10000000-0000-0000-0000-000000000081',
-        '20000000-0000-0000-0000-000000000081', 81, 'fg081-key', 'running', true, 82,
+        '20000000-0000-0000-0000-000000000081', 81, 'fg081-key', 'failure', true, 82,
         '2026-08-25T01:00:00Z');
 INSERT INTO nodes (id, organization_id, build_id, name, ordinal, required_trust_pool, required_capabilities, status)
 VALUES ('40000000-0000-0000-0000-000000000081', '10000000-0000-0000-0000-000000000081',
-        '30000000-0000-0000-0000-000000000081', 'rehearsal', 0, 'trusted-linux', ARRAY['linux', :'runtime'], 'running');
+        '30000000-0000-0000-0000-000000000081', 'rehearsal', 0, 'trusted-linux', ARRAY['linux', :'runtime'], 'failure');
 INSERT INTO attempts
   (id, organization_id, node_id, ordinal, retry_of, state, fence, restore_epoch, lease_owner, lease_expires_at, result, created_at)
 VALUES
@@ -210,6 +210,14 @@ INSERT INTO retry_decisions
 VALUES ('10000000-0000-0000-0000-000000000081', '50000000-0000-0000-0000-000000000081',
         '40000000-0000-0000-0000-000000000081', 0, NULL, 2, 3, 'child_created',
         '50000000-0000-0000-0000-000000000082', NULL, '2026-08-25T01:08:00Z');
+-- Since 0011 (retry_decisions_reopen_lineage), a retry decision may only be
+-- recorded while the parent's node and build carry the parent result or are
+-- already queued, and recording it reopens both to queued. The fixture above
+-- therefore seeds node and build as 'failure', records the decision, and only
+-- then advances both to 'running' for attempt 83 -- the same final rows the
+-- fixture seeded before 0011 became part of N-1 (FG-026b's 0012 is now N).
+UPDATE nodes SET status = 'running' WHERE id = '40000000-0000-0000-0000-000000000081';
+UPDATE builds SET status = 'running' WHERE id = '30000000-0000-0000-0000-000000000081';
 SELECT setval(pg_get_serial_sequence('events','id'), 810, true);
 SELECT setval(pg_get_serial_sequence('outbox','id'), 820, true);
 SELECT setval(pg_get_serial_sequence('log_chunks','id'), 830, true);
