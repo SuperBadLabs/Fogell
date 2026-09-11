@@ -18,7 +18,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   effect_checkpoints, retry_decisions, build_definitions
 TO fogell_runtime;
 GRANT USAGE, SELECT ON
-  events_id_seq, outbox_id_seq, log_chunks_id_seq TO fogell_runtime;
+  events_id_seq, outbox_id_seq, log_chunks_id_seq,
+  effect_checkpoints_uncertain_seq TO fogell_runtime;
 ```
 
 The maintenance identity applies checksum-pinned migrations during startup and
@@ -83,7 +84,8 @@ hook exists only for `scripts/prove-fg026b-effect-dispatch.sh` and must never
 be set on a service.
 
 The maintenance identity that performs a restore (`ActivateRestore`) needs
-`SELECT, UPDATE` on `effect_checkpoints` in addition to its attempt, node,
+`SELECT, UPDATE` on `effect_checkpoints` and `USAGE` on the classification
+sequence `effect_checkpoints_uncertain_seq` in addition to its attempt, node,
 build, event and outbox grants: a restore now classifies pre-restore
 prepared/applied effects in the same transaction as the epoch bump.
 

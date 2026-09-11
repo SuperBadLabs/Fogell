@@ -3603,7 +3603,8 @@ let effectDispatch =
                       "restore_epoch is the epoch the effect was prepared under"
                   let uncertainAt = DateTimeOffset.Parse(effect.GetProperty("uncertain_at").GetString(), Globalization.CultureInfo.InvariantCulture)
                   Expect.isTrue (uncertainAt.Offset = TimeSpan.Zero && uncertainAt > DateTimeOffset.UtcNow.AddMinutes -5.0) "uncertain_at is a recent UTC instant"
-                  Expect.equal (effect.EnumerateObject() |> Seq.length) 8 "the wire shape has exactly the eight documented fields"
+                  Expect.isTrue (effect.GetProperty("uncertain_seq").GetInt64() >= 1L) "uncertain_seq is the positive classification sequence value"
+                  Expect.equal (effect.EnumerateObject() |> Seq.length) 9 "the wire shape has exactly the nine documented fields"
 
                   let otherOrg, _ = freshProject ()
                   let otherCode, otherBody = send HttpMethod.Get (url otherOrg) (Some token) None None
@@ -3651,6 +3652,9 @@ let effectDispatch =
                   let secondEffects = secondPage.RootElement.GetProperty("effects").EnumerateArray() |> List.ofSeq
                   Expect.equal secondEffects.Length 1 "the second page holds the remaining row"
                   Expect.equal (secondEffects.Head.GetProperty("attempt_id").GetString()) (secondClaim.AttemptId.Value.ToString()) "no row is skipped or repeated"
+                  Expect.isTrue
+                      (secondEffects.Head.GetProperty("uncertain_seq").GetInt64() > firstEffects.Head.GetProperty("uncertain_seq").GetInt64())
+                      "the second page carries the later classification sequence value"
                   Expect.equal (secondPage.RootElement.GetProperty("next_cursor").ValueKind) JsonValueKind.Null "the last page carries no cursor"
 
                   let bothCode, bothBody = send HttpMethod.Get $"{url org}?limit=2" (Some token) None None
@@ -3670,17 +3674,24 @@ let effectDispatch =
                   Expect.stringContains garbageBody "invalid_cursor" "with the stable code"
 
                   // Codex round 5: well-formed base64 with a hostile payload is
-                  // the same 400, decided before any database statement.
+                  // the same 400, decided before any database statement. Round
+                  // 13: the cursor is (version, organization, sequence); a
+                  // round-12 (fg026b-2) cursor is refused, never translated.
+                  let encoded (text: string) =
+                      Uri.EscapeDataString(Convert.ToBase64String(Text.Encoding.UTF8.GetBytes text))
                   let forged (fields: string list) =
-                      Uri.EscapeDataString(
-                          Convert.ToBase64String(
-                              Text.Encoding.UTF8.GetBytes(String.concat "|" ("fg026b-2" :: org.Value.ToString() :: fields))))
+                      encoded (String.concat "|" ("fg026b-3" :: org.Value.ToString() :: fields))
                   let ticks = string DateTime.UtcNow.Ticks
                   for label, cursor in
-                      [ "NUL key", forged [ ticks; ticks; claim.AttemptId.Value.ToString(); "file-drop-receipt:\000" ]
-                        "oversized key", forged [ ticks; ticks; claim.AttemptId.Value.ToString(); String.replicate 300 "k" ]
-                        "non-GUID attempt", forged [ ticks; ticks; "attempt"; key ]
-                        "garbage timestamp", forged [ "now"; ticks; claim.AttemptId.Value.ToString(); key ] ] do
+                      [ "garbage sequence", forged [ "now" ]
+                        "zero sequence", forged [ "0" ]
+                        "negative sequence", forged [ "-1" ]
+                        "out-of-range sequence", forged [ "9223372036854775808" ]
+                        "NUL in the sequence", forged [ "1\000" ]
+                        "missing sequence", forged []
+                        "extra field", forged [ "1"; "1" ]
+                        "non-GUID organization", encoded "fg026b-3|nope|1"
+                        "round-12 (fg026b-2) cursor", encoded $"fg026b-2|{org.Value}|{ticks}|{ticks}|{claim.AttemptId.Value}|{key}" ] do
                       let tamperedCode, tamperedBody = send HttpMethod.Get $"{url org}?cursor={cursor}" (Some token) None None
                       Expect.equal tamperedCode 400 $"a tampered cursor with {label} is refused"
                       Expect.stringContains tamperedBody "invalid_cursor" $"{label}: with the stable code, not a 500"

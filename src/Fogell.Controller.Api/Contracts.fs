@@ -49,9 +49,13 @@ type UncertainEffect =
       /// "prepared" when the invocation may never have happened, "applied"
       /// when it did but its confirmation was lost.
       [<JsonPropertyName "uncertain_from">] UncertainFrom: string
-      /// When the row entered the uncertain set (ISO 8601, UTC): the listing's
-      /// first order key, so pages never skip a row classified behind a cursor.
-      [<JsonPropertyName "uncertain_at">] UncertainAt: string }
+      /// When the row entered the uncertain set (ISO 8601, UTC), for humans.
+      [<JsonPropertyName "uncertain_at">] UncertainAt: string
+      /// The database-generated classification sequence (migration 0014): the
+      /// listing order and the cursor key, monotone with commit order within
+      /// the organization whatever the wall clock does, so pages never skip a
+      /// row classified behind a cursor.
+      [<JsonPropertyName "uncertain_seq">] UncertainSeq: int64 }
 
 type UncertainEffectsResponse =
     { [<JsonPropertyName "organization_id">] OrganizationId: string

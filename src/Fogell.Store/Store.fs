@@ -105,20 +105,23 @@ type EffectAdvance =
     | RecordApplied
     | RecordConfirmed
 
-/// FG-026b. One bounded page of an organization's uncertain effects in the
-/// listing order (uncertain_at, prepared_at, attempt_id, effect_key). `NextCursor` is an
-/// opaque keyset cursor bound to the organization; None means the page was
-/// the last.
-/// One listed row with the instant it entered the uncertain set. `uncertain_at`
-/// is the listing's first order key: it is monotone for rows entering the set,
-/// so a keyset cursor never skips a row classified behind it (Codex #424
-/// round 6); prepared_at could, because a row can become uncertain long after
-/// it was prepared. The 0003 guard makes uncertain_at NOT NULL for every
-/// uncertain row.
+/// FG-026b. One listed row with the instant it entered the uncertain set and
+/// its classification sequence. `uncertain_seq` (0014) is the listing's only
+/// order key and the cursor key: it is drawn from a database sequence by the
+/// classification statement under the organization's classification lock, so
+/// within an organization it is monotone with commit order whatever the wall
+/// clock does (Codex #424 round 13) — `uncertain_at` is statement_timestamp()
+/// and can step backward or repeat, which a strict keyset would skip forever.
+/// `uncertain_at` is kept for humans. The 0014 check makes uncertain_seq NOT
+/// NULL for exactly the uncertain rows.
 type UncertainEffectEntry =
     { Checkpoint: EffectCheckpoint
-      UncertainAt: DateTime }
+      UncertainAt: DateTime
+      UncertainSeq: int64 }
 
+/// One bounded page of an organization's uncertain effects in classification
+/// order. `NextCursor` is an opaque keyset cursor bound to the organization;
+/// None means the page was the last.
 type UncertainEffectPage =
     { Effects: UncertainEffectEntry list
       NextCursor: string option }
@@ -658,14 +661,22 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
     ///      attempts only — a live attempt is never selected, and one whose
     ///      row another transaction holds (a renewal, a requeue) is skipped
     ///      for this chunk rather than waited on;
-    ///   3. `moved` re-checks staleness under the lock and flips the rows;
-    ///   4. with a reason, `emitted_events`/`emitted_outbox` publish exactly
+    ///   3. `sequenced` draws one `effect_checkpoints_uncertain_seq` value per
+    ///      candidate in (prepared_at, attempt_id, effect_key) order (round
+    ///      13) — the listing's cursor key, monotone with commit order under
+    ///      the lock whatever the wall clock does; a candidate the re-check
+    ///      drops leaves a gap, which is harmless;
+    ///   4. `moved` re-checks staleness under the lock and flips the rows,
+    ///      stamping each with its sequence value;
+    ///   5. with a reason, `emitted_events`/`emitted_outbox` publish exactly
     ///      one row each per moved checkpoint from the same statement.
     ///
-    /// Every row of one chunk shares one uncertain_at (statement_timestamp).
-    /// Callers loop chunks until one returns fewer than `chunk`, so no lock
-    /// outlives one chunk's transaction, a live worker's RenewLease never
-    /// waits on the pass, and a second pass finds nothing (idempotent).
+    /// Every row of one chunk shares one uncertain_at (statement_timestamp);
+    /// their sequence values follow preparation order, so a chunk lists in
+    /// preparation order. Callers loop chunks until one returns fewer than
+    /// `chunk`, so no lock outlives one chunk's transaction, a live worker's
+    /// RenewLease never waits on the pass, and a second pass finds nothing
+    /// (idempotent).
     [<Literal>]
     let classificationChunk = 100
 
@@ -763,7 +774,7 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         classify.Transaction <- tx
         classify.CommandText <-
             $"WITH candidates AS (
-                  SELECT /* FG026_MARKER_SNAPSHOT */ e.organization_id, e.attempt_id, e.effect_key
+                  SELECT /* FG026_MARKER_SNAPSHOT */ e.organization_id, e.attempt_id, e.effect_key, e.prepared_at
                     FROM effect_checkpoints e
                     JOIN attempts a
                       ON a.organization_id = e.organization_id AND a.id = e.attempt_id
@@ -773,12 +784,19 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                    ORDER BY e.attempt_id
                      FOR UPDATE OF a{locked}
                    LIMIT @chunk
+              ), sequenced AS (
+                  SELECT c.organization_id, c.attempt_id, c.effect_key,
+                         nextval('effect_checkpoints_uncertain_seq') AS uncertain_seq
+                    FROM (SELECT organization_id, attempt_id, effect_key
+                            FROM candidates
+                           ORDER BY prepared_at, attempt_id, effect_key) c
               ), moved AS (
                   UPDATE effect_checkpoints e
                      SET uncertain_from = e.state,
                          state = 'uncertain',
-                         uncertain_at = statement_timestamp()
-                    FROM candidates c
+                         uncertain_at = statement_timestamp(),
+                         uncertain_seq = c.uncertain_seq
+                    FROM sequenced c
                    WHERE e.organization_id = c.organization_id
                      AND e.attempt_id = c.attempt_id
                      AND e.effect_key = c.effect_key
@@ -1029,7 +1047,8 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                      AND NOT EXISTS (
                          SELECT 1
                            FROM unnest(ARRAY[
-                             'events_id_seq', 'outbox_id_seq', 'log_chunks_id_seq'
+                             'events_id_seq', 'outbox_id_seq', 'log_chunks_id_seq',
+                             'effect_checkpoints_uncertain_seq'
                            ]) AS required_sequence(name)
                            CROSS JOIN unnest(ARRAY['USAGE', 'SELECT'])
                              AS required_privilege(name)
@@ -1550,7 +1569,7 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             $"SELECT {effectProjection}
               FROM effect_checkpoints
               WHERE organization_id = @o AND state = 'uncertain'
-              ORDER BY uncertain_at, prepared_at, attempt_id, effect_key"
+              ORDER BY uncertain_seq"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
         use reader = cmd.ExecuteReader()
         let checkpoints = [ while reader.Read() do yield readCheckpoint reader ]
@@ -1560,65 +1579,61 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
 
     /// FG-026b. The bounded operator listing: at most `limit` (1..1000)
     /// uncertain effects in the same order as ListUncertainEffects, continued
-    /// through an opaque keyset cursor over (uncertain_at, prepared_at, attempt_id,
-    /// effect_key). The cursor carries the organization it was issued for and
-    /// is refused for any other, so a cursor can neither leak nor skip across
-    /// tenants. No new column: the order keys already exist.
+    /// through an opaque keyset cursor over the classification sequence
+    /// (`uncertain_seq`, 0014). The cursor carries the organization it was
+    /// issued for and is refused for any other, so a cursor can neither leak
+    /// nor skip across tenants.
     member _.ListUncertainEffectsPage
         (org: OrganizationId, cursor: string option, limit: int)
         : Result<UncertainEffectPage, string> =
-        let cursorVersion = "fg026b-2"
+        // Codex #424 round 13: the cursor key is the database-generated
+        // classification sequence, not uncertain_at. The per-organization lock
+        // orders classification transactions, but statement_timestamp() is
+        // wall-clock — a clock step backward or two classifications inside
+        // timestamp precision could hand a later-committing row an instant at
+        // or before an issued cursor, and the strict keyset skipped it forever.
+        // uncertain_seq is assigned by the classification statement under the
+        // lock, so it is monotone with commit order whatever the clock does,
+        // and it is unique, so the cursor is one key.
+        let cursorVersion = "fg026b-3"
 
-        // Same-pass rows share one uncertain_at (statement_timestamp), so
-        // prepared_at is the second key: it keeps FG-026's "stable list order"
-        // for rows classified together while uncertain_at, monotone for rows
-        // entering the set, keeps a cursor from skipping a late classification.
-        let encode (checkpoint: EffectCheckpoint, uncertainAt: DateTime, preparedAt: DateTime) =
-            let text =
-                String.concat
-                    "|"
-                    [ cursorVersion
-                      org.Value.ToString()
-                      string uncertainAt.Ticks
-                      string preparedAt.Ticks
-                      checkpoint.AttemptId.Value.ToString()
-                      checkpoint.EffectKey ]
-
+        let encode (uncertainSeq: int64) =
+            let text = String.concat "|" [ cursorVersion; org.Value.ToString(); string uncertainSeq ]
             Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes text)
 
-        // Codex #424 round 5: a well-formed base64 cursor whose decoded key
-        // carries NUL, invalid UTF-8 or an out-of-range length would only fail
-        // inside PostgreSQL. Every field is validated here, before any
-        // connection, with the key held to the same rule PrepareEffect and the
-        // 0007 check constraint enforce, so a tampered cursor is a refusal and
-        // never a database error.
+        // Codex #424 round 5: a well-formed base64 cursor whose decoded key is
+        // hostile must be a refusal before any connection, never a database
+        // error. Every field is validated here: exactly three fields, the
+        // current version, a GUID organization, and a plain positive decimal
+        // sequence (no sign, no whitespace, within bigint). A cursor of any
+        // earlier version is malformed, not translated.
         let decode (raw: string) =
             try
                 let strictUtf8 = System.Text.UTF8Encoding(false, true)
                 let text = strictUtf8.GetString(Convert.FromBase64String raw)
 
-                let validTicks (ticks: int64) =
-                    ticks >= DateTime.MinValue.Ticks && ticks <= DateTime.MaxValue.Ticks
+                match text.Split '|' with
+                | [| version; cursorOrg; sequence |] when version = cursorVersion ->
+                    // .NET's number parser tolerates trailing NUL characters, so
+                    // the sequence is held to ASCII digits before it is parsed.
+                    let digitsOnly = sequence.Length >= 1 && sequence |> Seq.forall Char.IsAsciiDigit
 
-                match text.Split('|', 6) with
-                | [| version; cursorOrg; uncertainTicks; preparedTicks; attempt; key |] when version = cursorVersion ->
-                    match Guid.TryParse cursorOrg, Int64.TryParse uncertainTicks, Int64.TryParse preparedTicks, Guid.TryParse attempt with
-                    | (true, cursorOrganization), (true, uncertainTicks), (true, preparedTicks), (true, attemptId) ->
+                    match
+                        Guid.TryParse cursorOrg,
+                        digitsOnly,
+                        Int64.TryParse(
+                            sequence,
+                            Globalization.NumberStyles.None,
+                            Globalization.CultureInfo.InvariantCulture
+                        )
+                    with
+                    | (true, cursorOrganization), true, (true, uncertainSeq) ->
                         if cursorOrganization <> org.Value then
                             Error "cursor belongs to another organization"
-                        elif not (validTicks uncertainTicks) || not (validTicks preparedTicks) then
-                            Error "cursor is malformed"
-                        elif key.Contains '\000' || Option.isSome (validateEffectInput key "cursor" Array.empty) then
+                        elif uncertainSeq < 1L then
                             Error "cursor is malformed"
                         else
-                            Ok(
-                                Some(
-                                    DateTime(uncertainTicks, DateTimeKind.Utc),
-                                    DateTime(preparedTicks, DateTimeKind.Utc),
-                                    attemptId,
-                                    key
-                                )
-                            )
+                            Ok(Some uncertainSeq)
                     | _ -> Error "cursor is malformed"
                 | _ -> Error "cursor is malformed"
             with _ ->
@@ -1638,13 +1653,13 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                 let keyset =
                     match after with
                     | None -> ""
-                    | Some _ -> " AND (uncertain_at, prepared_at, attempt_id, effect_key) > (@ts, @pt, @a, @k)"
+                    | Some _ -> " AND uncertain_seq > @after"
 
                 cmd.CommandText <-
-                    $"SELECT {effectProjection}, uncertain_at, prepared_at
+                    $"SELECT {effectProjection}, uncertain_at, uncertain_seq
                       FROM effect_checkpoints
                       WHERE organization_id = @o AND state = 'uncertain'{keyset}
-                      ORDER BY uncertain_at, prepared_at, attempt_id, effect_key
+                      ORDER BY uncertain_seq
                       LIMIT @limit"
                 cmd.Parameters.AddWithValue("o", org.Value) |> ignore
                 // One row past the page decides whether a next cursor exists.
@@ -1652,21 +1667,16 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
 
                 match after with
                 | None -> ()
-                | Some(uncertainAt, preparedAt, attempt, key) ->
-                    cmd.Parameters.Add(
-                        NpgsqlParameter("ts", NpgsqlTypes.NpgsqlDbType.TimestampTz, Value = uncertainAt))
-                    |> ignore
-                    cmd.Parameters.Add(
-                        NpgsqlParameter("pt", NpgsqlTypes.NpgsqlDbType.TimestampTz, Value = preparedAt))
-                    |> ignore
-                    cmd.Parameters.AddWithValue("a", attempt) |> ignore
-                    cmd.Parameters.AddWithValue("k", key) |> ignore
+                | Some uncertainSeq -> cmd.Parameters.AddWithValue("after", uncertainSeq) |> ignore
 
                 use reader = cmd.ExecuteReader()
 
                 let rows =
                     [ while reader.Read() do
-                          yield readCheckpoint reader, reader.GetDateTime 9, reader.GetDateTime 10 ]
+                          yield
+                              { Checkpoint = readCheckpoint reader
+                                UncertainAt = reader.GetDateTime 9
+                                UncertainSeq = reader.GetInt64 10 } ]
 
                 reader.Close()
                 tx.Commit()
@@ -1675,16 +1685,11 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
 
                 let next =
                     if rows.Length > limit then
-                        Some(encode (List.last page))
+                        Some(encode (List.last page).UncertainSeq)
                     else
                         None
 
-                Ok
-                    { Effects =
-                        page
-                        |> List.map (fun (checkpoint, uncertainAt, _) ->
-                            { Checkpoint = checkpoint; UncertainAt = uncertainAt })
-                      NextCursor = next }
+                Ok { Effects = page; NextCursor = next }
 
     /// Read-only idempotency probe for admission compatibility across stricter
     /// execution preflights. An exact durable result may be replayed without

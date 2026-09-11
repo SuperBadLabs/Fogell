@@ -707,7 +707,8 @@ module Router =
                                         | Some UncertainAfterPrepare -> "prepared"
                                         | Some UncertainAfterApply -> "applied"
                                         | None -> "unknown"
-                                      UncertainAt = entry.UncertainAt.ToUniversalTime().ToString("o") })
+                                      UncertainAt = entry.UncertainAt.ToUniversalTime().ToString("o")
+                                      UncertainSeq = entry.UncertainSeq })
 
                             let payload: UncertainEffectsResponse =
                                 { OrganizationId = org.ToString()

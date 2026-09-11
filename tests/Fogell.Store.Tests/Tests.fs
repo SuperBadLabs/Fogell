@@ -526,7 +526,7 @@ let migrations =
                           (applied
                            |> List.filter (fun item -> not item.AlreadyPresent)
                            |> List.map (fun item -> item.Version))
-                          [ "0009"; "0010"; "0011"; "0012"; "0013" ]
+                          [ "0009"; "0010"; "0011"; "0012"; "0013"; "0014" ]
                           "only the forward repair and invariant guard migrations are pending"
 
                   use repaired = target.CreateCommand()
@@ -828,7 +828,7 @@ let tenantIsolation =
                           build_definitions
                         TO {roleName};
                         GRANT SELECT ON organization_work_roots TO {roleName};
-                        GRANT USAGE ON events_id_seq, outbox_id_seq, log_chunks_id_seq TO {roleName}"
+                        GRANT USAGE ON events_id_seq, outbox_id_seq, log_chunks_id_seq, effect_checkpoints_uncertain_seq TO {roleName}"
 
                   // Deliberately disable Npgsql's pool reset and force one physical
                   // connection. Otherwise a session-scoped set_config mutant is
@@ -853,7 +853,7 @@ let tenantIsolation =
                       (runtimeStore.RuntimeCapabilities())
                       "sequence USAGE without SELECT is not the full sequence capability"
 
-                  admin $"GRANT SELECT ON events_id_seq, outbox_id_seq, log_chunks_id_seq TO {roleName}"
+                  admin $"GRANT SELECT ON events_id_seq, outbox_id_seq, log_chunks_id_seq, effect_checkpoints_uncertain_seq TO {roleName}"
 
                   Expect.isFalse
                       (runtimeStore.RuntimeCapabilities())
@@ -1152,7 +1152,7 @@ let tenantIsolation =
                         GRANT SELECT, UPDATE ON attempts, nodes, builds TO {roleName};
                         GRANT SELECT, UPDATE ON effect_checkpoints TO {roleName};
                         GRANT INSERT ON events, outbox TO {roleName};
-                        GRANT USAGE ON SEQUENCE events_id_seq, outbox_id_seq TO {roleName}"
+                        GRANT USAGE ON SEQUENCE events_id_seq, outbox_id_seq, effect_checkpoints_uncertain_seq TO {roleName}"
 
                   let maintenanceBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
                   maintenanceBuilder.Options <- $"-c role={roleName}"
@@ -3996,26 +3996,33 @@ let effectReconciliation =
                   | Ok page -> failtestf "limit %d accepted: %A" badLimit page
 
               Expect.equal (page 1000 None).Effects.Length 3 "the maximum limit is accepted"
-
               // Codex #424 round 5: a well-formed cursor with a hostile payload
               // must be a refusal before any connection, never a database error.
-              // The unreachable store proves no round trip was attempted.
+              // The unreachable store proves no round trip was attempted. Round
+              // 13: the cursor is (version, organization, sequence); a plain
+              // positive decimal within bigint is the only accepted sequence,
+              // and an earlier version's shape is malformed, never translated.
               let unreachable = Store("Host=127.0.0.1;Port=9;Username=nobody;Database=nowhere;Timeout=1")
+              let orgText = org.Value.ToString()
               let forged (fields: string list) =
-                  Convert.ToBase64String(Text.Encoding.UTF8.GetBytes(String.concat "|" ("fg026b-2" :: org.Value.ToString() :: fields)))
+                  Convert.ToBase64String(Text.Encoding.UTF8.GetBytes(String.concat "|" ("fg026b-3" :: fields)))
               let ticks = string DateTime.UtcNow.Ticks
               let attempt = Guid.NewGuid().ToString()
               let tampered =
-                  [ "a NUL in the key", forged [ ticks; ticks; attempt; "file-drop-receipt:\000x" ]
-                    "an oversized key", forged [ ticks; ticks; attempt; String.replicate 300 "k" ]
-                    "an empty key", forged [ ticks; ticks; attempt; "" ]
-                    "a whitespace key", forged [ ticks; ticks; attempt; "   " ]
-                    "a non-GUID attempt", forged [ ticks; ticks; "not-an-attempt"; "file-drop-receipt:x" ]
-                    "a garbage timestamp", forged [ "yesterday"; ticks; attempt; "file-drop-receipt:x" ]
-                    "an out-of-range timestamp", forged [ "9999999999999999999"; ticks; attempt; "file-drop-receipt:x" ]
-                    "a non-GUID organization", Convert.ToBase64String(Text.Encoding.UTF8.GetBytes $"fg026b-2|nope|{ticks}|{ticks}|{attempt}|k")
-                    "invalid UTF-8", Convert.ToBase64String(Array.append (Text.Encoding.UTF8.GetBytes $"fg026b-2|{org.Value}|{ticks}|{ticks}|{attempt}|k") [| 0xFFuy; 0xFEuy |])
-                    "a missing field", forged [ ticks; ticks; attempt ] ]
+                  [ "a garbage sequence", forged [ orgText; "yesterday" ]
+                    "a zero sequence", forged [ orgText; "0" ]
+                    "a negative sequence", forged [ orgText; "-1" ]
+                    "a signed sequence", forged [ orgText; "+7" ]
+                    "a sequence with whitespace", forged [ orgText; " 7" ]
+                    "an out-of-range sequence", forged [ orgText; "9223372036854775808" ]
+                    "a NUL in the sequence", forged [ orgText; "7\000" ]
+                    "an empty sequence", forged [ orgText; "" ]
+                    "a non-GUID organization", forged [ "nope"; "7" ]
+                    "a missing field", forged [ orgText ]
+                    "an extra field", forged [ orgText; "7"; "7" ]
+                    "invalid UTF-8", Convert.ToBase64String(Array.append (Text.Encoding.UTF8.GetBytes $"fg026b-3|{orgText}|7") [| 0xFFuy; 0xFEuy |])
+                    "the round-12 cursor shape", Convert.ToBase64String(Text.Encoding.UTF8.GetBytes $"fg026b-2|{orgText}|{ticks}|{ticks}|{attempt}|file-drop-receipt:x")
+                    "an unknown version with the right shape", Convert.ToBase64String(Text.Encoding.UTF8.GetBytes $"fg026b-4|{orgText}|7") ]
 
               for label, cursor in tampered do
                   match unreachable.ListUncertainEffectsPage(org, Some cursor, 10) with
@@ -4025,6 +4032,141 @@ let effectReconciliation =
               // The genuine cursor still works, proving the validator is not
               // simply refusing everything.
               Expect.equal (page 2 first.NextCursor).Effects.Length 1 "a genuine cursor is still accepted after the validator"
+          }
+
+          test "the cursor survives a wall clock that steps backward or repeats: a later classification stamped with an earlier or equal uncertain_at is still reached, in classification-sequence order" {
+              // Codex #424 round 13 (thread hVDpf): the round-12 lock orders
+              // classification transactions, but statement_timestamp() is
+              // wall-clock — an NTP or VM clock step backward, or two
+              // classifications inside timestamp precision, can give a LATER
+              // serialized classification an uncertain_at at or before a cursor
+              // already issued, and the old strict keyset over (uncertain_at,
+              // prepared_at, attempt_id, effect_key) skipped that row forever.
+              // The cursor now leads with uncertain_seq, drawn from a database
+              // sequence by the classification statement under the lock.
+              //
+              // The 0003 guard refuses a future uncertain_at and refuses every
+              // update of an already-uncertain row, so the clock step is
+              // modelled from the other side: the later classifications are
+              // flipped directly the way the store's statement does it (the
+              // organization's classification lock, then the next sequence
+              // value per row) but stamped with an instant the clock had
+              // already passed — one equal to the first row's instant with an
+              // earlier prepared_at (the precision case), one earlier still
+              // (its own prepared_at, the earliest the guard allows: the
+              // step-backward case). Both sort before the issued cursor under
+              // the old composite key.
+              let org, project = freshProject ()
+              let payload = [| 13uy |]
+              let prepare name =
+                  let attempt, fence = runningAttempt org project $"fg026b-clock-{name}" "agent-clock" 60
+                  prepareEffectOk org attempt.AttemptId fence "agent-clock" $"file-drop-receipt:{name}" payload |> ignore
+                  System.Threading.Thread.Sleep 5
+                  attempt.AttemptId
+              let rowEqual = prepare "equal"
+              let rowEarlier = prepare "earlier"
+              let rowFirst = prepare "first"
+              let rowSecond = prepare "second"
+              for row in [ rowFirst; rowSecond ] do
+                  expireLeases org [ row ]
+                  Expect.equal (reconcileOk org "lease_expired").Length 1 "one row classified by the store"
+                  System.Threading.Thread.Sleep 5
+
+              let page limit cursor =
+                  match store.ListUncertainEffectsPage(org, cursor, limit) with
+                  | Ok page -> page
+                  | Error error -> failtestf "page failed: %s" error
+              let keys (page: UncertainEffectPage) = page.Effects |> List.map (fun entry -> entry.Checkpoint.EffectKey)
+
+              // The reader holds a cursor issued after the first row.
+              let pageOne = page 1 None
+              Expect.equal (keys pageOne) [ "file-drop-receipt:first" ] "page 1 holds the first row the store classified"
+              Expect.isSome pageOne.NextCursor "with the second behind it"
+              let firstEntry = pageOne.Effects.Head
+
+              // Later classifications, stamped as a stepped or repeating clock
+              // would stamp them.
+              expireLeases org [ rowEarlier; rowEqual ]
+              use later = new Npgsql.NpgsqlConnection(connectionString)
+              later.Open()
+              use laterTx = later.BeginTransaction()
+              use lockLater = later.CreateCommand()
+              lockLater.Transaction <- laterTx
+              lockLater.CommandText <- "SELECT pg_advisory_xact_lock(hashtext(@o), @tag)"
+              lockLater.Parameters.AddWithValue("o", org.Value.ToString()) |> ignore
+              lockLater.Parameters.AddWithValue("tag", EffectClassification.classificationLockTag) |> ignore
+              lockLater.ExecuteNonQuery() |> ignore
+              let flip (attempt: AttemptId) (instant: string) (extra: (string * Guid) list) =
+                  use cmd = later.CreateCommand()
+                  cmd.Transaction <- laterTx
+                  cmd.CommandText <-
+                      $"UPDATE effect_checkpoints
+                           SET uncertain_from = state, state = 'uncertain',
+                               uncertain_at = ({instant}),
+                               uncertain_seq = nextval('effect_checkpoints_uncertain_seq')
+                         WHERE organization_id = @o AND attempt_id = @a AND state = 'prepared'"
+                  cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                  cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+                  for name, value in extra do
+                      cmd.Parameters.AddWithValue(name, value) |> ignore
+                  Expect.equal (cmd.ExecuteNonQuery()) 1 "the later classification flipped its row"
+              flip rowEarlier "SELECT prepared_at FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = @a" []
+              flip rowEqual "SELECT uncertain_at FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = @first" [ "first", rowFirst.Value ]
+              laterTx.Commit()
+
+              // Both later rows sort before the issued cursor under the old
+              // composite key: the keyset the cursor used to carry would have
+              // reached only the second row and lost the other two forever.
+              use probe = new Npgsql.NpgsqlConnection(connectionString)
+              probe.Open()
+              use oldKeyset = probe.CreateCommand()
+              oldKeyset.CommandText <-
+                  "SELECT (SELECT count(*) FROM effect_checkpoints
+                            WHERE organization_id = @o AND state = 'uncertain'
+                              AND (uncertain_at, prepared_at, attempt_id, effect_key)
+                                > (SELECT uncertain_at, prepared_at, attempt_id, effect_key
+                                     FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = @first)),
+                          (SELECT uncertain_at FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = @earlier)
+                            < (SELECT uncertain_at FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = @first),
+                          (SELECT uncertain_at FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = @equal)
+                            = (SELECT uncertain_at FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = @first)"
+              oldKeyset.Parameters.AddWithValue("o", org.Value) |> ignore
+              oldKeyset.Parameters.AddWithValue("first", rowFirst.Value) |> ignore
+              oldKeyset.Parameters.AddWithValue("earlier", rowEarlier.Value) |> ignore
+              oldKeyset.Parameters.AddWithValue("equal", rowEqual.Value) |> ignore
+              use trap = oldKeyset.ExecuteReader()
+              Expect.isTrue (trap.Read()) "trap row"
+              Expect.equal (trap.GetInt64 0) 1L "under the old (uncertain_at, ...) keyset only the second row lies past the cursor"
+              Expect.isTrue (trap.GetBoolean 1) "the stepped-back row carries an uncertain_at earlier than the cursor's"
+              Expect.isTrue (trap.GetBoolean 2) "the repeated-instant row carries the cursor's own uncertain_at"
+              trap.Close()
+
+              // Following the cursor reaches every later classification, in
+              // classification-sequence order, with no skip and no repeat.
+              let rec follow cursor collected =
+                  match cursor with
+                  | None -> List.rev collected
+                  | Some _ ->
+                      let next = page 1 cursor
+                      follow next.NextCursor (List.rev next.Effects @ collected)
+              let followed = follow pageOne.NextCursor []
+              Expect.equal
+                  (followed |> List.map (fun entry -> entry.Checkpoint.EffectKey))
+                  [ "file-drop-receipt:second"; "file-drop-receipt:earlier"; "file-drop-receipt:equal" ]
+                  "the cursor reaches the second row, then both clock-stepped classifications, in sequence order"
+              Expect.isTrue
+                  (firstEntry :: followed |> List.pairwise |> List.forall (fun (x, y) -> x.UncertainSeq < y.UncertainSeq))
+                  "uncertain_seq strictly increases along the pages"
+              Expect.isTrue
+                  (followed |> List.exists (fun entry -> entry.UncertainAt < firstEntry.UncertainAt))
+                  "and the pages carried a row whose uncertain_at precedes the cursor's, which the old keyset could never return"
+              Expect.equal
+                  (store.ListUncertainEffects org |> List.map (fun c -> c.EffectKey))
+                  [ "file-drop-receipt:first"; "file-drop-receipt:second"; "file-drop-receipt:earlier"; "file-drop-receipt:equal" ]
+                  "the unbounded listing is in classification-sequence order"
+              let wide = page 10 None
+              Expect.equal wide.Effects.Length 4 "one wide page holds all four"
+              Expect.isNone wide.NextCursor "and nothing is behind it"
           }
 
           test "the production trigger never waits on a live attempt: chunked, SKIP LOCKED, a held live row is untouched, a held stale row is skipped whether it sorts first or last, and an all-held remainder terminates" {
@@ -4271,7 +4413,8 @@ let effectReconciliation =
                   classifyFirst.Transaction <- firstTx
                   classifyFirst.CommandText <-
                       "UPDATE effect_checkpoints
-                          SET uncertain_from = state, state = 'uncertain', uncertain_at = statement_timestamp()
+                          SET uncertain_from = state, state = 'uncertain', uncertain_at = statement_timestamp(),
+                              uncertain_seq = nextval('effect_checkpoints_uncertain_seq')
                         WHERE organization_id = @o AND attempt_id = ANY(@ids) AND state = 'prepared'"
                   classifyFirst.Parameters.AddWithValue("o", org.Value) |> ignore
                   classifyFirst.Parameters.AddWithValue("ids", ids early) |> ignore
@@ -4309,7 +4452,9 @@ let effectReconciliation =
                       "SELECT (SELECT max(uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = ANY(@early))
                             < (SELECT min(uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = ANY(@late)),
                               (SELECT min(uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = ANY(@late)) > @before,
-                              (SELECT count(DISTINCT uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND state = 'uncertain')"
+                              (SELECT count(DISTINCT uncertain_at) FROM effect_checkpoints WHERE organization_id = @o AND state = 'uncertain'),
+                              (SELECT max(uncertain_seq) FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = ANY(@early))
+                            < (SELECT min(uncertain_seq) FROM effect_checkpoints WHERE organization_id = @o AND attempt_id = ANY(@late))"
                   order.Parameters.AddWithValue("o", org.Value) |> ignore
                   order.Parameters.AddWithValue("early", ids early) |> ignore
                   order.Parameters.AddWithValue("late", ids late) |> ignore
@@ -4319,6 +4464,11 @@ let effectReconciliation =
                   Expect.isTrue (ordering.GetBoolean 0) $"{label}: the later-committing rows carry the later uncertain_at"
                   Expect.isTrue (ordering.GetBoolean 1) $"{label}: the second's instant was assigned after the first's commit, not while it was open"
                   Expect.equal (ordering.GetInt64 2) 2L $"{label}: two classifications, two instants"
+                  // Round 13: the cursor key is the classification sequence, and
+                  // under the lock it is commit order — every sequence value of
+                  // the first-committing classification precedes every value of
+                  // the second's.
+                  Expect.isTrue (ordering.GetBoolean 3) $"{label}: the classification sequence order is the commit order"
                   ordering.Close()
 
                   // A cursor issued from the first's rows — what a reader who
