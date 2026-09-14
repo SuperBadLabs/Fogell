@@ -259,8 +259,30 @@ module Executor =
                     fun () ->
                         let stream = create ()
                         let admit = deliverRedacted (Some stream.Admit) decodedRedactedLine |> Option.defaultValue ignore
-                        { Admit = admit
-                          Complete = stream.Complete })
+                        { stream with
+                            Admit = admit
+                            Buffered =
+                                stream.Buffered
+                                |> Option.map (fun buffered ->
+                                    { buffered with
+                                        Admit =
+                                            fun consumed line ->
+                                                let mutable transferred = false
+                                                let transfer safe =
+                                                    transferred <- true
+                                                    buffered.Admit consumed safe
+                                                try
+                                                    let deliver =
+                                                        deliverRedacted (Some transfer) decodedRedactedLine
+                                                        |> Option.defaultValue ignore
+                                                    deliver line
+                                                with _ ->
+                                                    // Leak-warning admission can fail before
+                                                    // the final record reaches its owner.
+                                                    // The framer has already surrendered this
+                                                    // credit; release it here exactly once.
+                                                    if not transferred then buffered.Release consumed
+                                                    reraise () }) })
 
             let synchronousAdmission =
                 Option.isSome request.OnRedactedAdmission

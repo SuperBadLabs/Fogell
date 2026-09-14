@@ -563,7 +563,11 @@ diagnostic.
 
 A build also shares a cumulative budget of 33,554,432 UTF-16 code units and
 100,000 logical output records across all steps and parallel branches. Console
-records charge masked text, timestamp prefixes, and normalized line terminators;
+records charge masked text, timestamp prefixes, and normalized line terminators.
+Unframed console text reserves shared capacity before entering a line buffer;
+completing a record transfers that reservation into its final charge, so parallel
+unterminated lines cannot each consume a separate allowance. Discarding buffered
+text releases its temporary reservation, without refunding retained records.
 `returnStdout` charges raw decoded chunks before retaining them, even when the
 script never prints the result. Captures consume characters without creating
 console records. Positive growth from later secret masking consumes the same

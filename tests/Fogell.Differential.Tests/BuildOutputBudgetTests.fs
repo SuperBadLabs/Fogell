@@ -16,6 +16,10 @@ let buildOutputBudget =
             false
             None
 
+    let buffered stream =
+        stream.Buffered
+        |> Option.defaultWith (fun () -> failtest "WalkerCtx stream exposes buffered admission credits")
+
     testList
         "whole-build output budget"
         [ test "logical records charge framed UTF-16 characters at the exact boundary" {
@@ -33,6 +37,101 @@ let buildOutputBudget =
                   ctx.CheckOutputBudget
                   "the sticky exception is safe to surface at the run boundary"
               Expect.equal (ctx.Output()) [ "a"; "b" ] "a refused record never changes retained output"
+          }
+
+          test "buffered framing transfers a completed line credit exactly once" {
+              let ctx = context 2L 10
+              let stream = ctx.CreateRedactedAdmission()
+              let credits = buffered stream
+
+              credits.Reserve 2
+              credits.Admit 2 (RedactedText.Raw "x")
+
+              Expect.equal (ctx.Output()) [ "x" ] "the line consumes its x plus framed terminator charge once"
+              stream.Complete()
+          }
+
+          test "parallel partial streams cannot exceed the aggregate outstanding credit budget" {
+              let ctx = context 5L 10
+              let firstStream = ctx.CreateRedactedAdmission()
+              let secondStream = ctx.CreateRedactedAdmission()
+              let first = buffered firstStream
+              let second = buffered secondStream
+              let mutable admitted = 0
+
+              System.Threading.Tasks.Parallel.Invoke(
+                  Action(fun () ->
+                      try
+                          first.Reserve 3
+                          System.Threading.Interlocked.Increment(&admitted) |> ignore
+                      with :? BuildOutputLimitExceededException -> ()),
+                  Action(fun () ->
+                      try
+                          second.Reserve 3
+                          System.Threading.Interlocked.Increment(&admitted) |> ignore
+                      with :? BuildOutputLimitExceededException -> ()))
+
+              Expect.equal (System.Threading.Volatile.Read(&admitted)) 1 "only one partial stream fits"
+              Expect.isTrue (ctx.OutputBudgetExceeded()) "the second reservation trips the shared sticky budget"
+              // Cleanup stays possible after the sticky interrupt and returns
+              // the winner's transient framing credit.
+              if System.Threading.Volatile.Read(&admitted) = 1 then
+                  try
+                      first.Release 3
+                  with :? ArgumentException -> second.Release 3
+              firstStream.Complete()
+              secondStream.Complete()
+          }
+
+          test "buffered admission rejects credit from another or larger stream" {
+              let ctx = context 10L 10
+              let firstStream = ctx.CreateRedactedAdmission()
+              let secondStream = ctx.CreateRedactedAdmission()
+              let first = buffered firstStream
+              let second = buffered secondStream
+              first.Reserve 1
+
+              Expect.throwsT<ArgumentException>
+                  (fun () -> first.Admit 2 (RedactedText.Raw "x"))
+                  "a framer cannot turn more bytes into a record than its stream reserved"
+              Expect.throwsT<ArgumentException>
+                  (fun () -> second.Admit 1 (RedactedText.Raw "x"))
+                  "a stream cannot spend a different stream's reservation"
+              first.Release 1
+              firstStream.Complete()
+              secondStream.Complete()
+          }
+
+          test "buffered admission consumes its credit before a final record failure" {
+              let ctx = context 10L 0
+              let stream = ctx.CreateRedactedAdmission()
+              let credits = buffered stream
+              credits.Reserve 2
+
+              Expect.throwsT<BuildOutputLimitExceededException>
+                  (fun () -> credits.Admit 1 (RedactedText.Raw ""))
+                  "the final record limit still applies after framing credit transfers"
+              credits.Release 1
+              Expect.throwsT<ArgumentException>
+                  (fun () -> credits.Release 1)
+                  "the failed final admission consumed exactly one credit and released remainder cannot be spent twice"
+              stream.Complete()
+          }
+
+          test "CRLF's ignored LF releases its transient buffered credit" {
+              let finalRecordCharacters = 1 + Environment.NewLine.Length
+              let ctx = context (int64 (finalRecordCharacters + 1)) 10
+              let stream = ctx.CreateRedactedAdmission()
+              let credits = buffered stream
+
+              // ProcessGroup reserves x, CR and LF; its framer transfers
+              // through CR, then releases the ignored LF of the CRLF pair.
+              credits.Reserve 3
+              credits.Admit 2 (RedactedText.Raw "x")
+              credits.Release 1
+              credits.Reserve 1
+              credits.Release 1
+              stream.Complete()
           }
 
           test "record capacity is independent of available character capacity" {
@@ -173,6 +272,43 @@ let buildOutputBudget =
                   ctx.FlushOutput
                   "flush drains accepted backlog before returning the sticky quota error"
               Expect.equal (List.ofSeq published) [ "one"; "two" ] "accepted publication order remains FIFO"
+          }
+
+          test "late credential binding remasks a stalled publication queue after another branch exhausts budget" {
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let published = ResizeArray<string>()
+              let ctx =
+                  WalkerCtx.createWithOutputBudget
+                      { MaxCharacters = 10L
+                        MaxRecords = 10 }
+                      0L
+                      false
+                      (Some(fun line ->
+                          published.Add line
+                          if line = "blocker" then
+                              callbackEntered.Set()
+                              releaseCallback.Wait()))
+              let blocker = System.Threading.Tasks.Task.Run(fun () -> ctx.Emit "blocker")
+
+              try
+                  Expect.isTrue (callbackEntered.Wait 2_000) "the accepted prefix is genuinely in the callback"
+                  ctx.Emit "x"
+                  Expect.throwsT<BuildOutputLimitExceededException>
+                      (fun () -> ctx.ReserveCapturedOutput 1)
+                      "a concurrent capture trip exhausts the shared quota before credential registration"
+                  Expect.throwsT<BuildOutputLimitExceededException>
+                      (fun () -> ctx.BindSecrets [ Secrets.inMemoryTextBinding "TOKEN" "x" ])
+                      "late remasking cannot spend unavailable growth"
+              finally
+                  releaseCallback.Set()
+
+              blocker.GetAwaiter().GetResult()
+              Expect.throwsT<BuildOutputLimitExceededException>
+                  ctx.FlushOutput
+                  "the retained prefix drains before the sticky quota reaches the terminal boundary"
+              Expect.equal (List.ofSeq published) [ "blocker" ] "the unsafe queued raw line is withheld"
+              Expect.equal (ctx.Output()) [ "blocker" ] "the trace cannot expose the stale pre-binding raw representation"
           }
 
           test "a callback that directly rethrows its reentrant quota trip is publication uncertainty" {

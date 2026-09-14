@@ -29,6 +29,10 @@ type internal OutputBudget =
 
 type private PublicationStream() =
     member val Completed = false with get, set
+    /// Post-mask process characters held by the framer but not yet represented
+    /// by a retained output record.  WalkerCtx owns both this per-stream credit
+    /// and the run-wide total under outputLock.
+    member val BufferedCharacters = 0L with get, set
 
 type private PendingPublication =
     { Order: int64
@@ -275,6 +279,7 @@ module WalkerCtx =
         // a binding can otherwise repeatedly expand/shrink retained forms and
         // turn one finite budget into unbounded allocation over the build.
         let mutable chargedCharacters = 0L
+        let mutable outstandingBufferedCharacters = 0L
         let mutable logicalRecordCount = 0
         let mutable outputBudgetFailure: BuildOutputLimitExceededException option = None
 
@@ -315,10 +320,37 @@ module WalkerCtx =
                     | None -> failure :> exn)
 
         let reserveCharacters additional =
-            if additional < 0L || chargedCharacters > outputBudget.MaxCharacters - additional then
+            if additional < 0L
+               || chargedCharacters > outputBudget.MaxCharacters - outstandingBufferedCharacters - additional then
                 raise (tripOutputBudget ())
 
             chargedCharacters <- chargedCharacters + additional
+
+        let reserveBufferedCharacters (stream: PublicationStream) characters =
+            if characters < 0L
+               || chargedCharacters > outputBudget.MaxCharacters - outstandingBufferedCharacters - characters then
+                raise (tripOutputBudget ())
+
+            outstandingBufferedCharacters <- outstandingBufferedCharacters + characters
+            stream.BufferedCharacters <- stream.BufferedCharacters + characters
+
+        let releaseBufferedCharacters (stream: PublicationStream) characters =
+            if characters < 0L || characters > stream.BufferedCharacters then
+                invalidArg (nameof characters) "buffered output release exceeds this stream's credit"
+
+            outstandingBufferedCharacters <- outstandingBufferedCharacters - characters
+            stream.BufferedCharacters <- stream.BufferedCharacters - characters
+
+        let consumeBufferedCharacters (stream: PublicationStream) consumed =
+            if consumed < 0L || consumed > stream.BufferedCharacters then
+                invalidArg (nameof consumed) "buffered output admission exceeds this stream's credit"
+
+            // ProcessGroup removes its matching local credit before calling
+            // Buffered.Admit. Mirror that transfer before masking, callback
+            // checks, or final-record charging: a later failure must not
+            // strand either side's accounting.
+            outstandingBufferedCharacters <- outstandingBufferedCharacters - consumed
+            stream.BufferedCharacters <- stream.BufferedCharacters - consumed
 
         let reserveLogicalRecord characters =
             if logicalRecordCount >= outputBudget.MaxRecords then
@@ -623,6 +655,13 @@ module WalkerCtx =
                 lock outputLock (fun () ->
                     let secrets = boundSecrets |> Seq.map fst |> List.ofSeq
 
+                    // A real EOF should already have transferred each framed
+                    // line or explicitly released CRLF/discarded bytes.  Make
+                    // completion a final safety net for an aborted/framing
+                    // path so transient credits cannot outlive their stream.
+                    if stream.BufferedCharacters > 0L then
+                        releaseBufferedCharacters stream stream.BufferedCharacters
+
                     lock publicationLock (fun () ->
                         stream.Completed <- true
                         openStreams.Remove stream |> ignore
@@ -710,8 +749,10 @@ module WalkerCtx =
                     // though Output() exposes it without the terminator.  Use
                     // the platform line terminator because ProcessGroup's
                     // captured builders use that same UTF-16 framing unit.
+                    let finalCharacters = int64 stamped.Length + int64 Environment.NewLine.Length
+
                     publicationFailureOrBudgetFailure deferExternalDrain
-                    reserveLogicalRecord (int64 stamped.Length + int64 Environment.NewLine.Length)
+                    reserveLogicalRecord finalCharacters
 
                     let outputIndex = output.Count
                     output.Add stamped
@@ -809,6 +850,40 @@ module WalkerCtx =
                                 if List.isEmpty secrets then line else Secrets.maskAlreadyRedacted secrets line
 
                             safe, Secrets.detectUnregisteredLeaksRedacted secrets safe)
+                  Buffered =
+                    Some
+                        { Reserve =
+                            fun characters ->
+                                if characters < 0 then
+                                    invalidArg (nameof characters) "buffered output reservation must be non-negative"
+
+                                lock outputLock (fun () ->
+                                    // A publisher failure does not stop raw
+                                    // reader bookkeeping.  If this attempt
+                                    // crosses capacity, tripOutputBudget still
+                                    // latches the global interrupt before
+                                    // returning publication uncertainty.
+                                    publicationFailureOrBudgetFailure true
+                                    reserveBufferedCharacters stream (int64 characters))
+                          Admit =
+                            fun consumed (line: RedactedText) ->
+                                if consumed < 0 then
+                                    invalidArg (nameof consumed) "buffered output admission must be non-negative"
+
+                                lock outputLock (fun () ->
+                                    consumeBufferedCharacters stream (int64 consumed)
+                                    emitCore true true (Some stream) (fun secrets ->
+                                        let safe =
+                                            if List.isEmpty secrets then line else Secrets.maskAlreadyRedacted secrets line
+
+                                        safe, Secrets.detectUnregisteredLeaksRedacted secrets safe))
+                          Release =
+                            fun characters ->
+                                if characters < 0 then
+                                    invalidArg (nameof characters) "buffered output release must be non-negative"
+
+                                lock outputLock (fun () ->
+                                    releaseBufferedCharacters stream (int64 characters)) }
                   Complete = fun () -> completePublicationStream stream }
           CheckOutputBudget =
             fun () ->
@@ -845,8 +920,12 @@ module WalkerCtx =
 
                     let active = boundSecrets |> Seq.map fst |> List.ofSeq
 
-                    if outputBudgetFailure.IsNone
-                       && Secrets.maskingForms active <> previousMaskingForms then
+                    // A quota trip stops new admission, not late-binding
+                    // safety work for records already admitted to publication.
+                    // Otherwise a stalled callback can drain a raw queued line
+                    // after a later credential binding merely because another
+                    // branch exhausted the build budget first.
+                    if Secrets.maskingForms active <> previousMaskingForms then
                         remaskPendingPublications active)
           BoundSecrets =
             fun () ->

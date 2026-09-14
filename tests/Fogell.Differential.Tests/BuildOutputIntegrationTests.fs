@@ -127,6 +127,37 @@ let buildOutputIntegration =
                       "the peer did not continue after the global output limit")
           }
 
+          test "parallel unterminated console lines consume the shared budget before EOF" {
+              withRoot "parallel-unterminated" (fun root workspace ->
+                  let stages =
+                      [ 1 .. 3 ]
+                      |> List.map (fun i ->
+                          let command =
+                              $"set +x; echo $$ > unterminated-{i}.pid; touch started-{i}; "
+                              + "until [ -f started-1 ] && [ -f started-2 ] && [ -f started-3 ]; do sleep 0.02; done; "
+                              + "head -c 12582912 /dev/zero | tr '\\0' x; sleep 30; "
+                              + $"touch unterminated-after-{i}"
+                          let shellStep = "sh '''" + command.Replace("\\", "\\\\") + "'''"
+                          $"stage('partial-{i}') {{ steps {{ {shellStep} }} }}")
+                  let source =
+                      "pipeline { agent any options { timeout(time: 20, unit: 'SECONDS') } stages { stage('fanout') { parallel { "
+                      + String.concat " " stages
+                      + "} } } }"
+                  let clock = System.Diagnostics.Stopwatch.StartNew()
+                  let result =
+                      expectResultErrorWithin "parallel unterminated output" 30_000 (fun () ->
+                          FogellSide.run [] root "job" source)
+                  expectWholeBuildLimit "parallel unterminated output" result
+                  Expect.isLessThan clock.ElapsedMilliseconds 15_000L
+                      "the shared reservation trips before the 20-second timeout could force EOF"
+                  for i in [ 1 .. 3 ] do
+                      let pidPath = Path.Combine(workspace, $"unterminated-{i}.pid")
+                      Expect.isTrue (File.Exists pidPath) "every partial-output producer started"
+                      let pid = Int32.Parse(File.ReadAllText pidPath)
+                      Expect.isFalse (Directory.Exists $"/proc/{pid}") "partial-output producer reaped before return"
+                      Expect.isFalse (File.Exists(Path.Combine(workspace, $"unterminated-after-{i}"))) "no producer reached its delayed effect")
+          }
+
           test "nested failFast output overflow is catch-opaque to script and stops later effects" {
               withRoot "nested-catch" (fun root workspace ->
                   let source =
