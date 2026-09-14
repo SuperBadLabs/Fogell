@@ -10,6 +10,10 @@ open Fogell.Execution
 type private CaptureReservationFailure() =
     inherit Exception("test capture reservation failure")
 
+[<Sealed>]
+type private GeneratedNarrationFailure() =
+    inherit Exception("test generated narration failure")
+
 let private shellQuote (value: string) = "'" + value.Replace("'", "'\"'\"'") + "'"
 
 let private waitForPid (path: string) =
@@ -69,6 +73,140 @@ let captureOutputBudget =
                   | Some pid -> Expect.isTrue (waitForReap pid) $"captured-output failure reaped child {pid}"
               finally
                   try
+                      if Directory.Exists root then Directory.Delete(root, true)
+                  with _ -> ()
+          }
+
+          test "generated interrupt narration failure is deferred until the process group is reaped" {
+              let root = Path.Combine(Path.GetTempPath(), "fogell-generated-narration-" + Guid.NewGuid().ToString("N"))
+              Directory.CreateDirectory root |> ignore
+              let pidFile = Path.Combine(root, "child.pid")
+              let releaseFile = Path.Combine(root, "release")
+              let lateFile = Path.Combine(root, "late.txt")
+              let quotedPidFile = shellQuote pidFile
+              let quotedReleaseFile = shellQuote releaseFile
+              let quotedLateFile = shellQuote lateFile
+              let failure = GeneratedNarrationFailure()
+              let script =
+                  $"/bin/sh -c 'printf \"%%s\" \"$$\" > \"$1\"; while [ ! -f \"$2\" ]; do /bin/sleep 0.01; done' fogell-child {quotedPidFile} {quotedReleaseFile} >/dev/null 2>&1 & "
+                  + $"i=0; while [ ! -s {quotedPidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; /bin/sleep 0.01; done; while [ ! -f {quotedReleaseFile} ]; do /bin/sleep 0.01; done; touch {quotedLateFile}"
+
+              try
+                  try
+                      ProcessGroup.run
+                          { RunRequest.create (script, root) with
+                              GraceMs = 100
+                              Interrupt = Some(fun () -> File.Exists pidFile)
+                              OnGeneratedAdmission =
+                                  Some(fun line ->
+                                      if line = "Sending interrupt signal to process" then
+                                          raise failure) }
+                      |> ignore
+                      failtest "the generated-admission failure was swallowed"
+                  with :? GeneratedNarrationFailure as actual ->
+                      Expect.isTrue (obj.ReferenceEquals(actual, failure)) "the original admission failure survives cleanup"
+
+                  match waitForPid pidFile with
+                  | None -> failtest "the child never established reaping evidence"
+                  | Some pid ->
+                      Expect.isFalse (Directory.Exists(Path.Combine("/proc", string pid))) $"generated-admission failure returned only after reaping child {pid}"
+
+                  Expect.isFalse (File.Exists lateFile) "the parent did not reach its late effect"
+              finally
+                  try
+                      File.WriteAllText(releaseFile, "release")
+                      match waitForPid pidFile with
+                      | Some pid -> waitForReap pid |> ignore
+                      | None -> ()
+                      if Directory.Exists root then Directory.Delete(root, true)
+                  with _ -> ()
+          }
+
+          test "synthetic Terminated admission failure follows process-group reaping" {
+              let root = Path.Combine(Path.GetTempPath(), "fogell-generated-terminated-" + Guid.NewGuid().ToString("N"))
+              Directory.CreateDirectory root |> ignore
+              let pidFile = Path.Combine(root, "child.pid")
+              let releaseFile = Path.Combine(root, "release")
+              let quotedPidFile = shellQuote pidFile
+              let quotedReleaseFile = shellQuote releaseFile
+              let failure = GeneratedNarrationFailure()
+              let script =
+                  $"trap '' TERM; /bin/sh -c 'printf \"%%s\" \"$$\" > \"$1\"; while [ ! -f \"$2\" ]; do /bin/sleep 0.01; done' fogell-child {quotedPidFile} {quotedReleaseFile} >/dev/null 2>&1 & "
+                  + $"i=0; while [ ! -s {quotedPidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; /bin/sleep 0.01; done; while [ ! -f {quotedReleaseFile} ]; do /bin/sleep 0.01; done"
+
+              try
+                  try
+                      ProcessGroup.run
+                          { RunRequest.create (script, root) with
+                              GraceMs = 100
+                              Interrupt = Some(fun () -> File.Exists pidFile)
+                              OnGeneratedAdmission =
+                                  Some(fun line ->
+                                      if line = "Terminated" then
+                                          raise failure) }
+                      |> ignore
+                      failtest "the synthetic-Terminated admission failure was swallowed"
+                  with :? GeneratedNarrationFailure as actual ->
+                      Expect.isTrue (obj.ReferenceEquals(actual, failure)) "the original synthetic-Terminated failure survives cleanup"
+
+                  match waitForPid pidFile with
+                  | None -> failtest "the child never established reaping evidence"
+                  | Some pid ->
+                      Expect.isFalse (Directory.Exists(Path.Combine("/proc", string pid))) $"synthetic-Terminated failure returned only after reaping child {pid}"
+              finally
+                  try
+                      File.WriteAllText(releaseFile, "release")
+                      match waitForPid pidFile with
+                      | Some pid -> waitForReap pid |> ignore
+                      | None -> ()
+                      if Directory.Exists root then Directory.Delete(root, true)
+                  with _ -> ()
+          }
+
+          test "an established process callback failure outranks deferred generated narration" {
+              let root = Path.Combine(Path.GetTempPath(), "fogell-generated-precedence-" + Guid.NewGuid().ToString("N"))
+              Directory.CreateDirectory root |> ignore
+              let pidFile = Path.Combine(root, "child.pid")
+              let releaseFile = Path.Combine(root, "release")
+              let quotedPidFile = shellQuote pidFile
+              let quotedReleaseFile = shellQuote releaseFile
+              let narrationFailure = GeneratedNarrationFailure()
+              let callbackFailure = InvalidOperationException("test process callback failure")
+              use callbackEntered = new Threading.ManualResetEventSlim(false)
+              let script =
+                  $"echo raw-callback; /bin/sh -c 'printf \"%%s\" \"$$\" > \"$1\"; while [ ! -f \"$2\" ]; do /bin/sleep 0.01; done' fogell-child {quotedPidFile} {quotedReleaseFile} >/dev/null 2>&1 & "
+                  + $"i=0; while [ ! -s {quotedPidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; /bin/sleep 0.01; done; while [ ! -f {quotedReleaseFile} ]; do /bin/sleep 0.01; done"
+
+              try
+                  try
+                      ProcessGroup.run
+                          { RunRequest.create (script, root) with
+                              GraceMs = 100
+                              Interrupt = Some(fun () -> callbackEntered.IsSet && File.Exists pidFile)
+                              OnLine =
+                                  Some(fun line ->
+                                      if line = "raw-callback" then
+                                          callbackEntered.Set()
+                                          raise callbackFailure)
+                              OnGeneratedAdmission =
+                                  Some(fun line ->
+                                      if line = "Sending interrupt signal to process" then
+                                          raise narrationFailure) }
+                      |> ignore
+                      failtest "the process callback failure was swallowed"
+                  with :? InvalidOperationException as actual ->
+                      Expect.isTrue (obj.ReferenceEquals(actual, callbackFailure)) "established host output loss outranks deferred narration"
+
+                  match waitForPid pidFile with
+                  | None -> failtest "the child never established reaping evidence"
+                  | Some pid ->
+                      Expect.isFalse (Directory.Exists(Path.Combine("/proc", string pid))) $"precedence failure returned only after reaping child {pid}"
+              finally
+                  try
+                      File.WriteAllText(releaseFile, "release")
+                      match waitForPid pidFile with
+                      | Some pid -> waitForReap pid |> ignore
+                      | None -> ()
                       if Directory.Exists root then Directory.Delete(root, true)
                   with _ -> ()
           } ]

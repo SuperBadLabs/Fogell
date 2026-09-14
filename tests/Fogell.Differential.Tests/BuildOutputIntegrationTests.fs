@@ -50,7 +50,11 @@ let private expectWholeBuildLimit label result =
             "build output exceeded Fogell's whole-build output limit"
             $"{label}: the failure crosses the constant whole-build limit"
     | Ok trace ->
-        failtestf "%s: expected Result.Error, got terminal result %s; diagnostics: %A" label trace.Result (trace.EngineNotes @ (trace.Output |> List.truncate 8 |> List.map (fun line -> line.Substring(0, min 200 line.Length))))
+        let bounded lines = lines |> List.map (fun (line: string) -> line.Substring(0, min 200 line.Length))
+        failtestf "%s: expected Result.Error, got terminal result %s; notes: %A; first output: %A; last output: %A"
+            label trace.Result trace.EngineNotes
+            (trace.Output |> List.truncate 8 |> bounded)
+            (trace.Output |> List.rev |> List.truncate 20 |> List.rev |> bounded)
 
 let private expectResultErrorWithin label (timeoutMs: int) (run: unit -> Result<'a, string>) =
     let task = Task.Run(fun () -> run ())
@@ -128,7 +132,7 @@ let buildOutputIntegration =
                   let source =
                       "pipeline { agent any stages { stage('outer') { parallel { "
                       + "stage('nested') { failFast true parallel { "
-                      + $"stage('overflow') {{ steps {{ sh 'while [ ! -f nested-peer-started ] || [ ! -f outer-peer-started ]; do sleep 0.02; done'; script {{ try {{ def one = {captured outputChunk}; def two = {captured outputChunk}; def three = {captured outputChunk}; def four = {captured outputChunk}; sh 'touch escaped.txt' }} catch (Exception e) {{ sh 'touch caught.txt' }}; sh 'touch after.txt' }} }} }} "
+                      + $"stage('overflow') {{ steps {{ sh 'until [ -f nested-peer-started ] && [ -f outer-peer-started ]; do sleep 0.02; done; :'; script {{ try {{ def one = {captured outputChunk}; def two = {captured outputChunk}; def three = {captured outputChunk}; def four = {captured outputChunk}; sh 'touch escaped.txt' }} catch (Exception e) {{ sh 'touch caught.txt' }}; sh 'touch after.txt' }} }} }} "
                       + "stage('nested-peer') { steps { sh 'touch nested-peer-started; sleep 8; touch nested-peer-late.txt' } } "
                       + "} } "
                       + "stage('outer-peer') { steps { sh 'touch outer-peer-started; sleep 8; touch outer-peer-late.txt' } } "

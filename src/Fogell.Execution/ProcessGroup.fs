@@ -1393,6 +1393,20 @@ module ProcessGroup =
                 | None -> admit line
             | None -> enqueueLine (request.OnGeneratedLine |> Option.orElse request.OnLine) line
 
+        // Interrupt narration is useful evidence, but its synchronous admission
+        // may reject a run-wide exhausted budget or a broken publisher.  Never
+        // let that prevent the group signal and reaping path below: retain the
+        // first admission failure and surface it only after termination, extinction
+        // verification, and reader settlement have been attempted.
+        let mutable deferredGeneratedNarrationFailure: exn option = None
+
+        let publishGeneratedLineBeforeCleanup line =
+            try
+                publishGeneratedLine line
+            with error ->
+                if deferredGeneratedNarrationFailure.IsNone then
+                    deferredGeneratedNarrationFailure <- Some error
+
         let closeAndGetLineCallbackTail () =
             lock lineCallbackGate (fun () ->
                 lineCallbacksOpen <- false
@@ -2028,9 +2042,9 @@ module ProcessGroup =
                 // the shell itself on both engines. The cause is the SNAPSHOT taken
                 // when the wait ended, never a fresh sample.
                 if waitEnd = WaitEnd.Expired then
-                    publishGeneratedLine "Cancelling nested steps due to timeout"
+                    publishGeneratedLineBeforeCleanup "Cancelling nested steps due to timeout"
 
-                publishGeneratedLine "Sending interrupt signal to process"
+                publishGeneratedLineBeforeCleanup "Sending interrupt signal to process"
 
                 settleBeforeSignal 300
                 let outputBeforeSignal = lock stdout (fun () -> stdout.ToString())
@@ -2058,7 +2072,7 @@ module ProcessGroup =
                         |> Array.exists (fun line -> line.Trim() = "Terminated"))
 
                 if not shellSaidIt then
-                    publishGeneratedLine "Terminated"
+                    publishGeneratedLineBeforeCleanup "Terminated"
                 // Distinguish the two ways a step can fail to finish. Both take
                 // the same signal path; only the reported cause differs.
                 (if waitEnd = WaitEnd.Interrupted then Cancelled else TimedOut), t, completionClock, 300, callbackReadersReachedEof
@@ -2177,6 +2191,11 @@ module ProcessGroup =
         let finalFailure =
             readerFailure
             |> Option.orElse lineCallbackFailure
+            // An in-flight process callback can establish lost host output
+            // independently of a later rejected interrupt narration. Keep
+            // that transport uncertainty first, but never let a bare reader
+            // settlement timeout erase the retained narration failure.
+            |> Option.orElse deferredGeneratedNarrationFailure
             |> Option.orElse outputFailure
             |> Option.orElse lineCallbackSettlementTimeout
 
