@@ -1821,6 +1821,38 @@ module FogellSide =
         with ex ->
             Result.Error ex.Message
 
+    /// Publish only engine-owned classifications: exception messages can contain
+    /// credentials, workspace contents or arbitrarily large user input. Failure
+    /// to preserve this diagnostic remains a publication failure, so the host
+    /// cannot write a terminal outcome over missing evidence.
+    let internal withPersistedFailureDiagnostic (publish: string -> unit) run =
+        try
+            run ()
+        with
+        | :? OutputPublicationException -> reraise ()
+        | error ->
+            let diagnostic =
+                match error with
+                | :? OutputLimitExceededException ->
+                    "runner-failure: OUTPUT_LIMIT_EXCEEDED: process output exceeded the runner capture limit"
+                | :? OutOfMemoryException ->
+                    "runner-failure: RUNNER_OUT_OF_MEMORY: runner could not allocate memory"
+                | :? UnauthorizedAccessException ->
+                    "runner-failure: RUNNER_ACCESS_DENIED: runner could not access a required resource"
+                | :? IOException ->
+                    "runner-failure: RUNNER_IO_ERROR: runner input/output operation failed"
+                | _ ->
+                    "runner-failure: RUNNER_INTERNAL_ERROR: unexpected runner exception"
+
+            try
+                publish diagnostic
+            with
+            | :? OutputPublicationException -> reraise ()
+            | publicationError ->
+                raise (OutputPublicationException("runner failure diagnostic publication failed", publicationError))
+
+            Result.Error error.Message
+
     /// FG-112. Run one build with durability hooks — the restart lane's entry.
     /// Same walker, same semantics; the hooks journal top-level steps. The
     /// caller supplies the durable project build number because persisted runs
@@ -1834,14 +1866,11 @@ module FogellSide =
         (hooks: PersistenceHooks)
         (script: string)
         =
-        try
+        withPersistedFailureDiagnostic hooks.OnOutput (fun () ->
             match preflightPersistedExecution script with
             | Result.Error why -> Result.Error why
             | Result.Ok _ ->
-                runWith envReplacements workspaceRoot jobName buildNumber None freshWorkspace None (Some hooks) script
-        with
-        | :? OutputPublicationException -> reraise ()
-        | ex -> Result.Error ex.Message
+                runWith envReplacements workspaceRoot jobName buildNumber None freshWorkspace None (Some hooks) script)
 
     /// FG-052. Run one build of an SCM-DEFINED job: the script is what the
     /// harness pushed to the SCM (the same bytes Jenkins obtains), and the spec

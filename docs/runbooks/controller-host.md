@@ -525,6 +525,32 @@ FOGELL_FG224_CONTROLLER_IMAGE=mcr.microsoft.com/dotnet/sdk@sha256:ea8bde36c11b6e
 
 Expected final line begins `FG-224/FG-042b PROOF PASS`. The script owns a uniquely named
 scratch database, role, state directory, and listener, and removes them on exit.
+Each shell invocation limits its retained stdout and stderr, individual framed
+records, and asynchronous callback backlog to 16,777,216 UTF-16 code units each
+(32 MiB of character storage before object/provenance overhead). The callback
+backlog also has a 1,024-entry limit. Normal shell output includes normalized
+line terminators in the capture budget; `returnStdout` counts the original text.
+These are fixed limits, including when stdout is captured instead of echoed.
+Crossing a limit stops the process group and fails the run explicitly; a
+truncated capture is never returned as a successful shell result. Already
+published log chunks remain available, but the rejected record may be absent.
+
+Persisted runner exceptions publish a bounded `runner-failure` log event with
+an engine-owned cause code: `OUTPUT_LIMIT_EXCEEDED`, `RUNNER_OUT_OF_MEMORY`,
+`RUNNER_ACCESS_DENIED`, `RUNNER_IO_ERROR`, or `RUNNER_INTERNAL_ERROR`. The host
+also publishes a fixed `RUN_FAILED` fallback before recording terminal failure.
+Exception messages and inherited runner stderr are not copied into public logs;
+they can contain credentials and arbitrary process data. A failure to publish
+the diagnostic retains the same reconciliation behavior as other event writes.
+These events classify caught runner failures; they cannot diagnose an abrupt
+kernel kill or guarantee that a process already out of memory can allocate a
+diagnostic.
+
+This bounds individual process invocations. The walker still retains aggregate
+build output and publication history, so many below-limit steps or concurrent
+branches can consume more memory. Keep a worker/container memory limit; this
+change is not a whole-build memory budget or a multi-tenant isolation guarantee.
+
 If progressive event publication fails, Run.Host emits no terminal journal
 record; the failure remains infrastructure truth and the controller requires
 reconciliation instead of inventing a build failure. A local-worker

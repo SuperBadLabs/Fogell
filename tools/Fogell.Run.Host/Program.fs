@@ -1201,15 +1201,21 @@ let main argv =
             clearOutstandingPrompts ()
             eprintfn "controller event publication failed; reconciliation required"
             3
-        | Choice1Of2(Result.Error e) ->
+        | Choice1Of2(Result.Error _) ->
             // The attempt is OVER and failed — steps may already be durably
             // finished (the leak guard, for one, refuses AFTER they ran), and
             // leaving no terminal record would let a later invocation resume
             // into a finished run. Terminal failure is the honest state.
+            // Never forward e here: it may contain credentials or unbounded
+            // user input. The persisted runner publishes classified exceptions;
+            // this fixed fallback also covers returned engine refusals. Publish
+            // before the terminal journal record so missing evidence cannot be
+            // mistaken for an ordinary completed failure.
+            emitEvent "runner-failure: RUN_FAILED: runner could not complete the build"
             journal.Append(BuildFinished BuildStatus.Failure)
             journal.Close()
             clearOutstandingPrompts ()
-            eprintfn $"run failed: {e}"
+            eprintfn "runner-failure: RUN_FAILED: runner could not complete the build"
             2
         | Choice1Of2(Ok trace) ->
             let status =

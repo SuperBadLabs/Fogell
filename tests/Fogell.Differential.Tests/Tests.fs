@@ -15,6 +15,64 @@ extern uint32 private geteuid()
 
 let private effectiveIdentityIsRoot () = geteuid() = 0u
 
+let persistedFailureDiagnostics =
+    testList "persisted runner failure diagnostics"
+        [ test "infrastructure causes survive without exception payloads" {
+              let sensitive = "credential-canary\n" + String('x', 1024 * 1024)
+              let cases: (exn * string) list =
+                  [ OutOfMemoryException(sensitive), "RUNNER_OUT_OF_MEMORY"
+                    IO.IOException(sensitive), "RUNNER_IO_ERROR"
+                    UnauthorizedAccessException(sensitive), "RUNNER_ACCESS_DENIED"
+                    InvalidOperationException(sensitive), "RUNNER_INTERNAL_ERROR"
+                    OutputLimitExceededException(), "OUTPUT_LIMIT_EXCEEDED" ]
+
+              for error, code in cases do
+                  let published = ResizeArray<string>()
+                  let result: Result<unit, string> =
+                      FogellSide.withPersistedFailureDiagnostic published.Add (fun () -> raise error)
+                  Expect.isError result "an infrastructure exception cannot report success"
+                  Expect.equal published.Count 1 "one classified diagnostic is published"
+                  Expect.stringContains published[0] code "the useful cause survives"
+                  Expect.isLessThan published[0].Length 180 "diagnostic size is independent of exception payload"
+                  Expect.isFalse (published[0].Contains "credential-canary") "exception text never reaches the sink"
+                  Expect.isFalse (published[0].Contains '\n') "exception cannot inject extra log lines"
+          }
+          test "failure to publish the cause remains infrastructure uncertainty" {
+              let mutable calls = 0
+              let publish _ =
+                  calls <- calls + 1
+                  raise (IO.IOException "diagnostic disk full")
+              Expect.throwsT<OutputPublicationException>
+                  (fun () ->
+                      FogellSide.withPersistedFailureDiagnostic publish
+                          (fun () -> raise (OutOfMemoryException "private payload"))
+                      |> ignore)
+                  "host must reconcile instead of writing a terminal build failure"
+              Expect.equal calls 1 "no recursive attempt to publish a publication error"
+          }
+          test "existing publication failure is propagated without another write" {
+              let failure = OutputPublicationException("event sink failed", IO.IOException())
+              let mutable calls = 0
+              try
+                  FogellSide.withPersistedFailureDiagnostic (fun _ -> calls <- calls + 1)
+                      (fun () -> raise failure)
+                  |> ignore
+                  failtest "publication failure was swallowed"
+              with :? OutputPublicationException as actual ->
+                  Expect.isTrue (obj.ReferenceEquals(actual, failure)) "original failure remains authoritative"
+              Expect.equal calls 0 "an already failed output sink is not retried"
+          }
+          test "successful and returned-error paths do not invent exceptions" {
+              let published = ResizeArray<string>()
+              Expect.equal
+                  (FogellSide.withPersistedFailureDiagnostic published.Add (fun () -> Ok 42))
+                  (Ok 42) "success result is preserved"
+              Expect.equal
+                  (FogellSide.withPersistedFailureDiagnostic published.Add (fun () -> Error "refused"))
+                  (Error "refused": Result<int, string>) "returned refusal is preserved"
+              Expect.isEmpty published "only thrown infrastructure failures are classified"
+          } ]
+
 /// FG-224. Progressive output leaves the engine at WalkerCtx.Emit, which is
 /// also the one run-scoped masking and ordering boundary.  These tests pin the
 /// publication contract directly so a future transport cannot accidentally
@@ -12406,7 +12464,8 @@ let main argv =
         argv
         (testList
             "Fogell.Differential"
-            [ progressiveOutputPublication
+            [ persistedFailureDiagnostics
+              progressiveOutputPublication
               controllerEventDrainBudgets
               controllerWorkerScheduling
               controllerWorkerTiming
