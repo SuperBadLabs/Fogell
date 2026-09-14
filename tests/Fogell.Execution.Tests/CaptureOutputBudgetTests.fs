@@ -244,7 +244,8 @@ let captureOutputBudget =
               // check would retain the fragment indefinitely and let this
               // child reach its late side effect.
               let script =
-                  $"/bin/sh -c 'printf \"%%s\" \"$$\" > \"$1\"; /bin/sleep 600' fogell-child {quotedPidFile} >/dev/null 2>&1 & "
+                  "#!/bin/sh\n"
+                  + $"/bin/sh -c 'printf \"%%s\" \"$$\" > \"$1\"; /bin/sleep 600' fogell-child {quotedPidFile} >/dev/null 2>&1 & "
                   + $"i=0; while [ ! -s {quotedPidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; /bin/sleep 0.01; done; "
                   + "head -c 4096 /dev/zero | tr '\\0' x; /bin/sleep 1; touch "
                   + quotedLateFile
