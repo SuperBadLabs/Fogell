@@ -1655,16 +1655,45 @@ module ProcessGroup =
                 let controlPrefix = Text.StringBuilder()
                 let mutable controlResolved = not stripInitialControlFrame
                 let mutable reachedEof = false
+                // Credits for matcher state which has not yet become framer
+                // input. The matcher can retain a long almost-secret prefix
+                // while returning an empty RedactedText; those bytes must be
+                // part of the shared whole-build budget before EOF.
+                let mutable matcherReservedCharacters = 0
+
+                let reconcileMatcherOutput () (masked: RedactedText) =
+                    let desired = masker.PendingCharacters + masked.Text.Length
+                    let delta = desired - matcherReservedCharacters
+
+                    if delta > 0 then
+                        bufferedAdmission |> Option.iter (fun buffered -> buffered.Reserve delta)
+                    elif delta < 0 then
+                        releaseBuffered (-delta)
+
+                    // Only the matcher's retained prefix remains local after
+                    // the emitted portion is handed to the framer. Set this
+                    // before Push so an admission exception cannot make the
+                    // finally path release framer-owned credit twice.
+                    matcherReservedCharacters <- masker.PendingCharacters
+
+                let abandonMatcherReservation () =
+                    if matcherReservedCharacters > 0 then
+                        let abandoned = matcherReservedCharacters
+                        matcherReservedCharacters <- 0
+                        releaseBuffered abandoned
 
                 let feedBuildOutput text =
                     if not (String.IsNullOrEmpty text) then
+                        // Charge decoded process input *before* the matcher.
+                        // A matcher may retain all of an almost-secret prefix
+                        // and return no text for the framer until a later
+                        // chunk or EOF.
+                        bufferedAdmission |> Option.iter (fun buffered -> buffered.Reserve text.Length)
+                        matcherReservedCharacters <- matcherReservedCharacters + text.Length
                         let masked = masker.PushRedacted text
+                        reconcileMatcherOutput () masked
 
                         if not (String.IsNullOrEmpty masked.Text) then
-                            // This is the first point at which arbitrary process
-                            // bytes become retained frame state. Reserve exactly
-                            // the matcher output before handing it to the framer.
-                            bufferedAdmission |> Option.iter (fun buffered -> buffered.Reserve masked.Text.Length)
                             framer.Push masked
 
                 let feed text =
@@ -1728,18 +1757,20 @@ module ProcessGroup =
                                         controlPrefix.Clear() |> ignore
 
                                     let suffix = masker.CompleteRedacted()
+                                    reconcileMatcherOutput () suffix
 
                                     if not (String.IsNullOrEmpty suffix.Text) then
-                                        bufferedAdmission |> Option.iter (fun buffered -> buffered.Reserve suffix.Text.Length)
                                         framer.Push suffix
 
                                     framer.Complete()
                                 else
                                     framer.Abandon()
+                                    abandonMatcherReservation ()
 
                                 completePublication |> Option.iter (fun complete -> complete ()))
                         with error ->
                             framer.Abandon()
+                            abandonMatcherReservation ()
                             reportOutputFailure error)
                 finally
                     // On an exceptional/cut-off read, never flush an ambiguous
@@ -1748,6 +1779,7 @@ module ProcessGroup =
                         controlPrefix.Clear() |> ignore
 
                     framer.Abandon()
+                    abandonMatcherReservation ()
 
                     closed.TrySetResult(()) |> ignore
             }

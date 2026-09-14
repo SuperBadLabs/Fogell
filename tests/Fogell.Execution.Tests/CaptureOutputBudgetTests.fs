@@ -131,6 +131,62 @@ let captureOutputBudget =
                   with _ -> ()
           }
 
+          test "a matcher-held almost-secret prefix reserves before EOF and blocks its late effect" {
+              let root = Path.Combine(Path.GetTempPath(), "fogell-matcher-prefix-" + Guid.NewGuid().ToString("N"))
+              Directory.CreateDirectory root |> ignore
+              let lateFile = Path.Combine(root, "late.txt")
+              let prefix = String.replicate 4095 "x"
+              let failure = BufferedReservationFailure()
+              // The 4095-character output is one character short of the
+              // registered form. The matcher deliberately holds it and emits
+              // an empty value until EOF; a framer-only reservation therefore
+              // permits the sleep/touch on the old implementation.
+              let script = "#!/bin/sh\nprintf '%s' \"$PREFIX\"\n/bin/sleep 1\ntouch " + shellQuote lateFile
+              let outstandingCredits = ResizeArray<unit -> int>()
+
+              let admission () =
+                  let mutable bufferedCharacters = 0
+                  outstandingCredits.Add(fun () -> bufferedCharacters)
+
+                  { Admit = ignore
+                    Buffered =
+                        Some
+                            { Reserve =
+                                fun characters ->
+                                    // A StreamReader may split this prefix at
+                                    // any character. Accumulate per-stream
+                                    // credit so either chunking reaches the
+                                    // same pre-EOF rejection boundary.
+                                    if bufferedCharacters + characters >= prefix.Length then
+                                        raise failure
+                                    bufferedCharacters <- bufferedCharacters + characters
+                              Admit = fun _ _ -> failtest "the held prefix must not reach line admission"
+                              Release = fun characters -> bufferedCharacters <- bufferedCharacters - characters }
+                    Complete = ignore }
+
+              try
+                  try
+                      ProcessGroup.run
+                          { RunRequest.create (script, root) with
+                              Environment = [ "PREFIX", prefix ]
+                              GraceMs = 100
+                              OutputRedaction = Some(OutputRedactionPolicy [ prefix + "x" ])
+                              CreateRedactedAdmission = Some admission }
+                      |> ignore
+                      failtest "the matcher-prefix reservation failure was swallowed"
+                  with :? BufferedReservationFailure as actual ->
+                      Expect.isTrue (obj.ReferenceEquals(actual, failure)) "the original prefix reservation failure survives cleanup"
+
+                  Expect.isFalse (File.Exists lateFile) "the held prefix was charged before the script reached its late effect"
+                  Expect.isTrue
+                      (outstandingCredits |> Seq.forall (fun read -> read () = 0))
+                      "cleanup releases partial matcher credit from every stream after rejection"
+              finally
+                  try
+                      if Directory.Exists root then Directory.Delete(root, true)
+                  with _ -> ()
+          }
+
           test "buffered framing transfers records and releases CRLF-only credit" {
               let reservations = ResizeArray<int>()
               let admissions = ResizeArray<int * string>()

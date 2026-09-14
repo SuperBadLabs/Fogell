@@ -10,6 +10,44 @@ open Fogell.Ir
 /// The Fogell side. Parses the same Jenkinsfile, walks its stages, executes each
 /// step, and reduces the run to a [Trace] in the same canonical form.
 module FogellSide =
+    /// Settles accepted output without allowing cleanup to erase a stronger
+    /// build outcome.  The order matches parallel branch joining: publication
+    /// uncertainty is strongest, then runtime guard drift, then the sticky
+    /// whole-build quota, then ordinary execution failures.
+    let internal settleTerminalOutput
+        (active: exn option)
+        (flush: unit -> unit)
+        (checkBudget: unit -> unit)
+        =
+        let rank (error: exn) =
+            match error with
+            | :? OutputPublicationException -> 4
+            | :? RuntimeGuardFailure -> 3
+            | :? BuildOutputLimitExceededException -> 2
+            | _ -> 1
+
+        let rethrow (error: exn) : unit =
+            Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw()
+            Unchecked.defaultof<unit>
+
+        let settlement =
+            try
+                flush ()
+                checkBudget ()
+                None
+            with error ->
+                Some error
+
+        match active, settlement with
+        | None, None -> ()
+        | Some error, None
+        | None, Some error -> rethrow error
+        | Some activeError, Some settlementError ->
+            if rank settlementError > rank activeError then
+                rethrow settlementError
+            else
+                rethrow activeError
+
     let internal terminalOutputLeaks
         (output: (string * SecretBinding list * bool * string * RedactedText) list)
         =
@@ -756,963 +794,959 @@ module FogellSide =
                     isRestartedRun
                     (persistence |> Option.map (fun hooks -> hooks.OnOutput))
 
-            // Every exit settles accepted output before reporting resource
-            // failure. A swallowed script exception cannot turn a spent budget
-            // into success, and lost publication still requires reconciliation.
-            use outputScope =
-                { new IDisposable with
-                    member _.Dispose() =
-                        runCtx.FlushOutput()
-                        runCtx.CheckOutputBudget() }
+            try
+                // FG-053. The SCRIPT decides whether a timestamp-shaped prefix is
+                // engine decoration or the build's own output — nothing in a line's
+                // shape can tell those apart, so normalisation is told rather than
+                // left to guess.
+                // ZERO-ARGUMENT, and a name-only check accepted anything. Jenkins'
+                // Declarative `timestamps()` takes no arguments and REJECTS
+                // `timestamps(false)` or named parameters when it compiles the
+                // model, so accepting them here would run a build Jenkins refuses —
+                // failing OPEN on a script the reference engine will not execute.
+                // EVERY entry, not the first. `options` is a Step LIST and the parser
+                // keeps them all, so `options { timestamps(); timestamps(false) }`
+                // arrives with both — `tryFind` saw the valid one, accepted it, and
+                // ran a build Jenkins refuses to compile.
+                let timestampsOptions =
+                    pipeline.Options |> List.filter (fun o -> o.Name = "timestamps")
 
-            // FG-053. The SCRIPT decides whether a timestamp-shaped prefix is
-            // engine decoration or the build's own output — nothing in a line's
-            // shape can tell those apart, so normalisation is told rather than
-            // left to guess.
-            // ZERO-ARGUMENT, and a name-only check accepted anything. Jenkins'
-            // Declarative `timestamps()` takes no arguments and REJECTS
-            // `timestamps(false)` or named parameters when it compiles the
-            // model, so accepting them here would run a build Jenkins refuses —
-            // failing OPEN on a script the reference engine will not execute.
-            // EVERY entry, not the first. `options` is a Step LIST and the parser
-            // keeps them all, so `options { timestamps(); timestamps(false) }`
-            // arrives with both — `tryFind` saw the valid one, accepted it, and
-            // ran a build Jenkins refuses to compile.
-            let timestampsOptions =
-                pipeline.Options |> List.filter (fun o -> o.Name = "timestamps")
+                let timestampsArgError =
+                    if
+                        timestampsOptions
+                        |> List.exists (fun o -> not (List.isEmpty o.Positional) || not (List.isEmpty o.Named))
+                    then
+                        Some "the timestamps() option takes no arguments"
+                    elif timestampsOptions |> List.exists (fun o -> o.HasBlock) then
+                        // FG-121. `timestamps { }` parses as the option carrying a trailing
+                        // closure, and the argument check above cannot see a closure. Jenkins
+                        // refuses the model, so accepting it ran a build the reference engine
+                        // will not compile. MEASURED on Jenkins 2.568.1 by FG-053's verifier;
+                        // UNPROVEN by receipt (sealable since FG-129 landed; none sealed for
+                        // this shape).
+                        Some "the timestamps() option takes no block"
+                    else
+                        None
 
-            let timestampsArgError =
-                if
-                    timestampsOptions
-                    |> List.exists (fun o -> not (List.isEmpty o.Positional) || not (List.isEmpty o.Named))
-                then
-                    Some "the timestamps() option takes no arguments"
-                elif timestampsOptions |> List.exists (fun o -> o.HasBlock) then
-                    // FG-121. `timestamps { }` parses as the option carrying a trailing
-                    // closure, and the argument check above cannot see a closure. Jenkins
-                    // refuses the model, so accepting it ran a build the reference engine
-                    // will not compile. MEASURED on Jenkins 2.568.1 by FG-053's verifier;
-                    // UNPROVEN by receipt (sealable since FG-129 landed; none sealed for
-                    // this shape).
-                    Some "the timestamps() option takes no block"
-                else
-                    None
+                let declaresTimestamps = not (List.isEmpty timestampsOptions) && timestampsArgError.IsNone
 
-            let declaresTimestamps = not (List.isEmpty timestampsOptions) && timestampsArgError.IsNone
+                let ansiColorOptions =
+                    pipeline.Options |> List.filter (fun o -> o.Name = "ansiColor")
 
-            let ansiColorOptions =
-                pipeline.Options |> List.filter (fun o -> o.Name = "ansiColor")
+                // Jenkins' ansiColor option exposes ONE parameter, the colour map name.
+                // `ansiColor('xterm', 'vga')` ran here with TERM=xterm and the extra
+                // argument silently dropped — the same fail-open shape the timestamps
+                // arg check closed, and every entry is validated for the same reason
+                // `tryFind` was wrong there.
+                // `ansiColor('xterm')` AND `ansiColor(colorMapName: 'xterm')` are both
+                // valid — the parameter has a name and Groovy lets it be passed
+                // either way. A positional-only check REFUSED the named form, which
+                // is worse than the fail-open it replaced: it rejects a Jenkinsfile
+                // Jenkins accepts.
+                // STAGE-LEVEL `options { timestamps() }` is REFUSED, not ignored.
+                // Jenkins 2.568.1 honours it and stamps that stage's output; Fogell
+                // enables the wrapper for the whole build or not at all, so honouring
+                // the pipeline form while silently dropping the stage form would
+                // produce unstamped output where Jenkins stamps — a divergence the
+                // engine would not announce. Refusing by name is this project's
+                // stated direction for a construct it does not implement (FG-103),
+                // and FG-120 carries the scoped enable/restore that would support it.
+                // FG-053. Options are classified in THREE ways, and the default is
+                // refusal. An earlier version of this allowlist held every name Jenkins
+                // accepts, which conflated "Jenkins knows this NAME" with "Fogell
+                // implements this BEHAVIOUR" — so `checkoutToSubdirectory('src')`, which
+                // moves the automatic checkout under a subdirectory, was accepted and
+                // silently ignored. That is the divergence this project refuses by name
+                // rather than commits quietly (FG-103). Caught by the pre-push verifier.
+                //
+                // The closed descriptor table above owns both categories and is the
+                // source of `supportedPipelineOptionNames`: HONOURED means the engine
+                // implements the semantics.
+                // PIPELINE scope. `retry` is deliberately ABSENT: FG-053(b) implements
+                // it for a STAGE's options only, and Jenkins' pipeline-level `retry`
+                // retries the WHOLE PIPELINE — a different feature this engine does not
+                // have. Listing it here accepted `options { retry(3) }` at pipeline
+                // scope and ran ONE attempt, silently, which is the name-vs-scope
+                // conflation PR #38 fixed for `ansiColor` and I reproduced in the very
+                // next ticket. The corpus has ZERO pipeline-level `retry` (measured:
+                // 0 pipeline / 2 stage), so refusing it costs nothing today.
+                // INERT descriptors cover retention and queueing policy with no observable
+                // effect on ONE build, which is all a receipt can see. Receipt:
+                // `options-accept-and-ignore`. Everything else Jenkins accepts is REFUSED,
+                // because accepting it would mean running a build whose semantics this
+                // engine does not reproduce.
+                // FG-053(b) has since implemented `skipStagesAfterUnstable` (pipeline
+                // scope) and `retry` (STAGE scope only — Jenkins' pipeline-level `retry`
+                // retries the whole pipeline, which this engine does not do), so both
+                // have moved out of this set. What remains refused is everything Jenkins
+                // accepts whose semantics are not reproduced here.
+                // SCOPE, measured against the lab and UNPROVEN BY RECEIPT (a compile
+                // refusal is sealable since FG-129 landed; none is sealed for this
+                // shape): Jenkins enumerates a DIFFERENT valid set for a stage
+                // `options` block than for the pipeline one and refuses pipeline-only
+                // names there — `stage { options { buildDiscarder(...) } }` is
+                // jenkins=failure. Fogell refuses far more narrowly than that (only
+                // `timeout` survives at stage scope, see below), so an explicit
+                // pipeline-only SET is not needed to get the refusal right; it existed
+                // here, was read by nothing after the stage rule tightened, and is
+                // deleted rather than left as a binding that looks load-bearing.
 
-            // Jenkins' ansiColor option exposes ONE parameter, the colour map name.
-            // `ansiColor('xterm', 'vga')` ran here with TERM=xterm and the extra
-            // argument silently dropped — the same fail-open shape the timestamps
-            // arg check closed, and every entry is validated for the same reason
-            // `tryFind` was wrong there.
-            // `ansiColor('xterm')` AND `ansiColor(colorMapName: 'xterm')` are both
-            // valid — the parameter has a name and Groovy lets it be passed
-            // either way. A positional-only check REFUSED the named form, which
-            // is worse than the fail-open it replaced: it rejects a Jenkinsfile
-            // Jenkins accepts.
-            // STAGE-LEVEL `options { timestamps() }` is REFUSED, not ignored.
-            // Jenkins 2.568.1 honours it and stamps that stage's output; Fogell
-            // enables the wrapper for the whole build or not at all, so honouring
-            // the pipeline form while silently dropping the stage form would
-            // produce unstamped output where Jenkins stamps — a divergence the
-            // engine would not announce. Refusing by name is this project's
-            // stated direction for a construct it does not implement (FG-103),
-            // and FG-120 carries the scoped enable/restore that would support it.
-            // FG-053. Options are classified in THREE ways, and the default is
-            // refusal. An earlier version of this allowlist held every name Jenkins
-            // accepts, which conflated "Jenkins knows this NAME" with "Fogell
-            // implements this BEHAVIOUR" — so `checkoutToSubdirectory('src')`, which
-            // moves the automatic checkout under a subdirectory, was accepted and
-            // silently ignored. That is the divergence this project refuses by name
-            // rather than commits quietly (FG-103). Caught by the pre-push verifier.
-            //
-            // The closed descriptor table above owns both categories and is the
-            // source of `supportedPipelineOptionNames`: HONOURED means the engine
-            // implements the semantics.
-            // PIPELINE scope. `retry` is deliberately ABSENT: FG-053(b) implements
-            // it for a STAGE's options only, and Jenkins' pipeline-level `retry`
-            // retries the WHOLE PIPELINE — a different feature this engine does not
-            // have. Listing it here accepted `options { retry(3) }` at pipeline
-            // scope and ran ONE attempt, silently, which is the name-vs-scope
-            // conflation PR #38 fixed for `ansiColor` and I reproduced in the very
-            // next ticket. The corpus has ZERO pipeline-level `retry` (measured:
-            // 0 pipeline / 2 stage), so refusing it costs nothing today.
-            // INERT descriptors cover retention and queueing policy with no observable
-            // effect on ONE build, which is all a receipt can see. Receipt:
-            // `options-accept-and-ignore`. Everything else Jenkins accepts is REFUSED,
-            // because accepting it would mean running a build whose semantics this
-            // engine does not reproduce.
-            // FG-053(b) has since implemented `skipStagesAfterUnstable` (pipeline
-            // scope) and `retry` (STAGE scope only — Jenkins' pipeline-level `retry`
-            // retries the whole pipeline, which this engine does not do), so both
-            // have moved out of this set. What remains refused is everything Jenkins
-            // accepts whose semantics are not reproduced here.
-            // SCOPE, measured against the lab and UNPROVEN BY RECEIPT (a compile
-            // refusal is sealable since FG-129 landed; none is sealed for this
-            // shape): Jenkins enumerates a DIFFERENT valid set for a stage
-            // `options` block than for the pipeline one and refuses pipeline-only
-            // names there — `stage { options { buildDiscarder(...) } }` is
-            // jenkins=failure. Fogell refuses far more narrowly than that (only
-            // `timeout` survives at stage scope, see below), so an explicit
-            // pipeline-only SET is not needed to get the refusal right; it existed
-            // here, was read by nothing after the stage rule tightened, and is
-            // deleted rather than left as a binding that looks load-bearing.
-
-            let refusedPipelineOptions =
-                pipeline.Options
-                |> List.map (fun o -> o.Name)
-                |> List.filter (fun n -> not (supportedPipelineOptionNames.Contains n))
-                |> List.distinct
-
-            let stageOptionNames =
-                pipeline.Stages
-                |> Pipeline.flattenStages
-                |> List.collect (fun st -> st.Options |> List.map (fun o -> o.Name))
-                |> List.distinct
-
-            // HONOURED IS PER (NAME, SCOPE), NOT PER NAME. The previous version
-            // allowed any supported name at stage scope, but `ansiColor` is read
-            // ONLY from `pipeline.Options`, so `stage { options { ansiColor('xterm') } }`
-            // ran to success with TERM=dumb instead of xterm — silently, which is
-            // the whole failure mode this classification exists to stop. Same for
-            // `skipDefaultCheckout`, also read pipeline-only. Caught by the
-            // pre-push verifier, which built the scratch pipeline and read TERM.
-            //
-            // `timeout` and `retry` are the options honoured at stage scope: the
-            // orchestrator calls `deadlineFromOptions stage.Options` for the first
-            // and `runWithRetry` over `runStageBody` for the second (FG-053(b)).
-            // Stage `timestamps` is refused separately by FG-120. Everything else in
-            // a stage block is refused — including names Jenkins accepts there —
-            // because this engine reads none of them.
-            // `retry` joins `timeout` here now that FG-053(b) implements it: the
-            // stage's steps run through the shared retry loop. It was refused by
-            // FG-053(a) precisely so it could not run with the wrong semantics
-            // silently, and that refusal is what this ticket lifts.
-            let stageHonouredOptions = set [ "timeout"; "retry" ]
-
-            // `timestamps` is EXCLUDED here so the FG-120 branch below owns it. The
-            // generic list caught it first and reported "unknown option type(s):
-            // timestamps" — a name Jenkins knows, that this engine knows, and that
-            // is refused for a specific reason the reader is then denied. A
-            // diagnostic that misclassifies is worse than a vague one.
-            let refusedStageOptions =
-                stageOptionNames
-                |> List.filter (fun n -> not (stageHonouredOptions.Contains n) && n <> "timestamps")
-
-            // Two refusal SITES, pipeline and stage — NOT two accurate categories,
-            // and an earlier comment here claimed they were. They are not: a
-            // pipeline `retry` is a name Jenkins knows and this engine does not
-            // implement, and it went out as "unknown"; a genuinely unknown name in a
-            // stage block went out as "not honoured at stage scope". Both refusals
-            // are CORRECT — the wording was what lied, in the commit that split them
-            // to stop exactly that.
-            //
-            // Both say UNSUPPORTED, which is true of every case either list can
-            // hold; FG-133 then adds WHY per name from the two measured Jenkins
-            // sets below — unknown, known-but-unimplemented, or wrong scope —
-            // without touching which names are refused. Claiming the distinction
-            // without making it is how this went wrong twice.
-            let unknownOptionNames = refusedPipelineOptions |> List.distinct
-
-            let stageScopeRefusals = refusedStageOptions |> List.distinct
-
-            // FG-133. WHY each name is refused, decided against the two sets
-            // Jenkins 2.568.1 enumerates in its own refusal — MEASURED on the
-            // pinned lab (receipts `compile-refusal-option-unknown-pipeline`,
-            // `compile-refusal-option-unknown-stage` and
-            // `compile-refusal-option-pipeline-only-at-stage`): `Invalid option
-            // type "<name>". Valid option types: [...]`, 39 names at pipeline
-            // scope and 24 at stage scope, the stage list a strict subset. Three
-            // cases, each sending the reader somewhere different:
-            //   * unknown to Jenkins at either scope — a typo or a plugin this lab
-            //     does not have; Jenkins refuses it too;
-            //   * known to Jenkins at this scope, not implemented here — Jenkins
-            //     runs it; this engine's gap, refused by name (FG-103);
-            //   * a pipeline-only name inside a stage block — Jenkins refuses it
-            //     there too, with the stage list.
-            // The two lists are Jenkins' KNOWN set, not what this engine honours;
-            // conflating the two is the FG-053 defect the descriptor table exists
-            // to prevent, so they are consulted only to word the refusal.
-            let jenkinsPipelineOptionNames =
-                set
-                    [ "ansiColor"; "buildDiscarder"; "catchError"; "checkoutToSubdirectory"
-                      "copyArtifactPermission"; "disableConcurrentBuilds"; "disableRestartFromStage"
-                      "disableResume"; "dockerNode"; "durabilityHint"; "githubProjectProperty"; "lock"
-                      "newContainerPerStage"; "overrideIndexTriggers"; "parallelsAlwaysFailFast"
-                      "podTemplate"; "preserveStashes"; "quietPeriod"; "rateLimitBuilds"; "retry"
-                      "script"; "skipDefaultCheckout"; "skipStagesAfterUnstable"; "throttle"
-                      "throttleJobProperty"; "timeout"; "timestamps"; "waitUntil"; "warnError"
-                      "withAWS"; "withBuildUser"; "withChecks"; "withContext"; "withCredentials"
-                      "withEnv"; "withKubeConfig"; "withKubeCredentials"; "wrap"; "ws" ]
-
-            let jenkinsStageOptionNames =
-                set
-                    [ "ansiColor"; "catchError"; "checkoutToSubdirectory"; "dockerNode"; "lock"
-                      "podTemplate"; "retry"; "script"; "skipDefaultCheckout"; "throttle"; "timeout"
-                      "timestamps"; "waitUntil"; "warnError"; "withAWS"; "withBuildUser"; "withChecks"
-                      "withContext"; "withCredentials"; "withEnv"; "withKubeConfig"
-                      "withKubeCredentials"; "wrap"; "ws" ]
-
-            let describePipelineOptionRefusal name =
-                if jenkinsPipelineOptionNames.Contains name then
-                    $"{name} (known to Jenkins at pipeline scope; not implemented by this engine)"
-                else
-                    $"{name} (unknown to Jenkins at either scope; Jenkins refuses it too)"
-
-            let describeStageOptionRefusal name =
-                if jenkinsStageOptionNames.Contains name then
-                    $"{name} (known to Jenkins at stage scope; not implemented by this engine at stage scope)"
-                elif jenkinsPipelineOptionNames.Contains name then
-                    $"{name} (a pipeline-only option; Jenkins refuses it at stage scope too)"
-                else
-                    $"{name} (unknown to Jenkins at either scope; Jenkins refuses it too)"
-
-            // FG-053(b). Pipeline-level only (Jenkins does not accept it at stage
-            // scope). ZERO-ARGUMENT: reading it by mere presence meant
-            // `skipStagesAfterUnstable(false)` ENABLED the skip — the option saying
-            // the opposite of what it does. That is the `parallelsAlwaysFailFast(false)`
-            // defect I filed as FG-130 and then reproduced here in the same session;
-            // an argument-bearing form is refused rather than guessed at.
-            let skipStagesOptions =
-                pipeline.Options |> List.filter (fun o -> o.Name = "skipStagesAfterUnstable")
-
-            // FG-053(b). A stage `retry` with a missing or non-integer count is a
-            // COMPILE refusal, not a default. UNPROVEN BY RECEIPT (sealable since
-            // FG-129 landed; none sealed for this shape) and measured on
-            // Jenkins 2.568.1:
-            // `options { retry('nope') }` gives
-            // `Expecting "int" but got "nope" of type class java.lang.String`
-            // and jenkins=failure, where defaulting to one attempt ran the stage
-            // and reported fogell=success — an invalid Jenkinsfile performing side
-            // effects. Same shape as `timestampsArgError` beside it.
-            let stageRetryArgError =
-                pipeline.Stages
-                |> Pipeline.flattenStages
-                |> List.collect (fun st -> st.Options |> List.filter (fun o -> o.Name = "retry"))
-                |> List.tryPick (fun o ->
-                    match WalkerRules.retryCountOpt o with
-                    | Some _ -> None
-                    | None -> Some "the retry(<count>) option needs one positive integer count")
-
-            // FG-239 / FG-240. `options { timeout(time: 1, unit: 'NOPE') }` is a
-            // COMPILE refusal on Jenkins at either level — MEASURED on 2.568.1
-            // (2026-09-03): `Expecting "class java.util.concurrent.TimeUnit" for
-            // parameter "unit" but got "NOPE"`, FAILURE, nothing runs. Receipts:
-            // `compile-refusal-timeout-unit-stage`,
-            // `compile-refusal-timeout-unit-pipeline` (FG-129 compares the refusal
-            // disposition, result and workspace). The parse is
-            // `WalkerRules.timeoutMs`, the same rule the deadline computation uses,
-            // so the two cannot disagree about what is unusable.
-            //
-            // VALIDATED HERE, beside the other option checks and before the SCM
-            // block, because the deadline computation that also validates lives
-            // where its `Timeout set to expire` banner must print — after the
-            // checkout (receipt `checkout-scm-timeout-env`) — and the validation
-            // rode along with the banner: a pipeline-level bad unit refused only
-            // after an SCM build had cloned and left the Jenkinsfile (FG-240), and
-            // a stage-level bad unit was refused by the walk without marking the
-            // model rejected, so the pipeline `post` still ran (FG-239). The
-            // deadline computation keeps its place; only the judgement moved.
-            let timeoutArgErrors =
-                let pipelineErrors =
+                let refusedPipelineOptions =
                     pipeline.Options
-                    |> List.filter (fun o -> o.Name = "timeout")
-                    |> List.choose (fun o ->
-                        match WalkerRules.timeoutMs o with
-                        | Ok _ -> None
-                        | Error e -> Some $"ERROR: pipeline declares an unusable timeout option: {e}")
+                    |> List.map (fun o -> o.Name)
+                    |> List.filter (fun n -> not (supportedPipelineOptionNames.Contains n))
+                    |> List.distinct
 
-                let stageErrors =
+                let stageOptionNames =
                     pipeline.Stages
                     |> Pipeline.flattenStages
-                    |> List.collect (fun st ->
-                        st.Options
+                    |> List.collect (fun st -> st.Options |> List.map (fun o -> o.Name))
+                    |> List.distinct
+
+                // HONOURED IS PER (NAME, SCOPE), NOT PER NAME. The previous version
+                // allowed any supported name at stage scope, but `ansiColor` is read
+                // ONLY from `pipeline.Options`, so `stage { options { ansiColor('xterm') } }`
+                // ran to success with TERM=dumb instead of xterm — silently, which is
+                // the whole failure mode this classification exists to stop. Same for
+                // `skipDefaultCheckout`, also read pipeline-only. Caught by the
+                // pre-push verifier, which built the scratch pipeline and read TERM.
+                //
+                // `timeout` and `retry` are the options honoured at stage scope: the
+                // orchestrator calls `deadlineFromOptions stage.Options` for the first
+                // and `runWithRetry` over `runStageBody` for the second (FG-053(b)).
+                // Stage `timestamps` is refused separately by FG-120. Everything else in
+                // a stage block is refused — including names Jenkins accepts there —
+                // because this engine reads none of them.
+                // `retry` joins `timeout` here now that FG-053(b) implements it: the
+                // stage's steps run through the shared retry loop. It was refused by
+                // FG-053(a) precisely so it could not run with the wrong semantics
+                // silently, and that refusal is what this ticket lifts.
+                let stageHonouredOptions = set [ "timeout"; "retry" ]
+
+                // `timestamps` is EXCLUDED here so the FG-120 branch below owns it. The
+                // generic list caught it first and reported "unknown option type(s):
+                // timestamps" — a name Jenkins knows, that this engine knows, and that
+                // is refused for a specific reason the reader is then denied. A
+                // diagnostic that misclassifies is worse than a vague one.
+                let refusedStageOptions =
+                    stageOptionNames
+                    |> List.filter (fun n -> not (stageHonouredOptions.Contains n) && n <> "timestamps")
+
+                // Two refusal SITES, pipeline and stage — NOT two accurate categories,
+                // and an earlier comment here claimed they were. They are not: a
+                // pipeline `retry` is a name Jenkins knows and this engine does not
+                // implement, and it went out as "unknown"; a genuinely unknown name in a
+                // stage block went out as "not honoured at stage scope". Both refusals
+                // are CORRECT — the wording was what lied, in the commit that split them
+                // to stop exactly that.
+                //
+                // Both say UNSUPPORTED, which is true of every case either list can
+                // hold; FG-133 then adds WHY per name from the two measured Jenkins
+                // sets below — unknown, known-but-unimplemented, or wrong scope —
+                // without touching which names are refused. Claiming the distinction
+                // without making it is how this went wrong twice.
+                let unknownOptionNames = refusedPipelineOptions |> List.distinct
+
+                let stageScopeRefusals = refusedStageOptions |> List.distinct
+
+                // FG-133. WHY each name is refused, decided against the two sets
+                // Jenkins 2.568.1 enumerates in its own refusal — MEASURED on the
+                // pinned lab (receipts `compile-refusal-option-unknown-pipeline`,
+                // `compile-refusal-option-unknown-stage` and
+                // `compile-refusal-option-pipeline-only-at-stage`): `Invalid option
+                // type "<name>". Valid option types: [...]`, 39 names at pipeline
+                // scope and 24 at stage scope, the stage list a strict subset. Three
+                // cases, each sending the reader somewhere different:
+                //   * unknown to Jenkins at either scope — a typo or a plugin this lab
+                //     does not have; Jenkins refuses it too;
+                //   * known to Jenkins at this scope, not implemented here — Jenkins
+                //     runs it; this engine's gap, refused by name (FG-103);
+                //   * a pipeline-only name inside a stage block — Jenkins refuses it
+                //     there too, with the stage list.
+                // The two lists are Jenkins' KNOWN set, not what this engine honours;
+                // conflating the two is the FG-053 defect the descriptor table exists
+                // to prevent, so they are consulted only to word the refusal.
+                let jenkinsPipelineOptionNames =
+                    set
+                        [ "ansiColor"; "buildDiscarder"; "catchError"; "checkoutToSubdirectory"
+                          "copyArtifactPermission"; "disableConcurrentBuilds"; "disableRestartFromStage"
+                          "disableResume"; "dockerNode"; "durabilityHint"; "githubProjectProperty"; "lock"
+                          "newContainerPerStage"; "overrideIndexTriggers"; "parallelsAlwaysFailFast"
+                          "podTemplate"; "preserveStashes"; "quietPeriod"; "rateLimitBuilds"; "retry"
+                          "script"; "skipDefaultCheckout"; "skipStagesAfterUnstable"; "throttle"
+                          "throttleJobProperty"; "timeout"; "timestamps"; "waitUntil"; "warnError"
+                          "withAWS"; "withBuildUser"; "withChecks"; "withContext"; "withCredentials"
+                          "withEnv"; "withKubeConfig"; "withKubeCredentials"; "wrap"; "ws" ]
+
+                let jenkinsStageOptionNames =
+                    set
+                        [ "ansiColor"; "catchError"; "checkoutToSubdirectory"; "dockerNode"; "lock"
+                          "podTemplate"; "retry"; "script"; "skipDefaultCheckout"; "throttle"; "timeout"
+                          "timestamps"; "waitUntil"; "warnError"; "withAWS"; "withBuildUser"; "withChecks"
+                          "withContext"; "withCredentials"; "withEnv"; "withKubeConfig"
+                          "withKubeCredentials"; "wrap"; "ws" ]
+
+                let describePipelineOptionRefusal name =
+                    if jenkinsPipelineOptionNames.Contains name then
+                        $"{name} (known to Jenkins at pipeline scope; not implemented by this engine)"
+                    else
+                        $"{name} (unknown to Jenkins at either scope; Jenkins refuses it too)"
+
+                let describeStageOptionRefusal name =
+                    if jenkinsStageOptionNames.Contains name then
+                        $"{name} (known to Jenkins at stage scope; not implemented by this engine at stage scope)"
+                    elif jenkinsPipelineOptionNames.Contains name then
+                        $"{name} (a pipeline-only option; Jenkins refuses it at stage scope too)"
+                    else
+                        $"{name} (unknown to Jenkins at either scope; Jenkins refuses it too)"
+
+                // FG-053(b). Pipeline-level only (Jenkins does not accept it at stage
+                // scope). ZERO-ARGUMENT: reading it by mere presence meant
+                // `skipStagesAfterUnstable(false)` ENABLED the skip — the option saying
+                // the opposite of what it does. That is the `parallelsAlwaysFailFast(false)`
+                // defect I filed as FG-130 and then reproduced here in the same session;
+                // an argument-bearing form is refused rather than guessed at.
+                let skipStagesOptions =
+                    pipeline.Options |> List.filter (fun o -> o.Name = "skipStagesAfterUnstable")
+
+                // FG-053(b). A stage `retry` with a missing or non-integer count is a
+                // COMPILE refusal, not a default. UNPROVEN BY RECEIPT (sealable since
+                // FG-129 landed; none sealed for this shape) and measured on
+                // Jenkins 2.568.1:
+                // `options { retry('nope') }` gives
+                // `Expecting "int" but got "nope" of type class java.lang.String`
+                // and jenkins=failure, where defaulting to one attempt ran the stage
+                // and reported fogell=success — an invalid Jenkinsfile performing side
+                // effects. Same shape as `timestampsArgError` beside it.
+                let stageRetryArgError =
+                    pipeline.Stages
+                    |> Pipeline.flattenStages
+                    |> List.collect (fun st -> st.Options |> List.filter (fun o -> o.Name = "retry"))
+                    |> List.tryPick (fun o ->
+                        match WalkerRules.retryCountOpt o with
+                        | Some _ -> None
+                        | None -> Some "the retry(<count>) option needs one positive integer count")
+
+                // FG-239 / FG-240. `options { timeout(time: 1, unit: 'NOPE') }` is a
+                // COMPILE refusal on Jenkins at either level — MEASURED on 2.568.1
+                // (2026-09-03): `Expecting "class java.util.concurrent.TimeUnit" for
+                // parameter "unit" but got "NOPE"`, FAILURE, nothing runs. Receipts:
+                // `compile-refusal-timeout-unit-stage`,
+                // `compile-refusal-timeout-unit-pipeline` (FG-129 compares the refusal
+                // disposition, result and workspace). The parse is
+                // `WalkerRules.timeoutMs`, the same rule the deadline computation uses,
+                // so the two cannot disagree about what is unusable.
+                //
+                // VALIDATED HERE, beside the other option checks and before the SCM
+                // block, because the deadline computation that also validates lives
+                // where its `Timeout set to expire` banner must print — after the
+                // checkout (receipt `checkout-scm-timeout-env`) — and the validation
+                // rode along with the banner: a pipeline-level bad unit refused only
+                // after an SCM build had cloned and left the Jenkinsfile (FG-240), and
+                // a stage-level bad unit was refused by the walk without marking the
+                // model rejected, so the pipeline `post` still ran (FG-239). The
+                // deadline computation keeps its place; only the judgement moved.
+                let timeoutArgErrors =
+                    let pipelineErrors =
+                        pipeline.Options
                         |> List.filter (fun o -> o.Name = "timeout")
                         |> List.choose (fun o ->
                             match WalkerRules.timeoutMs o with
                             | Ok _ -> None
-                            | Error e -> Some $"ERROR: stage '{st.Name}' declares an unusable timeout option: {e}"))
+                            | Error e -> Some $"ERROR: pipeline declares an unusable timeout option: {e}")
 
-                pipelineErrors @ stageErrors
+                    let stageErrors =
+                        pipeline.Stages
+                        |> Pipeline.flattenStages
+                        |> List.collect (fun st ->
+                            st.Options
+                            |> List.filter (fun o -> o.Name = "timeout")
+                            |> List.choose (fun o ->
+                                match WalkerRules.timeoutMs o with
+                                | Ok _ -> None
+                                | Error e -> Some $"ERROR: stage '{st.Name}' declares an unusable timeout option: {e}"))
 
-            // FG-053(b). `unstable()` with NO message is a COMPILE refusal — MEASURED
-            // on Jenkins 2.568.1: `Missing required parameter: "message"`, nothing
-            // runs, empty workspace. UNPROVEN BY RECEIPT (sealable since FG-129
-            // landed; none sealed for this shape).
-            //
-            // A BLANK message is different and is handled at the STEP, not here:
-            // `unstable(message: '')` compiles, so `+ echo before` RUNS and the build
-            // then fails at the step. Collapsing the two would have been wrong in one
-            // direction or the other.
-            // RECURSIVELY, into wrapper bodies. Scanning `st.Steps` alone missed
-            // `timeout { sh '...'; unstable() }` — the body lives in `Step.Block` —
-            // so the refusal was bypassed, `before.txt` WAS created, and the comment
-            // below claiming "nothing runs, empty workspace" was false for exactly
-            // the shape a wrapper produces. Same top-level-only mistake as the
-            // options scan and `Parser.fs`'s first-vs-all, in a third place.
-            let rec flattenSteps (steps: Step list) =
-                steps |> List.collect (fun st -> st :: flattenSteps st.Block)
+                    pipelineErrors @ stageErrors
 
-            // EVERY step list a build can execute: stage steps, stage `post` arms,
-            // and pipeline `post` arms — `Post` is a SEPARATE FIELD from `Steps`, so
-            // a scan made recursive into `Step.Block` still missed
-            // `post { always { unstable() } }`, which ran the stage body and left
-            // workspace side effects before failing at runtime.
-            //
-            // Fourth variant of the same incompleteness on this branch: one section
-            // of many (`tryPick`), top-level stages only, `st.Steps` without
-            // `Step.Block`, and now steps without `post`. Each time the traversal
-            // covered the shape in front of me and the comment described all of them.
-            let postSteps (post: (PostCondition * Step list) list) =
-                post |> List.collect (fun (_, steps) -> flattenSteps steps)
+                // FG-053(b). `unstable()` with NO message is a COMPILE refusal — MEASURED
+                // on Jenkins 2.568.1: `Missing required parameter: "message"`, nothing
+                // runs, empty workspace. UNPROVEN BY RECEIPT (sealable since FG-129
+                // landed; none sealed for this shape).
+                //
+                // A BLANK message is different and is handled at the STEP, not here:
+                // `unstable(message: '')` compiles, so `+ echo before` RUNS and the build
+                // then fails at the step. Collapsing the two would have been wrong in one
+                // direction or the other.
+                // RECURSIVELY, into wrapper bodies. Scanning `st.Steps` alone missed
+                // `timeout { sh '...'; unstable() }` — the body lives in `Step.Block` —
+                // so the refusal was bypassed, `before.txt` WAS created, and the comment
+                // below claiming "nothing runs, empty workspace" was false for exactly
+                // the shape a wrapper produces. Same top-level-only mistake as the
+                // options scan and `Parser.fs`'s first-vs-all, in a third place.
+                let rec flattenSteps (steps: Step list) =
+                    steps |> List.collect (fun st -> st :: flattenSteps st.Block)
 
-            let unstableArgError =
-                (pipeline.Stages
-                 |> Pipeline.flattenStages
-                 |> List.collect (fun st -> flattenSteps st.Steps @ postSteps st.Post))
-                @ postSteps pipeline.Post
-                |> List.filter (fun st -> st.Name = "unstable")
-                |> List.tryPick (fun st ->
-                    // ARITY is compile-shaped too, and I had inferred it was runtime.
-                    // UNPROVEN BY RECEIPT (sealable since FG-129 landed; none sealed
-                    // for this shape), measured on Jenkins 2.568.1 — `unstable('a','b')` gives
-                    // `Arguments to "unstable" must be explicitly named.` with an
-                    // EMPTY workspace, where routing it through the blank-message
-                    // runtime path had already run the preceding step. Three
-                    // outcomes, not two:
-                    //   no message      -> compile refusal (Missing required parameter)
-                    //   extra arguments -> compile refusal (must be explicitly named)
-                    //   blank message   -> COMPILES, prior steps run, then throws
-                    match st.Positional, st.Named with
-                    | [ _ ], [] -> None
-                    | [], [ ("message", _) ] -> None
-                    | [], [] -> Some "the unstable step requires a message"
-                    | _ -> Some "the unstable step takes exactly one message argument")
+                // EVERY step list a build can execute: stage steps, stage `post` arms,
+                // and pipeline `post` arms — `Post` is a SEPARATE FIELD from `Steps`, so
+                // a scan made recursive into `Step.Block` still missed
+                // `post { always { unstable() } }`, which ran the stage body and left
+                // workspace side effects before failing at runtime.
+                //
+                // Fourth variant of the same incompleteness on this branch: one section
+                // of many (`tryPick`), top-level stages only, `st.Steps` without
+                // `Step.Block`, and now steps without `post`. Each time the traversal
+                // covered the shape in front of me and the comment described all of them.
+                let postSteps (post: (PostCondition * Step list) list) =
+                    post |> List.collect (fun (_, steps) -> flattenSteps steps)
 
-            let skipStagesArgError =
-                if
-                    skipStagesOptions
-                    |> List.exists (fun o -> not (List.isEmpty o.Positional) || not (List.isEmpty o.Named))
-                then
-                    Some "the skipStagesAfterUnstable() option takes no arguments"
-                else
-                    None
+                let unstableArgError =
+                    (pipeline.Stages
+                     |> Pipeline.flattenStages
+                     |> List.collect (fun st -> flattenSteps st.Steps @ postSteps st.Post))
+                    @ postSteps pipeline.Post
+                    |> List.filter (fun st -> st.Name = "unstable")
+                    |> List.tryPick (fun st ->
+                        // ARITY is compile-shaped too, and I had inferred it was runtime.
+                        // UNPROVEN BY RECEIPT (sealable since FG-129 landed; none sealed
+                        // for this shape), measured on Jenkins 2.568.1 — `unstable('a','b')` gives
+                        // `Arguments to "unstable" must be explicitly named.` with an
+                        // EMPTY workspace, where routing it through the blank-message
+                        // runtime path had already run the preceding step. Three
+                        // outcomes, not two:
+                        //   no message      -> compile refusal (Missing required parameter)
+                        //   extra arguments -> compile refusal (must be explicitly named)
+                        //   blank message   -> COMPILES, prior steps run, then throws
+                        match st.Positional, st.Named with
+                        | [ _ ], [] -> None
+                        | [], [ ("message", _) ] -> None
+                        | [], [] -> Some "the unstable step requires a message"
+                        | _ -> Some "the unstable step takes exactly one message argument")
 
-            let skipAfterUnstable = not (List.isEmpty skipStagesOptions) && skipStagesArgError.IsNone
+                let skipStagesArgError =
+                    if
+                        skipStagesOptions
+                        |> List.exists (fun o -> not (List.isEmpty o.Positional) || not (List.isEmpty o.Named))
+                    then
+                        Some "the skipStagesAfterUnstable() option takes no arguments"
+                    else
+                        None
 
-            let stageTimestamps =
-                pipeline.Stages
-                |> Pipeline.flattenStages
-                |> List.exists (fun st -> st.Options |> List.exists (fun o -> o.Name = "timestamps"))
+                let skipAfterUnstable = not (List.isEmpty skipStagesOptions) && skipStagesArgError.IsNone
 
-            let emit = runCtx.Emit
-            let bump = runCtx.Bump
-            let deadlineDidFire = runCtx.DeadlineDidFire
-
-            Directory.CreateDirectory workspace |> ignore
-
-            /// Environment visible to a step: pipeline scope, overridden by stage
-            /// scope. Lexical, and stage wins — the semantics measured on Jenkins.
-            /// Variables Jenkins provides to every build. REVIEW FIX (Codex, PR #13
-            /// round 4): only pipeline- and stage-declared variables were visible, so
-            /// `when { environment name: 'BUILD_NUMBER', value: '1' }` and
-            /// `expression { env.BUILD_NUMBER == '1' }` saw them as ABSENT and skipped
-            /// a stage Jenkins runs. Declarative overrides still win, as they do on
-            /// Jenkins — hence these go first.
-            let jenkinsProvided =
-                // FG-110: in a sequence these must INCREMENT — Jenkins' do, and
-                // `when { environment name: 'BUILD_NUMBER' ... }` selects on them.
-                // FG-222: PATH and HOME are the measured compatibility baseline.
-                // They enter the same explicit map used by GStrings, shell and
-                // runtime Git. No other controller variable is build-visible.
-                LaunchEnvironment.buildBaseline buildHome
-                @ [ ("BUILD_NUMBER", string buildNumber)
-                    ("BUILD_ID", string buildNumber)
-                    ("BUILD_DISPLAY_NAME", $"#{buildNumber}")
-                    ("JOB_NAME", jobName)
-                    ("JOB_BASE_NAME", jobName)
-                    ("WORKSPACE", Path.Combine(workspaceRoot, jobName))
-                    ("EXECUTOR_NUMBER", "0")
-                    ("NODE_NAME", "built-in") ]
-
-            // FG-105: env resolution and argument rendering live in WalkerArgs.
-            let root =
-                { Preamble = pipeline.Preamble
-                  Interrupt = None
-                  Failed = ref false
-                  Sink = bump
-                  // The root has no enclosing Declarative stage. Stage-local
-                  // decorations are consumed by runStage's derived StageSink;
-                  // a warning reaching this boundary must not alter the build.
-                  StageSink = ignore
-                  EnvOverlay = []
-                  HostedBody = None
-                  HostedDeadline = None
-                  HostedArgs = None
-                  HostedResult = None
-                  Secrets = []
-                  SiblingFailedAt = ref -1L
-                  // set per top-level step by runStageBody; nothing outside a
-                  // stage's step list is journaled, so the root carries none
-                  DurabilityKey = None
-                  LastDiagnostic = ref None
-                  HumanRejected = ref false }
-
-            let mutable scmWrapperEnv: (string * string) list = []
-
-            // Definition identity was verified before semantic preflight so even
-            // parser-refused SCM cases are attested. Carry the same controller-owned
-            // notes into ordinary traces without a second remote read.
-            for note in scmPreflightNotes do
-                runCtx.NoteEngine note
-
-
-            match scm with
-            | Some spec when not root.Failed.Value ->
-                // MEASURED only for `agent any` at pipeline level (receipt
-                // `checkout-scm-basic`: one up-front auto-checkout). Under
-                // `agent none`/stage agents Jenkins places the default checkout
-                // at each applicable stage-agent entry instead — UNPROVEN here,
-                // so that shape refuses by name rather than checking out where
-                // Jenkins would not (FG-103).
-                let stageAgents =
+                let stageTimestamps =
                     pipeline.Stages
                     |> Pipeline.flattenStages
-                    |> List.exists (fun st -> st.Agent.IsSome)
+                    |> List.exists (fun st -> st.Options |> List.exists (fun o -> o.Name = "timestamps"))
 
-                if pipeline.Agent <> AgentAny || stageAgents then
-                    emit
-                        "ERROR: an SCM-defined pipeline without a top-level `agent any` (or with stage-level agents) is not modelled — default-checkout placement differs and is unmeasured"
+                let emit = runCtx.Emit
+                let bump = runCtx.Bump
+                let deadlineDidFire = runCtx.DeadlineDidFire
+
+                Directory.CreateDirectory workspace |> ignore
+
+                /// Environment visible to a step: pipeline scope, overridden by stage
+                /// scope. Lexical, and stage wins — the semantics measured on Jenkins.
+                /// Variables Jenkins provides to every build. REVIEW FIX (Codex, PR #13
+                /// round 4): only pipeline- and stage-declared variables were visible, so
+                /// `when { environment name: 'BUILD_NUMBER', value: '1' }` and
+                /// `expression { env.BUILD_NUMBER == '1' }` saw them as ABSENT and skipped
+                /// a stage Jenkins runs. Declarative overrides still win, as they do on
+                /// Jenkins — hence these go first.
+                let jenkinsProvided =
+                    // FG-110: in a sequence these must INCREMENT — Jenkins' do, and
+                    // `when { environment name: 'BUILD_NUMBER' ... }` selects on them.
+                    // FG-222: PATH and HOME are the measured compatibility baseline.
+                    // They enter the same explicit map used by GStrings, shell and
+                    // runtime Git. No other controller variable is build-visible.
+                    LaunchEnvironment.buildBaseline buildHome
+                    @ [ ("BUILD_NUMBER", string buildNumber)
+                        ("BUILD_ID", string buildNumber)
+                        ("BUILD_DISPLAY_NAME", $"#{buildNumber}")
+                        ("JOB_NAME", jobName)
+                        ("JOB_BASE_NAME", jobName)
+                        ("WORKSPACE", Path.Combine(workspaceRoot, jobName))
+                        ("EXECUTOR_NUMBER", "0")
+                        ("NODE_NAME", "built-in") ]
+
+                // FG-105: env resolution and argument rendering live in WalkerArgs.
+                let root =
+                    { Preamble = pipeline.Preamble
+                      Interrupt = None
+                      Failed = ref false
+                      Sink = bump
+                      // The root has no enclosing Declarative stage. Stage-local
+                      // decorations are consumed by runStage's derived StageSink;
+                      // a warning reaching this boundary must not alter the build.
+                      StageSink = ignore
+                      EnvOverlay = []
+                      HostedBody = None
+                      HostedDeadline = None
+                      HostedArgs = None
+                      HostedResult = None
+                      Secrets = []
+                      SiblingFailedAt = ref -1L
+                      // set per top-level step by runStageBody; nothing outside a
+                      // stage's step list is journaled, so the root carries none
+                      DurabilityKey = None
+                      LastDiagnostic = ref None
+                      HumanRejected = ref false }
+
+                let mutable scmWrapperEnv: (string * string) list = []
+
+                // Definition identity was verified before semantic preflight so even
+                // parser-refused SCM cases are attested. Carry the same controller-owned
+                // notes into ordinary traces without a second remote read.
+                for note in scmPreflightNotes do
+                    runCtx.NoteEngine note
+
+
+                match scm with
+                | Some spec when not root.Failed.Value ->
+                    // MEASURED only for `agent any` at pipeline level (receipt
+                    // `checkout-scm-basic`: one up-front auto-checkout). Under
+                    // `agent none`/stage agents Jenkins places the default checkout
+                    // at each applicable stage-agent entry instead — UNPROVEN here,
+                    // so that shape refuses by name rather than checking out where
+                    // Jenkins would not (FG-103).
+                    let stageAgents =
+                        pipeline.Stages
+                        |> Pipeline.flattenStages
+                        |> List.exists (fun st -> st.Agent.IsSome)
+
+                    if pipeline.Agent <> AgentAny || stageAgents then
+                        emit
+                            "ERROR: an SCM-defined pipeline without a top-level `agent any` (or with stage-level agents) is not modelled — default-checkout placement differs and is unmeasured"
+
+                        root.Failed.Value <- true
+                        bump BuildStatus.Failure
+                | _ -> ()
+
+                // REFUSED, and NOT YET TERMINAL — say what this does, because the
+                // sentence here previously claimed "fail closed" and "running the
+                // build at all would be failing OPEN" while the code does exactly
+                // that. A reviewer reproduced it: `timestamps(false)` with a
+                // `post { always { sh ... } }` exits FAILURE and still runs the post
+                // step, creating its file. Jenkins rejects the model before any
+                // stage or post runs, so this executes side effects for a script the
+                // reference engine never would.
+                //
+                // What IS right here is the POSITION: before the SCM block, because
+                // Jenkins refuses after the lightweight Jenkinsfile fetch and BEFORE
+                // its generated default checkout — validating after `runCheckout`
+                // left repository files behind and turned a compile refusal into a
+                // workspace-hash divergence.
+                //
+                // Making it terminal is a control-flow change to the walker and is
+                // FG-121, with the reproduction recorded there. No corpus file
+                // declares any of these forms; every one is a script Jenkins itself
+                // rejects.
+                // A COMPILE-SHAPED refusal, distinct from a build failure: Jenkins
+                // rejects the model before any stage or post runs, so neither may
+                // run here. `root.Failed` alone left pipeline `post` executing and
+                // creating files for a script the reference engine never accepts —
+                // reproduced by the verifier with `timestamps(false)` and a
+                // `post { always { sh ... } }`.
+                let mutable compileRejected = false
+
+                if not (List.isEmpty unknownOptionNames) then
+                    emit (
+                        "ERROR: pipeline declares option(s) this engine does not support: "
+                        + String.concat ", " (unknownOptionNames |> List.map describePipelineOptionRefusal)
+                    )
+                    root.Failed.Value <- true
+                    compileRejected <- true
+                    bump BuildStatus.Failure
+
+                if not (List.isEmpty stageScopeRefusals) then
+                    emit (
+                        "ERROR: stage declares option(s) this engine does not support at stage scope: "
+                        + String.concat ", " (stageScopeRefusals |> List.map describeStageOptionRefusal)
+                        + " — refusing rather than running them with the wrong semantics"
+                    )
 
                     root.Failed.Value <- true
+                    compileRejected <- true
                     bump BuildStatus.Failure
-            | _ -> ()
 
-            // REFUSED, and NOT YET TERMINAL — say what this does, because the
-            // sentence here previously claimed "fail closed" and "running the
-            // build at all would be failing OPEN" while the code does exactly
-            // that. A reviewer reproduced it: `timestamps(false)` with a
-            // `post { always { sh ... } }` exits FAILURE and still runs the post
-            // step, creating its file. Jenkins rejects the model before any
-            // stage or post runs, so this executes side effects for a script the
-            // reference engine never would.
-            //
-            // What IS right here is the POSITION: before the SCM block, because
-            // Jenkins refuses after the lightweight Jenkinsfile fetch and BEFORE
-            // its generated default checkout — validating after `runCheckout`
-            // left repository files behind and turned a compile refusal into a
-            // workspace-hash divergence.
-            //
-            // Making it terminal is a control-flow change to the walker and is
-            // FG-121, with the reproduction recorded there. No corpus file
-            // declares any of these forms; every one is a script Jenkins itself
-            // rejects.
-            // A COMPILE-SHAPED refusal, distinct from a build failure: Jenkins
-            // rejects the model before any stage or post runs, so neither may
-            // run here. `root.Failed` alone left pipeline `post` executing and
-            // creating files for a script the reference engine never accepts —
-            // reproduced by the verifier with `timestamps(false)` and a
-            // `post { always { sh ... } }`.
-            let mutable compileRejected = false
+                if stageTimestamps then
+                    emit
+                        "ERROR: stage-level options { timestamps() } is not implemented; Jenkins stamps that stage's output and this engine would not — refusing rather than diverging silently (FG-120)"
 
-            if not (List.isEmpty unknownOptionNames) then
-                emit (
-                    "ERROR: pipeline declares option(s) this engine does not support: "
-                    + String.concat ", " (unknownOptionNames |> List.map describePipelineOptionRefusal)
-                )
-                root.Failed.Value <- true
-                compileRejected <- true
-                bump BuildStatus.Failure
+                    root.Failed.Value <- true
+                    compileRejected <- true
+                    bump BuildStatus.Failure
 
-            if not (List.isEmpty stageScopeRefusals) then
-                emit (
-                    "ERROR: stage declares option(s) this engine does not support at stage scope: "
-                    + String.concat ", " (stageScopeRefusals |> List.map describeStageOptionRefusal)
-                    + " — refusing rather than running them with the wrong semantics"
-                )
+                let ansiColorRejected = rejectInvalidAnsiColor emit pipeline.Options
 
-                root.Failed.Value <- true
-                compileRejected <- true
-                bump BuildStatus.Failure
+                if ansiColorRejected then
+                    root.Failed.Value <- true
+                    compileRejected <- true
+                    bump BuildStatus.Failure
 
-            if stageTimestamps then
-                emit
-                    "ERROR: stage-level options { timestamps() } is not implemented; Jenkins stamps that stage's output and this engine would not — refusing rather than diverging silently (FG-120)"
+                match unstableArgError with
+                | Some e ->
+                    emit $"ERROR: a stage declares an unusable unstable step: {e}"
+                    root.Failed.Value <- true
+                    compileRejected <- true
+                    bump BuildStatus.Failure
+                | None -> ()
 
-                root.Failed.Value <- true
-                compileRejected <- true
-                bump BuildStatus.Failure
+                match stageRetryArgError with
+                | Some e ->
+                    emit $"ERROR: a stage declares an unusable retry option: {e}"
+                    root.Failed.Value <- true
+                    compileRejected <- true
+                    bump BuildStatus.Failure
+                | None -> ()
 
-            let ansiColorRejected = rejectInvalidAnsiColor emit pipeline.Options
+                // FG-239 / FG-240. The first unusable timeout option refuses the model.
+                match timeoutArgErrors with
+                | first :: _ ->
+                    emit first
+                    root.Failed.Value <- true
+                    compileRejected <- true
+                    bump BuildStatus.Failure
+                | [] -> ()
 
-            if ansiColorRejected then
-                root.Failed.Value <- true
-                compileRejected <- true
-                bump BuildStatus.Failure
+                match skipStagesArgError with
+                | Some e ->
+                    emit $"ERROR: pipeline declares an unusable skipStagesAfterUnstable option: {e}"
+                    root.Failed.Value <- true
+                    compileRejected <- true
+                    bump BuildStatus.Failure
+                | None -> ()
 
-            match unstableArgError with
-            | Some e ->
-                emit $"ERROR: a stage declares an unusable unstable step: {e}"
-                root.Failed.Value <- true
-                compileRejected <- true
-                bump BuildStatus.Failure
-            | None -> ()
+                if rejectParallelsAlwaysFailFast emit pipeline.Options then
+                    root.Failed.Value <- true
+                    compileRejected <- true
+                    bump BuildStatus.Failure
 
-            match stageRetryArgError with
-            | Some e ->
-                emit $"ERROR: a stage declares an unusable retry option: {e}"
-                root.Failed.Value <- true
-                compileRejected <- true
-                bump BuildStatus.Failure
-            | None -> ()
+                match timestampsArgError with
+                | Some e ->
+                    emit $"ERROR: pipeline declares an unusable timestamps option: {e}"
+                    root.Failed.Value <- true
+                    compileRejected <- true
+                    bump BuildStatus.Failure
+                | None -> ()
 
-            // FG-239 / FG-240. The first unusable timeout option refuses the model.
-            match timeoutArgErrors with
-            | first :: _ ->
-                emit first
-                root.Failed.Value <- true
-                compileRejected <- true
-                bump BuildStatus.Failure
-            | [] -> ()
+                //
+                // FG-123. The map name is EVALUATED, because Jenkins evaluates it.
+                // MEASURED on Jenkins 2.568.1 (2026-09-02, transient probe jobs):
+                // `ansiColor("${'xterm'}")` sets TERM=xterm, `ansiColor("${env.JOB_NAME}")`
+                // sets TERM to the job name, `ansiColor('xt' + 'erm')` sets TERM=xterm,
+                // and the argument is evaluated BEFORE the `environment` block applies,
+                // so `env.MAPNAME` over a declared MAPNAME and `env.NOPE` both give the
+                // text `null` — every one of them SUCCESS; a bare unknown name fails
+                // with MissingPropertyException. This code copied the parser's
+                // unevaluated text — `${'xterm'}`, `${env.JOB_NAME}`, `xt' + 'erm`,
+                // `${env.MAPNAME}` — into TERM and reported success: a green build
+                // carrying the wrong bytes. The argument
+                // now goes through the same strict literal/GString/expression renderer
+                // as a step argument, with the same run-scoped script binding, over the
+                // Jenkins-provided values ONLY, and it is judged HERE, after the
+                // option and step argument checks above and before the SCM block
+                // below — so a model those checks reject never evaluates it (Codex on
+                // PR #341; the pipeline-level `timeout` argument check is the stated
+                // exception, it sits after the SCM block with its banner), an unusable
+                // argument refuses before any checkout effect, and the SCM wrapper
+                // values are deliberately not visible to it (what
+                // Jenkins gives an option that reads GIT_COMMIT is unmeasured; on
+                // Jenkins the checkout runs inside the option's wrapper). Receipts:
+                // `options-ansicolor-gstring`, `options-ansicolor-env`,
+                // `options-ansicolor-expression`, `options-ansicolor-declared-env`,
+                // `options-ansicolor-env-unknown`, `options-ansicolor-binding`.
+                //
+                // FAIL CLOSED, not fall back: a placeholder the renderer cannot resolve
+                // or evaluate is refused by name below (FG-103), never copied verbatim —
+                // that was the defect. What Jenkins prints for such an argument is
+                // UNMEASURED and not claimed.
+                // The def-keyword advisory an assignment raises is CAPTURED, not
+                // emitted: Jenkins prints its SCM provenance line before it can
+                // evaluate anything in the Jenkinsfile it just fetched, so the
+                // advisory must follow `Obtained Jenkinsfile …` in compared output
+                // (Codex on PR #341; by construction, UNPROVEN by receipt — no SCM
+                // case assigns a binding in an option). `flushAnsiColorAdvisories`
+                // below emits it at that point, or immediately when there is no SCM.
+                let ansiColorAdvisories = ResizeArray<string>()
 
-            match skipStagesArgError with
-            | Some e ->
-                emit $"ERROR: pipeline declares an unusable skipStagesAfterUnstable option: {e}"
-                root.Failed.Value <- true
-                compileRejected <- true
-                bump BuildStatus.Failure
-            | None -> ()
+                let ansiColorEnv, ansiColorRenderError =
+                    match ansiColorOptions with
+                    | [ o ] when not compileRejected ->
+                        match ansiColorMap o with
+                        | Some m ->
+                            let key = if List.isEmpty o.Positional then "colorMapName" else "#0"
+                            let optionEnv = Map.ofList jenkinsProvided
 
-            if rejectParallelsAlwaysFailFast emit pipeline.Options then
-                root.Failed.Value <- true
-                compileRejected <- true
-                bump BuildStatus.Failure
+                            try
+                                // THE RUN-SCOPED BINDING, not the stateless `GString.render`:
+                                // Jenkins evaluates the argument in the script's own binding,
+                                // so `ansiColor("${x = 'xterm'; x}")` leaves `x` readable by a
+                                // later step and prints the def-keyword advisory (MEASURED,
+                                // Codex on PR #336; receipt `options-ansicolor-binding`). A
+                                // throwaway binding set TERM correctly and then failed the
+                                // later read.
+                                [ "TERM",
+                                  GString.renderInto
+                                      runCtx.ScriptBinding
+                                      (fun (name, value) ->
+                                          ansiColorAdvisories.Add(WalkerArgs.defKeywordAdvisory (name, value)))
+                                      optionEnv
+                                      o
+                                      key
+                                      m ],
+                                None
+                            with
+                            | GString.MissingProperty name ->
+                                [], Some $"the ansiColor(<colorMapName>) argument names an unknown property: {name}"
+                            | GString.UnsupportedExpression detail ->
+                                [], Some $"the ansiColor(<colorMapName>) argument cannot be evaluated: {detail}"
+                        | None -> [], None
+                    | _ -> [], None
 
-            match timestampsArgError with
-            | Some e ->
-                emit $"ERROR: pipeline declares an unusable timestamps option: {e}"
-                root.Failed.Value <- true
-                compileRejected <- true
-                bump BuildStatus.Failure
-            | None -> ()
+                match ansiColorRenderError with
+                | Some e ->
+                    emit $"ERROR: pipeline declares an unusable ansiColor option: {e}"
+                    root.Failed.Value <- true
+                    compileRejected <- true
+                    bump BuildStatus.Failure
+                | None -> ()
 
-            //
-            // FG-123. The map name is EVALUATED, because Jenkins evaluates it.
-            // MEASURED on Jenkins 2.568.1 (2026-09-02, transient probe jobs):
-            // `ansiColor("${'xterm'}")` sets TERM=xterm, `ansiColor("${env.JOB_NAME}")`
-            // sets TERM to the job name, `ansiColor('xt' + 'erm')` sets TERM=xterm,
-            // and the argument is evaluated BEFORE the `environment` block applies,
-            // so `env.MAPNAME` over a declared MAPNAME and `env.NOPE` both give the
-            // text `null` — every one of them SUCCESS; a bare unknown name fails
-            // with MissingPropertyException. This code copied the parser's
-            // unevaluated text — `${'xterm'}`, `${env.JOB_NAME}`, `xt' + 'erm`,
-            // `${env.MAPNAME}` — into TERM and reported success: a green build
-            // carrying the wrong bytes. The argument
-            // now goes through the same strict literal/GString/expression renderer
-            // as a step argument, with the same run-scoped script binding, over the
-            // Jenkins-provided values ONLY, and it is judged HERE, after the
-            // option and step argument checks above and before the SCM block
-            // below — so a model those checks reject never evaluates it (Codex on
-            // PR #341; the pipeline-level `timeout` argument check is the stated
-            // exception, it sits after the SCM block with its banner), an unusable
-            // argument refuses before any checkout effect, and the SCM wrapper
-            // values are deliberately not visible to it (what
-            // Jenkins gives an option that reads GIT_COMMIT is unmeasured; on
-            // Jenkins the checkout runs inside the option's wrapper). Receipts:
-            // `options-ansicolor-gstring`, `options-ansicolor-env`,
-            // `options-ansicolor-expression`, `options-ansicolor-declared-env`,
-            // `options-ansicolor-env-unknown`, `options-ansicolor-binding`.
-            //
-            // FAIL CLOSED, not fall back: a placeholder the renderer cannot resolve
-            // or evaluate is refused by name below (FG-103), never copied verbatim —
-            // that was the defect. What Jenkins prints for such an argument is
-            // UNMEASURED and not claimed.
-            // The def-keyword advisory an assignment raises is CAPTURED, not
-            // emitted: Jenkins prints its SCM provenance line before it can
-            // evaluate anything in the Jenkinsfile it just fetched, so the
-            // advisory must follow `Obtained Jenkinsfile …` in compared output
-            // (Codex on PR #341; by construction, UNPROVEN by receipt — no SCM
-            // case assigns a binding in an option). `flushAnsiColorAdvisories`
-            // below emits it at that point, or immediately when there is no SCM.
-            let ansiColorAdvisories = ResizeArray<string>()
+                let flushAnsiColorAdvisories () =
+                    if not root.Failed.Value then
+                        for line in ansiColorAdvisories do
+                            emit line
 
-            let ansiColorEnv, ansiColorRenderError =
-                match ansiColorOptions with
-                | [ o ] when not compileRejected ->
-                    match ansiColorMap o with
-                    | Some m ->
-                        let key = if List.isEmpty o.Positional then "colorMapName" else "#0"
-                        let optionEnv = Map.ofList jenkinsProvided
+                    ansiColorAdvisories.Clear()
 
-                        try
-                            // THE RUN-SCOPED BINDING, not the stateless `GString.render`:
-                            // Jenkins evaluates the argument in the script's own binding,
-                            // so `ansiColor("${x = 'xterm'; x}")` leaves `x` readable by a
-                            // later step and prints the def-keyword advisory (MEASURED,
-                            // Codex on PR #336; receipt `options-ansicolor-binding`). A
-                            // throwaway binding set TERM correctly and then failed the
-                            // later read.
-                            [ "TERM",
-                              GString.renderInto
-                                  runCtx.ScriptBinding
-                                  (fun (name, value) ->
-                                      ansiColorAdvisories.Add(WalkerArgs.defKeywordAdvisory (name, value)))
-                                  optionEnv
-                                  o
-                                  key
-                                  m ],
-                            None
-                        with
-                        | GString.MissingProperty name ->
-                            [], Some $"the ansiColor(<colorMapName>) argument names an unknown property: {name}"
-                        | GString.UnsupportedExpression detail ->
-                            [], Some $"the ansiColor(<colorMapName>) argument cannot be evaluated: {detail}"
-                    | None -> [], None
-                | _ -> [], None
+                match scm with
+                | Some spec when not root.Failed.Value ->
+                    // BEFORE the option can apply. Jenkins must FETCH and PARSE the
+                    // Jenkinsfile before a Declarative option exists to activate, so
+                    // its own provenance line is unprefixed even when the script
+                    // declares `timestamps()`. Stamping it here would make Fogell
+                    // report `all` against Jenkins' `partial` and fail a case whose
+                    // output and workspace agree — a divergence invented by the
+                    // wrapper's placement rather than by either engine.
+                    emit $"Obtained Jenkinsfile from git {spec.Url}"
+                    // FG-123. The option's advisory, AFTER the provenance line.
+                    flushAnsiColorAdvisories ()
 
-            match ansiColorRenderError with
-            | Some e ->
-                emit $"ERROR: pipeline declares an unusable ansiColor option: {e}"
-                root.Failed.Value <- true
-                compileRejected <- true
-                bump BuildStatus.Failure
-            | None -> ()
+                    // `options { skipDefaultCheckout() }` suppresses the Declarative
+                    // auto-checkout; the Obtained line still prints (the definition
+                    // was still loaded from SCM). A positional `false` RE-ENABLES it
+                    // — the option's argument decides, not its presence.
+                    // Receipt: `checkout-scm-skip-default`.
+                    let skipDefault =
+                        pipeline.Options
+                        |> List.exists (fun o ->
+                            o.Name = "skipDefaultCheckout"
+                            && (o.Positional.IsEmpty || o.Positional.Head.Trim() <> "false"))
 
-            let flushAnsiColorAdvisories () =
-                if not root.Failed.Value then
-                    for line in ansiColorAdvisories do
-                        emit line
+                    if not skipDefault then
 
-                ansiColorAdvisories.Clear()
+                        // Jenkins-provided env ONLY: the auto-checkout runs BEFORE
+                        // the withEnv wrapper (measured order — the Obtained line
+                        // precedes everything), so pipeline `environment {}` must
+                        // not reach it. The top-level timeout does NOT bound it and
+                        // its banner prints AFTER the checkout — MEASURED (receipt
+                        // `checkout-scm-timeout-env`) — hence deadline None here
+                        // and the deadline computation BELOW this block.
+                        let checkout =
+                            WalkerGit.runCheckout
+                                runCtx
+                                root
+                                workspace
+                                (fun () ->
+                                    Workspace.materializeUnder workspace workspace
+                                    |> Result.mapError (fun e -> e.Describe))
+                                None
+                                jenkinsProvided
+                                artifactRoot
+                                jobName
+                                buildNumber
+                                spec
 
-            match scm with
-            | Some spec when not root.Failed.Value ->
-                // BEFORE the option can apply. Jenkins must FETCH and PARSE the
-                // Jenkinsfile before a Declarative option exists to activate, so
-                // its own provenance line is unprefixed even when the script
-                // declares `timestamps()`. Stamping it here would make Fogell
-                // report `all` against Jenkins' `partial` and fail a case whose
-                // output and workspace agree — a divergence invented by the
-                // wrapper's placement rather than by either engine.
-                emit $"Obtained Jenkinsfile from git {spec.Url}"
-                // FG-123. The option's advisory, AFTER the provenance line.
-                flushAnsiColorAdvisories ()
+                        if root.Failed.Value then
+                            bump BuildStatus.Failure
+                        else
+                            // The wrapper env the checkout returns — MEASURED values
+                            // (receipt `checkout-scm-timeout-env`): full sha,
+                            // origin/-prefixed branch, the remote url — overlaid on
+                            // every user stage and the pipeline post, exactly the
+                            // withEnv wrapper Jenkins inserts.
+                            scmWrapperEnv <-
+                                match checkout with
+                                | Some completed ->
+                                    [ "GIT_COMMIT", completed.Revision
+                                      "GIT_BRANCH", $"origin/{spec.Branch}"
+                                      "GIT_URL", spec.Url ]
+                                | None -> []
+                | _ -> flushAnsiColorAdvisories ()
 
-                // `options { skipDefaultCheckout() }` suppresses the Declarative
-                // auto-checkout; the Obtained line still prints (the definition
-                // was still loaded from SCM). A positional `false` RE-ENABLES it
-                // — the option's argument decides, not its presence.
-                // Receipt: `checkout-scm-skip-default`.
-                let skipDefault =
-                    pipeline.Options
-                    |> List.exists (fun o ->
-                        o.Name = "skipDefaultCheckout"
-                        && (o.Positional.IsEmpty || o.Positional.Head.Trim() <> "false"))
+                // FG-053. HERE: after SCM provenance AND after the auto-checkout,
+                // before the stage walk. Jenkins cannot activate a Declarative
+                // option until it has fetched and parsed the Jenkinsfile, so its
+                // provenance line and its default checkout are BOTH unprefixed and
+                // stamping begins with the build's own step output.
+                //
+                // MEASURED, not reasoned — receipt `options-timestamps-scm` reports
+                // PARTIAL (1/21) on BOTH engines. An earlier draft of this comment
+                // said "before checkout" and "everything from the checkout onward is
+                // stamped"; the checkout runs above, so that was wrong about its own
+                // placement even while the code was right.
+                //
+                // Enabling at context creation stamped the provenance line too and
+                // made Fogell read `all` against Jenkins' `partial` — a divergence
+                // the wrapper's placement invented, on a case whose output and
+                // workspace agreed.
+                if declaresTimestamps then
+                    runCtx.EnableTimestamps()
 
-                if not skipDefault then
 
-                    // Jenkins-provided env ONLY: the auto-checkout runs BEFORE
-                    // the withEnv wrapper (measured order — the Obtained line
-                    // precedes everything), so pipeline `environment {}` must
-                    // not reach it. The top-level timeout does NOT bound it and
-                    // its banner prints AFTER the checkout — MEASURED (receipt
-                    // `checkout-scm-timeout-env`) — hence deadline None here
-                    // and the deadline computation BELOW this block.
-                    let checkout =
-                        WalkerGit.runCheckout
-                            runCtx
-                            root
-                            workspace
-                            (fun () ->
-                                Workspace.materializeUnder workspace workspace
-                                |> Result.mapError (fun e -> e.Describe))
-                            None
-                            jenkinsProvided
-                            artifactRoot
-                            jobName
-                            buildNumber
-                            spec
+                // The SCM wrapper values sit at the BASE layer — after the
+                // Jenkins-provided variables, BEFORE pipeline/stage declarations —
+                // so a declared GIT_COMMIT overrides the wrapper (measured
+                // semantics: declarations apply INSIDE the wrapper) and `when`
+                // conditions see the wrapper values like any other env.
+                // FG-053. `ansiColor('<map>')` sets TERM to the map name for the
+                // scope it wraps. MEASURED, and it is the reason this option is NOT
+                // the inert accept-and-ignore an earlier commit here called it:
+                //   jenkins=+ echo TERM=[xterm]    fogell=+ echo TERM=[]
+                // Receipt: `options-ansicolor`.
+                // A case that checked only plain output passed while any pipeline
+                // reading TERM diverged.
+                //
+                // It joins the BASE layer beside the SCM wrapper values, for the
+                // same reason they are there: a declared `environment { TERM = ... }`
+                // must override it, because a declaration applies INSIDE the wrapper.
+                let envForWith =
+                    WalkerArgs.envForWith (jenkinsProvided @ scmWrapperEnv @ ansiColorEnv) pipeline
 
+
+
+                // FG-105: the cancellation model lives in WalkerCancellation.
+
+
+                let alwaysFailFast = WalkerRules.alwaysFailFast pipeline
+                // FG-105: step execution lives in WalkerStep.
+                let runStepInner =
+                    WalkerStep.runStepInner runCtx envForWith beforeShellLaunch workspace artifactRoot jobName
+
+                // FG-105: when-evaluation lives in WalkerWhen.
+                let evalWhen =
+                    WalkerWhen.evalWhen
+                        (persistence |> Option.map (fun h -> h.IsRestartedRun) |> Option.defaultValue false)
+                        envForWith
+
+                let deadlineFromOptions = WalkerCancellation.deadlineFromOptions runCtx
+
+                // FG-105: stage/post orchestration and wrapper dispatch live in
+                // WalkerOrchestration; run() is the conductor wiring the units.
+                let runStage, runPostWithDeadline =
+                    WalkerOrchestration.makeRunners
+                        { RunCtx = runCtx
+                          EnvForWith = envForWith
+                          RunStepInner = runStepInner
+                          EvalWhen = evalWhen
+                          AlwaysFailFast = alwaysFailFast
+                          SkipStagesAfterUnstable = skipAfterUnstable
+                          WorkspaceRoot = workspaceRoot
+                          ArtifactRoot = artifactRoot
+                          JobName = jobName
+                          Credentials = fun () -> credentialsForRun.Value
+                          PreviousBuild = previousBuild
+                          BuildNumber = buildNumber
+                          Scm = scm
+                          Persistence = persistence }
+
+                // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
+                // FG-240: a rejected model computes no deadline — its unusable option was
+                // refused above, before the SCM block, and computing here would emit the
+                // same error a second time.
+                let pipelineDeadline, pipelineDeclaredDeadline, pipelineOptionError =
+                    if compileRejected then
+                        None, None, None
+                    else
+                        deadlineFromOptions pipeline.Options None
+
+                match pipelineOptionError with
+                | Some e ->
+                    emit $"ERROR: pipeline declares an unusable timeout option: {e}"
+                    root.Failed.Value <- true
+                    // COMPILE-shaped, like every other option refusal. This branch set
+                    // `root.Failed` alone, and the pipeline `post` guard tests
+                    // `compileRejected`, so `timeout(time: 1, unit: 'NOPE')` skipped the
+                    // stage and then RAN `post { always { ... } }`, creating files for a
+                    // Jenkinsfile Jenkins refuses to compile. FG-121 fixed precisely this
+                    // for the timestamps and ansiColor refusals and this one was left
+                    // behind — the same defect, in the same block, one branch down.
+                    compileRejected <- true
+                    bump BuildStatus.Failure
+                | None -> ()
+
+                // FG-102: the pipeline-level timeout announces its expiry ONCE, at the
+                // point it is first observed to have aborted work — after the stages
+                // when a stage died to it, or after the pipeline post when the post did
+                // (`options-timeout-pipeline`, `options-timeout-wraps-post`).
+                // FG-052. An SCM-defined job narrates its Jenkinsfile provenance
+                // FIRST, then Declarative auto-inserts a checkout stage before any
+                // user stage (measured — the stage annotations are excluded from
+                // comparison; the checkout narration inside it is compared).
+                let mutable exceededAnnounced = false
+
+                // ONE announcement, after the pipeline post: the post runs under the
+                // already-expired deadline and narrates its own cancellations first —
+                // announcing before it reversed Jenkins' cluster order.
+                let announcePipelineExceeded () =
+                    if
+                        not exceededAnnounced
+                        && root.Failed.Value
+                        && deadlineDidFire pipelineDeclaredDeadline
+                    then
+                        exceededAnnounced <- true
+                        emit "Timeout has been exceeded"
+
+                for stage in pipeline.Stages do
                     if root.Failed.Value then
-                        bump BuildStatus.Failure
+                        // Jenkins names every stage it skips because of an earlier
+                        // failure. Being quieter than Jenkins about why a stage did not
+                        // run is the JB-DUR-005 defect in miniature, so we say it too.
+                        //
+                        // EXCEPT after a COMPILE rejection, where saying it is being
+                        // LOUDER than Jenkins: it refuses the model before any stage
+                        // exists to skip, so it emits no such line and this one is pure
+                        // invention. It was also half of the divergence on the
+                        // unknown-option case, which FG-129 recorded as entirely the
+                        // banner limit — a self-inflicted difference filed as somebody
+                        // else's problem.
+                        if not compileRejected then
+                            emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
+                    elif skipAfterUnstable && runCtx.Status() = BuildStatus.Unstable then
+                        // FG-053(b). `options { skipStagesAfterUnstable() }` stops the
+                        // build at the first stage that went UNSTABLE, and says so with
+                        // its OWN sentence — not the failure one. MEASURED on Jenkins
+                        // 2.568.1 by running the same pipeline WITH and WITHOUT the
+                        // option, which is what makes it a measurement of the option
+                        // rather than of unstable handling generally:
+                        //   with:    Stage "three" skipped due to earlier stage(s) marking the build as unstable
+                        //   without: + echo three
+                        // Both end `unstable`, both run pipeline `post`. The skipped
+                        // stage's file is ABSENT from the workspace, so the hash checks
+                        // the skip happened rather than was merely announced.
+                        // Receipts: `options-skip-after-unstable`,
+                        // `options-unstable-runs-on` (the control).
+                        emit $"Stage \"{stage.Name}\" skipped due to earlier stage(s) marking the build as unstable"
                     else
-                        // The wrapper env the checkout returns — MEASURED values
-                        // (receipt `checkout-scm-timeout-env`): full sha,
-                        // origin/-prefixed branch, the remote url — overlaid on
-                        // every user stage and the pipeline post, exactly the
-                        // withEnv wrapper Jenkins inserts.
-                        scmWrapperEnv <-
-                            match checkout with
-                            | Some completed ->
-                                [ "GIT_COMMIT", completed.Revision
-                                  "GIT_BRANCH", $"origin/{spec.Branch}"
-                                  "GIT_URL", spec.Url ]
-                            | None -> []
-            | _ -> flushAnsiColorAdvisories ()
+                        runStage root workspace pipelineDeadline stage
 
-            // FG-053. HERE: after SCM provenance AND after the auto-checkout,
-            // before the stage walk. Jenkins cannot activate a Declarative
-            // option until it has fetched and parsed the Jenkinsfile, so its
-            // provenance line and its default checkout are BOTH unprefixed and
-            // stamping begins with the build's own step output.
-            //
-            // MEASURED, not reasoned — receipt `options-timestamps-scm` reports
-            // PARTIAL (1/21) on BOTH engines. An earlier draft of this comment
-            // said "before checkout" and "everything from the checkout onward is
-            // stamped"; the checkout runs above, so that was wrong about its own
-            // placement even while the code was right.
-            //
-            // Enabling at context creation stamped the provenance line too and
-            // made Fogell read `all` against Jenkins' `partial` — a divergence
-            // the wrapper's placement invented, on a case whose output and
-            // workspace agreed.
-            if declaresTimestamps then
-                runCtx.EnableTimestamps()
+                // Pipeline-level `post` is selected against the BUILD result, so it
+                // runs after every stage. Modelled as a synthetic stage carrying only
+                // the post section, which is also how the pipeline's own environment
+                // reaches those steps.
+                if not (List.isEmpty pipeline.Post) && not compileRejected then
+                    let synthetic =
+                        { Name = ""
+                          Agent = None
+                          Environment = []
+                          Tools = []
+                          Steps = []
+                          Options = []
+                          When = None
+                          Post = pipeline.Post
+                          OpaqueSections = []
+                          Nested = []
+                          IsParallel = false
+                          FailFast = false
+                          Position = { Line = 0L; Column = 0L } }
 
+                    // REVIEW FIX (Codex, PR #16 round 5): the pipeline deadline reached
+                    // runStage but NOT the pipeline-level post, so a slow `post { always }`
+                    // ran unbounded past a timeout Jenkins enforces around it. Same
+                    // "one path was missed" shape as FG-002e.
+                    let postRoot = { root with Failed = ref false }
+                    runPostWithDeadline postRoot workspace synthetic (runCtx.Status()) previousBuild pipelineDeadline
+                    if postRoot.Failed.Value then root.Failed.Value <- true
 
-            // The SCM wrapper values sit at the BASE layer — after the
-            // Jenkins-provided variables, BEFORE pipeline/stage declarations —
-            // so a declared GIT_COMMIT overrides the wrapper (measured
-            // semantics: declarations apply INSIDE the wrapper) and `when`
-            // conditions see the wrapper values like any other env.
-            // FG-053. `ansiColor('<map>')` sets TERM to the map name for the
-            // scope it wraps. MEASURED, and it is the reason this option is NOT
-            // the inert accept-and-ignore an earlier commit here called it:
-            //   jenkins=+ echo TERM=[xterm]    fogell=+ echo TERM=[]
-            // Receipt: `options-ansicolor`.
-            // A case that checked only plain output passed while any pipeline
-            // reading TERM diverged.
-            //
-            // It joins the BASE layer beside the SCM wrapper values, for the
-            // same reason they are there: a declared `environment { TERM = ... }`
-            // must override it, because a declaration applies INSIDE the wrapper.
-            let envForWith =
-                WalkerArgs.envForWith (jenkinsProvided @ scmWrapperEnv @ ansiColorEnv) pipeline
+                announcePipelineExceeded ()
 
+                // The callback is an ordered infrastructure stream.  A slow
+                // publisher may still be draining lines emitted by a parallel
+                // branch; no terminal trace may overtake it, and any publisher
+                // failure must escape runPersisted for controller reconciliation.
+                runCtx.FlushOutput()
+                runCtx.CheckOutputBudget()
 
+                let workspaceHash, files = Trace.hashWorkspace workspace
 
-            // FG-105: the cancellation model lives in WalkerCancellation.
+                // Fail CLOSED on a leaked secret, checked over the RAW output — before
+                // normalisation, which strips exactly the diagnostic lines a secret is
+                // most likely to ride out on. Verified by disabling masking and re-running
+                // `publish-secret-in-pattern`: the receipt still said PROVEN, because the
+                // leaking `ERROR:` line never reaches the comparison. A receipt that stays
+                // green while the log leaks is worse than no receipt, so the run itself
+                // refuses to produce a trace instead.
+                let leakedVars =
+                    (runCtx.PublicationLeaks()
+                     @ terminalOutputLeaks (runCtx.OutputWithActiveSecrets()))
+                    |> List.map (fun leak -> leak.Variable)
+                    |> List.distinct
 
-
-            let alwaysFailFast = WalkerRules.alwaysFailFast pipeline
-            // FG-105: step execution lives in WalkerStep.
-            let runStepInner =
-                WalkerStep.runStepInner runCtx envForWith beforeShellLaunch workspace artifactRoot jobName
-
-            // FG-105: when-evaluation lives in WalkerWhen.
-            let evalWhen =
-                WalkerWhen.evalWhen
-                    (persistence |> Option.map (fun h -> h.IsRestartedRun) |> Option.defaultValue false)
-                    envForWith
-
-            let deadlineFromOptions = WalkerCancellation.deadlineFromOptions runCtx
-
-            // FG-105: stage/post orchestration and wrapper dispatch live in
-            // WalkerOrchestration; run() is the conductor wiring the units.
-            let runStage, runPostWithDeadline =
-                WalkerOrchestration.makeRunners
-                    { RunCtx = runCtx
-                      EnvForWith = envForWith
-                      RunStepInner = runStepInner
-                      EvalWhen = evalWhen
-                      AlwaysFailFast = alwaysFailFast
-                      SkipStagesAfterUnstable = skipAfterUnstable
-                      WorkspaceRoot = workspaceRoot
-                      ArtifactRoot = artifactRoot
-                      JobName = jobName
-                      Credentials = fun () -> credentialsForRun.Value
-                      PreviousBuild = previousBuild
-                      BuildNumber = buildNumber
-                      Scm = scm
-                      Persistence = persistence }
-
-            // Pipeline-level `options { timeout(...) }` bounds the WHOLE build.
-            // FG-240: a rejected model computes no deadline — its unusable option was
-            // refused above, before the SCM block, and computing here would emit the
-            // same error a second time.
-            let pipelineDeadline, pipelineDeclaredDeadline, pipelineOptionError =
-                if compileRejected then
-                    None, None, None
+                if not (List.isEmpty leakedVars) then
+                    Result.Error(
+                        $"""SECRET LEAKED to build output (variable(s): {String.concat ", " leakedVars}) — refusing to emit a trace"""
+                    )
                 else
-                    deadlineFromOptions pipeline.Options None
 
-            match pipelineOptionError with
-            | Some e ->
-                emit $"ERROR: pipeline declares an unusable timeout option: {e}"
-                root.Failed.Value <- true
-                // COMPILE-shaped, like every other option refusal. This branch set
-                // `root.Failed` alone, and the pipeline `post` guard tests
-                // `compileRejected`, so `timeout(time: 1, unit: 'NOPE')` skipped the
-                // stage and then RAN `post { always { ... } }`, creating files for a
-                // Jenkinsfile Jenkins refuses to compile. FG-121 fixed precisely this
-                // for the timestamps and ansiColor refusals and this one was left
-                // behind — the same defect, in the same block, one branch down.
-                compileRejected <- true
-                bump BuildStatus.Failure
-            | None -> ()
+                let outputLines, timestampCounts =
+                    let idReplacements =
+                        runCtx.DurableIds()
+                        |> Seq.map (fun i -> $"@tmp/durable-{i}/script.sh", "@tmp/durable-<id>/script.sh")
+                        |> List.ofSeq
 
-            // FG-102: the pipeline-level timeout announces its expiry ONCE, at the
-            // point it is first observed to have aborted work — after the stages
-            // when a stage died to it, or after the pipeline post when the post did
-            // (`options-timeout-pipeline`, `options-timeout-wraps-post`).
-            // FG-052. An SCM-defined job narrates its Jenkinsfile provenance
-            // FIRST, then Declarative auto-inserts a checkout stage before any
-            // user stage (measured — the stage annotations are excluded from
-            // comparison; the checkout narration inside it is compared).
-            let mutable exceededAnnounced = false
+                    // The CLI enables a HOME fold only for a case that actually
+                    // references HOME. Supply this build's exact stable identity
+                    // to that existing fold without teaching the CLI one shared
+                    // cross-build path.
+                    let buildEnvReplacements =
+                        if envReplacements |> List.exists (fun (_, token) -> token = "${HOME}") then
+                            (buildHome, "${HOME}") :: envReplacements
+                        else
+                            envReplacements
 
-            // ONE announcement, after the pipeline post: the post runs under the
-            // already-expired deadline and narrates its own cancellations first —
-            // announcing before it reversed Jenkins' cluster order.
-            let announcePipelineExceeded () =
-                if
-                    not exceededAnnounced
-                    && root.Failed.Value
-                    && deadlineDidFire pipelineDeclaredDeadline
-                then
-                    exceededAnnounced <- true
-                    emit "Timeout has been exceeded"
+                    Trace.normaliseOutputShapedWithTimestampCoverage
+                        declaresTimestamps
+                        false
+                        ((workspace, "${WORKSPACE}") :: idReplacements)
+                        buildEnvReplacements
+                        (runCtx.Output())
 
-            for stage in pipeline.Stages do
-                if root.Failed.Value then
-                    // Jenkins names every stage it skips because of an earlier
-                    // failure. Being quieter than Jenkins about why a stage did not
-                    // run is the JB-DUR-005 defect in miniature, so we say it too.
-                    //
-                    // EXCEPT after a COMPILE rejection, where saying it is being
-                    // LOUDER than Jenkins: it refuses the model before any stage
-                    // exists to skip, so it emits no such line and this one is pure
-                    // invention. It was also half of the divergence on the
-                    // unknown-option case, which FG-129 recorded as entirely the
-                    // banner limit — a self-inflicted difference filed as somebody
-                    // else's problem.
-                    if not compileRejected then
-                        emit $"Stage \"{stage.Name}\" skipped due to earlier failure(s)"
-                elif skipAfterUnstable && runCtx.Status() = BuildStatus.Unstable then
-                    // FG-053(b). `options { skipStagesAfterUnstable() }` stops the
-                    // build at the first stage that went UNSTABLE, and says so with
-                    // its OWN sentence — not the failure one. MEASURED on Jenkins
-                    // 2.568.1 by running the same pipeline WITH and WITHOUT the
-                    // option, which is what makes it a measurement of the option
-                    // rather than of unstable handling generally:
-                    //   with:    Stage "three" skipped due to earlier stage(s) marking the build as unstable
-                    //   without: + echo three
-                    // Both end `unstable`, both run pipeline `post`. The skipped
-                    // stage's file is ABSENT from the workspace, so the hash checks
-                    // the skip happened rather than was merely announced.
-                    // Receipts: `options-skip-after-unstable`,
-                    // `options-unstable-runs-on` (the control).
-                    emit $"Stage \"{stage.Name}\" skipped due to earlier stage(s) marking the build as unstable"
-                else
-                    runStage root workspace pipelineDeadline stage
+                let terminalStatus = runCtx.Status()
 
-            // Pipeline-level `post` is selected against the BUILD result, so it
-            // runs after every stage. Modelled as a synthetic stage carrying only
-            // the post section, which is also how the pipeline's own environment
-            // reaches those steps.
-            if not (List.isEmpty pipeline.Post) && not compileRejected then
-                let synthetic =
-                    { Name = ""
-                      Agent = None
-                      Environment = []
-                      Tools = []
-                      Steps = []
-                      Options = []
-                      When = None
-                      Post = pipeline.Post
-                      OpaqueSections = []
-                      Nested = []
-                      IsParallel = false
-                      FailFast = false
-                      Position = { Line = 0L; Column = 0L } }
+                let trace =
+                    { Disposition = if compileRejected then RefusedBeforeExecution else ExecutedOrRuntime
+                      Result = BuildStatus.toWireString terminalStatus
+                      EngineNotes = runCtx.EngineNotes()
+                      Output = outputLines
+                      WorkspaceHash = workspaceHash
+                      WorkspaceFiles = files
+                      Concurrent = pipeline.Stages |> Pipeline.flattenStages |> List.exists (fun st -> st.IsParallel)
+                      // FG-118: the counts come from the exact same tagged survivor
+                      // list as Output, including every contextual suppression.
+                      Timestamps = timestampCounts
+                      ReportedFailureReason = Trace.reportedFailureReasonWhen declaresTimestamps (runCtx.Output()) }
 
-                // REVIEW FIX (Codex, PR #16 round 5): the pipeline deadline reached
-                // runStage but NOT the pipeline-level post, so a slow `post { always }`
-                // ran unbounded past a timeout Jenkins enforces around it. Same
-                // "one path was missed" shape as FG-002e.
-                let postRoot = { root with Failed = ref false }
-                runPostWithDeadline postRoot workspace synthetic (runCtx.Status()) previousBuild pipelineDeadline
-                if postRoot.Failed.Value then root.Failed.Value <- true
-
-            announcePipelineExceeded ()
-
-            // The callback is an ordered infrastructure stream.  A slow
-            // publisher may still be draining lines emitted by a parallel
-            // branch; no terminal trace may overtake it, and any publisher
-            // failure must escape runPersisted for controller reconciliation.
-            runCtx.FlushOutput()
-
-            let workspaceHash, files = Trace.hashWorkspace workspace
-
-            // Fail CLOSED on a leaked secret, checked over the RAW output — before
-            // normalisation, which strips exactly the diagnostic lines a secret is
-            // most likely to ride out on. Verified by disabling masking and re-running
-            // `publish-secret-in-pattern`: the receipt still said PROVEN, because the
-            // leaking `ERROR:` line never reaches the comparison. A receipt that stays
-            // green while the log leaks is worse than no receipt, so the run itself
-            // refuses to produce a trace instead.
-            let leakedVars =
-                (runCtx.PublicationLeaks()
-                 @ terminalOutputLeaks (runCtx.OutputWithActiveSecrets()))
-                |> List.map (fun leak -> leak.Variable)
-                |> List.distinct
-
-            if not (List.isEmpty leakedVars) then
-                Result.Error(
-                    $"""SECRET LEAKED to build output (variable(s): {String.concat ", " leakedVars}) — refusing to emit a trace"""
-                )
-            else
-
-            let outputLines, timestampCounts =
-                let idReplacements =
-                    runCtx.DurableIds()
-                    |> Seq.map (fun i -> $"@tmp/durable-{i}/script.sh", "@tmp/durable-<id>/script.sh")
-                    |> List.ofSeq
-
-                // The CLI enables a HOME fold only for a case that actually
-                // references HOME. Supply this build's exact stable identity
-                // to that existing fold without teaching the CLI one shared
-                // cross-build path.
-                let buildEnvReplacements =
-                    if envReplacements |> List.exists (fun (_, token) -> token = "${HOME}") then
-                        (buildHome, "${HOME}") :: envReplacements
-                    else
-                        envReplacements
-
-                Trace.normaliseOutputShapedWithTimestampCoverage
-                    declaresTimestamps
-                    false
-                    ((workspace, "${WORKSPACE}") :: idReplacements)
-                    buildEnvReplacements
-                    (runCtx.Output())
-
-            let terminalStatus = runCtx.Status()
-
-            let trace =
-                { Disposition = if compileRejected then RefusedBeforeExecution else ExecutedOrRuntime
-                  Result = BuildStatus.toWireString terminalStatus
-                  EngineNotes = runCtx.EngineNotes()
-                  Output = outputLines
-                  WorkspaceHash = workspaceHash
-                  WorkspaceFiles = files
-                  Concurrent = pipeline.Stages |> Pipeline.flattenStages |> List.exists (fun st -> st.IsParallel)
-                  // FG-118: the counts come from the exact same tagged survivor
-                  // list as Output, including every contextual suppression.
-                  Timestamps = timestampCounts
-                  ReportedFailureReason = Trace.reportedFailureReasonWhen declaresTimestamps (runCtx.Output()) }
-
-            // FG-177. Checkout writes only a provisional revision record. The
-            // build's FINAL status is knowable here: stages and pipeline post
-            // have finished, the workspace/trace snapshot exists, and the raw
-            // secret-leak guard above has passed. Publishing earlier would turn
-            // a build that checked out successfully and then failed into a
-            // previous-successful build. A crash before this call leaves no
-            // finalized marker, so later history refuses to invent one.
-            WalkerGit.finalizeBuild artifactRoot jobName buildNumber terminalStatus
-            Result.Ok trace
+                // FG-177. Checkout writes only a provisional revision record. The
+                // build's FINAL status is knowable here: stages and pipeline post
+                // have finished, the workspace/trace snapshot exists, and the raw
+                // secret-leak guard above has passed. Publishing earlier would turn
+                // a build that checked out successfully and then failed into a
+                // previous-successful build. A crash before this call leaves no
+                // finalized marker, so later history refuses to invent one.
+                WalkerGit.finalizeBuild artifactRoot jobName buildNumber terminalStatus
+                Result.Ok trace
+            with active ->
+                settleTerminalOutput (Some active) runCtx.FlushOutput runCtx.CheckOutputBudget
+                Unchecked.defaultof<Result<Trace, string>>
 
     let internal runWith
         (envReplacements: (string * string) list)

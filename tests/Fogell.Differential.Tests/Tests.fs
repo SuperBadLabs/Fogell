@@ -12574,6 +12574,7 @@ let main argv =
             "Fogell.Differential"
             [ BuildOutputBudgetTests.buildOutputBudget
               BuildOutputIntegrationTests.buildOutputIntegration
+              TerminalOutputSettlementTests.terminalOutputSettlement
               persistedFailureDiagnostics
               progressiveOutputPublication
               controllerEventDrainBudgets
