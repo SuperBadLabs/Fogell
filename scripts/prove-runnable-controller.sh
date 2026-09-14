@@ -72,7 +72,7 @@ liveness_host_pid=""
 #
 # The budgets below are the proof's own poll budgets restated as wall-clock
 # deadlines: 10 s for ordinary readiness (the old 200 x 50 ms), 30 s for PID1
-# startup identity, and 80 s for the post-exit tail (800 x 100 ms). A single HTTP request is bounded by the
+# startup identity, and 150 s for the deliberately delayed post-exit tail. A single HTTP request is bounded by the
 # shortest of them; a container-runtime call, synchronous controller or Run.Host
 # invocation, and a reaped process each get a budget wide enough that only a
 # hang can exhaust it.
@@ -406,6 +406,7 @@ common_env=(
 
 launch_controller() {
   local poll_ms="$1"
+  local lease_seconds=${2:-60}
 
   if [[ -n "$controller_image" ]]; then
     controller_serial=$((controller_serial + 1))
@@ -426,13 +427,14 @@ launch_controller() {
     local entry
     for entry in "${common_env[@]}"; do
       case "$entry" in
-        FOGELL_WORKER_POLL_MS=*) ;;
+        FOGELL_WORKER_POLL_MS=*|FOGELL_WORKER_LEASE_SECONDS=*) ;;
         *) container_env+=(--env "$entry") ;;
       esac
     done
     container_env+=(
       --env "FOGELL_API_TOKEN_FILE=$token_file"
       --env "FOGELL_WORKER_POLL_MS=$poll_ms"
+      --env "FOGELL_WORKER_LEASE_SECONDS=$lease_seconds"
       --env "FOGELL_PID1_ATTESTATION_FILE=$pid1_attestation_file"
       --env "FOGELL_PID1_ATTESTATION_NONCE=$pid1_attestation_nonce"
     )
@@ -443,7 +445,7 @@ launch_controller() {
   else
     controller_container=""
     env "${common_env[@]}" "FOGELL_API_TOKEN_FILE=$token_file" \
-      "FOGELL_WORKER_POLL_MS=$poll_ms" "$controller" >>"$host_log" 2>&1 &
+      "FOGELL_WORKER_POLL_MS=$poll_ms" "FOGELL_WORKER_LEASE_SECONDS=$lease_seconds" "$controller" >>"$host_log" 2>&1 &
   fi
   host_pid=$!
 
@@ -1063,14 +1065,16 @@ grep -Fq 'already-terminal: success' "$scratch/retry-child-restart.log" \
   || { echo "FG-224 REFUSED: same-child restart re-executed the shell" >&2; exit 1; }
 
 # Force a finite post-exit event tail beyond the former 16 MiB aggregate drain
-# ceiling. With a 10-second poll and the guarded sub-80-second runtime, bounded
-# running slices can consume less than 3 MiB of the >24 MiB encoded event file;
-# terminal success therefore requires draining a post-exit remainder above the
-# old ceiling. Uniform payload cardinality and unique sentinels detect either
-# loss or replay across every bounded slice.
+# ceiling. The tail controller uses a valid 60-second poll with a 180-second
+# lease. The Run.Host terminal journal is required before 15 seconds, well
+# before the first running drain. It is written only after the runner has
+# emitted its complete event stream and then closed its journal, so the later
+# controller observation has a frozen >16 MiB tail to drain. Uniform payload
+# cardinality and unique sentinels detect either loss or replay across every
+# bounded slice.
 stop_controller
 
-launch_controller 10000
+launch_controller 60000 180
 
 ready=0
 poll_deadline=$(deadline_after 10000)
@@ -1086,6 +1090,8 @@ done
 
 # Two individually bounded invocations still produce the same 18 MB tail.
 # This tests controller draining independently of the runner's per-stream cap.
+tail_producer_done="$scratch/tail-producer-done"
+rm -f "$tail_producer_done"
 tail_pipeline=$(cat <<'JENKINSFILE'
 pipeline {
   agent any
@@ -1093,21 +1099,99 @@ pipeline {
     stage('Tail') {
       steps {
         sh 'printf RFJBSU4tQkVHSU4tMjI0 | base64 -d; head -c 9000000 /dev/zero | tr "\\0" "\\132"'
-        sh 'head -c 9000000 /dev/zero | tr "\\0" "\\132"; printf RFJBSU4tRU5ELTIyNA== | base64 -d'
+        sh 'head -c 9000000 /dev/zero | tr "\\0" "\\132"; printf RFJBSU4tRU5ELTIyNA== | base64 -d; : > "__FG224_TAIL_PRODUCER_DONE__"'
       }
     }
   }
 }
 JENKINSFILE
 )
+tail_pipeline=${tail_pipeline//__FG224_TAIL_PRODUCER_DONE__/$tail_producer_done}
 tail_response=$(curl --max-time "$http_max_time" -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-post-exit-tail' \
   -H 'content-type: application/x-jenkinsfile' --data-binary "$tail_pipeline" "$builds_url")
 tail_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$tail_response")
 [[ -n "$tail_build_id" ]] || { echo "FG-224 REFUSED: tail proof admission returned no build id" >&2; exit 1; }
 
-tail_started=$(date +%s)
+tail_build_key=${tail_build_id//-/}
+tail_attempt=$(admin "$database" -Atc \
+  "SELECT a.id
+     FROM attempts a JOIN nodes n
+       ON n.organization_id=a.organization_id AND n.id=a.node_id
+    WHERE n.build_id='$tail_build_id'")
+[[ "$tail_attempt" =~ ^[0-9a-f-]{36}$ ]] \
+  || { echo "FG-224 REFUSED: tail proof did not create one attempt" >&2; exit 1; }
+tail_journal="$state_root/journals/$organization_key/attempts/${tail_attempt//-/}.journal"
+
+# The worker can be in an idle 60-second claim scan when the API admits this
+# build. Start the pre-exit budget only after BeginExecution has made the
+# attempt running, which is before Process.Start and its first active-poll
+# delay. The longer outer bound is only for waiting out that idle scan.
+tail_running=0
+poll_deadline=$(deadline_after 70000)
+while before_deadline "$poll_deadline"; do
+  tail_state=$(admin "$database" -Atc \
+    "SELECT state FROM attempts WHERE organization_id='$organization' AND id='$tail_attempt'")
+  if [[ "$tail_state" = running ]]; then
+    tail_running=1
+    break
+  fi
+  [[ "$tail_state" = queued || "$tail_state" = offered || "$tail_state" = accepted ]] \
+    || { echo "FG-224 REFUSED: tail attempt left the launch path before running ($tail_state)" >&2; exit 1; }
+  kill -0 "$host_pid" 2>/dev/null || { echo "FG-224 REFUSED: tail-proof controller exited before the attempt started" >&2; exit 1; }
+  sleep 0.05
+done
+[[ $tail_running -eq 1 ]] \
+  || { echo "FG-224 REFUSED: tail attempt did not enter running before its claim deadline" >&2; exit 1; }
+
+# This single deadline covers both the post-BeginExecution identity binding
+# race and producer extinction, so both still precede the first 60-second poll.
+tail_preexit_deadline=$(deadline_after 15000)
+tail_run_host_pid=""
+tail_run_host_bound=0
+while before_deadline "$tail_preexit_deadline"; do
+  if [[ -n "$controller_container" ]]; then
+    tail_process_table="$scratch/tail-run-host-processes.txt"
+    container_process_table "$controller_container" >"$tail_process_table"
+    tail_run_host_pid=$(awk -v app="$run_host" -v journal="$tail_journal" \
+      'index($0, app) && index($0, journal) { print $1; exit }' "$tail_process_table")
+  else
+    # The attempt-specific journal is a command-line argument of exactly one
+    # local Run.Host process. pgrep excludes itself from matching.
+    tail_run_host_pid=$(pgrep -f -- "$tail_journal" | head -n1 || true)
+  fi
+  if [[ "$tail_run_host_pid" =~ ^[0-9]+$ && -r "/proc/$tail_run_host_pid/stat" ]]; then
+    tail_run_host_bound=1
+    break
+  fi
+  kill -0 "$host_pid" 2>/dev/null || { echo "FG-224 REFUSED: tail-proof controller exited before Run.Host identity binding" >&2; exit 1; }
+  sleep 0.05
+done
+[[ $tail_run_host_bound -eq 1 ]] \
+  || { echo "FG-224 REFUSED: tail proof could not bind its Run.Host process identity" >&2; exit 1; }
+
+# The marker proves the shell produced both payloads; the terminal journal is
+# Run.Host's durable completion point, after event publication. Both must occur
+# before the first 60-second active-drain poll. The captured Run.Host must then
+# be absent or a zombie (an exited process) before terminal polling begins,
+# establishing an extinguished-tail proof rather than a running-backlog guess.
+tail_preexit_ready=0
+while before_deadline "$tail_preexit_deadline"; do
+  if [[ -e "$tail_producer_done" && -f "$tail_journal" ]] \
+      && grep -qx $'build-finished\tsuccess' "$tail_journal"; then
+    if [[ ! -e "/proc/$tail_run_host_pid" ]] \
+        || [[ $(awk '{ print $3 }' "/proc/$tail_run_host_pid/stat" 2>/dev/null || true) = Z ]]; then
+      tail_preexit_ready=1
+      break
+    fi
+  fi
+  kill -0 "$host_pid" 2>/dev/null || { echo "FG-224 REFUSED: tail-proof controller exited before Run.Host completion" >&2; exit 1; }
+  sleep 0.05
+done
+[[ $tail_preexit_ready -eq 1 ]] \
+  || { echo "FG-224 REFUSED: tail producer and terminal journal did not complete before the first drain poll" >&2; exit 1; }
+
 tail_terminal=""
-poll_deadline=$(deadline_after 80000)
+poll_deadline=$(deadline_after 150000)
 while before_deadline "$poll_deadline"; do
   tail_terminal=$(curl --max-time "$http_max_time" -fsS -H "$auth" "$builds_url/$tail_build_id")
   grep -q '"status":"success"' <<<"$tail_terminal" && break
@@ -1119,9 +1203,6 @@ while before_deadline "$poll_deadline"; do
 done
 grep -q '"status":"success"' <<<"$tail_terminal" \
   || { echo "FG-224 REFUSED: tail proof did not finish" >&2; exit 1; }
-tail_elapsed=$(( $(date +%s) - tail_started ))
-(( tail_elapsed < 80 )) \
-  || { echo "FG-224 REFUSED: tail proof timing no longer establishes a >16 MiB post-exit remainder" >&2; exit 1; }
 
 IFS='|' read -r tail_begin tail_end tail_z tail_chunks <<<"$(admin "$database" -Atc \
   "WITH bounds AS (
@@ -1146,11 +1227,13 @@ IFS='|' read -r tail_begin tail_end tail_z tail_chunks <<<"$(admin "$database" -
 
 # Terminal publication owns event-file cleanup. The successful tail attempt
 # must leave no fence file behind.
-IFS='|' read -r tail_attempt tail_fence <<<"$(admin "$database" -Atc \
-  "SELECT a.id, a.fence
+tail_fence=$(admin "$database" -Atc \
+  "SELECT a.fence
      FROM attempts a JOIN nodes n
        ON n.organization_id=a.organization_id AND n.id=a.node_id
-    WHERE n.build_id='$tail_build_id'")"
+    WHERE n.build_id='$tail_build_id'")
+[[ "$tail_fence" =~ ^[0-9]+$ ]] \
+  || { echo "FG-224 REFUSED: tail proof lost its attempt fence" >&2; exit 1; }
 tail_event_file="$state_root/events/$organization_key/${tail_attempt//-/}-$tail_fence.events"
 [[ ! -e "$tail_event_file" ]] \
   || { echo "FG-224 REFUSED: terminal publication retained its event file" >&2; exit 1; }

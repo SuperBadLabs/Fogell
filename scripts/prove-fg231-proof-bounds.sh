@@ -29,7 +29,7 @@ repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 proof="$repo/scripts/prove-runnable-controller.sh"
 attestation_reader="$repo/scripts/read-pid1-attestation.py"
 controller_image=${FOGELL_FG224_CONTROLLER_IMAGE:-}
-# Outer bound per arm. The proof's widest single budget is the 80 s tail poll;
+# Outer bound per arm. These planted arms stop before the full tail workload;
 # an arm that reaches this has hung, which is the defect this proves absent.
 arm_budget=${FOGELL_FG231_ARM_BUDGET:-180}
 scratch=$(mktemp -d /tmp/fogell-fg231-proof.XXXXXX)

@@ -3136,6 +3136,103 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         tx.Commit()
         appended
 
+    /// Appends a contiguous attempt-local log range under one lease check and
+    /// one public build-cursor allocation. Empty batches are deliberately a
+    /// successful no-op, so a drained worker buffer needs no special case.
+    /// Invalid batches are refused before a connection is opened.
+    member this.AppendLogBatchFenced
+        (org: OrganizationId,
+         build: BuildId,
+         attempt: AttemptId,
+         fence: Fence,
+         owner: string,
+         startSequence: int,
+         bodies: string array)
+        : bool =
+        if isNull bodies then
+            invalidArg "bodies" "log batch bodies cannot be null"
+
+        if bodies.Length > 128 then
+            invalidArg "bodies" "a log batch may contain at most 128 frames"
+
+        // Strings are immutable, but the caller can replace entries in its
+        // array while this call is validating it. Snapshot the bounded input
+        // so the exact frames checked here are the frames bound below.
+        let frames = Array.copy bodies
+
+        if frames.Length = 0 then
+            true
+        else
+            if startSequence < 0 || int64 startSequence + int64 frames.Length > int64 Int32.MaxValue then
+                invalidArg "startSequence" "log batch sequences and resulting cursor must fit in Int32"
+
+            let mutable utf8Bytes = 0L
+
+            for body in frames do
+                if isNull body then
+                    invalidArg "bodies" "log batch bodies cannot contain null"
+
+                utf8Bytes <- utf8Bytes + int64 (Encoding.UTF8.GetByteCount body)
+
+                if utf8Bytes > 1024L * 1024L then
+                    invalidArg "bodies" "a log batch may contain at most 1 MiB of UTF-8 text"
+
+            use conn = openConn ()
+            use tx = beginTenantTransaction conn org
+
+            let appended =
+                if not (this.LockLogLineage(conn, tx, org, build, attempt)) then
+                    false
+                else
+                    use cmd = conn.CreateCommand()
+                    cmd.Transaction <- tx
+                    cmd.CommandText <-
+                        "WITH incoming AS (
+                             SELECT body, ordinal::integer - 1 AS offset
+                               FROM unnest(@bodies::text[]) WITH ORDINALITY AS frame(body, ordinal)
+                         ),
+                         allocation AS (
+                             UPDATE builds b
+                                SET next_log_sequence = GREATEST(b.next_log_sequence, @start) + @count
+                              WHERE b.organization_id = @o AND b.id = @b
+                                AND NOT EXISTS (
+                                    SELECT 1
+                                      FROM log_chunks l
+                                     WHERE l.organization_id = @o AND l.attempt_id = @a
+                                       AND l.sequence BETWEEN @start AND @last
+                                )
+                                AND EXISTS (
+                                    SELECT 1
+                                      FROM attempts a
+                                     WHERE a.organization_id = @o AND a.id = @a
+                                       AND a.fence = @f AND a.lease_owner = @owner
+                                       AND a.lease_expires_at > clock_timestamp()
+                                       AND a.state IN ('offered', 'accepted', 'running', 'finalizing', 'cancelling')
+                                       AND a.restore_epoch =
+                                           (SELECT restore_epoch FROM controller_metadata WHERE singleton)
+                                )
+                             RETURNING b.next_log_sequence - @count AS build_start
+                         )
+                         INSERT INTO log_chunks
+                                (organization_id, build_id, attempt_id, sequence, build_sequence, body)
+                         SELECT @o, @b, @a, @start + incoming.offset,
+                                allocation.build_start + incoming.offset, incoming.body
+                           FROM allocation
+                           CROSS JOIN incoming"
+                    cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+                    cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+                    cmd.Parameters.AddWithValue("a", attempt.Value) |> ignore
+                    cmd.Parameters.AddWithValue("f", fence.Value) |> ignore
+                    cmd.Parameters.AddWithValue("owner", owner) |> ignore
+                    cmd.Parameters.AddWithValue("start", startSequence) |> ignore
+                    cmd.Parameters.AddWithValue("last", startSequence + frames.Length - 1) |> ignore
+                    cmd.Parameters.AddWithValue("count", frames.Length) |> ignore
+                    cmd.Parameters.AddWithValue("bodies", frames) |> ignore
+                    cmd.ExecuteNonQuery() = frames.Length
+
+            if appended then tx.Commit() else tx.Rollback()
+            appended
+
     member _.NextLogSequence(org: OrganizationId, attempt: AttemptId) : int =
         use conn = openConn ()
         use tx = beginTenantTransaction conn org

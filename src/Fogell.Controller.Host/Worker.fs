@@ -204,7 +204,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
     // prevents a noisy child or a large existing backlog from postponing lease
     // renewal and cancellation behind an EOF that may never arrive.
     let eventDrainByteBudget = 256 * 1024
-    let eventDrainFrameBudget = 16
+    let eventDrainFrameBudget = 128
     let processGroupProbeMilliseconds = 50
     let processGroupTermChecks = 40
     let processGroupKillChecks = 100
@@ -248,36 +248,19 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
         else
             None
 
-    let eventBody frame =
-        match frame with
-        | Oversized -> "controller refused an oversized child log frame"
-        | Encoded bytes ->
-            let payloadLength =
-                if bytes.Length > 0 && bytes[bytes.Length - 1] = byte '\r' then
-                    bytes.Length - 1
-                else
-                    bytes.Length
-
-            try
-                Text.Encoding.ASCII.GetString(bytes, 0, payloadLength)
-                |> Convert.FromBase64String
-                |> Text.Encoding.UTF8.GetString
-            with _ ->
-                "controller refused a malformed child log frame"
-
-    let eventPublisher (claim: ExecutionClaim) (nextSequence: int ref) frame =
+    let eventPublisher (claim: ExecutionClaim) (nextSequence: int ref) (frames: EventFrame array) =
         let appended =
-            store.AppendLogFenced(
+            store.AppendLogBatchFenced(
                 claim.OrganizationId,
                 claim.BuildId,
                 claim.AttemptId,
                 claim.Fence,
                 owner,
                 nextSequence.Value,
-                eventBody frame)
+                Array.map EventStream.eventBody frames)
 
         if appended then
-            nextSequence.Value <- nextSequence.Value + 1
+            nextSequence.Value <- nextSequence.Value + frames.Length
 
         appended
 
@@ -297,7 +280,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
         | Some stream ->
             use stream = stream
             batch <-
-                EventStream.drainBatch
+                EventStream.drainCommittedBatch
                     stream
                     state
                     maxEventFrameEncodedBytes
@@ -314,18 +297,20 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
         sequence
         continueControl
         =
-        let nextSequence = ref sequence
-        let completion =
-            EventStream.drainExtinguishedBoundary
-                (openEventStream eventPath)
-                state
-                maxEventFrameEncodedBytes
-                eventDrainByteBudget
-                eventDrainFrameBudget
-                continueControl
-                (eventPublisher claim nextSequence)
+        task {
+            let nextSequence = ref sequence
+            let! completion =
+                EventStream.drainExtinguishedBoundaryBatched
+                    (openEventStream eventPath)
+                    state
+                    maxEventFrameEncodedBytes
+                    eventDrainByteBudget
+                    eventDrainFrameBudget
+                    continueControl
+                    (eventPublisher claim nextSequence)
 
-        nextSequence.Value, completion
+            return nextSequence.Value, completion
+        }
 
     let completeDiagnosticDrains
         (child: Process)
@@ -731,12 +716,20 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                             config.LeaseSeconds))
                                 nextRenewal <- DateTimeOffset.UtcNow.AddSeconds(float config.LeaseSeconds / 3.0)
 
+                        let mutable backlog = false
                         while not child.HasExited && not cancelled && not interrupted && not leaseLost do
-                            match!
-                                WorkerControl.waitForActivePoll
-                                    config.PollMilliseconds
-                                    stoppingToken
-                            with
+                            // A full slice is evidence of work already waiting.
+                            // Keep draining it without the idle poll delay, but
+                            // yield and recheck control before every transaction.
+                            let! poll =
+                                task {
+                                    if backlog then
+                                        do! Task.Yield()
+                                        return WorkerControl.ActivePollResult.PollElapsed
+                                    else
+                                        return! WorkerControl.waitForActivePoll config.PollMilliseconds stoppingToken
+                                }
+                            match poll with
                             | WorkerControl.ActivePollResult.ShutdownRequested ->
                                 interrupted <- true
                             | WorkerControl.ActivePollResult.PollElapsed ->
@@ -746,6 +739,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                     let next, batch = drainEvents claim eventPath eventState sequence
                                     sequence <- next
                                     leaseLost <- batch.AuthorityLost
+                                    backlog <- batch.BytesProcessed > 0 && not batch.ReachedEof
                                     refreshControl false
 
                         if not cancelled && not interrupted && not leaseLost then
@@ -780,7 +774,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                     interrupted
                                     leaseLost
 
-                            let next, completion =
+                            let! next, completion =
                                 drainFinalEvents
                                     claim
                                     eventPath
