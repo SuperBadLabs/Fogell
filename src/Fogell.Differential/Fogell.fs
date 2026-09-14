@@ -756,6 +756,15 @@ module FogellSide =
                     isRestartedRun
                     (persistence |> Option.map (fun hooks -> hooks.OnOutput))
 
+            // Every exit settles accepted output before reporting resource
+            // failure. A swallowed script exception cannot turn a spent budget
+            // into success, and lost publication still requires reconciliation.
+            use outputScope =
+                { new IDisposable with
+                    member _.Dispose() =
+                        runCtx.FlushOutput()
+                        runCtx.CheckOutputBudget() }
+
             // FG-053. The SCRIPT decides whether a timestamp-shaped prefix is
             // engine decoration or the build's own output — nothing in a line's
             // shape can tell those apart, so normalisation is told rather than
@@ -1833,6 +1842,8 @@ module FogellSide =
         | error ->
             let diagnostic =
                 match error with
+                | :? BuildOutputLimitExceededException ->
+                    "runner-failure: BUILD_OUTPUT_LIMIT_EXCEEDED: build output exceeded the shared retention limit"
                 | :? OutputLimitExceededException ->
                     "runner-failure: OUTPUT_LIMIT_EXCEEDED: process output exceeded the runner capture limit"
                 | :? OutOfMemoryException ->

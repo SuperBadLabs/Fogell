@@ -256,6 +256,9 @@ type RunRequest =
       /// process pipes. The historical single callback above remains for direct
       /// callers which do not need provenance identity.
       CreateRedactedAdmission: (unit -> RedactedAdmission) option
+      /// Reserve captured stdout against an optional run-wide budget before
+      /// retaining each decoded chunk. Captured text bypasses log admission.
+      ReserveCapturedOutput: (int -> unit) option
       /// FG-236. Opaque raw-output policy. Stdout and stderr each create an
       /// independent matcher before CR/LF framing.
       OutputRedaction: OutputRedactionPolicy option
@@ -306,6 +309,7 @@ type RunRequest =
           OnRedactedLine = None
           OnRedactedAdmission = None
           CreateRedactedAdmission = None
+          ReserveCapturedOutput = None
           OutputRedaction = None
           SuppressStdoutEcho = false
           ReapGroup = true
@@ -1307,11 +1311,13 @@ module ProcessGroup =
         let outputLimitReached =
             Tasks.TaskCompletionSource<unit>(Tasks.TaskCreationOptions.RunContinuationsAsynchronously)
         let mutable outputFailure: exn option = None
-        let reportOutputLimit () =
+        let reportOutputFailure error =
             lock outputFailureGate (fun () ->
                 if outputFailure.IsNone then
-                    outputFailure <- Some(OutputLimitExceededException())
+                    outputFailure <- Some error
                     outputLimitReached.TrySetResult(()) |> ignore)
+
+        let reportOutputLimit () = reportOutputFailure (OutputLimitExceededException())
 
         let hasOutputFailure () = lock outputFailureGate (fun () -> outputFailure.IsSome)
         let completionOptions = Tasks.TaskCreationOptions.RunContinuationsAsynchronously
@@ -1654,7 +1660,14 @@ module ProcessGroup =
                                     if n > OutputLimitCharacters - captureBuffer.Length then
                                         reportOutputLimit ()
                                     elif not (hasOutputFailure ()) then
-                                        captureBuffer.Append(chunk, 0, n) |> ignore)
+                                        try
+                                            request.ReserveCapturedOutput |> Option.iter (fun reserve -> reserve n)
+                                            captureBuffer.Append(chunk, 0, n) |> ignore
+                                        with error ->
+                                            // Wake even an otherwise unbounded wait;
+                                            // continue draining while cleanup reaps
+                                            // the group, then propagate the cause.
+                                            reportOutputFailure error)
                             else
                                 reading <- false
                     }

@@ -63,6 +63,8 @@ type StepRequest =
       /// for stdout and once for stderr so late publication remasking retains
       /// the same independent-stream identity as the raw matchers.
       CreateRedactedAdmission: (unit -> RedactedAdmission) option
+      /// Shared build quota for captured stdout, charged before retention.
+      ReserveCapturedOutput: (int -> unit) option
       /// Named arguments as written (`artifacts:`, `testResults:`, `pattern:`).
       Named: (string * string) list
       /// Where publishing steps write. None disables them by failing closed.
@@ -292,6 +294,7 @@ module Executor =
                         OnRedactedAdmission =
                             if Option.isSome request.OnRedactedAdmission then onLine else None
                         CreateRedactedAdmission = createRedactedAdmission
+                        ReserveCapturedOutput = request.ReserveCapturedOutput
                         OutputRedaction = outputRedaction
                         SuppressStdoutEcho = request.CaptureStdout }
 

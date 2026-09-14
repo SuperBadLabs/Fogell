@@ -24,7 +24,8 @@ let persistedFailureDiagnostics =
                     IO.IOException(sensitive), "RUNNER_IO_ERROR"
                     UnauthorizedAccessException(sensitive), "RUNNER_ACCESS_DENIED"
                     InvalidOperationException(sensitive), "RUNNER_INTERNAL_ERROR"
-                    OutputLimitExceededException(), "OUTPUT_LIMIT_EXCEEDED" ]
+                    OutputLimitExceededException(), "OUTPUT_LIMIT_EXCEEDED"
+                    BuildOutputLimitExceededException(), "BUILD_OUTPUT_LIMIT_EXCEEDED" ]
 
               for error, code in cases do
                   let published = ResizeArray<string>()
@@ -12571,7 +12572,9 @@ let main argv =
         argv
         (testList
             "Fogell.Differential"
-            [ persistedFailureDiagnostics
+            [ BuildOutputBudgetTests.buildOutputBudget
+              BuildOutputIntegrationTests.buildOutputIntegration
+              persistedFailureDiagnostics
               progressiveOutputPublication
               controllerEventDrainBudgets
               controllerWorkerScheduling

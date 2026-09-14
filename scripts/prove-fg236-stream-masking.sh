@@ -412,10 +412,10 @@ cp "$scratch/walker-ctx.clean" "$walker_ctx"
 # A slow earlier callback leaves later provenance-bearing lines pending. A
 # newly bound credential must recheck that queue as one separator-aware stream,
 # not merely recheck each already-framed fragment in isolation.
-target='                    if Secrets.maskingForms active <> previousMaskingForms then'
+target='                       && Secrets.maskingForms active <> previousMaskingForms then'
 [[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
   || { echo 'FG-236 proof: pending-publication mutation target is not unique' >&2; exit 1; }
-sed -i 's/^                    if Secrets\.maskingForms active <> previousMaskingForms then$/                    if false then/' "$walker_ctx"
+sed -i 's/^                       && Secrets\.maskingForms active <> previousMaskingForms then$/                       \&\& false then/' "$walker_ctx"
 kill_differential_mutant pending-publication 'a stalled non-stream line is rechecked before external publication'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 
@@ -469,10 +469,10 @@ cp "$scratch/walker-ctx.clean" "$walker_ctx"
 
 # Empty bindings and duplicate masking inventories add no new secret form. They
 # must not hold an otherwise-progressive open stream until EOF.
-target='                    if Secrets.maskingForms active <> previousMaskingForms then'
+target='                       && Secrets.maskingForms active <> previousMaskingForms then'
 test "$(rg -F -x -c "$target" "$walker_ctx")" -eq 1 \
   || { echo 'FG-236 proof: non-expanding-binding mutation target is not unique' >&2; exit 1; }
-sed -i 's/^                    if Secrets\.maskingForms active <> previousMaskingForms then$/                    if not (List.isEmpty bindings) then/' "$walker_ctx"
+sed -i 's/^                       && Secrets\.maskingForms active <> previousMaskingForms then$/                       \&\& not (List.isEmpty bindings) then/' "$walker_ctx"
 kill_differential_mutant non-expanding-binding 'a non-expanding binding does not create an EOF publication barrier'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 

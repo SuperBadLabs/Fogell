@@ -72,6 +72,7 @@ let private request root script =
       OnRedactedOutput = None
       OnRedactedAdmission = None
       CreateRedactedAdmission = None
+      ReserveCapturedOutput = None
       Named = []
       Artifacts = None
       BuildKey = "test" }
@@ -4058,6 +4059,7 @@ let externalInterrupt =
                         OnRedactedOutput = None
                         OnRedactedAdmission = None
                         CreateRedactedAdmission = None
+                        ReserveCapturedOutput = None
                         Named = [ "testResults", "report.xml" ]
                         Artifacts = None
                         BuildKey = "k" }
@@ -4098,6 +4100,7 @@ let externalInterrupt =
                         OnRedactedOutput = None
                         OnRedactedAdmission = None
                         CreateRedactedAdmission = None
+                        ReserveCapturedOutput = None
                         Named = [ "testResults", "nothing-matches-*.xml" ]
                         Artifacts = None
                         BuildKey = "k" }
@@ -6688,7 +6691,8 @@ let main argv =
             (testSequenced
                 (testList
                     "Fogell.Execution"
-                    [ workspaceHygiene
+                    [ CaptureOutputBudgetTests.captureOutputBudget
+                      workspaceHygiene
                       shellExecution
                       environmentIsolation
                       containment

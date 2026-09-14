@@ -10,6 +10,23 @@ open Fogell.Execution
 type OutputPublicationException(message: string, inner: exn) =
     inherit Exception(message, inner)
 
+/// The build has retained as much console/captured output as one run may own.
+///
+/// This is deliberately distinct from [OutputPublicationException]: capacity is
+/// a build-wide execution guard, whereas the latter means the host can no
+/// longer account for output it already accepted.  Its text is constant because
+/// it can cross the persisted-host boundary.
+[<Sealed>]
+type BuildOutputLimitExceededException() =
+    inherit Exception("build output exceeded Fogell's whole-build output limit")
+
+/// Internal test seam.  The public create path always uses the production
+/// budget below; callers outside the friend test assembly cannot make a build
+/// silently weaker.
+type internal OutputBudget =
+    { MaxCharacters: int64
+      MaxRecords: int }
+
 type private PublicationStream() =
     member val Completed = false with get, set
 
@@ -71,6 +88,16 @@ type WalkerCtx =
       /// stderr stream. EOF releases any suffix retained because a credential
       /// was registered after that stream's earlier line was admitted.
       CreateRedactedAdmission: unit -> RedactedAdmission
+      /// Throw the sticky capacity guard, if one has fired.  This is safe for
+      /// polling from cancellation paths; [OutputBudgetExceeded] is the
+      /// non-throwing counterpart for an interrupt predicate.
+      CheckOutputBudget: unit -> unit
+      /// A lock-safe, non-throwing view used by process/parallel interruption.
+      OutputBudgetExceeded: unit -> bool
+      /// Charge UTF-16 characters captured by returnStdout before the reader
+      /// appends them.  Captured text and console records consume one shared
+      /// run-wide character budget; capture does not create a logical record.
+      ReserveCapturedOutput: int -> unit
       /// FG-053. Turn on `options { timestamps() }` for the rest of the build.
       ///
       /// A SETTER rather than a `create` parameter because the pipeline's
@@ -199,13 +226,30 @@ type WalkerCtx =
 
 module WalkerCtx =
 
+    [<Literal>]
+    let private DefaultOutputBudgetCharacters = 32 * 1024 * 1024
+
+    [<Literal>]
+    let private DefaultOutputBudgetRecords = 100_000
+
+    let private defaultOutputBudget =
+        { MaxCharacters = int64 DefaultOutputBudgetCharacters
+          MaxRecords = DefaultOutputBudgetRecords }
+
     /// Build the run-scoped state. Everything mutable lives inside this call's
     /// closures; the returned record is the only handle.
-    let create
+    let internal createWithOutputBudget
+        (outputBudget: OutputBudget)
         (buildStartTimeInMillis: int64)
         (isRestartedRun: bool)
         (onOutput: (string -> unit) option)
         : WalkerCtx =
+        if outputBudget.MaxCharacters < 0L then
+            invalidArg (nameof outputBudget) "output budget characters must be non-negative"
+
+        if outputBudget.MaxRecords < 0 then
+            invalidArg (nameof outputBudget) "output budget records must be non-negative"
+
         let output = System.Collections.Generic.List<string>()
         // Parallel branches append from several threads at once; this one lock
         // also orders output against secret registration and the fired-set.
@@ -227,6 +271,61 @@ module WalkerCtx =
         let mutable nextPublicationOrder = 0L
         let mutable publicationActive = false
         let mutable publicationFailure: OutputPublicationException option = None
+        // These are cumulative charges.  We never refund a shortened remask:
+        // a binding can otherwise repeatedly expand/shrink retained forms and
+        // turn one finite budget into unbounded allocation over the build.
+        let mutable chargedCharacters = 0L
+        let mutable logicalRecordCount = 0
+        let mutable outputBudgetFailure: BuildOutputLimitExceededException option = None
+
+        let publicationFailureOrBudgetFailure allowDeferredAdmissionAfterPublicationFailure =
+            // Publication failure is authoritative for bytes already dequeued
+            // to the host.  In particular, a later capacity trip must not make
+            // terminal reconciliation claim that lost host output was merely a
+            // build limit.
+            lock publicationLock (fun () ->
+                match publicationFailure, outputBudgetFailure with
+                | Some failure, Some _ -> raise failure
+                | None, Some failure -> raise failure
+                | Some failure, None when not allowDeferredAdmissionAfterPublicationFailure -> raise failure
+                | Some _, None -> ()
+                | None, None -> ())
+
+        let tripOutputBudget () : exn =
+            match outputBudgetFailure with
+            | Some failure ->
+                lock publicationLock (fun () ->
+                    match publicationFailure with
+                    | Some publication -> publication :> exn
+                    | None -> failure :> exn)
+            | None ->
+                lock publicationLock (fun () ->
+                    let failure = BuildOutputLimitExceededException()
+                    // Capacity is build-wide cancellation state even if a
+                    // callback had already failed.  Returning that callback
+                    // failure below preserves reconciliation precedence, while
+                    // this latch still stops sibling process readers.
+                    outputBudgetFailure <- Some failure
+                    // Retain already admitted publication work. FlushOutput
+                    // drains its safe FIFO prefix before surfacing this sticky
+                    // guard; dropping it would silently lose accepted output.
+                    // Deferred records stay behind their EOF/remasking barrier.
+                    match publicationFailure with
+                    | Some publication -> publication :> exn
+                    | None -> failure :> exn)
+
+        let reserveCharacters additional =
+            if additional < 0L || chargedCharacters > outputBudget.MaxCharacters - additional then
+                raise (tripOutputBudget ())
+
+            chargedCharacters <- chargedCharacters + additional
+
+        let reserveLogicalRecord characters =
+            if logicalRecordCount >= outputBudget.MaxRecords then
+                raise (tripOutputBudget ())
+
+            reserveCharacters characters
+            logicalRecordCount <- logicalRecordCount + 1
 
         let streamHasPendingPublication (stream: PublicationStream) =
             let belongsToStream (item: PendingPublication) =
@@ -267,6 +366,11 @@ module WalkerCtx =
                         // External code runs with neither WalkerCtx lock held.
                         publish (item.Prefix + item.Value.Text)
                     with ex ->
+                        // A callback may re-enter Emit and trip the budget
+                        // before it durably persists THIS callback item.  That
+                        // leaves the host prefix ambiguous, so even a typed
+                        // budget exception from callback code is transport
+                        // uncertainty and must retain publication semantics.
                         let failure =
                             match ex with
                             | :? OutputPublicationException as typed -> typed
@@ -283,7 +387,7 @@ module WalkerCtx =
 
         let flushPublications () =
             match onOutput with
-            | None -> ()
+            | None -> publicationFailureOrBudgetFailure false
             | Some publish ->
                 let mutable complete = false
 
@@ -298,6 +402,8 @@ module WalkerCtx =
                             | None when publicationActive ->
                                 System.Threading.Monitor.Wait publicationLock |> ignore
                                 false
+                            | None when outputBudgetFailure.IsSome ->
+                                raise outputBudgetFailure.Value
                             | None when barrierStreams.Count > 0 ->
                                 let failure =
                                     OutputPublicationException(
@@ -338,6 +444,17 @@ module WalkerCtx =
         let outputPrefixes = ResizeArray<string>()
         let outputValues = ResizeArray<RedactedText>()
         let suppressedOutputIndexes = System.Collections.Generic.HashSet<int>()
+
+        let reserveRemaskGrowth outputIndex (value: RedactedText) =
+            // The initial charge includes prefix and line delimiter, which do
+            // not change during a remask.  Charge only positive value growth
+            // and never refund a later contraction: retained provenance can
+            // still point at the older representation until the stream settles.
+            let previousLength = int64 outputValues[outputIndex].Text.Length
+            let nextLength = int64 value.Text.Length
+
+            if nextLength > previousLength then
+                reserveCharacters (nextLength - previousLength)
 
         let engineNotes = ResizeArray<string>()
         let durableIds = ResizeArray<string>()
@@ -390,9 +507,15 @@ module WalkerCtx =
                             Publishable = item.Publishable && List.isEmpty leaks }
 
                     if rechecked.Publishable then
+                        // If the changed representation cannot be charged,
+                        // do not let Output() expose its older, pre-binding
+                        // value while terminal failure is being assembled.
+                        suppressedOutputIndexes.Add item.OutputIndex |> ignore
+                        reserveRemaskGrowth item.OutputIndex value
                         output[item.OutputIndex] <- item.Prefix + value.Text
                         outputValues[item.OutputIndex] <- value
                         redactedOutputIndexes.Add item.OutputIndex |> ignore
+                        suppressedOutputIndexes.Remove item.OutputIndex |> ignore
                         remasked.Add rechecked
                     else
                         retainPublicationLeaks leaks
@@ -462,6 +585,7 @@ module WalkerCtx =
 
                         for item, _ in rechecked do
                             if mutableAfterBinding item then
+                                reserveRemaskGrowth item.OutputIndex item.Value
                                 output[item.OutputIndex] <- item.Prefix + item.Value.Text
                                 outputValues[item.OutputIndex] <- item.Value
                                 suppressedOutputIndexes.Remove item.OutputIndex |> ignore
@@ -504,10 +628,19 @@ module WalkerCtx =
                         openStreams.Remove stream |> ignore
                         barrierStreams.Remove stream |> ignore
 
-                        if barrierStreams.Count = 0 && deferredPublications.Count > 0 then
+                        if barrierStreams.Count = 0
+                           && deferredPublications.Count > 0 then
                             let pending = deferredPublications.ToArray()
                             deferredPublications.Clear()
-                            remaskIntoPublicationQueue secrets pending
+                            try
+                                remaskIntoPublicationQueue secrets pending
+                            with :? BuildOutputLimitExceededException ->
+                                // EOF is cleanup authority.  The attempted
+                                // remask has latched the guard; retain the
+                                // still-unpublishable suffix behind its EOF
+                                // barrier, but do not replace a process
+                                // failure by throwing from Complete.
+                                deferredPublications.AddRange pending
 
                         if barrierStreams.Count = 0 then
                             streamHistory
@@ -529,6 +662,12 @@ module WalkerCtx =
         let emitCore deferExternalDrain alreadyRedacted redactedStream safeAndLeaks =
             let shouldDrain =
                 lock outputLock (fun () ->
+                    // Refuse a sticky limit before constructing another
+                    // provenance-bearing redaction value.  Recheck after
+                    // masking below because an external publisher can fail
+                    // while that work is in progress, and publication failure
+                    // remains authoritative over a later capacity result.
+                    publicationFailureOrBudgetFailure deferExternalDrain
                     let secrets = boundSecrets |> Seq.map fst |> List.ofSeq
                     let (safeValue: RedactedText), leaks = safeAndLeaks secrets
                     let safe = safeValue.Text
@@ -566,6 +705,13 @@ module WalkerCtx =
                             && List.isEmpty (Secrets.detectBoundaryLeaks secrets prefix safeValue))
 
                     let stamped = prefix + safe
+
+                    // A console record is retained as one framed line even
+                    // though Output() exposes it without the terminator.  Use
+                    // the platform line terminator because ProcessGroup's
+                    // captured builders use that same UTF-16 framing unit.
+                    publicationFailureOrBudgetFailure deferExternalDrain
+                    reserveLogicalRecord (int64 stamped.Length + int64 Environment.NewLine.Length)
 
                     let outputIndex = output.Count
                     output.Add stamped
@@ -664,6 +810,26 @@ module WalkerCtx =
 
                             safe, Secrets.detectUnregisteredLeaksRedacted secrets safe)
                   Complete = fun () -> completePublicationStream stream }
+          CheckOutputBudget =
+            fun () ->
+                lock outputLock (fun () -> publicationFailureOrBudgetFailure false)
+          OutputBudgetExceeded =
+            fun () ->
+                lock outputLock (fun () -> outputBudgetFailure.IsSome)
+          ReserveCapturedOutput =
+            fun characters ->
+                if characters < 0 then
+                    invalidArg (nameof characters) "captured output reservation must be non-negative"
+
+                lock outputLock (fun () ->
+                    // A capture chunk may itself cross the shared budget even
+                    // after the publisher has failed.  Evaluate that attempt
+                    // first so the global interrupt latch still reaches every
+                    // sibling, then preserve publication uncertainty for the
+                    // caller.
+                    publicationFailureOrBudgetFailure true
+                    reserveCharacters (int64 characters)
+                    publicationFailureOrBudgetFailure false)
           EnableTimestamps = fun () -> lock outputLock (fun () -> timestamps <- true)
           BindSecrets =
             fun bindings ->
@@ -679,7 +845,8 @@ module WalkerCtx =
 
                     let active = boundSecrets |> Seq.map fst |> List.ofSeq
 
-                    if Secrets.maskingForms active <> previousMaskingForms then
+                    if outputBudgetFailure.IsNone
+                       && Secrets.maskingForms active <> previousMaskingForms then
                         remaskPendingPublications active)
           BoundSecrets =
             fun () ->
@@ -757,3 +924,12 @@ module WalkerCtx =
 
                     inputOccurrences[key] <- next
                     next) }
+
+    /// Production construction remains source-compatible.  Focused friend
+    /// tests use [createWithOutputBudget] to exercise exact boundaries.
+    let create
+        (buildStartTimeInMillis: int64)
+        (isRestartedRun: bool)
+        (onOutput: (string -> unit) option)
+        : WalkerCtx =
+        createWithOutputBudget defaultOutputBudget buildStartTimeInMillis isRestartedRun onOutput
