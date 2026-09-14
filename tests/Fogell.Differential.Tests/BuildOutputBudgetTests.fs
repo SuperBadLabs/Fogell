@@ -20,6 +20,10 @@ let buildOutputBudget =
         stream.Buffered
         |> Option.defaultWith (fun () -> failtest "WalkerCtx stream exposes buffered admission credits")
 
+    let close stream =
+        stream.Close
+        |> Option.defaultWith (fun () -> failtest "WalkerCtx stream exposes an owner closure lease")
+
     testList
         "whole-build output budget"
         [ test "logical records charge framed UTF-16 characters at the exact boundary" {
@@ -116,6 +120,79 @@ let buildOutputBudget =
                   (fun () -> credits.Release 1)
                   "the failed final admission consumed exactly one credit and released remainder cannot be spent twice"
               stream.Complete()
+          }
+
+          test "closing a stream releases its own pending credits once and rejects all late admission" {
+              let ctx = context 4L 10
+              let firstStream = ctx.CreateRedactedAdmission()
+              let secondStream = ctx.CreateRedactedAdmission()
+              let first = buffered firstStream
+              let second = buffered secondStream
+
+              first.Reserve 4
+              close firstStream ()
+              close firstStream ()
+
+              // A late reader can finish its local cleanup, but cannot reserve,
+              // turn an arbitrary old credit into output, or claim EOF.
+              first.Reserve 100
+              first.Admit 100 (RedactedText.Raw "late")
+              first.Release 100
+              firstStream.Admit (RedactedText.Raw "late")
+              firstStream.Complete()
+
+              second.Reserve 4
+              // The first stream's delayed release is a no-op: it must not
+              // refund the second stream's full live reservation.
+              first.Release 4
+              Expect.throwsT<BuildOutputLimitExceededException>
+                  (fun () -> ctx.ReserveCapturedOutput 1)
+                  "a closed stream cannot double-refund credit now held by another stream"
+              second.Release 4
+              secondStream.Complete()
+              Expect.isEmpty (ctx.Output()) "the closed stream cannot append late logical output"
+          }
+
+          test "late binding after close retains the incomplete publication barrier" {
+              let published = ResizeArray<string>()
+              let ctx =
+                  WalkerCtx.createWithOutputBudget
+                      { MaxCharacters = 100L
+                        MaxRecords = 10 }
+                      0L
+                      false
+                      (Some published.Add)
+              let stream = ctx.CreateRedactedAdmission()
+
+              close stream ()
+              ctx.BindSecrets [ Secrets.inMemoryTextBinding "TOKEN" "secret" ]
+              stream.Admit (RedactedText.Raw "late")
+              stream.Complete()
+
+              Expect.throwsT<OutputPublicationException>
+                  ctx.FlushOutput
+                  "closure without EOF keeps a later credential binding fail-closed"
+              Expect.isEmpty published "an incomplete closed stream does not publish a fabricated EOF suffix"
+          }
+
+          test "a stream completed before closure remains publishable" {
+              let published = ResizeArray<string>()
+              let ctx =
+                  WalkerCtx.createWithOutputBudget
+                      { MaxCharacters = 100L
+                        MaxRecords = 10 }
+                      0L
+                      false
+                      (Some published.Add)
+              let stream = ctx.CreateRedactedAdmission()
+
+              stream.Admit (RedactedText.Raw "safe")
+              stream.Complete()
+              close stream ()
+              ctx.BindSecrets [ Secrets.inMemoryTextBinding "TOKEN" "secret" ]
+              ctx.FlushOutput()
+
+              Expect.equal (List.ofSeq published) [ "safe" ] "only a real EOF clears the stream barrier"
           }
 
           test "CRLF's ignored LF releases its transient buffered credit" {

@@ -29,6 +29,10 @@ type internal OutputBudget =
 
 type private PublicationStream() =
     member val Completed = false with get, set
+    /// Closure stops a reader from adding data after ProcessGroup has returned.
+    /// It deliberately does not claim a real EOF, because later credential
+    /// binding must keep this stream's publication barrier fail-closed.
+    member val Closed = false with get, set
     /// Post-mask process characters held by the framer but not yet represented
     /// by a retained output record.  WalkerCtx owns both this per-stream credit
     /// and the run-wide total under outputLock.
@@ -352,6 +356,17 @@ module WalkerCtx =
             outstandingBufferedCharacters <- outstandingBufferedCharacters - consumed
             stream.BufferedCharacters <- stream.BufferedCharacters - consumed
 
+        let closePublicationStream (stream: PublicationStream) =
+            lock outputLock (fun () ->
+                if not stream.Closed then
+                    stream.Closed <- true
+
+                    // These credits describe only raw matcher/framer state,
+                    // never a retained record. Closing can return them without
+                    // refunding cumulative output charges.
+                    if stream.BufferedCharacters > 0L then
+                        releaseBufferedCharacters stream stream.BufferedCharacters)
+
         let reserveLogicalRecord characters =
             if logicalRecordCount >= outputBudget.MaxRecords then
                 raise (tripOutputBudget ())
@@ -653,46 +668,52 @@ module WalkerCtx =
         let completePublicationStream (stream: PublicationStream) =
             let shouldDrain =
                 lock outputLock (fun () ->
-                    let secrets = boundSecrets |> Seq.map fst |> List.ofSeq
+                    if stream.Closed then
+                        // ProcessGroup closed this lease without a real EOF.
+                        // Do not turn it into a completed stream: later secret
+                        // binding must retain the incomplete barrier.
+                        false
+                    else
+                        let secrets = boundSecrets |> Seq.map fst |> List.ofSeq
 
-                    // A real EOF should already have transferred each framed
-                    // line or explicitly released CRLF/discarded bytes.  Make
-                    // completion a final safety net for an aborted/framing
-                    // path so transient credits cannot outlive their stream.
-                    if stream.BufferedCharacters > 0L then
-                        releaseBufferedCharacters stream stream.BufferedCharacters
+                        // A real EOF should already have transferred each framed
+                        // line or explicitly released CRLF/discarded bytes.  Make
+                        // completion a final safety net for an aborted/framing
+                        // path so transient credits cannot outlive their stream.
+                        if stream.BufferedCharacters > 0L then
+                            releaseBufferedCharacters stream stream.BufferedCharacters
 
-                    lock publicationLock (fun () ->
-                        stream.Completed <- true
-                        openStreams.Remove stream |> ignore
-                        barrierStreams.Remove stream |> ignore
+                        lock publicationLock (fun () ->
+                            stream.Completed <- true
+                            openStreams.Remove stream |> ignore
+                            barrierStreams.Remove stream |> ignore
 
-                        if barrierStreams.Count = 0
-                           && deferredPublications.Count > 0 then
-                            let pending = deferredPublications.ToArray()
-                            deferredPublications.Clear()
-                            try
-                                remaskIntoPublicationQueue secrets pending
-                            with :? BuildOutputLimitExceededException ->
-                                // EOF is cleanup authority.  The attempted
-                                // remask has latched the guard; retain the
-                                // still-unpublishable suffix behind its EOF
-                                // barrier, but do not replace a process
-                                // failure by throwing from Complete.
-                                deferredPublications.AddRange pending
+                            if barrierStreams.Count = 0
+                               && deferredPublications.Count > 0 then
+                                let pending = deferredPublications.ToArray()
+                                deferredPublications.Clear()
+                                try
+                                    remaskIntoPublicationQueue secrets pending
+                                with :? BuildOutputLimitExceededException ->
+                                    // EOF is cleanup authority.  The attempted
+                                    // remask has latched the guard; retain the
+                                    // still-unpublishable suffix behind its EOF
+                                    // barrier, but do not replace a process
+                                    // failure by throwing from Complete.
+                                    deferredPublications.AddRange pending
 
-                        if barrierStreams.Count = 0 then
-                            streamHistory
-                            |> Seq.choose (fun pair -> if pair.Key.Completed then Some pair.Key else None)
-                            |> Seq.toArray
-                            |> Array.iter discardCompletedHistoryIfSettled
+                            if barrierStreams.Count = 0 then
+                                streamHistory
+                                |> Seq.choose (fun pair -> if pair.Key.Completed then Some pair.Key else None)
+                                |> Seq.toArray
+                                |> Array.iter discardCompletedHistoryIfSettled
 
-                        match publicationFailure with
-                        | Some _ -> false
-                        | None when barrierStreams.Count = 0 && not publicationActive && publications.Count > 0 ->
-                            publicationActive <- true
-                            true
-                        | None -> false))
+                            match publicationFailure with
+                            | Some _ -> false
+                            | None when barrierStreams.Count = 0 && not publicationActive && publications.Count > 0 ->
+                                publicationActive <- true
+                                true
+                            | None -> false))
 
             match shouldDrain, onOutput with
             | true, Some publish -> startDeferredDrain publish
@@ -845,46 +866,52 @@ module WalkerCtx =
 
                 { Admit =
                     fun (line: RedactedText) ->
-                        emitCore true true (Some stream) (fun secrets ->
-                            let safe =
-                                if List.isEmpty secrets then line else Secrets.maskAlreadyRedacted secrets line
+                        lock outputLock (fun () ->
+                            if not stream.Closed then
+                                emitCore true true (Some stream) (fun secrets ->
+                                    let safe =
+                                        if List.isEmpty secrets then line else Secrets.maskAlreadyRedacted secrets line
 
-                            safe, Secrets.detectUnregisteredLeaksRedacted secrets safe)
+                                    safe, Secrets.detectUnregisteredLeaksRedacted secrets safe))
                   Buffered =
                     Some
                         { Reserve =
                             fun characters ->
-                                if characters < 0 then
-                                    invalidArg (nameof characters) "buffered output reservation must be non-negative"
-
                                 lock outputLock (fun () ->
-                                    // A publisher failure does not stop raw
-                                    // reader bookkeeping.  If this attempt
-                                    // crosses capacity, tripOutputBudget still
-                                    // latches the global interrupt before
-                                    // returning publication uncertainty.
-                                    publicationFailureOrBudgetFailure true
-                                    reserveBufferedCharacters stream (int64 characters))
+                                    if not stream.Closed then
+                                        if characters < 0 then
+                                            invalidArg (nameof characters) "buffered output reservation must be non-negative"
+
+                                        // A publisher failure does not stop raw
+                                        // reader bookkeeping.  If this attempt
+                                        // crosses capacity, tripOutputBudget still
+                                        // latches the global interrupt before
+                                        // returning publication uncertainty.
+                                        publicationFailureOrBudgetFailure true
+                                        reserveBufferedCharacters stream (int64 characters))
                           Admit =
                             fun consumed (line: RedactedText) ->
-                                if consumed < 0 then
-                                    invalidArg (nameof consumed) "buffered output admission must be non-negative"
-
                                 lock outputLock (fun () ->
-                                    consumeBufferedCharacters stream (int64 consumed)
-                                    emitCore true true (Some stream) (fun secrets ->
-                                        let safe =
-                                            if List.isEmpty secrets then line else Secrets.maskAlreadyRedacted secrets line
+                                    if not stream.Closed then
+                                        if consumed < 0 then
+                                            invalidArg (nameof consumed) "buffered output admission must be non-negative"
 
-                                        safe, Secrets.detectUnregisteredLeaksRedacted secrets safe))
+                                        consumeBufferedCharacters stream (int64 consumed)
+                                        emitCore true true (Some stream) (fun secrets ->
+                                            let safe =
+                                                if List.isEmpty secrets then line else Secrets.maskAlreadyRedacted secrets line
+
+                                            safe, Secrets.detectUnregisteredLeaksRedacted secrets safe))
                           Release =
                             fun characters ->
-                                if characters < 0 then
-                                    invalidArg (nameof characters) "buffered output release must be non-negative"
-
                                 lock outputLock (fun () ->
-                                    releaseBufferedCharacters stream (int64 characters)) }
-                  Complete = fun () -> completePublicationStream stream }
+                                    if not stream.Closed then
+                                        if characters < 0 then
+                                            invalidArg (nameof characters) "buffered output release must be non-negative"
+
+                                        releaseBufferedCharacters stream (int64 characters)) }
+                  Complete = fun () -> completePublicationStream stream
+                  Close = Some(fun () -> closePublicationStream stream) }
           CheckOutputBudget =
             fun () ->
                 lock outputLock (fun () -> publicationFailureOrBudgetFailure false)

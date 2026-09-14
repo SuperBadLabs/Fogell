@@ -231,6 +231,10 @@ type BufferedOutputAdmission =
 type RedactedAdmission =
     { Admit: RedactedText -> unit
       Buffered: BufferedOutputAdmission option
+      /// Ends owner-side output admission without claiming pipe EOF. Used when
+      /// ProcessGroup returns after a bounded reader wait while an escaped
+      /// writer may still hold the pipe.
+      Close: (unit -> unit) option
       Complete: unit -> unit }
 
 type RunRequest =
@@ -1623,6 +1627,7 @@ module ProcessGroup =
         // The buffer is locked on BOTH sides: this task may still be reading when the
         // snapshot below is taken, precisely in the case the ticket is about.
         let captureBuffer = Text.StringBuilder()
+        let mutable acceptingCapturedOutput = true
 
         let startRedactingReader
             (reader: IO.StreamReader)
@@ -1630,19 +1635,44 @@ module ProcessGroup =
             (closed: Tasks.TaskCompletionSource<unit>)
             publish
             bufferedAdmission
+            closeAdmission
             completePublication
             stripInitialControlFrame
             =
             let policy = request.OutputRedaction.Value
+            let mutable acceptingRedactedOutput = 1
+            // Assigned before the reader's first await. The outer freeze never
+            // waits for callbackGate: a direct synchronous callback is allowed
+            // to stall, but it must not admit a NEW chunk after return.
+            let mutable closeLocalReaderState: unit -> unit = ignore
 
-            task {
+            let freezeRedactedReader () =
+                // Close new reader work before acquiring the owner lease. A
+                // reader already in policy.Synchronize then either finishes
+                // before Close takes the output lock or sees this inner flag;
+                // a fresh feed cannot slip between Close and the flag.
+                Threading.Interlocked.Exchange(&acceptingRedactedOutput, 0) |> ignore
+
+                try
+                    closeAdmission |> Option.iter (fun close -> close ())
+                finally
+                    if Monitor.TryEnter(callbackGate) then
+                        try
+                            // Local matcher/framer state belongs only to this
+                            // reader; do not take the policy lock here because a
+                            // different synchronous callback may hold it.
+                            closeLocalReaderState ()
+                        finally
+                            Monitor.Exit(callbackGate)
+
+            let readerTask = task {
                 let masker = policy.CreateMatcher()
                 let releaseBuffered characters =
                     if characters > 0 then
                         bufferedAdmission |> Option.iter (fun buffered -> buffered.Release characters)
 
                 let publishFramedLine consumed line =
-                    if hasOutputFailure () then
+                    if Threading.Volatile.Read(&acceptingRedactedOutput) = 0 || hasOutputFailure () then
                         releaseBuffered consumed
                     else
                         // Per-process buffering can reject a line before its
@@ -1654,7 +1684,6 @@ module ProcessGroup =
                 let framer = RedactedLineFramer(publishFramedLine, releaseBuffered, reportOutputLimit)
                 let controlPrefix = Text.StringBuilder()
                 let mutable controlResolved = not stripInitialControlFrame
-                let mutable reachedEof = false
                 // Credits for matcher state which has not yet become framer
                 // input. The matcher can retain a long almost-secret prefix
                 // while returning an empty RedactedText; those bytes must be
@@ -1681,6 +1710,21 @@ module ProcessGroup =
                         let abandoned = matcherReservedCharacters
                         matcherReservedCharacters <- 0
                         releaseBuffered abandoned
+
+                let mutable localReaderStateClosed = false
+
+                let closeLocalState () =
+                    if not localReaderStateClosed then
+                        localReaderStateClosed <- true
+                        framer.Abandon()
+                        abandonMatcherReservation ()
+                        // Frozen readers never receive EOF authority. Drop the
+                        // matcher's ambiguous raw suffix rather than completing
+                        // it into output after the owning stream is closed.
+                        masker.Abandon()
+                        controlPrefix.Clear() |> ignore
+
+                closeLocalReaderState <- closeLocalState
 
                 let feedBuildOutput text =
                     if not (String.IsNullOrEmpty text) then
@@ -1734,9 +1778,19 @@ module ProcessGroup =
 
                         if n > 0 then
                             lock callbackGate (fun () ->
-                                if not (hasOutputFailure ()) then
+                                if Threading.Volatile.Read(&acceptingRedactedOutput) = 0 then
+                                    closeLocalState ()
+                                elif not (hasOutputFailure ()) then
                                     try
-                                        policy.Synchronize(fun () -> feed (String(chunk, 0, n)))
+                                        policy.Synchronize(fun () ->
+                                            // A freeze can race a reader which
+                                            // already acquired callbackGate.
+                                            // Recheck inside Synchronize before
+                                            // raw reservation or matcher state.
+                                            if Threading.Volatile.Read(&acceptingRedactedOutput) = 0 then
+                                                closeLocalState ()
+                                            else
+                                                feed (String(chunk, 0, n)) )
                                     with error ->
                                         // A shared quota rejection must wake an
                                         // otherwise unbounded run. Keep draining
@@ -1746,44 +1800,44 @@ module ProcessGroup =
                         else
                             reading <- false
 
-                    reachedEof <- true
-
                     lock callbackGate (fun () ->
                         try
                             policy.Synchronize(fun () ->
-                                if not (hasOutputFailure ()) then
-                                    if not controlResolved && controlPrefix.Length > 0 then
-                                        feedBuildOutput (controlPrefix.ToString())
-                                        controlPrefix.Clear() |> ignore
-
-                                    let suffix = masker.CompleteRedacted()
-                                    reconcileMatcherOutput () suffix
-
-                                    if not (String.IsNullOrEmpty suffix.Text) then
-                                        framer.Push suffix
-
-                                    framer.Complete()
+                                if Threading.Volatile.Read(&acceptingRedactedOutput) = 0 then
+                                    closeLocalState ()
                                 else
-                                    framer.Abandon()
-                                    abandonMatcherReservation ()
+                                    if not (hasOutputFailure ()) then
+                                        if not controlResolved && controlPrefix.Length > 0 then
+                                            feedBuildOutput (controlPrefix.ToString())
+                                            controlPrefix.Clear() |> ignore
 
-                                completePublication |> Option.iter (fun complete -> complete ()))
+                                        let suffix = masker.CompleteRedacted()
+                                        reconcileMatcherOutput () suffix
+
+                                        if not (String.IsNullOrEmpty suffix.Text) then
+                                            framer.Push suffix
+
+                                        framer.Complete()
+                                    else
+                                        closeLocalState ()
+
+                                    // A direct synchronous Admit can have
+                                    // stalled inside framer.Complete. Recheck
+                                    // after it returns: bounded finalization
+                                    // may have frozen this reader meanwhile.
+                                    if Threading.Volatile.Read(&acceptingRedactedOutput) = 0 then
+                                        closeLocalState ()
+                                    else
+                                        completePublication |> Option.iter (fun complete -> complete ()))
                         with error ->
-                            framer.Abandon()
-                            abandonMatcherReservation ()
+                            closeLocalState ()
                             reportOutputFailure error)
                 finally
-                    // On an exceptional/cut-off read, never flush an ambiguous
-                    // pending prefix. A real EOF is the sole authority to do so.
-                    if not reachedEof then
-                        controlPrefix.Clear() |> ignore
-
-                    framer.Abandon()
-                    abandonMatcherReservation ()
+                    lock callbackGate (fun () -> closeLocalState ())
 
                     closed.TrySetResult(()) |> ignore
             }
-            :> Tasks.Task
+            (readerTask :> Tasks.Task), freezeRedactedReader
 
         let startRawReader
             (reader: IO.StreamReader)
@@ -1826,6 +1880,7 @@ module ProcessGroup =
                         stdoutClosed
                         (emitRedacted stdoutAdmission stdout stdoutRedacted)
                         (stdoutAdmission |> Option.bind (fun admission -> admission.Buffered))
+                        (stdoutAdmission |> Option.bind (fun admission -> admission.Close))
                         (stdoutAdmission |> Option.map _.Complete)
                         false)
             | _ -> None
@@ -1845,6 +1900,7 @@ module ProcessGroup =
                             else
                                 emitRedacted stderrAdmission stderr stderrRedacted consumed line)
                         (stderrAdmission |> Option.bind (fun admission -> admission.Buffered))
+                        (stderrAdmission |> Option.bind (fun admission -> admission.Close))
                         (stderrAdmission |> Option.map _.Complete)
                         true)
             | None -> None
@@ -1865,7 +1921,15 @@ module ProcessGroup =
 
                             if n > 0 then
                                 lock captureBuffer (fun () ->
-                                    if n > OutputLimitCharacters - captureBuffer.Length then
+                                    // Capture return is a synchronization
+                                    // boundary. An escaped descendant may keep
+                                    // this pipe open after the bounded EOF wait;
+                                    // continue draining it, but never let that
+                                    // late data reserve run-wide budget or alter
+                                    // a completed step after its snapshot.
+                                    if not acceptingCapturedOutput then
+                                        ()
+                                    elif n > OutputLimitCharacters - captureBuffer.Length then
                                         reportOutputLimit ()
                                     elif not (hasOutputFailure ()) then
                                         try
@@ -1898,11 +1962,13 @@ module ProcessGroup =
             | Some task -> task
             | None ->
                 redactingStdoutReader
+                |> Option.map fst
                 |> Option.orElse rawStdoutReader
                 |> Option.defaultValue (stdoutClosed.Task :> Tasks.Task)
 
         let stderrReaderCompleted: Tasks.Task =
             redactingStderrReader
+            |> Option.map fst
             |> Option.orElse rawStderrReader
             |> Option.defaultValue (stderrClosed.Task :> Tasks.Task)
 
@@ -2280,6 +2346,23 @@ module ProcessGroup =
                 outputCompletionClock
                 callbackReadersReachedEof
 
+        // A bounded reader wait is also an ownership boundary. Close Walker's
+        // per-stream admission lease before constructing the result so an
+        // escaped pipe holder cannot mutate a later step's shared budget. Do
+        // not let an unexpected direct Close implementation skip remaining
+        // readers or cleanup; retain it for final propagation instead.
+        let mutable deferredReaderCloseFailure: exn option = None
+
+        let freezeRedactingReader reader =
+            try
+                reader |> Option.iter (fun (_, freeze) -> freeze ())
+            with error ->
+                if deferredReaderCloseFailure.IsNone then
+                    deferredReaderCloseFailure <- Some error
+
+        freezeRedactingReader redactingStdoutReader
+        freezeRedactingReader redactingStderrReader
+
         let readerFailure =
             if allReadersCompleted.IsFaulted then
                 try
@@ -2351,7 +2434,10 @@ module ProcessGroup =
 
         let capturedText =
             capturedStdout
-            |> Option.map (fun _ -> lock captureBuffer (fun () -> captureBuffer.ToString()))
+            |> Option.map (fun _ ->
+                lock captureBuffer (fun () ->
+                    acceptingCapturedOutput <- false
+                    captureBuffer.ToString()))
 
         let bufferedStdout = lock stdout (fun () -> stdout.ToString())
         let bufferedStderr = lock stderr (fun () -> stderr.ToString())
@@ -2390,6 +2476,7 @@ module ProcessGroup =
             // that transport uncertainty first, but never let a bare reader
             // settlement timeout erase the retained narration failure.
             |> Option.orElse deferredGeneratedNarrationFailure
+            |> Option.orElse deferredReaderCloseFailure
             |> Option.orElse outputFailure
             |> Option.orElse lineCallbackSettlementTimeout
 

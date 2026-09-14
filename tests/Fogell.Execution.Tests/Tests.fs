@@ -6291,6 +6291,7 @@ let maskingOnOutputPath =
 
                   { Admit = fun line -> events.Enqueue(stream, "line:" + line.Text)
                     Buffered = None
+                    Close = None
                     Complete = fun () -> events.Enqueue(stream, "eof") }
 
               let result =

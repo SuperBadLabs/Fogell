@@ -502,10 +502,10 @@ cp "$scratch/walker-ctx.clean" "$walker_ctx"
 # A registration-time snapshot is not EOF. Losing the lifecycle completion
 # keeps the first physical fragment stranded instead of resolving it together
 # with bytes admitted after the binding.
-target='                  Complete = fun () -> completePublicationStream stream }'
+target='                  Complete = fun () -> completePublicationStream stream'
 [[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
   || { echo 'FG-236 proof: publication-EOF mutation target is not unique' >&2; exit 1; }
-sed -i 's/^                  Complete = fun () -> completePublicationStream stream }$/                  Complete = ignore }/' "$walker_ctx"
+sed -i 's/^                  Complete = fun () -> completePublicationStream stream$/                  Complete = ignore/' "$walker_ctx"
 kill_differential_mutant publication-eof 'progressive output stream did not reach EOF'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 

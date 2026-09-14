@@ -81,6 +81,156 @@ let captureOutputBudget =
                   with _ -> ()
           }
 
+          test "captured stdout stops reserving after its bounded return snapshot" {
+              let root = Path.Combine(Path.GetTempPath(), "fogell-capture-return-boundary-" + Guid.NewGuid().ToString("N"))
+              Directory.CreateDirectory root |> ignore
+              let pidFile = Path.Combine(root, "child.pid")
+              let releaseFile = Path.Combine(root, "release")
+              let quotedPidFile = shellQuote pidFile
+              let quotedReleaseFile = shellQuote releaseFile
+              use lateReservation = new Threading.ManualResetEventSlim(false)
+              let mutable returned = 0
+              // The setsid child intentionally escapes the script group while
+              // retaining stdout. It writes only after ProcessGroup's bounded
+              // reader wait has returned the captured result.
+              let script =
+                  $"setsid /bin/sh -c 'printf \"%%s\" \"$$\" > \"$1\"; while [ ! -f \"$2\" ]; do /bin/sleep 0.01; done; printf late' fogell-child {quotedPidFile} {quotedReleaseFile} & "
+                  + $"i=0; while [ ! -s {quotedPidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; /bin/sleep 0.01; done; printf pre"
+
+              try
+                  let result =
+                      ProcessGroup.run
+                          { RunRequest.create (script, root) with
+                              SuppressStdoutEcho = true
+                              ReserveCapturedOutput =
+                                  Some(fun _ ->
+                                      if Threading.Interlocked.CompareExchange(&returned, 0, 0) = 1 then
+                                          lateReservation.Set()) }
+
+                  Threading.Volatile.Write(&returned, 1)
+                  Expect.equal result.Stdout "pre" "bytes received before the bounded snapshot remain the return value"
+                  Expect.isFalse result.StdoutReachedEof "the escaped writer keeps capture EOF unresolved at return"
+
+                  match waitForPid pidFile with
+                  | None -> failtest "the escaped capture writer never established its pid"
+                  | Some pid ->
+                      File.WriteAllText(releaseFile, "release")
+                      Expect.isTrue (waitForReap pid) $"the owned escaped writer {pid} exits after release"
+
+                  Expect.isFalse
+                      (lateReservation.Wait 1_000)
+                      "late escaped stdout drains without a post-return budget reservation"
+              finally
+                  try
+                      if not (File.Exists releaseFile) then File.WriteAllText(releaseFile, "release")
+                      match waitForPid pidFile with
+                      | Some pid -> waitForReap pid |> ignore
+                      | None -> ()
+                      if Directory.Exists root then Directory.Delete(root, true)
+                  with _ -> ()
+          }
+
+          test "redacted escaped stdout cannot admit after the bounded reader return" {
+              let root = Path.Combine(Path.GetTempPath(), "fogell-redacted-return-boundary-" + Guid.NewGuid().ToString("N"))
+              Directory.CreateDirectory root |> ignore
+              let pidFile = Path.Combine(root, "child.pid")
+              let releaseFile = Path.Combine(root, "release")
+              let quotedPidFile = shellQuote pidFile
+              let quotedReleaseFile = shellQuote releaseFile
+              use lateAdmission = new Threading.ManualResetEventSlim(false)
+              let mutable returned = 0
+              let script =
+                  $"setsid /bin/sh -c 'printf \"%%s\" \"$$\" > \"$1\"; while [ ! -f \"$2\" ]; do /bin/sleep 0.01; done; printf \"late\\n\"' fogell-child {quotedPidFile} {quotedReleaseFile} & "
+                  + $"i=0; while [ ! -s {quotedPidFile} ]; do i=$((i+1)); [ \"$i\" -lt 300 ] || exit 97; /bin/sleep 0.01; done; printf 'pre\\n'"
+
+              let admission () =
+                  let markLate () =
+                      if Threading.Interlocked.CompareExchange(&returned, 0, 0) = 1 then
+                          lateAdmission.Set()
+
+                  { Admit = fun _ -> markLate ()
+                    Buffered =
+                        Some
+                            { Reserve = fun _ -> markLate ()
+                              Admit = fun _ _ -> markLate ()
+                              Release = fun _ -> () }
+                    // This deliberately observes rather than suppresses late
+                    // calls. ProcessGroup's reader freeze must prevent them;
+                    // WalkerCtx's production Close is an additional lease.
+                    Close = Some ignore
+                    Complete = markLate }
+
+              try
+                  Expect.throwsT<TimeoutException>
+                      (fun () ->
+                          ProcessGroup.run
+                              { RunRequest.create (script, root) with
+                                  OutputRedaction = Some(OutputRedactionPolicy [])
+                                  CreateRedactedAdmission = Some admission }
+                          |> ignore)
+                      "an incomplete redacted reader fails after the bounded wait"
+
+                  Threading.Volatile.Write(&returned, 1)
+
+                  match waitForPid pidFile with
+                  | None -> failtest "the escaped redacted writer never established its pid"
+                  | Some pid ->
+                      File.WriteAllText(releaseFile, "release")
+                      Expect.isTrue (waitForReap pid) $"the owned escaped redacted writer {pid} exits after release"
+
+                  Expect.isFalse
+                      (lateAdmission.Wait 1_000)
+                      "no Reserve, Admit, or Complete call occurs after the reader return boundary"
+              finally
+                  try
+                      if not (File.Exists releaseFile) then File.WriteAllText(releaseFile, "release")
+                      match waitForPid pidFile with
+                      | Some pid -> waitForReap pid |> ignore
+                      | None -> ()
+                      if Directory.Exists root then Directory.Delete(root, true)
+                  with _ -> ()
+          }
+
+          test "a stalled synchronous redacted admission keeps the bounded return" {
+              let root = Path.Combine(Path.GetTempPath(), "fogell-redacted-stall-" + Guid.NewGuid().ToString("N"))
+              Directory.CreateDirectory root |> ignore
+              use entered = new Threading.ManualResetEventSlim(false)
+              use release = new Threading.ManualResetEventSlim(false)
+              use exited = new Threading.ManualResetEventSlim(false)
+              let clock = Stopwatch.StartNew()
+
+              let admission () =
+                  { Admit =
+                        fun _ ->
+                            entered.Set()
+
+                            try
+                                release.Wait()
+                            finally
+                                exited.Set()
+                    Buffered = None
+                    Close = None
+                    Complete = ignore }
+
+              try
+                  Expect.throwsT<TimeoutException>
+                      (fun () ->
+                          ProcessGroup.run
+                              { RunRequest.create ("printf 'stalled\\n'", root) with
+                                  ReapGroup = false
+                                  OutputRedaction = Some(OutputRedactionPolicy [])
+                                  CreateRedactedAdmission = Some admission }
+                          |> ignore)
+                      "a direct stalled admission must not make reader freezing unbounded"
+
+                  Expect.isTrue entered.IsSet "the fixture holds synchronous admission under callbackGate"
+                  Expect.isLessThan clock.ElapsedMilliseconds 1_500L "TryEnter reader freeze preserves the existing bounded return"
+              finally
+                  release.Set()
+                  Expect.isTrue (exited.Wait 1_000) "the stalled direct admission exits before fixture cleanup"
+                  if Directory.Exists root then Directory.Delete(root, true)
+          }
+
           test "a newline-free redacted fragment reserves before framing and reaps before reporting rejection" {
               let root = Path.Combine(Path.GetTempPath(), "fogell-buffered-reservation-" + Guid.NewGuid().ToString("N"))
               Directory.CreateDirectory root |> ignore
@@ -89,6 +239,7 @@ let captureOutputBudget =
               let quotedPidFile = shellQuote pidFile
               let quotedLateFile = shellQuote lateFile
               let failure = BufferedReservationFailure()
+              let mutable admissionCount = 0
               // The normal stdout stream has no newline. A framer-only quota
               // check would retain the fragment indefinitely and let this
               // child reach its late side effect.
@@ -99,12 +250,20 @@ let captureOutputBudget =
                   + quotedLateFile
 
               let admission () =
+                  // ProcessGroup mints stderr admission before stdout. Do not
+                  // let shell tracing on stderr reject before the fixture has
+                  // started its child; reject the newline-free stdout chunk.
+                  let isStdout = Threading.Interlocked.Increment(&admissionCount) = 2
+
                   { Admit = ignore
                     Buffered =
                         Some
-                            { Reserve = fun _ -> raise failure
-                              Admit = fun _ _ -> failtest "a rejected fragment must not become a line"
+                            { Reserve =
+                                fun _ ->
+                                    if isStdout then raise failure
+                              Admit = fun _ _ -> ()
                               Release = ignore }
+                    Close = None
                     Complete = ignore }
 
               try
@@ -162,6 +321,7 @@ let captureOutputBudget =
                                     bufferedCharacters <- bufferedCharacters + characters
                               Admit = fun _ _ -> failtest "the held prefix must not reach line admission"
                               Release = fun characters -> bufferedCharacters <- bufferedCharacters - characters }
+                    Close = None
                     Complete = ignore }
 
               try
@@ -262,6 +422,13 @@ let captureOutputBudget =
 
               Expect.sequenceEqual reservations [ 5 ] "the EOF suffix is reserved before framing"
               Expect.sequenceEqual admissions [ 5, "secre" ] "the suffix is transferred into its unterminated record"
+
+              let abandoned = policy.CreateMatcher()
+              Expect.equal (abandoned.PushRedacted "secre").Text "" "the abandonment fixture retains an ambiguous prefix"
+              Expect.equal abandoned.PendingCharacters 5 "the ambiguous prefix occupies matcher state before abandonment"
+              abandoned.Abandon()
+              Expect.equal abandoned.PendingCharacters 0 "abandonment drops pending matcher state"
+              Expect.equal (abandoned.CompleteRedacted()).Text "" "abandonment never turns an unresolved suffix into EOF output"
           }
 
           test "generated interrupt narration failure is deferred until the process group is reaped" {

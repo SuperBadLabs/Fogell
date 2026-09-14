@@ -574,6 +574,9 @@ text releases its temporary reservation, without refunding retained records.
 script never prints the result. Captures consume characters without creating
 console records. Positive growth from later secret masking consumes the same
 budget; shortening or discarding a capture does not refund it.
+When a bounded reader wait expires, returning the step closes output admission.
+Late escaped-writer bytes cannot charge a later step; closing a stream does not
+count as EOF for secret masking.
 
 Crossing either build limit prevents further step execution and interrupts
 running shell siblings even when `failFast` is disabled. All parallel branches
