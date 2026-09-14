@@ -103,3 +103,14 @@ generated credentials were removed after verification. The five original
 containers retained their IDs: `b3c3d866d9d1` (`ctrl`), `5388364b3d6b` (`ag1`),
 `3d18d8520a10` (`jenkins-bench`), `38cf17f58768` (`mcloving-faceoff2`), and
 `f828e5fbbd95` (`jenkins-lab`).
+
+## Final stack review
+
+The stack incorporates #447's `d7163c9e` review fixes: platform-correct newline
+capacity accounting and fixed returned-failure stderr. The combined Release
+build passed with zero warnings/errors; all eight suites passed 1,216 tests,
+and the real-controller acceptance proof passed again with exact 18 MB tail
+preservation. `review-followup-tests.txt` records this verification. The Luigi
+timings above remain the original benchmark observations, not a new campaign.
+The final shared output files are identified by #447's adjacent
+`REVIEW-FOLLOWUP-SHA256SUMS`; the log-batch source hashes remain unchanged.
