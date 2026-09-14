@@ -1,0 +1,29 @@
+Complete local gate: PASS; process exit 0; final line OK.
+Command: ./scripts/build-and-test.sh (all lanes; PostgreSQL and established external corpus fixtures configured).
+Base for strict stale-reference audit: codex/bounded-output-diagnostics.
+
+tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj: EXPECTO! 78 tests run in 00:00:15.0290289 for Fogell.Controller.Api – 78 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj: EXPECTO! 398 tests run in 00:00:04.3871640 for Fogell.Differential – 398 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj: EXPECTO! 41 tests run in 00:00:00.0773944 for Fogell.Domain – 41 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj: EXPECTO! 169 tests run in 00:00:29.2118158 for Fogell.Execution – 169 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj: EXPECTO! 243 tests run in 00:00:00.1929034 for Fogell.Groovy – 243 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Journal.Tests/Fogell.Journal.Tests.fsproj: EXPECTO! 31 tests run in 00:00:00.2587996 for Fogell.Journal – 31 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj: EXPECTO! 143 tests run in 00:00:00.3189438 for Fogell.Pipeline.Parser – 143 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj: EXPECTO! 112 tests run in 00:00:15.6559880 for Fogell.Store – 112 passed, 0 ignored, 0 failed, 0 errored. Success!
+
+Separate controller acceptance proofs:
+native-proof: FG-224/FG-042b PROOF PASS: controller-lifetime EOF supervision reaps the nested shell and its sleep child; safe timing refusal; exact execution-preflight admission and idempotency boundary; restart-discovered durable admission; authenticated byte-exact artifact retrieval; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; attempt-keyed retry journals with same-child deterministic resume; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; terminal event-file cleanup; graceful-shutdown reason event, outbox, and byte-exact recovery file; atomic terminal roll-up
+container-proof: FG-224/FG-042b PROOF PASS: controller-lifetime EOF supervision reaps the nested shell and its sleep child; digest-pinned surviving-init controller death closes the real liveness pipe and reaps Run.Host, the step shell, and its sleep child without a post-sleep effect; safe timing refusal; exact execution-preflight admission and idempotency boundary; restart-discovered durable admission; authenticated byte-exact artifact retrieval; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; attempt-keyed retry journals with same-child deterministic resume; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; terminal event-file cleanup; graceful-shutdown reason event, outbox, and byte-exact recovery file; atomic terminal roll-up
+proof-bounds: FG-231 PROOF PASS: 8 planted controls/stalls in the runnable-controller proof each became a named result within budget and left no controller behind
+
+Selected full-gate receipts:
+PROJECT TEST INVENTORY PROOF PASS: nested/mismatched projects identified; ambient Git selectors contained; inventory and summaries fail closed; summary boundary holds under named UTF-8 and C locales
+FG-251 PROOF PASS: baseline passed; architecture, statx mask/uid, loader/path reopen, blocking/inheritable descriptor, mode, decode, and growth mutants compiled and were killed
+FG-235 PROOF PASS: baseline passed; central-refusal and runtime-preflight mutants compiled and were killed
+FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, inactive-callback, executor-stream-provenance, executor-buffer-provenance, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, timestamp-prefix, timestamp-registered-prefix, timestamp-boundary, timestamp-boundary-provenance, terminal-timestamp-boundary, terminal-timestamp-registered-prefix, open-stream-barrier, pending-publication, pending-leak-screen, transformed-token-provenance, committed-history, completed-history, committed-prefix-projection, non-expanding-binding, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed
+FG-228 PROOF PASS: baseline passed; linked-directory/openat/path-follow mutant compiled and was killed
+FG-233 PROOF PASS: across every workflow under .github/workflows, Podman is explicit, Actions services are absent, five jobs own guarded disposable PostgreSQL lifecycles, and hosted plus local host ports are runtime-allocated
+OK
+FG-094 COMPATIBILITY REGRESSION GATE PASSED: files=228 baseline_accepted=200 current_accepted=200 baseline_tier1=1 current_tier1=16 allowed_oracle_not_ready_losses=0 gains=0
+APPROVAL LANE: ALL ASSERTIONS PASSED
+OK

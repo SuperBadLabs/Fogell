@@ -32,6 +32,27 @@ type internal EventDrainCompletion =
 
 module internal EventStream =
 
+    let private strictUtf8 = Text.UTF8Encoding(false, true)
+
+    /// Malformed payloads must not expand through replacement characters and
+    /// exceed the decoded UTF-8 batch bound.
+    let eventBody frame =
+        match frame with
+        | Oversized -> "controller refused an oversized child log frame"
+        | Encoded bytes ->
+            let payloadLength =
+                if bytes.Length > 0 && bytes[bytes.Length - 1] = byte '\r' then
+                    bytes.Length - 1
+                else
+                    bytes.Length
+
+            try
+                Text.Encoding.ASCII.GetString(bytes, 0, payloadLength)
+                |> Convert.FromBase64String
+                |> strictUtf8.GetString
+            with _ ->
+                "controller refused a malformed child log frame"
+
     /// Consume a bounded prefix of an append-only, newline-framed stream.
     /// Offset advances only for bytes actually inspected, so bytes read ahead
     /// into the local buffer are safely re-read by the next batch. The callback
@@ -116,78 +137,114 @@ module internal EventStream =
           ReachedEof = reachedEof
           AuthorityLost = authorityLost }
 
-    /// Drain the exact finite boundary observed after producer extinction.
-    /// Individual slices remain bounded so lease/cancellation checks are
-    /// interleaved with publication, but there is deliberately no cumulative
-    /// byte or frame ceiling: a finite tail must not be silently truncated.
-    /// Any later length change contradicts the extinction proof and is surfaced
-    /// as unsafe evidence rather than being folded into terminal truth.
-    let drainExtinguishedBoundary
+    /// Stage parsing in a private cursor. A store refusal or exception must
+    /// not acknowledge any frame in an atomic batch, including a retained
+    /// prefix or oversized-frame discard state from an earlier slice.
+    let drainCommittedBatch stream (state: EventDrainState) maxFrameBytes byteBudget frameBudget publish =
+        let staged = { state with Tail = Array.copy state.Tail }
+        let frames = ResizeArray<EventFrame>()
+        let batch = drainBatch stream staged maxFrameBytes byteBudget frameBudget (fun frame ->
+            frames.Add frame
+            true)
+
+        if frames.Count = 0 || publish (frames.ToArray()) then
+            state.Offset <- staged.Offset
+            state.Tail <- staged.Tail
+            state.DiscardingOversizedFrame <- staged.DiscardingOversizedFrame
+            batch
+        else
+            { BytesProcessed = 0
+              FramesProcessed = 0
+              ReachedEof = false
+              AuthorityLost = true }
+
+    /// Drain an immutable finite boundary with bounded slices and cooperative
+    /// scheduling. Both publication modes share the same extinction checks.
+    let private drainExtinguishedBoundaryUsing
+        yieldBetweenBatches
+        (drainSlice: Stream -> EventDrainState -> int -> int -> int -> EventDrainBatch)
         (openStream: unit -> Stream option)
         (state: EventDrainState)
         maxFrameBytes
         sliceByteBudget
         sliceFrameBudget
         (continueControl: unit -> bool)
-        publish
         =
-        let mutable totalBytes = 0
-        let mutable totalFrames = 0
-        let mutable stop = None
+        task {
+            let mutable totalBytes = 0
+            let mutable totalFrames = 0
+            let mutable stop = None
 
-        match openStream () with
-        | None ->
-            stop <-
-                if state.Offset <> 0L then
-                    Some StreamChangedAfterExtinction
-                elif state.Tail.Length <> 0 || state.DiscardingOversizedFrame then
-                    Some IncompleteFrameAtEndOfStream
-                else
-                    Some EndOfStream
-        | Some opened ->
-            // Retain the same handle for the full drain. Besides fixing the
-            // byte boundary, this fixes file identity if the path is replaced.
-            use stream = opened
-            let boundary = stream.Length
+            match openStream () with
+            | None ->
+                stop <-
+                    if state.Offset <> 0L then
+                        Some StreamChangedAfterExtinction
+                    elif state.Tail.Length <> 0 || state.DiscardingOversizedFrame then
+                        Some IncompleteFrameAtEndOfStream
+                    else
+                        Some EndOfStream
+            | Some opened ->
+                // Retain the same handle for the full drain. Besides fixing the
+                // byte boundary, this fixes file identity if the path is replaced.
+                use stream = opened
+                let boundary = stream.Length
 
-            if boundary < state.Offset then
-                stop <- Some StreamChangedAfterExtinction
-
-            while stop.IsNone do
-                if not (continueControl()) then
-                    stop <- Some ControlStopped
-                elif stream.Length <> boundary then
+                if boundary < state.Offset then
                     stop <- Some StreamChangedAfterExtinction
-                elif state.Offset = boundary then
-                    stop <-
-                        if state.Tail.Length = 0 && not state.DiscardingOversizedFrame then
-                            Some EndOfStream
-                        else
-                            Some IncompleteFrameAtEndOfStream
-                else
-                    let remaining = boundary - state.Offset
-                    let batch =
-                        drainBatch
-                            stream
-                            state
-                            maxFrameBytes
-                            (min sliceByteBudget (int (min remaining (int64 Int32.MaxValue))))
-                            sliceFrameBudget
-                            publish
 
-                    totalBytes <- totalBytes + batch.BytesProcessed
-                    totalFrames <- totalFrames + batch.FramesProcessed
-
-                    if batch.AuthorityLost then
-                        stop <- Some PublicationAuthorityLost
-                    elif batch.BytesProcessed = 0 then
-                        // The frozen boundary promised unread bytes. A zero
-                        // read cannot safely be interpreted as completion.
+                while stop.IsNone do
+                    // Even a continuously full file gives request handling and
+                    // shutdown continuations an opportunity to run between slices.
+                    if yieldBetweenBatches then
+                        do! System.Threading.Tasks.Task.Yield()
+                    if not (continueControl()) then
+                        stop <- Some ControlStopped
+                    elif stream.Length <> boundary then
                         stop <- Some StreamChangedAfterExtinction
+                    elif state.Offset = boundary then
+                        stop <-
+                            if state.Tail.Length = 0 && not state.DiscardingOversizedFrame then
+                                Some EndOfStream
+                            else
+                                Some IncompleteFrameAtEndOfStream
+                    else
+                        let remaining = boundary - state.Offset
+                        let batch =
+                            drainSlice
+                                stream
+                                state
+                                maxFrameBytes
+                                (min sliceByteBudget (int (min remaining (int64 Int32.MaxValue))))
+                                sliceFrameBudget
 
-        { BytesProcessed = totalBytes
-          FramesProcessed = totalFrames
-          Stop = stop.Value }
+                        totalBytes <- totalBytes + batch.BytesProcessed
+                        totalFrames <- totalFrames + batch.FramesProcessed
+
+                        if batch.AuthorityLost then
+                            stop <- Some PublicationAuthorityLost
+                        elif batch.BytesProcessed = 0 then
+                            // The frozen boundary promised unread bytes. A zero
+                            // read cannot safely be interpreted as completion.
+                            stop <- Some StreamChangedAfterExtinction
+
+            return { BytesProcessed = totalBytes
+                     FramesProcessed = totalFrames
+                     Stop = stop.Value }
+
+        }
+
+    /// Single-frame publication retained for existing callers and proofs.
+    let drainExtinguishedBoundary openStream state maxFrameBytes sliceByteBudget sliceFrameBudget continueControl publish =
+        let drain stream cursor maximum bytes frames = drainBatch stream cursor maximum bytes frames publish
+        (drainExtinguishedBoundaryUsing false drain openStream state maxFrameBytes sliceByteBudget sliceFrameBudget continueControl)
+            .GetAwaiter().GetResult()
+
+    /// Production publication commits one bounded batch before advancing its
+    /// cursor. No cumulative cap can discard a finite post-exit log tail.
+    let drainExtinguishedBoundaryBatched openStream state maxFrameBytes sliceByteBudget sliceFrameBudget continueControl publish =
+        let drain stream cursor maximum bytes frames = drainCommittedBatch stream cursor maximum bytes frames publish
+        drainExtinguishedBoundaryUsing true drain openStream state maxFrameBytes sliceByteBudget sliceFrameBudget continueControl
 
     /// Terminal truth is authorized only by a complete, immutable frame
     /// boundary. Every other completion requires reconciliation.

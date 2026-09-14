@@ -154,6 +154,26 @@ let private readLog org project build fromSequence =
     | Some chunks -> chunks
     | None -> failtest "expected the project-qualified build lineage to exist"
 
+let private nextLogCursor (org: OrganizationId) (build: BuildId) =
+    use conn = new Npgsql.NpgsqlConnection(connectionString)
+    conn.Open()
+    use tx = conn.BeginTransaction()
+    use scope = conn.CreateCommand()
+    scope.Transaction <- tx
+    scope.CommandText <- "SELECT set_config('fogell.organization_id', @o, true)"
+    scope.Parameters.AddWithValue("o", string org.Value) |> ignore
+    scope.ExecuteScalar() |> ignore
+    use read = conn.CreateCommand()
+    read.Transaction <- tx
+    read.CommandText <-
+        "SELECT next_log_sequence FROM builds
+          WHERE organization_id = @o AND id = @b"
+    read.Parameters.AddWithValue("o", org.Value) |> ignore
+    read.Parameters.AddWithValue("b", build.Value) |> ignore
+    let value = read.ExecuteScalar() :?> int
+    tx.Commit()
+    value
+
 let migrations =
     testList
         "FG-020 migrations"
@@ -5469,6 +5489,125 @@ let logs =
               Expect.isTrue (store.AppendLog(org, a.BuildId, a.AttemptId, 0, "once")) "first"
               Expect.isFalse (store.AppendLog(org, a.BuildId, a.AttemptId, 0, "again")) "duplicate rejected"
               Expect.equal (readLog org project a.BuildId 0 |> List.length) 1 "still one chunk"
+          }
+
+          test "a fenced batch assigns consecutive public cursors in body order" {
+              let org, project = freshProject ()
+              let admitted, fence = runningAttempt org project "log-batch-order" "batch-owner" 60
+
+              Expect.isTrue
+                  (store.AppendLogBatchFenced(
+                      org, admitted.BuildId, admitted.AttemptId, fence, "batch-owner", 4, [| "four"; "five"; "six" |]))
+                  "batch appended"
+              Expect.equal
+                  (readLog org project admitted.BuildId 0)
+                  [ 4, "four"; 5, "five"; 6, "six" ]
+                  "bodies retain their input order at contiguous build cursors"
+              Expect.equal (nextLogCursor org admitted.BuildId) 7 "cursor follows the complete batch"
+              Expect.isTrue
+                  (store.AppendLogBatchFenced(
+                      org, admitted.BuildId, admitted.AttemptId, fence, "batch-owner", 7, [||]))
+                  "empty batch is a success no-op"
+              Expect.equal (nextLogCursor org admitted.BuildId) 7 "empty batch consumes no cursor"
+          }
+
+          test "fenced batch limits are refused before they can change persistence" {
+              let org, project = freshProject ()
+              let admitted, fence = runningAttempt org project "log-batch-limits" "batch-owner" 60
+              let append start bodies =
+                  store.AppendLogBatchFenced(
+                      org, admitted.BuildId, admitted.AttemptId, fence, "batch-owner", start, bodies)
+
+              Expect.throwsT<ArgumentException>
+                  (fun () -> append 0 (Array.create 129 "frame") |> ignore)
+                  "frame count is capped"
+              Expect.throwsT<ArgumentException>
+                  (fun () -> append 0 [| String('x', 1024 * 1024 + 1) |] |> ignore)
+                  "UTF-8 payload total is capped"
+              Expect.throwsT<ArgumentException>
+                  (fun () -> append Int32.MaxValue [| "frame" |] |> ignore)
+                  "resulting public cursor must fit in Int32"
+              Expect.equal (readLog org project admitted.BuildId 0) [] "invalid batches write no rows"
+              Expect.equal (nextLogCursor org admitted.BuildId) 0 "invalid batches do not open a cursor allocation"
+          }
+
+          test "a fenced batch overlap rejects every frame without consuming a cursor" {
+              let org, project = freshProject ()
+              let admitted, fence = runningAttempt org project "log-batch-overlap" "batch-owner" 60
+
+              Expect.isTrue
+                  (store.AppendLogBatchFenced(
+                      org, admitted.BuildId, admitted.AttemptId, fence, "batch-owner", 5, [| "five" |]))
+                  "seed batch appended"
+              Expect.isFalse
+                  (store.AppendLogBatchFenced(
+                      org, admitted.BuildId, admitted.AttemptId, fence, "batch-owner", 4, [| "four"; "duplicate-five"; "six" |]))
+                  "one conflicting sequence refuses the whole batch"
+              Expect.equal (readLog org project admitted.BuildId 0) [ 5, "five" ] "no nonconflicting tail leaked in"
+              Expect.equal (nextLogCursor org admitted.BuildId) 6 "refusal did not consume the cursor"
+          }
+
+          test "fenced batches refuse stale authority and bad lineage atomically" {
+              let org, project = freshProject ()
+              let admitted, fence = runningAttempt org project "log-batch-authority" "batch-owner" 60
+              let wrongBuild = admitOk (newBuild org project "log-batch-wrong-build" [ "b" ])
+
+              Expect.isFalse
+                  (store.AppendLogBatchFenced(
+                      org, wrongBuild.BuildId, admitted.AttemptId, fence, "batch-owner", 0, [| "bad"; "lineage" |]))
+                  "wrong lineage is refused"
+              Expect.isFalse
+                  (store.AppendLogBatchFenced(
+                      org, admitted.BuildId, admitted.AttemptId, Fence(fence.Value + 1L), "batch-owner", 0, [| "bad"; "fence" |]))
+                  "wrong fence is refused"
+
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use expire = conn.CreateCommand()
+              expire.CommandText <-
+                  "UPDATE attempts SET lease_expires_at = clock_timestamp() - interval '1 second'
+                    WHERE organization_id = @o AND id = @a"
+              expire.Parameters.AddWithValue("o", org.Value) |> ignore
+              expire.Parameters.AddWithValue("a", admitted.AttemptId.Value) |> ignore
+              Expect.equal (expire.ExecuteNonQuery()) 1 "lease expired"
+
+              Expect.isFalse
+                  (store.AppendLogBatchFenced(
+                      org, admitted.BuildId, admitted.AttemptId, fence, "batch-owner", 0, [| "expired"; "lease" |]))
+                  "expired authority is refused"
+              Expect.equal (readLog org project admitted.BuildId 0) [] "authority failures insert no partial rows"
+              Expect.equal (nextLogCursor org admitted.BuildId) 0 "authority failures consume no cursor"
+          }
+
+          test "a restore epoch change refuses the whole fenced batch" {
+              let org, project = freshProject ()
+              let admitted, fence = runningAttempt org project "log-batch-restore" "batch-owner" 60
+              store.ActivateRestore() |> ignore
+
+              Expect.isFalse
+                  (store.AppendLogBatchFenced(
+                      org, admitted.BuildId, admitted.AttemptId, fence, "batch-owner", 0, [| "stale"; "epoch" |]))
+                  "pre-restore lease cannot append"
+              Expect.equal (readLog org project admitted.BuildId 0) [] "restore refusal is atomic"
+              Expect.equal (nextLogCursor org admitted.BuildId) 0 "restore refusal consumes no cursor"
+          }
+
+          test "concurrent identical fenced batches have one winner and no cursor burn" {
+              let org, project = freshProject ()
+              let admitted, fence = runningAttempt org project "log-batch-race" "batch-owner" 60
+              let publish () =
+                  Store(connectionString).AppendLogBatchFenced(
+                      org, admitted.BuildId, admitted.AttemptId, fence, "batch-owner", 0, [| "zero"; "one" |])
+
+              let results =
+                  [ async { return publish () }
+                    async { return publish () } ]
+                  |> Async.Parallel
+                  |> Async.RunSynchronously
+
+              Expect.equal (results |> Array.filter id |> Array.length) 1 "exactly one concurrent publisher wins"
+              Expect.equal (readLog org project admitted.BuildId 0) [ 0, "zero"; 1, "one" ] "winner inserted one exact batch"
+              Expect.equal (nextLogCursor org admitted.BuildId) 2 "loser burned no public cursor"
           }
 
           test "concurrent duplicate publication does not burn the next build cursor" {

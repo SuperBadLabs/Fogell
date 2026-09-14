@@ -476,6 +476,20 @@ returns 409. Placement is controller policy: a request carrying
 `Fogell-Trust-Pool` is refused. Log responses include `next_sequence`; use that
 value as the next `?from=` cursor when tailing a long-running build.
 
+The local worker publishes logs in atomic batches of at most 128 frames and
+1 MiB of decoded UTF-8 text. Each parsing slice reads at most 256 KiB, retaining
+at most one 1 MiB encoded partial frame. Malformed base64 or UTF-8 becomes a
+fixed diagnostic. A refused transaction advances neither the durable build
+cursor nor the worker's committed frame cursor.
+
+While a backlog remains, the worker yields between batches and checks control
+without waiting for the idle poll interval. It rechecks cancellation and lease
+authority between transactions; a slow database operation can still delay that
+check until the operation returns. After producer extinction, it drains the
+complete frozen boundary before terminal publication, with the same bounded
+batches and control checks. These limits bound each publication transaction;
+they are not total log-storage quotas.
+
 A graceful or ungraceful forced stop still moves started work to
 `reconciliation_required`: proving every process extinct does not prove whether
 an external effect or journal write completed. Shutdown cancellation interrupts

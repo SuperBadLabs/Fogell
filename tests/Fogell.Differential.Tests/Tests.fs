@@ -953,7 +953,114 @@ let controllerEventDrainBudgets =
 
     testList
         "FG-224 controller event drain budgets"
-        [ test "a fixed backlog is consumed in bounded, exactly-once batches" {
+        [ test "malformed UTF-8 cannot expand a bounded encoded frame into an oversized batch" {
+              let encoded = Array.create (768 * 1024) 0xffuy |> Convert.ToBase64String |> Text.Encoding.ASCII.GetBytes
+              Expect.equal encoded.Length (1024 * 1024) "the malformed input fits the encoded frame limit"
+              Expect.equal
+                  (EventStream.eventBody (Encoded encoded))
+                  "controller refused a malformed child log frame"
+                  "invalid UTF-8 becomes one bounded diagnostic instead of expanding to replacement text"
+              let valid = "Unicode stays exact: λ 日本語 😀"
+              let validFrame = Text.Encoding.ASCII.GetBytes(Convert.ToBase64String(Text.Encoding.UTF8.GetBytes valid) + "\r")
+              Expect.equal (EventStream.eventBody (Encoded validFrame)) valid "valid Unicode and CRLF remain supported"
+          }
+
+          test "atomic batch refusal preserves a partial cursor and retries every frame in order" {
+              let first = frame "first"
+              let bytes = Array.concat [ first; frame "second"; frame "third" ]
+              use stream = new IO.MemoryStream(bytes)
+              let cursor = state ()
+              EventStream.drainCommittedBatch stream cursor 1024 3 128 (fun _ -> failtest "partial frame published") |> ignore
+              let offset, tail = cursor.Offset, Array.copy cursor.Tail
+              let mutable attempted = Array.empty
+              let refused = EventStream.drainCommittedBatch stream cursor 1024 4096 2 (fun frames ->
+                  attempted <- frames
+                  false)
+              Expect.isTrue refused.AuthorityLost "the atomic refusal stops publication"
+              Expect.equal refused.FramesProcessed 0 "no refused frame is acknowledged"
+              Expect.equal cursor.Offset offset "refusal does not consume the retained prefix or newline"
+              Expect.sequenceEqual cursor.Tail tail "the exact prior prefix remains retryable"
+              let committed = ResizeArray<EventFrame>()
+              let accepted = EventStream.drainCommittedBatch stream cursor 1024 4096 2 (fun frames ->
+                  Expect.sequenceEqual frames attempted "retry submits the identical ordered transaction"
+                  committed.AddRange frames
+                  true)
+              Expect.equal accepted.FramesProcessed 2 "one commit respects the frame bound"
+              Expect.equal cursor.Offset (int64 (first.Length + (frame "second").Length)) "only committed frames advanced"
+              EventStream.drainCommittedBatch stream cursor 1024 4096 2 (fun frames -> committed.AddRange frames; true) |> ignore
+              Expect.sequenceEqual committed
+                  [ for text in [ "first"; "second"; "third" ] ->
+                      let bytes = frame text
+                      Encoded(bytes[..bytes.Length-2]) ]
+                  "the complete file is published once in order"
+          }
+
+          test "a throwing batch publisher cannot advance its cursor" {
+              use stream = new IO.MemoryStream(frame "not committed")
+              let cursor = state ()
+              Expect.throwsT<IO.IOException>
+                  (fun () -> EventStream.drainCommittedBatch stream cursor 1024 4096 128 (fun _ -> raise (IO.IOException "commit failed")) |> ignore)
+                  "an infrastructure failure escapes to conservative worker recovery"
+              Expect.equal cursor.Offset 0L "no bytes are acknowledged after a failed commit"
+              Expect.isEmpty cursor.Tail "staged parser state was not installed"
+          }
+
+          test "atomic refusal preserves oversized discard state until its marker commits" {
+              use stream = new IO.MemoryStream(Text.Encoding.ASCII.GetBytes("oversized\nnext\n"))
+              let cursor = state ()
+              EventStream.drainCommittedBatch stream cursor 4 8 128 (fun _ -> failtest "unterminated frame published") |> ignore
+              Expect.isTrue cursor.DiscardingOversizedFrame "the prefix crossed its bound"
+              let offset = cursor.Offset
+              let refused = EventStream.drainCommittedBatch stream cursor 4 4096 128 (fun frames ->
+                  Expect.sequenceEqual frames [ Oversized; Encoded(Text.Encoding.ASCII.GetBytes "next") ] "oversized marker and following frame share the transaction"
+                  false)
+              Expect.isTrue refused.AuthorityLost "the marker is not silently consumed"
+              Expect.equal cursor.Offset offset "discard cursor remains at its prior boundary"
+              Expect.isTrue cursor.DiscardingOversizedFrame "discard state is retryable"
+          }
+
+          test "batched extinct drain preserves a finite tail and checks control between transactions" {
+              let bytes = Array.concat [| for i in 0..999 -> frame $"row-{i}" |]
+              let cursor = state ()
+              let published = ResizeArray<string>()
+              let mutable checks = 0
+              let mutable commits = 0
+              let completion =
+                  EventStream.drainExtinguishedBoundaryBatched
+                      (fun () -> Some(new IO.MemoryStream(bytes) :> IO.Stream)) cursor 1024 4096 128
+                      (fun () -> checks <- checks + 1; true)
+                      (fun frames ->
+                          commits <- commits + 1
+                          Expect.isTrue (frames.Length <= 128) "transaction size is bounded"
+                          for item in frames do
+                              match item with
+                              | Encoded value -> published.Add(Text.Encoding.UTF8.GetString(Convert.FromBase64String(Text.Encoding.ASCII.GetString value)))
+                              | Oversized -> failtest "valid input refused"
+                          true)
+                      |> fun pending -> pending.GetAwaiter().GetResult()
+              Expect.equal completion.Stop EndOfStream "the complete immutable boundary authorizes terminal truth"
+              Expect.sequenceEqual published [ for i in 0..999 -> $"row-{i}" ] "batching loses or reorders no log records"
+              Expect.isGreaterThan commits 1 "the test crosses multiple transactions"
+              Expect.isGreaterThan checks commits "control is checked at every slice and before terminal completion"
+          }
+
+          test "a refused extinct batch leaves its complete tail available for recovery" {
+              let bytes = Array.concat [| for i in 0..299 -> frame $"row-{i}" |]
+              let cursor = state ()
+              let mutable commits = 0
+              let mutable committedOffset = 0L
+              let completion =
+                  EventStream.drainExtinguishedBoundaryBatched
+                      (fun () -> Some(new IO.MemoryStream(bytes) :> IO.Stream)) cursor 1024 4096 128
+                      (fun () -> committedOffset <- cursor.Offset; true)
+                      (fun _ -> commits <- commits + 1; commits = 1)
+                      |> fun pending -> pending.GetAwaiter().GetResult()
+              Expect.equal completion.Stop PublicationAuthorityLost "rejected authority prevents terminal publication"
+              Expect.equal cursor.Offset committedOffset "the rejected transaction consumes no additional bytes"
+              Expect.isFalse (EventStream.terminalPublicationAllowed completion) "partial publication cannot authorize success"
+          }
+
+          test "a fixed backlog is consumed in bounded, exactly-once batches" {
               let expected = [ for i in 0 .. 99 -> $"line-{i}" ]
               let bytes = expected |> List.collect (frame >> Array.toList) |> Array.ofList
               use stream = new IO.MemoryStream(bytes)

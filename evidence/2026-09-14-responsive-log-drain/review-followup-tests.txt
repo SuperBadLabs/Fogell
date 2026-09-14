@@ -1,0 +1,13 @@
+Final combined stack: d7163c9e output review fixes integrated into the log batch.
+Release build: zero warnings/errors. All 1,216 tests passed.
+
+tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj: EXPECTO! 78 tests run in 00:00:11.7573000 for Fogell.Controller.Api – 78 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj: EXPECTO! 398 tests run in 00:00:04.4078970 for Fogell.Differential – 398 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj: EXPECTO! 41 tests run in 00:00:00.0773827 for Fogell.Domain – 41 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj: EXPECTO! 170 tests run in 00:00:29.1895046 for Fogell.Execution – 170 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj: EXPECTO! 243 tests run in 00:00:00.1941030 for Fogell.Groovy – 243 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Journal.Tests/Fogell.Journal.Tests.fsproj: EXPECTO! 31 tests run in 00:00:00.2445993 for Fogell.Journal – 31 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj: EXPECTO! 143 tests run in 00:00:00.3237401 for Fogell.Pipeline.Parser – 143 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj: EXPECTO! 112 tests run in 00:00:12.2401494 for Fogell.Store – 112 passed, 0 ignored, 0 failed, 0 errored. Success!
+
+FG-224/FG-042b PROOF PASS: controller-lifetime EOF supervision reaps the nested shell and its sleep child; safe timing refusal; exact execution-preflight admission and idempotency boundary; restart-discovered durable admission; authenticated byte-exact artifact retrieval; poisoned-definition quarantine with FIFO progress; exact chunked byte bounds; build-number metadata; supervised execution; attempt-keyed retry journals with same-child deterministic resume; progressive bounded fenced logs; >16 MiB finite post-exit tail drained exactly once; terminal event-file cleanup; graceful-shutdown reason event, outbox, and byte-exact recovery file; atomic terminal roll-up
