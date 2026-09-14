@@ -167,6 +167,13 @@ type Outcome =
     | TimedOut
     | Cancelled
 
+/// Process output crossed Fogell's fixed in-memory safety boundary.  The text is
+/// deliberately constant: callers may persist this diagnostic without exposing
+/// process output (which can contain credentials).
+[<Sealed>]
+type OutputLimitExceededException() =
+    inherit Exception("process output exceeded Fogell's bounded output limit")
+
 type Termination =
     { /// True when SIGTERM alone was enough — i.e. the step had a chance to
       /// clean up, which is the contract scripts rely on (ADR 0005).
@@ -185,6 +192,7 @@ type internal WaitEnd =
     | Exited
     | Expired
     | Interrupted
+    | OutputLimit
 
 type RunResult =
     { Outcome: Outcome
@@ -307,12 +315,24 @@ type RunRequest =
 
 module ProcessGroup =
 
+    /// Every limit is measured in UTF-16 code units, the unit used by
+    /// StreamReader, StringBuilder and RedactedText. A 16 Mi-unit record
+    /// preserves established 8 MiB returnStdout workloads while bounding each
+    /// retained stream, framed record and callback backlog for one invocation.
+
+    [<Literal>]
+    let OutputLimitCharacters = 16 * 1024 * 1024
+
+    [<Literal>]
+    let CallbackLimitCount = 1024
+
     /// Incremental equivalent of StreamReader.ReadLine: CR, LF and CRLF frame
     /// lines, while EOF publishes a final unterminated non-empty line. Keeping
     /// this after the raw masker is the ordering guarantee FG-236 requires.
-    type internal RawLineFramer(publish: string -> unit) =
+    type internal RawLineFramer(publish: string -> unit, overflow: unit -> unit) =
         let line = Text.StringBuilder()
         let mutable afterCr = false
+        let mutable discarding = false
 
         member _.Push(text: string) =
             for c in text do
@@ -322,23 +342,31 @@ module ProcessGroup =
                     afterCr <- false
 
                     if c = '\r' || c = '\n' then
-                        publish (line.ToString())
+                        if not discarding then publish (line.ToString())
                         line.Clear() |> ignore
+                        discarding <- false
                         afterCr <- c = '\r'
                     else
-                        line.Append c |> ignore
+                        if not discarding then
+                            if line.Length = OutputLimitCharacters then
+                                discarding <- true
+                                line.Clear() |> ignore
+                                overflow ()
+                            else
+                                line.Append c |> ignore
 
         member _.Complete() =
-            if line.Length > 0 then
+            if line.Length > 0 && not discarding then
                 publish (line.ToString())
                 line.Clear() |> ignore
 
     /// The same framing grammar with per-character redaction provenance kept
     /// beside every published line.
-    type internal RedactedLineFramer(publish: RedactedText -> unit) =
+    type internal RedactedLineFramer(publish: RedactedText -> unit, overflow: unit -> unit) =
         let line = RedactedTextBuilder()
         let mutable lineLength = 0
         let mutable afterCr = false
+        let mutable discarding = false
 
         member _.Push(value: RedactedText) =
             for index = 0 to value.Text.Length - 1 do
@@ -350,20 +378,28 @@ module ProcessGroup =
                     afterCr <- false
 
                     if c = '\r' || c = '\n' then
-                        publish (line.ToRedactedText())
+                        if not discarding then publish (line.ToRedactedText())
                         line.Clear()
                         lineLength <- 0
+                        discarding <- false
                         afterCr <- c = '\r'
                     else
-                        if value.TokenCharacters[index] then
-                            line.AppendProtected(string c)
-                        else
-                            line.AppendRaw c
+                        if not discarding then
+                            if lineLength = OutputLimitCharacters then
+                                discarding <- true
+                                line.Clear()
+                                lineLength <- 0
+                                overflow ()
+                            else
+                                if value.TokenCharacters[index] then
+                                    line.AppendProtected(string c)
+                                else
+                                    line.AppendRaw c
 
-                        lineLength <- lineLength + 1
+                                lineLength <- lineLength + 1
 
         member _.Complete() =
-            if lineLength > 0 then
+            if lineLength > 0 && not discarding then
                 publish (line.ToRedactedText())
                 line.Clear()
                 lineLength <- 0
@@ -1256,6 +1292,17 @@ module ProcessGroup =
         let stderr = Text.StringBuilder()
         let stdoutRedacted = RedactedTextBuilder()
         let stderrRedacted = RedactedTextBuilder()
+        let outputFailureGate = obj ()
+        let outputLimitReached =
+            Tasks.TaskCompletionSource<unit>(Tasks.TaskCreationOptions.RunContinuationsAsynchronously)
+        let mutable outputFailure: exn option = None
+        let reportOutputLimit () =
+            lock outputFailureGate (fun () ->
+                if outputFailure.IsNone then
+                    outputFailure <- Some(OutputLimitExceededException())
+                    outputLimitReached.TrySetResult(()) |> ignore)
+
+        let hasOutputFailure () = lock outputFailureGate (fun () -> outputFailure.IsSome)
         let completionOptions = Tasks.TaskCreationOptions.RunContinuationsAsynchronously
         let reportedPgid = Tasks.TaskCompletionSource<int * int>(completionOptions)
         let stdoutClosed = Tasks.TaskCompletionSource<unit>(completionOptions)
@@ -1266,35 +1313,51 @@ module ProcessGroup =
         let lineCallbackGate = obj ()
         let mutable lineCallbackTail: Tasks.Task = Tasks.Task.CompletedTask
         let mutable lineCallbacksOpen = true
+        let mutable queuedCallbackCharacters = 0
+        let mutable queuedCallbackCount = 0
 
         proc.Exited.Add(fun _ -> processExited.TrySetResult(()) |> ignore)
 
-        let enqueueAction action =
+        let enqueueAction characters action =
             match action with
             | None -> ()
             | Some callback ->
                 lock lineCallbackGate (fun () ->
                     if lineCallbacksOpen then
-                        // Process invokes DataReceived handlers serially. Running a
-                        // hostile user callback in that handler therefore prevents an
-                        // already-written following line from reaching the buffer and
-                        // makes the pre-signal snapshot misclassify it. Keep delivery
-                        // serialized, but move it onto an asynchronous continuation so
-                        // reader ingestion and EOF can advance independently.
-                        lineCallbackTail <-
-                            lineCallbackTail.ContinueWith(
-                                Action<Tasks.Task>(fun previous ->
-                                    // Keep a failed output sink sticky. Awaiting only
-                                    // the final continuation is sufficient because
-                                    // every successor first propagates its antecedent.
-                                    previous.GetAwaiter().GetResult()
-                                    callback ()),
-                                CancellationToken.None,
-                                Tasks.TaskContinuationOptions.None,
-                                Tasks.TaskScheduler.Default))
+                        if queuedCallbackCount >= CallbackLimitCount
+                           || characters > OutputLimitCharacters - queuedCallbackCharacters then
+                            reportOutputLimit ()
+                        else
+                            queuedCallbackCount <- queuedCallbackCount + 1
+                            queuedCallbackCharacters <- queuedCallbackCharacters + characters
+                            // The reader invokes this callback path serially. Running a
+                            // hostile user callback there would prevent an
+                            // already-written following line from reaching the buffer and
+                            // makes the pre-signal snapshot misclassify it. Keep delivery
+                            // serialized, but move it onto an asynchronous continuation so
+                            // reader ingestion and EOF can advance independently. This is
+                            // deliberately within the successful reservation branch: an
+                            // rejected callback must neither run nor release capacity it
+                            // never acquired.
+                            lineCallbackTail <-
+                                lineCallbackTail.ContinueWith(
+                                    Action<Tasks.Task>(fun previous ->
+                                        try
+                                            // Keep a failed output sink sticky. Awaiting only
+                                            // the final continuation is sufficient because
+                                            // every successor first propagates its antecedent.
+                                            previous.GetAwaiter().GetResult()
+                                            callback ()
+                                        finally
+                                            lock lineCallbackGate (fun () ->
+                                                queuedCallbackCount <- queuedCallbackCount - 1
+                                                queuedCallbackCharacters <- queuedCallbackCharacters - characters)),
+                                    CancellationToken.None,
+                                    Tasks.TaskContinuationOptions.None,
+                                    Tasks.TaskScheduler.Default))
 
-        let enqueueLine callback line =
-            enqueueAction (callback |> Option.map (fun publish -> fun () -> publish line))
+        let enqueueLine (callback: (string -> unit) option) (line: string) =
+            enqueueAction line.Length (callback |> Option.map (fun publish -> fun () -> publish line))
 
         let publishLine line = enqueueLine request.OnLine line
 
@@ -1302,7 +1365,7 @@ module ProcessGroup =
             match admission, request.OnRedactedAdmission, request.OnRedactedLine with
             | Some stream, _, _ -> stream.Admit line
             | None, Some admit, _ -> admit line
-            | None, None, Some publish -> enqueueAction (Some(fun () -> publish line))
+            | None, None, Some publish -> enqueueAction line.Text.Length (Some(fun () -> publish line))
             | None, None, None -> enqueueLine request.OnLine line.Text
 
         let publishGeneratedLine line =
@@ -1320,15 +1383,29 @@ module ProcessGroup =
 
         let emit (sink: Text.StringBuilder) (line: string) =
             if line <> null then
-                lock sink (fun () -> sink.AppendLine line |> ignore)
-                publishLine line
+                if line.Length > OutputLimitCharacters then
+                    reportOutputLimit ()
+                elif not (hasOutputFailure ()) then
+                    lock sink (fun () ->
+                        if line.Length + 1 > OutputLimitCharacters - sink.Length then
+                            reportOutputLimit ()
+                        else
+                            sink.AppendLine line |> ignore)
+
+                    if not (hasOutputFailure ()) then publishLine line
 
         let emitRedacted admission (sink: Text.StringBuilder) (taggedSink: RedactedTextBuilder) (line: RedactedText) =
-            lock sink (fun () ->
-                sink.AppendLine line.Text |> ignore
-                taggedSink.AppendLine line)
+            if line.Text.Length > OutputLimitCharacters then
+                reportOutputLimit ()
+            elif not (hasOutputFailure ()) then
+                lock sink (fun () ->
+                    if line.Text.Length + 1 > OutputLimitCharacters - sink.Length then
+                        reportOutputLimit ()
+                    else
+                        sink.AppendLine line.Text |> ignore
+                        taggedSink.AppendLine line)
 
-            publishRedactedLine admission line
+                if not (hasOutputFailure ()) then publishRedactedLine admission line
 
         // CAPTURED STDOUT IS READ AS ONE STREAM, NOT REASSEMBLED FROM LINES.
         //
@@ -1346,19 +1423,9 @@ module ProcessGroup =
         // terminator, not the raw bytes, and an earlier version of this comment said
         // "as bytes" and overstated it (raised in review on PR #53). Capture mode therefore skips the line reader for stdout entirely,
         // which costs nothing: nothing is echoing those lines anyway. stderr keeps its
-        // event reader, so the xtrace still streams while this runs, and the two are read
+        // incremental line reader, so the xtrace still streams while this runs, and the two are read
         // CONCURRENTLY — reading one to completion before draining the other is how a
         // full pipe buffer deadlocks a process that writes to both.
-        if not request.SuppressStdoutEcho then
-            proc.OutputDataReceived.Add(fun e ->
-                // Serialize the reader callback through buffer append and callback
-                // enqueue, so EOF is a real reader-drained barrier. User callback
-                // execution itself is deliberately outside this reader.
-                lock stdoutCallbackGate (fun () ->
-                    match e.Data with
-                    | null -> stdoutClosed.TrySetResult(()) |> ignore
-                    | line -> emit stdout line))
-
         let handleStderrLine (line: string) =
             if line.StartsWith(pgidMarker, StringComparison.Ordinal) then
                 // the leader's own pid: the real group id. Never surfaced to the
@@ -1386,12 +1453,6 @@ module ProcessGroup =
                 handleStderrLine line.Text
             else
                 emitRedacted stderrAdmission stderr stderrRedacted line
-
-        proc.ErrorDataReceived.Add(fun e ->
-            lock stderrCallbackGate (fun () ->
-                match e.Data with
-                | null -> stderrClosed.TrySetResult(()) |> ignore
-                | line -> handleStderrLine line))
 
         proc.Start() |> ignore
 
@@ -1434,7 +1495,7 @@ module ProcessGroup =
 
             task {
                 let masker = policy.CreateMatcher()
-                let framer = RedactedLineFramer publish
+                let framer = RedactedLineFramer(publish, reportOutputLimit)
                 let controlPrefix = Text.StringBuilder()
                 let mutable controlResolved = not stripInitialControlFrame
                 let mutable reachedEof = false
@@ -1506,6 +1567,36 @@ module ProcessGroup =
             }
             :> Tasks.Task
 
+        let startRawReader
+            (reader: IO.StreamReader)
+            callbackGate
+            (closed: Tasks.TaskCompletionSource<unit>)
+            publish
+            =
+            task {
+                let framer = RawLineFramer(publish, reportOutputLimit)
+
+                try
+                    let chunk = Array.zeroCreate<char> 4096
+                    let mutable reading = true
+
+                    while reading do
+                        let! n = reader.ReadAsync(chunk, 0, chunk.Length)
+
+                        if n > 0 then
+                            lock callbackGate (fun () ->
+                                if not (hasOutputFailure ()) then
+                                    framer.Push(String(chunk, 0, n)))
+                        else
+                            reading <- false
+
+                    lock callbackGate (fun () ->
+                        if not (hasOutputFailure ()) then framer.Complete())
+                finally
+                    closed.TrySetResult(()) |> ignore
+            }
+            :> Tasks.Task
+
         let redactingStdoutReader =
             match request.OutputRedaction, request.SuppressStdoutEcho with
             | Some _, false ->
@@ -1548,34 +1639,47 @@ module ProcessGroup =
                             let! n = reader.ReadAsync(chunk, 0, chunk.Length)
 
                             if n > 0 then
-                                lock captureBuffer (fun () -> captureBuffer.Append(chunk, 0, n) |> ignore)
+                                lock captureBuffer (fun () ->
+                                    if n > OutputLimitCharacters - captureBuffer.Length then
+                                        reportOutputLimit ()
+                                    elif not (hasOutputFailure ()) then
+                                        captureBuffer.Append(chunk, 0, n) |> ignore)
                             else
                                 reading <- false
                     }
                     :> Tasks.Task)
             else
-                if redactingStdoutReader.IsNone then
-                    proc.BeginOutputReadLine()
-
                 None
 
-        if redactingStderrReader.IsNone then
-            proc.BeginErrorReadLine()
+        let rawStdoutReader =
+            match request.SuppressStdoutEcho, redactingStdoutReader with
+            | false, None -> Some(startRawReader proc.StandardOutput stdoutCallbackGate stdoutClosed (emit stdout))
+            | _ -> None
+
+        let rawStderrReader =
+            match redactingStderrReader with
+            | None -> Some(startRawReader proc.StandardError stderrCallbackGate stderrClosed handleStderrLine)
+            | _ -> None
 
         let stdoutReaderCompleted: Tasks.Task =
             match capturedStdout with
             | Some task -> task
-            | None -> redactingStdoutReader |> Option.defaultValue (stdoutClosed.Task :> Tasks.Task)
+            | None ->
+                redactingStdoutReader
+                |> Option.orElse rawStdoutReader
+                |> Option.defaultValue (stdoutClosed.Task :> Tasks.Task)
 
         let stderrReaderCompleted: Tasks.Task =
-            redactingStderrReader |> Option.defaultValue (stderrClosed.Task :> Tasks.Task)
+            redactingStderrReader
+            |> Option.orElse rawStderrReader
+            |> Option.defaultValue (stderrClosed.Task :> Tasks.Task)
 
         let allReadersCompleted =
             Tasks.Task.WhenAll [| stdoutReaderCompleted; stderrReaderCompleted |]
 
         // Capture mode intentionally permits an escaped holder of the raw stdout
         // pipe and retains the bytes already read. Stderr still publishes through
-        // DataReceived/OnLine, so its EOF is load-bearing before the callback-tail
+        // its incremental reader and OnLine, so its EOF is load-bearing before the callback-tail
         // snapshot: otherwise an escaped stderr writer could enqueue after return.
         let callbackReadersCompleted: Tasks.Task =
             if request.SuppressStdoutEcho then
@@ -1694,8 +1798,8 @@ module ProcessGroup =
 
                 // The interrupt contract is a predicate, not a wait handle, so
                 // only interruptible steps still need a bounded re-sample. An
-                // ordinary step sleeps on the process handle until exit or its
-                // exact remaining deadline; there is no 10ms exit poll.
+                // ordinary step sleeps until exit, output-limit notification or
+                // its exact remaining deadline; there is no 10ms exit poll.
                 match request.Interrupt, remaining with
                 | Some _, Some ms -> int (min 10L ms)
                 | Some _, None -> 10
@@ -1711,6 +1815,11 @@ module ProcessGroup =
             while cause = WaitEnd.Waiting do
                 if processExited.Task.IsCompleted || proc.HasExited then
                     cause <- WaitEnd.Exited
+                elif hasOutputFailure () then
+                    // Keep draining readers while the same identity-safe group
+                    // cleanup runs below; do not wait for a hostile producer to
+                    // finish writing after its output was rejected.
+                    cause <- WaitEnd.OutputLimit
                 else
                     match expired (), interrupted () with
                     | false, false ->
@@ -1719,6 +1828,7 @@ module ProcessGroup =
                         let completed =
                             Tasks.Task.WhenAny(
                                 [| processExited.Task :> Tasks.Task
+                                   outputLimitReached.Task :> Tasks.Task
                                    delay |])
                                 .GetAwaiter()
                                 .GetResult()
@@ -1779,7 +1889,7 @@ module ProcessGroup =
             let allReachedEof = waitForTaskWithin clock budgetMs allReadersCompleted
             clock, allReachedEof, callbackReadersCompleted.IsCompletedSuccessfully
 
-        let waitForLineCallbackCompletion budgetMs clock callbackReadersReachedEof : exn option =
+        let waitForLineCallbackCompletion budgetMs clock callbackReadersReachedEof : exn option * exn option =
             // Close callback admission under the same lock as enqueue before
             // snapshotting the tail, so an escaped writer cannot append later.
             let tail = closeAndGetLineCallbackTail ()
@@ -1792,23 +1902,25 @@ module ProcessGroup =
                         || Option.isSome request.CreateRedactedAdmission))
 
             if processOutputCallbackPresent && not callbackReadersReachedEof then
+                None,
                 Some(
                     TimeoutException(
                         $"progressive output reader did not reach EOF within the shared {budgetMs}ms output-drain budget"))
             elif waitForTaskWithin clock budgetMs tail then
                 try
                     tail.GetAwaiter().GetResult()
-                    None
+                    None, None
                 with error ->
-                    Some error
+                    Some error, None
             else
+                None,
                 Some(
                     TimeoutException(
                         $"OnLine callback tail did not complete within the shared {budgetMs}ms output-drain budget"))
 
         let settleBeforeSignal (budgetMs: int) =
             // RESIDUAL, deliberately not described as event-driven. Process does
-            // not expose the instant at which bytes become queued DataReceived
+            // not expose the instant at which bytes become queued to the reader
             // callbacks, so pre/post-signal causality still needs the old bounded
             // quiet sample. This runs only on abort paths; ordinary completion no
             // longer pays it. The snapshots below remain the classification boundary.
@@ -1875,6 +1987,16 @@ module ProcessGroup =
                     if code > 128 && code <= 192 then Signalled(code - 128) else Completed code
 
                 outcome, t, completionClock, 500, callbackReadersReachedEof
+            elif waitEnd = WaitEnd.OutputLimit then
+                let t =
+                    pgid
+                    |> Option.map (fun g ->
+                        match registeredGroup with
+                        | Some identity -> terminateGroupWithAnchor identity request.GraceMs
+                        | None -> terminateGroup g request.GraceMs)
+
+                let completionClock, _, callbackReadersReachedEof = waitForReaderCompletion 300
+                Completed 125, t, completionClock, 300, callbackReadersReachedEof
             else
                 // Jenkins' interrupt narration, in its words and its order — measured
                 // on 2.568.1 — so the two logs COMPARE (FG-102) instead of each
@@ -1920,7 +2042,7 @@ module ProcessGroup =
         // Defer propagation until after process-group guard and secret-bearing
         // script cleanup. The run still fails closed, but never trades an output
         // publication failure for a leaked containment guard or durable script.
-        let lineCallbackFailure =
+        let lineCallbackFailure, lineCallbackSettlementTimeout =
             waitForLineCallbackCompletion
                 outputCompletionBudget
                 outputCompletionClock
@@ -2023,7 +2145,18 @@ module ProcessGroup =
               CleanupFailure = cleanupFailure
               DurableId = mintedDurableId }
 
-        match readerFailure |> Option.orElse lineCallbackFailure with
+        // A failed publication sink is an existing sticky infrastructure cause
+        // with stronger reconciliation requirements than the output limit. A
+        // bounded settlement timeout only says its queued callbacks could not
+        // finish in time; when an output overflow already explains the run, it
+        // must not replace that explicit cause.
+        let finalFailure =
+            readerFailure
+            |> Option.orElse lineCallbackFailure
+            |> Option.orElse outputFailure
+            |> Option.orElse lineCallbackSettlementTimeout
+
+        match finalFailure with
         | None -> result
         | Some error ->
             Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw()

@@ -1084,7 +1084,22 @@ while before_deadline "$poll_deadline"; do
 done
 [[ $ready -eq 1 ]] || { echo "FG-224 REFUSED: tail-proof controller never became ready" >&2; exit 1; }
 
-tail_pipeline=$'pipeline {\n  agent any\n  stages {\n    stage(\'Tail\') {\n      steps {\n        sh \'printf RFJBSU4tQkVHSU4tMjI0 | base64 -d; head -c 18000000 /dev/zero | tr "\\\\0" "\\\\132"; printf RFJBSU4tRU5ELTIyNA== | base64 -d\'\n      }\n    }\n  }\n}'
+# Two individually bounded invocations still produce the same 18 MB tail.
+# This tests controller draining independently of the runner's per-stream cap.
+tail_pipeline=$(cat <<'JENKINSFILE'
+pipeline {
+  agent any
+  stages {
+    stage('Tail') {
+      steps {
+        sh 'printf RFJBSU4tQkVHSU4tMjI0 | base64 -d; head -c 9000000 /dev/zero | tr "\\0" "\\132"'
+        sh 'head -c 9000000 /dev/zero | tr "\\0" "\\132"; printf RFJBSU4tRU5ELTIyNA== | base64 -d'
+      }
+    }
+  }
+}
+JENKINSFILE
+)
 tail_response=$(curl --max-time "$http_max_time" -fsS -X POST -H "$auth" -H 'idempotency-key: fg224-post-exit-tail' \
   -H 'content-type: application/x-jenkinsfile' --data-binary "$tail_pipeline" "$builds_url")
 tail_build_id=$(sed -n 's/.*"build_id":"\([^"]*\)".*/\1/p' <<<"$tail_response")
@@ -1111,7 +1126,7 @@ tail_elapsed=$(( $(date +%s) - tail_started ))
 IFS='|' read -r tail_begin tail_end tail_z tail_chunks <<<"$(admin "$database" -Atc \
   "WITH bounds AS (
      SELECT min(sequence) FILTER (WHERE body LIKE 'step-started: Tail% sh') AS started,
-            min(sequence) FILTER (WHERE body LIKE 'step-finished: Tail% success') AS finished
+            max(sequence) FILTER (WHERE body LIKE 'step-finished: Tail% success') AS finished
      FROM log_chunks WHERE build_id='$tail_build_id'
    ), frame AS (
      SELECT body FROM log_chunks, bounds

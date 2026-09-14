@@ -2099,6 +2099,18 @@ let eventDrivenWaits =
               Expect.equal seen.Count 1 "successors do not publish after the first callback failure"
           }
 
+          test "a real OnLine callback failure stays authoritative when output also exceeds its bound" {
+              let size = ProcessGroup.OutputLimitCharacters + 1
+
+              Expect.throwsT<IO.IOException>
+                  (fun () ->
+                      ProcessGroup.run
+                          { RunRequest.create ($"yes x | head -c {size}", tempRoot ()) with
+                              OnLine = Some(fun _ -> raise (IO.IOException "event sink unavailable")) }
+                      |> ignore)
+                  "a publication failure retains reconciliation precedence over a concurrent output limit"
+          }
+
           test "an incomplete OnLine callback tail fails within the shared bound" {
               use callbackEntered = new Threading.ManualResetEventSlim(false)
               use releaseCallback = new Threading.ManualResetEventSlim(false)
@@ -5917,13 +5929,117 @@ let maskingOnOutputPath =
 
           test "FG-236 raw line framing matches CR, LF, CRLF, empty, and unterminated lines" {
               let lines = System.Collections.Generic.List<string>()
-              let framer = ProcessGroup.RawLineFramer lines.Add
+              let framer = ProcessGroup.RawLineFramer(lines.Add, ignore)
 
               for chunk in [ "one\r"; "\ntwo\rthr"; "ee\n\nfour" ] do
                   framer.Push chunk
 
               framer.Complete()
               Expect.sequenceEqual lines [ "one"; "two"; "three"; ""; "four" ] "framing matches StreamReader.ReadLine"
+          }
+
+          test "bounded capture preserves an 8 MiB unterminated returnStdout value" {
+              let size = 8 * 1024 * 1024
+
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create ($"head -c {size} /dev/zero | tr '\\0' x", tempRoot ()) with
+                          SuppressStdoutEcho = true }
+
+              Expect.equal result.Outcome (Completed 0) "the bounded control succeeds"
+              Expect.equal result.Stdout.Length size "returnStdout retains the complete below-limit record"
+              Expect.isTrue (result.Stdout |> Seq.forall ((=) 'x')) "returnStdout retains the original characters"
+              Expect.isTrue result.StdoutReachedEof "the exact captured value reached EOF"
+          }
+
+          test "a newline-free capture over the bound fails explicitly" {
+              let size = ProcessGroup.OutputLimitCharacters + 1
+
+              Expect.throwsT<OutputLimitExceededException>
+                  (fun () ->
+                      ProcessGroup.run
+                          { RunRequest.create ($"head -c {size} /dev/zero | tr '\\0' x", tempRoot ()) with
+                              SuppressStdoutEcho = true }
+                      |> ignore)
+                  "an oversized returnStdout record cannot become a successful truncated value"
+          }
+
+          test "output overflow wakes a step with no deadline or interrupt before its next effect" {
+              let root = tempRoot ()
+              let effect = Path.Combine(root, "late-effect")
+              let size = ProcessGroup.OutputLimitCharacters + 4096
+              let clock = Stopwatch.StartNew()
+
+              Expect.throwsT<OutputLimitExceededException>
+                  (fun () ->
+                      ProcessGroup.run
+                          { RunRequest.create
+                              ($"head -c {size} /dev/zero; sleep 5; printf late > '{effect}'", root) with
+                              SuppressStdoutEcho = true }
+                      |> ignore)
+                  "the output signal wakes the process wait without a deadline or cancellation poll"
+
+              Expect.isLessThan clock.ElapsedMilliseconds 5_000L "cleanup does not wait for the producer to exit"
+              Expect.isFalse (File.Exists effect) "the command after the rejected output did not run"
+          }
+
+          test "a newline-free stderr record over the bound fails explicitly with returnStdout enabled" {
+              let size = ProcessGroup.OutputLimitCharacters + 1
+
+              Expect.throwsT<OutputLimitExceededException>
+                  (fun () ->
+                      ProcessGroup.run
+                          { RunRequest.create ($"head -c {size} /dev/zero | tr '\\0' x >&2", tempRoot ()) with
+                              SuppressStdoutEcho = true }
+                      |> ignore)
+                  "stderr is bounded even when stdout is captured"
+          }
+
+          test "a stalled output callback cannot grow an unbounded publication queue" {
+              let mutable delivered = 0
+              use firstCallbackStarted = new Threading.ManualResetEventSlim(false)
+              use releaseCallbacks = new Threading.ManualResetEventSlim(false)
+
+              let running =
+                  Threading.Tasks.Task.Run(fun () ->
+                      ProcessGroup.run
+                          { RunRequest.create ("set +x; i=0; while [ $i -lt 1100 ]; do printf 'line\\n'; i=$((i+1)); done", tempRoot ()) with
+                              OnLine =
+                                  Some(fun _ ->
+                                      let position = Threading.Interlocked.Increment(&delivered)
+
+                                      if position = 1 then
+                                          firstCallbackStarted.Set()
+                                          releaseCallbacks.Wait()) }
+                      |> ignore)
+
+              try
+                  Expect.isTrue (firstCallbackStarted.Wait 3_000) "the first callback blocks before the backlog is filled"
+                  Expect.throwsT<OutputLimitExceededException>
+                      (fun () -> running.GetAwaiter().GetResult())
+                      "the bounded callback backlog fails the run instead of retaining every pending line"
+              finally
+                  releaseCallbacks.Set()
+
+              Expect.isTrue
+                  (Threading.SpinWait.SpinUntil((fun () -> Threading.Volatile.Read(&delivered) = ProcessGroup.CallbackLimitCount), 5_000))
+                  "all reserved callbacks drain after the gate is released"
+              Expect.equal
+                  (Threading.Volatile.Read(&delivered))
+                  ProcessGroup.CallbackLimitCount
+                  "the rejected callback and every later record were never scheduled"
+          }
+
+          test "bounded capture retains CRLF exactly while stderr keeps line framing" {
+              let result =
+                  ProcessGroup.run
+                      { RunRequest.create ("printf 'out\\r\\n'; printf 'err\\r\\n' >&2", tempRoot ()) with
+                          SuppressStdoutEcho = true }
+
+              Expect.equal result.Outcome (Completed 0) "the CRLF control succeeds"
+              Expect.equal result.Stdout "out\r\n" "returnStdout retains its physical terminator"
+              Expect.stringContains result.Stderr "err\n" "stderr retains its established line callback representation"
+              Expect.isFalse (result.Stderr.Contains "err\r\n") "stderr framing normalizes its CRLF terminator"
           }
 
           test "FG-236 masks wrapped base64 in progressive and buffered shell output" {
