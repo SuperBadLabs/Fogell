@@ -104,3 +104,26 @@ generated credentials were removed. Luigi's original containers retained their
 IDs: `b3c3d866d9d1` (`ctrl`), `5388364b3d6b` (`ag1`), `3d18d8520a10`
 (`jenkins-bench`), `38cf17f58768` (`mcloving-faceoff2`) and `f828e5fbbd95`
 (`jenkins-lab`).
+
+## PR review follow-up
+
+Review identified two small corrections after the original campaign above.
+Both line sinks now reserve `Environment.NewLine.Length`, with an independently
+testable capacity check covering CRLF on Linux. The host's returned-error path
+now writes the same fixed `RUN_FAILED` diagnostic to stderr as to its event
+stream, preserving terminal failure and exit code without forwarding exception
+text. Preflight refusal diagnostics are outside this change.
+
+The old host reproduced the stderr defect with an unreadable generated
+directory. The committed restart-lane regression instead uses a control
+character in a generated filename, which deterministically fails final
+workspace hashing for both root and unprivileged users. It failed against the
+old host, then passed with the fix, including the durable failure assertion.
+The complete restart lane passed. The Execution suite passed 170 tests before
+an equivalent arithmetic guard tightening; the final guard passed its focused
+boundary regression and a Release build. Independent Terra review found no
+blockers in the final changes.
+
+`REVIEW-FOLLOWUP-SHA256SUMS` identifies these revised files. The original
+`SOURCE-SHA256SUMS`, performance measurements and full-gate transcript above
+describe the pre-review candidate; they are preserved as historical receipts.

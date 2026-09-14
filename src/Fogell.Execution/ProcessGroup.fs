@@ -326,6 +326,17 @@ module ProcessGroup =
     [<Literal>]
     let CallbackLimitCount = 1024
 
+    /// [StringBuilder.AppendLine] writes the platform terminator, which is two
+    /// UTF-16 code units on CRLF platforms. Keep the capacity calculation
+    /// explicit so the advertised bound holds independently of the host OS.
+    let internal fitsOutputLine sinkLength lineLength terminatorLength =
+        sinkLength >= 0
+        && lineLength >= 0
+        && terminatorLength >= 0
+        && sinkLength <= OutputLimitCharacters
+        && lineLength <= OutputLimitCharacters - sinkLength
+        && terminatorLength <= OutputLimitCharacters - sinkLength - lineLength
+
     /// Incremental equivalent of StreamReader.ReadLine: CR, LF and CRLF frame
     /// lines, while EOF publishes a final unterminated non-empty line. Keeping
     /// this after the raw masker is the ordering guarantee FG-236 requires.
@@ -1387,7 +1398,7 @@ module ProcessGroup =
                     reportOutputLimit ()
                 elif not (hasOutputFailure ()) then
                     lock sink (fun () ->
-                        if line.Length + 1 > OutputLimitCharacters - sink.Length then
+                        if not (fitsOutputLine sink.Length line.Length Environment.NewLine.Length) then
                             reportOutputLimit ()
                         else
                             sink.AppendLine line |> ignore)
@@ -1399,7 +1410,7 @@ module ProcessGroup =
                 reportOutputLimit ()
             elif not (hasOutputFailure ()) then
                 lock sink (fun () ->
-                    if line.Text.Length + 1 > OutputLimitCharacters - sink.Length then
+                    if not (fitsOutputLine sink.Length line.Text.Length Environment.NewLine.Length) then
                         reportOutputLimit ()
                     else
                         sink.AppendLine line.Text |> ignore

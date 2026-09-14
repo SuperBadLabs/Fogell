@@ -52,6 +52,36 @@ HOST_BIN=$(find tools/Fogell.Run.Host/bin/Release -name Fogell.Run.Host -type f 
 [ -x "$HOST_BIN" ] || { echo "FAIL: host binary not found"; exit 1; }
 HOST=("$HOST_BIN")
 
+echo "=== returned runner failure has a fixed stderr diagnostic ==="
+DIAGNOSTIC_LANE="$LANE/failure-diagnostic"
+mkdir -p "$DIAGNOSTIC_LANE"
+cat > "$DIAGNOSTIC_LANE/Jenkinsfile" <<'JF'
+pipeline {
+  agent any
+  stages {
+    stage('Invalid workspace entry') {
+      steps {
+        sh '''touch "$(printf 'private\\012path')"'''
+      }
+    }
+  }
+}
+JF
+# A control character in the resulting filename makes final workspace hashing
+# throw on every supported Linux identity, including root. The previous host
+# forwarded that exception text; only the fixed failure code may reach stderr.
+DIAGNOSTIC_RC=0
+"${HOST[@]}" "$DIAGNOSTIC_LANE/Jenkinsfile" "$DIAGNOSTIC_LANE/ws" diagnostic \
+  "$DIAGNOSTIC_LANE/build.journal" >"$DIAGNOSTIC_LANE/stdout" 2>"$DIAGNOSTIC_LANE/stderr" \
+  || DIAGNOSTIC_RC=$?
+[[ $DIAGNOSTIC_RC = 2 ]] || { echo "FAIL: diagnostic fixture did not reach returned runner failure"; exit 1; }
+printf '%s\n' 'runner-failure: RUN_FAILED: runner could not complete the build' > "$DIAGNOSTIC_LANE/expected-stderr"
+cmp -s "$DIAGNOSTIC_LANE/expected-stderr" "$DIAGNOSTIC_LANE/stderr" \
+  || { echo "FAIL: returned runner failure exposed arbitrary stderr text"; exit 1; }
+grep -qx $'build-finished\tfailure' "$DIAGNOSTIC_LANE/build.journal" \
+  || { echo "FAIL: safe failure diagnostic lost durable terminal truth"; exit 1; }
+echo "fixed stderr diagnostic and durable failure preserved"
+
 echo "=== FG-253: unsupported agent refuses before torn-journal repair ==="
 A_LANE="$LANE/fg253-agent"
 mkdir -p "$A_LANE/ws/fg253-agent"
