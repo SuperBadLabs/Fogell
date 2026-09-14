@@ -65,6 +65,9 @@ let private expectResultErrorWithin label (timeoutMs: int) (run: unit -> Result<
     task.GetAwaiter().GetResult()
 
 let buildOutputIntegration =
+    // These fixtures each retain tens of MiB while exercising a bounded EOF
+    // drain. Isolate their resource load from unrelated tests; parallel branch
+    // behavior remains explicit inside the fan-out and nested fixtures.
     testList
         "whole-build output integration"
         [ test "ordinary output charges cumulatively across sub-limit processes" {
@@ -241,3 +244,4 @@ let buildOutputIntegration =
                           (File.Exists(Path.Combine(workspace, "control.txt")))
                           "the step after the large but permitted output ran")
           } ]
+    |> testSequenced
