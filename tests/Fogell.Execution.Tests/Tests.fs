@@ -72,6 +72,7 @@ let private request root script =
       OnRedactedOutput = None
       OnRedactedAdmission = None
       CreateRedactedAdmission = None
+      ReserveCapturedOutput = None
       Named = []
       Artifacts = None
       BuildKey = "test" }
@@ -4058,6 +4059,7 @@ let externalInterrupt =
                         OnRedactedOutput = None
                         OnRedactedAdmission = None
                         CreateRedactedAdmission = None
+                        ReserveCapturedOutput = None
                         Named = [ "testResults", "report.xml" ]
                         Artifacts = None
                         BuildKey = "k" }
@@ -4098,6 +4100,7 @@ let externalInterrupt =
                         OnRedactedOutput = None
                         OnRedactedAdmission = None
                         CreateRedactedAdmission = None
+                        ReserveCapturedOutput = None
                         Named = [ "testResults", "nothing-matches-*.xml" ]
                         Artifacts = None
                         BuildKey = "k" }
@@ -5929,7 +5932,7 @@ let maskingOnOutputPath =
 
           test "FG-236 raw line framing matches CR, LF, CRLF, empty, and unterminated lines" {
               let lines = System.Collections.Generic.List<string>()
-              let framer = ProcessGroup.RawLineFramer(lines.Add, ignore)
+              let framer = ProcessGroup.RawLineFramer((fun _ line -> lines.Add line), ignore, ignore)
 
               for chunk in [ "one\r"; "\ntwo\rthr"; "ee\n\nfour" ] do
                   framer.Push chunk
@@ -6287,6 +6290,8 @@ let maskingOnOutputPath =
                   let stream = Threading.Interlocked.Increment(&nextStream)
 
                   { Admit = fun line -> events.Enqueue(stream, "line:" + line.Text)
+                    Buffered = None
+                    Close = None
                     Complete = fun () -> events.Enqueue(stream, "eof") }
 
               let result =
@@ -6688,7 +6693,8 @@ let main argv =
             (testSequenced
                 (testList
                     "Fogell.Execution"
-                    [ workspaceHygiene
+                    [ CaptureOutputBudgetTests.captureOutputBudget
+                      workspaceHygiene
                       shellExecution
                       environmentIsolation
                       containment

@@ -284,7 +284,9 @@ module WalkerOrchestration =
         let humanizeSpan = WalkerRules.humanizeSpan
         let timeoutMs = WalkerRules.timeoutMs
         let retryCount = WalkerRules.retryCount
-        let halted = WalkerRules.halted
+        let halted ctx =
+            runCtx.CheckOutputBudget()
+            WalkerRules.halted ctx
 
         // FG-160. The step names a `script { }` body may call. DERIVED FROM THE DISPATCH
         // TABLE below plus the two the inner runner handles, deliberately CLOSED: a name
@@ -941,6 +943,7 @@ module WalkerOrchestration =
         /// Erasing the name to "" instead would RUN a command the author never
         /// wrote (`deploy ${TARGET}` → `deploy `), with the build green.
         and runStepDispatch (ctx: BranchCtx) (cwd: string) (stage: Stage) (step: Step) (deadline: Deadline option) =
+            runCtx.CheckOutputBudget()
             try
                 runStepDispatchBody ctx cwd stage step deadline
             with
@@ -2927,11 +2930,6 @@ module WalkerOrchestration =
                                     runStage branchCtx cwd deadline branch
                                 with _ ->
                                     branchCtx.Failed.Value <- true
-                                    // named exactly as the ordinary failure path
-                                    // names it — a reader wants to know WHICH
-                                    // branch died either way
-                                    emit $"Failed in branch {branch.Name}"
-
                                     if failFast then
                                         System.Threading.Interlocked.CompareExchange(
                                             siblingFailedAt, runClock.ElapsedMilliseconds, -1L)
@@ -2939,6 +2937,10 @@ module WalkerOrchestration =
 
                                         siblingFailed.Cancel()
 
+                                    // Diagnostics must not prevent cancellation or
+                                    // replace the shared resource failure.
+                                    if not (runCtx.OutputBudgetExceeded()) then
+                                        emit $"Failed in branch {branch.Name}"
                                     reraise ()
 
                                 if branchCtx.Failed.Value then
@@ -2947,7 +2949,6 @@ module WalkerOrchestration =
                                     // exclusion that a user's own output can match is a
                                     // false-PROVEN path, and this sentence is real
                                     // information a reader wants.
-                                    emit $"Failed in branch {branch.Name}"
                                     // Stamp only the FIRST signal. Every failing
                                     // branch reaches here, including ones cancelled as
                                     // COLLATERAL, so an unconditional write let a later
@@ -2961,53 +2962,42 @@ module WalkerOrchestration =
                                         siblingFailedAt, runClock.ElapsedMilliseconds, -1L)
                                     |> ignore
 
-                                    siblingFailed.Cancel()))
+                                    siblingFailed.Cancel()
+                                    emit $"Failed in branch {branch.Name}"))
 
                     // Every branch is awaited even under failFast: an
                     // interrupted branch still has a process group to reap,
                     // and abandoning it is how orphans happen (FG-032).
-                    let mutable runtimeGuardFailure: exn option = None
+                    let mutable criticalFailure: exn option = None
+                    let failureRank (error: exn) =
+                        match error with
+                        | :? OutputPublicationException -> 3
+                        | :? RuntimeGuardFailure -> 2
+                        | :? BuildOutputLimitExceededException -> 1
+                        | _ -> 0
+                    let retainCritical error =
+                        if failureRank error > (criticalFailure |> Option.map failureRank |> Option.defaultValue -1) then
+                            criticalFailure <- Some error
 
-                    branches
-                    |> List.iter (fun (bc, t) ->
+                    for bc, task in branches do
                         try
-                            t.Wait()
-                        with ex ->
-                            // FG-046b (Codex P1). This used to swallow the
-                            // exception and move on, while the ONLY failure
-                            // signal read below is `bc.Failed` — which a fault
-                            // never sets. So a branch that threw vanished: the
-                            // build could report SUCCESS having silently skipped
-                            // whatever that branch was doing, and for an `input`
-                            // branch that means shipping without the approval.
-                            //
-                            // A branch's ordinary failure never arrives here (it
-                            // is recorded through Failed/Sink), so anything that
-                            // does is an ENGINE fault, and the honest response to
-                            // one is to fail the build by name.
-                            let root =
-                                match ex with
-                                | :? AggregateException as agg ->
-                                    agg.Flatten().InnerExceptions
-                                    |> Seq.tryHead
-                                    |> Option.defaultValue ex
-                                | _ -> ex
+                            task.GetAwaiter().GetResult()
+                        with error ->
+                            bc.Failed.Value <- true
+                            bc.Sink BuildStatus.Failure
+                            if failureRank error > 0 then
+                                retainCritical error
+                            else
+                                // Even failure narration can exhaust the shared
+                                // quota. Keep joining so every child is reaped.
+                                try
+                                    emit $"ERROR: parallel branch failed: {error.GetType().Name}: {error.Message}"
+                                with diagnosticError ->
+                                    retainCritical diagnosticError
 
-                            match root with
-                            | :? RuntimeGuardFailure ->
-                                // Runtime pins are harness authority. Await every
-                                // branch for process cleanup, but never turn this
-                                // failure into comparable build output/status.
-                                if runtimeGuardFailure.IsNone then
-                                    runtimeGuardFailure <- Some root
-                            | _ ->
-                                emit $"ERROR: parallel branch failed: {root.GetType().Name}: {root.Message}"
-                                bc.Failed.Value <- true
-                                bc.Sink BuildStatus.Failure)
-
-                    match runtimeGuardFailure with
+                    match criticalFailure with
                     | Some failure -> raise failure
-                    | None -> ()
+                    | None -> runCtx.CheckOutputBudget()
 
                     if branches |> List.exists (fun (bc, _) -> bc.Failed.Value) then
                         ctx.Failed.Value <- true

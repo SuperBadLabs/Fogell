@@ -456,8 +456,8 @@ audit_build_path_sources() {
   [ "$(rg -F -c 'let environment = envForWith ctx.EnvOverlay stage' "$walker_step")" = 1 ] || return 1
   [ "$(rg -F -c 'beforeShellLaunch |> Option.iter (fun verify -> verify cwd environment)' "$walker_step")" = 1 ] || return 1
   [ "$(rg -F -c 'Environment = environment' "$walker_step")" = 1 ] || return 1
-  [ "$(rg -F -c 'let mutable runtimeGuardFailure: exn option = None' "$walker_orchestration")" = 1 ] || return 1
-  [ "$(rg -F -c '| :? RuntimeGuardFailure ->' "$walker_orchestration")" = 1 ] || return 1
+  [ "$(rg -F -c 'let mutable criticalFailure: exn option = None' "$walker_orchestration")" = 1 ] || return 1
+  [ "$(rg -F -c '| :? RuntimeGuardFailure -> 2' "$walker_orchestration")" = 1 ] || return 1
   [ "$(rg -F -c '| Some failure -> raise failure' "$walker_orchestration")" = 1 ] || return 1
 }
 
@@ -737,6 +737,16 @@ if audit_build_path_sources src/Fogell.Differential/Jenkins.fs tools/Fogell.Diff
   echo "RUNTIME-PIN PROOF FAILED: parallel runtime-guard absorption mutant was accepted" >&2; exit 1
 fi
 echo "  refused parallel runtime-guard absorption mutant"
+
+cp src/Fogell.Differential/WalkerOrchestration.fs "$scratch/WalkerOrchestration.fs"
+sed -i 's/| :? RuntimeGuardFailure -> 2/| :? RuntimeGuardFailure -> 0/' "$scratch/WalkerOrchestration.fs"
+if cmp -s src/Fogell.Differential/WalkerOrchestration.fs "$scratch/WalkerOrchestration.fs"; then
+  echo "RUNTIME-PIN PROOF FAILED: parallel runtime-guard ranking mutant did not apply" >&2; exit 1
+fi
+if audit_build_path_sources src/Fogell.Differential/Jenkins.fs tools/Fogell.Differential.Cli/Program.fs src/Fogell.Differential/Fogell.fs src/Fogell.Differential/WalkerStep.fs "$scratch/WalkerOrchestration.fs"; then
+  echo "RUNTIME-PIN PROOF FAILED: unranked parallel runtime-guard mutant was accepted" >&2; exit 1
+fi
+echo "  refused unranked parallel runtime-guard mutant"
 
 cp tools/Fogell.Differential.Cli/Program.fs "$scratch/Program.fs"
 sed -i 's/printfn "fogell-runtime-guard-v9"/printfn "fogell-runtime-guard-v8"/' "$scratch/Program.fs"

@@ -337,8 +337,8 @@ kill_differential_mutant live-policy 'the late-registered split form is redacted
 # that registered-before-publication credential visible.
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 target='                    if List.isEmpty secrets then line else Secrets.maskAlreadyRedacted secrets line'
-[[ $(rg -F -c "$target" "$walker_ctx") == 2 ]] \
-  || { echo 'FG-236 proof: publication-race mutation targets drifted' >&2; exit 1; }
+[[ $(sed -n '/let emitRedacted/,/let admit line/p' "$walker_ctx" | rg -F -x -c "$target") == 1 ]] \
+  || { echo 'FG-236 proof: publication-race mutation target is not unique in emitRedacted' >&2; exit 1; }
 sed -i '/let emitRedacted/,/let admit line/ s/^                    if List\.isEmpty secrets then line else Secrets\.maskAlreadyRedacted secrets line$/                    line/' "$walker_ctx"
 kill_differential_mutant publication-race 'the terminal trace masks the late-bound credential'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
@@ -502,10 +502,10 @@ cp "$scratch/walker-ctx.clean" "$walker_ctx"
 # A registration-time snapshot is not EOF. Losing the lifecycle completion
 # keeps the first physical fragment stranded instead of resolving it together
 # with bytes admitted after the binding.
-target='                  Complete = fun () -> completePublicationStream stream }'
+target='                  Complete = fun () -> completePublicationStream stream'
 [[ $(rg -F -c "$target" "$walker_ctx") == 1 ]] \
   || { echo 'FG-236 proof: publication-EOF mutation target is not unique' >&2; exit 1; }
-sed -i 's/^                  Complete = fun () -> completePublicationStream stream }$/                  Complete = ignore }/' "$walker_ctx"
+sed -i 's/^                  Complete = fun () -> completePublicationStream stream$/                  Complete = ignore/' "$walker_ctx"
 kill_differential_mutant publication-eof 'progressive output stream did not reach EOF'
 cp "$scratch/walker-ctx.clean" "$walker_ctx"
 

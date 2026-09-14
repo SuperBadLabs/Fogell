@@ -218,8 +218,23 @@ type RunResult =
       /// materialised — the caller canonicalises exactly this id, never a shape.
       DurableId: string option }
 
+/// Per-stream credits for process bytes which have crossed the raw matcher but
+/// have not yet formed an output record.  [Admit] atomically transfers the
+/// supplied consumed input credits into the final redacted record admission;
+/// [Release] returns bytes which CRLF normalization, a discarded oversized
+/// record, or an aborted reader will never turn into a record.
+type BufferedOutputAdmission =
+    { Reserve: int -> unit
+      Admit: int -> RedactedText -> unit
+      Release: int -> unit }
+
 type RedactedAdmission =
     { Admit: RedactedText -> unit
+      Buffered: BufferedOutputAdmission option
+      /// Ends owner-side output admission without claiming pipe EOF. Used when
+      /// ProcessGroup returns after a bounded reader wait while an escaped
+      /// writer may still hold the pipe.
+      Close: (unit -> unit) option
       Complete: unit -> unit }
 
 type RunRequest =
@@ -256,6 +271,9 @@ type RunRequest =
       /// process pipes. The historical single callback above remains for direct
       /// callers which do not need provenance identity.
       CreateRedactedAdmission: (unit -> RedactedAdmission) option
+      /// Reserve captured stdout against an optional run-wide budget before
+      /// retaining each decoded chunk. Captured text bypasses log admission.
+      ReserveCapturedOutput: (int -> unit) option
       /// FG-236. Opaque raw-output policy. Stdout and stderr each create an
       /// independent matcher before CR/LF framing.
       OutputRedaction: OutputRedactionPolicy option
@@ -306,6 +324,7 @@ type RunRequest =
           OnRedactedLine = None
           OnRedactedAdmission = None
           CreateRedactedAdmission = None
+          ReserveCapturedOutput = None
           OutputRedaction = None
           SuppressStdoutEcho = false
           ReapGroup = true
@@ -340,80 +359,169 @@ module ProcessGroup =
     /// Incremental equivalent of StreamReader.ReadLine: CR, LF and CRLF frame
     /// lines, while EOF publishes a final unterminated non-empty line. Keeping
     /// this after the raw masker is the ordering guarantee FG-236 requires.
-    type internal RawLineFramer(publish: string -> unit, overflow: unit -> unit) =
+    type internal RawLineFramer(publish: int -> string -> unit, release: int -> unit, overflow: unit -> unit) =
         let line = Text.StringBuilder()
         let mutable afterCr = false
         let mutable discarding = false
+        let mutable pendingCharacters = 0
+
+        let publishPending value =
+            let consumed = pendingCharacters
+            pendingCharacters <- 0
+            publish consumed value
+
+        let releasePending () =
+            if pendingCharacters > 0 then
+                let discarded = pendingCharacters
+                pendingCharacters <- 0
+                release discarded
 
         member _.Push(text: string) =
-            for c in text do
-                if afterCr && c = '\n' then
-                    afterCr <- false
-                else
-                    afterCr <- false
+            let mutable visited = 0
 
-                    if c = '\r' || c = '\n' then
-                        if not discarding then publish (line.ToString())
-                        line.Clear() |> ignore
-                        discarding <- false
-                        afterCr <- c = '\r'
+            try
+                for index = 0 to text.Length - 1 do
+                    let c = text[index]
+                    visited <- index + 1
+                    pendingCharacters <- pendingCharacters + 1
+
+                    if afterCr && c = '\n' then
+                        afterCr <- false
+                        // The preceding CR already completed and transferred the
+                        // record. This LF is only CRLF framing state.
+                        releasePending ()
                     else
-                        if not discarding then
-                            if line.Length = OutputLimitCharacters then
-                                discarding <- true
-                                line.Clear() |> ignore
-                                overflow ()
+                        afterCr <- false
+
+                        if c = '\r' || c = '\n' then
+                            if not discarding then publishPending (line.ToString())
+                            else releasePending ()
+
+                            line.Clear() |> ignore
+                            discarding <- false
+                            afterCr <- c = '\r'
+                        else
+                            if not discarding then
+                                if line.Length = OutputLimitCharacters then
+                                    discarding <- true
+                                    line.Clear() |> ignore
+                                    releasePending ()
+                                    overflow ()
+                                else
+                                    line.Append c |> ignore
                             else
-                                line.Append c |> ignore
+                                // Do not retain run-wide credit for a record this
+                                // per-process guard has already discarded.
+                                releasePending ()
+            with _ ->
+                // A synchronous admission can fail after this whole chunk was
+                // reserved but before its suffix was visited. Return both the
+                // current line and that unvisited suffix exactly once.
+                releasePending ()
+                let unvisited = text.Length - visited
+
+                if unvisited > 0 then
+                    release unvisited
+
+                reraise ()
 
         member _.Complete() =
             if line.Length > 0 && not discarding then
-                publish (line.ToString())
+                publishPending (line.ToString())
                 line.Clear() |> ignore
+            else
+                releasePending ()
+
+        member _.Abandon() =
+            line.Clear() |> ignore
+            releasePending ()
 
     /// The same framing grammar with per-character redaction provenance kept
     /// beside every published line.
-    type internal RedactedLineFramer(publish: RedactedText -> unit, overflow: unit -> unit) =
+    type internal RedactedLineFramer(publish: int -> RedactedText -> unit, release: int -> unit, overflow: unit -> unit) =
         let line = RedactedTextBuilder()
         let mutable lineLength = 0
         let mutable afterCr = false
         let mutable discarding = false
+        let mutable pendingCharacters = 0
+
+        let publishPending value =
+            let consumed = pendingCharacters
+            pendingCharacters <- 0
+            publish consumed value
+
+        let releasePending () =
+            if pendingCharacters > 0 then
+                let discarded = pendingCharacters
+                pendingCharacters <- 0
+                release discarded
 
         member _.Push(value: RedactedText) =
-            for index = 0 to value.Text.Length - 1 do
-                let c = value.Text[index]
+            let mutable visited = 0
 
-                if afterCr && c = '\n' then
-                    afterCr <- false
-                else
-                    afterCr <- false
+            try
+                for index = 0 to value.Text.Length - 1 do
+                    let c = value.Text[index]
+                    visited <- index + 1
+                    pendingCharacters <- pendingCharacters + 1
 
-                    if c = '\r' || c = '\n' then
-                        if not discarding then publish (line.ToRedactedText())
-                        line.Clear()
-                        lineLength <- 0
-                        discarding <- false
-                        afterCr <- c = '\r'
+                    if afterCr && c = '\n' then
+                        afterCr <- false
+                        // The CR was transferred with the preceding record; this
+                        // LF contributes no output record of its own.
+                        releasePending ()
                     else
-                        if not discarding then
-                            if lineLength = OutputLimitCharacters then
-                                discarding <- true
-                                line.Clear()
-                                lineLength <- 0
-                                overflow ()
-                            else
-                                if value.TokenCharacters[index] then
-                                    line.AppendProtected(string c)
-                                else
-                                    line.AppendRaw c
+                        afterCr <- false
 
-                                lineLength <- lineLength + 1
+                        if c = '\r' || c = '\n' then
+                            if not discarding then publishPending (line.ToRedactedText())
+                            else releasePending ()
+
+                            line.Clear()
+                            lineLength <- 0
+                            discarding <- false
+                            afterCr <- c = '\r'
+                        else
+                            if not discarding then
+                                if lineLength = OutputLimitCharacters then
+                                    discarding <- true
+                                    line.Clear()
+                                    lineLength <- 0
+                                    releasePending ()
+                                    overflow ()
+                                else
+                                    if value.TokenCharacters[index] then
+                                        line.AppendProtected(string c)
+                                    else
+                                        line.AppendRaw c
+
+                                    lineLength <- lineLength + 1
+                            else
+                                releasePending ()
+            with _ ->
+                // `Reserve` covered the complete transformed chunk. If the
+                // final-record admission rejects partway through it, the
+                // framer owns and returns only bytes that did not transfer.
+                releasePending ()
+                let unvisited = value.Text.Length - visited
+
+                if unvisited > 0 then
+                    release unvisited
+
+                reraise ()
 
         member _.Complete() =
             if lineLength > 0 && not discarding then
-                publish (line.ToRedactedText())
+                publishPending (line.ToRedactedText())
                 line.Clear()
                 lineLength <- 0
+            else
+                releasePending ()
+
+        member _.Abandon() =
+            line.Clear()
+            lineLength <- 0
+            releasePending ()
 
     [<RequireQualifiedAccess>]
     type internal ProcessIdentityState =
@@ -1307,11 +1415,13 @@ module ProcessGroup =
         let outputLimitReached =
             Tasks.TaskCompletionSource<unit>(Tasks.TaskCreationOptions.RunContinuationsAsynchronously)
         let mutable outputFailure: exn option = None
-        let reportOutputLimit () =
+        let reportOutputFailure error =
             lock outputFailureGate (fun () ->
                 if outputFailure.IsNone then
-                    outputFailure <- Some(OutputLimitExceededException())
+                    outputFailure <- Some error
                     outputLimitReached.TrySetResult(()) |> ignore)
+
+        let reportOutputLimit () = reportOutputFailure (OutputLimitExceededException())
 
         let hasOutputFailure () = lock outputFailureGate (fun () -> outputFailure.IsSome)
         let completionOptions = Tasks.TaskCreationOptions.RunContinuationsAsynchronously
@@ -1372,9 +1482,12 @@ module ProcessGroup =
 
         let publishLine line = enqueueLine request.OnLine line
 
-        let publishRedactedLine admission line =
+        let publishRedactedLine admission consumedBufferedCharacters line =
             match admission, request.OnRedactedAdmission, request.OnRedactedLine with
-            | Some stream, _, _ -> stream.Admit line
+            | Some stream, _, _ ->
+                match consumedBufferedCharacters, stream.Buffered with
+                | Some consumed, Some buffered -> buffered.Admit consumed line
+                | _ -> stream.Admit line
             | None, Some admit, _ -> admit line
             | None, None, Some publish -> enqueueAction line.Text.Length (Some(fun () -> publish line))
             | None, None, None -> enqueueLine request.OnLine line.Text
@@ -1386,6 +1499,20 @@ module ProcessGroup =
                 | Some policy -> policy.Synchronize(fun () -> admit line)
                 | None -> admit line
             | None -> enqueueLine (request.OnGeneratedLine |> Option.orElse request.OnLine) line
+
+        // Interrupt narration is useful evidence, but its synchronous admission
+        // may reject a run-wide exhausted budget or a broken publisher.  Never
+        // let that prevent the group signal and reaping path below: retain the
+        // first admission failure and surface it only after termination, extinction
+        // verification, and reader settlement have been attempted.
+        let mutable deferredGeneratedNarrationFailure: exn option = None
+
+        let publishGeneratedLineBeforeCleanup line =
+            try
+                publishGeneratedLine line
+            with error ->
+                if deferredGeneratedNarrationFailure.IsNone then
+                    deferredGeneratedNarrationFailure <- Some error
 
         let closeAndGetLineCallbackTail () =
             lock lineCallbackGate (fun () ->
@@ -1405,9 +1532,16 @@ module ProcessGroup =
 
                     if not (hasOutputFailure ()) then publishLine line
 
-        let emitRedacted admission (sink: Text.StringBuilder) (taggedSink: RedactedTextBuilder) (line: RedactedText) =
+        let emitRedacted
+            admission
+            (sink: Text.StringBuilder)
+            (taggedSink: RedactedTextBuilder)
+            consumedBufferedCharacters
+            (line: RedactedText)
+            =
             if line.Text.Length > OutputLimitCharacters then
                 reportOutputLimit ()
+                false
             elif not (hasOutputFailure ()) then
                 lock sink (fun () ->
                     if not (fitsOutputLine sink.Length line.Text.Length Environment.NewLine.Length) then
@@ -1416,7 +1550,13 @@ module ProcessGroup =
                         sink.AppendLine line.Text |> ignore
                         taggedSink.AppendLine line)
 
-                if not (hasOutputFailure ()) then publishRedactedLine admission line
+                if not (hasOutputFailure ()) then
+                    publishRedactedLine admission consumedBufferedCharacters line
+                    true
+                else
+                    false
+            else
+                false
 
         // CAPTURED STDOUT IS READ AS ONE STREAM, NOT REASSEMBLED FROM LINES.
         //
@@ -1459,12 +1599,6 @@ module ProcessGroup =
             | Some _ -> request.CreateRedactedAdmission |> Option.map (fun create -> create ())
             | None -> None
 
-        let handleRedactedStderrLine (line: RedactedText) =
-            if line.Text.StartsWith(pgidMarker, StringComparison.Ordinal) then
-                handleStderrLine line.Text
-            else
-                emitRedacted stderrAdmission stderr stderrRedacted line
-
         proc.Start() |> ignore
 
         // `Exited` is a process-handle notification. It does not wait for
@@ -1493,27 +1627,118 @@ module ProcessGroup =
         // The buffer is locked on BOTH sides: this task may still be reading when the
         // snapshot below is taken, precisely in the case the ticket is about.
         let captureBuffer = Text.StringBuilder()
+        let mutable acceptingCapturedOutput = true
 
         let startRedactingReader
             (reader: IO.StreamReader)
             callbackGate
             (closed: Tasks.TaskCompletionSource<unit>)
             publish
+            bufferedAdmission
+            closeAdmission
             completePublication
             stripInitialControlFrame
             =
             let policy = request.OutputRedaction.Value
+            let mutable acceptingRedactedOutput = 1
+            // Assigned before the reader's first await. The outer freeze never
+            // waits for callbackGate: a direct synchronous callback is allowed
+            // to stall, but it must not admit a NEW chunk after return.
+            let mutable closeLocalReaderState: unit -> unit = ignore
 
-            task {
+            let freezeRedactedReader () =
+                // Close new reader work before acquiring the owner lease. A
+                // reader already in policy.Synchronize then either finishes
+                // before Close takes the output lock or sees this inner flag;
+                // a fresh feed cannot slip between Close and the flag.
+                Threading.Interlocked.Exchange(&acceptingRedactedOutput, 0) |> ignore
+
+                try
+                    closeAdmission |> Option.iter (fun close -> close ())
+                finally
+                    if Monitor.TryEnter(callbackGate) then
+                        try
+                            // Local matcher/framer state belongs only to this
+                            // reader; do not take the policy lock here because a
+                            // different synchronous callback may hold it.
+                            closeLocalReaderState ()
+                        finally
+                            Monitor.Exit(callbackGate)
+
+            let readerTask = task {
                 let masker = policy.CreateMatcher()
-                let framer = RedactedLineFramer(publish, reportOutputLimit)
+                let releaseBuffered characters =
+                    if characters > 0 then
+                        bufferedAdmission |> Option.iter (fun buffered -> buffered.Release characters)
+
+                let publishFramedLine consumed line =
+                    if Threading.Volatile.Read(&acceptingRedactedOutput) = 0 || hasOutputFailure () then
+                        releaseBuffered consumed
+                    else
+                        // Per-process buffering can reject a line before its
+                        // run-wide admission. Those credits never transferred,
+                        // so return them before the reader begins cleanup.
+                        if not (publish (Some consumed) line) then
+                            releaseBuffered consumed
+
+                let framer = RedactedLineFramer(publishFramedLine, releaseBuffered, reportOutputLimit)
                 let controlPrefix = Text.StringBuilder()
                 let mutable controlResolved = not stripInitialControlFrame
-                let mutable reachedEof = false
+                // Credits for matcher state which has not yet become framer
+                // input. The matcher can retain a long almost-secret prefix
+                // while returning an empty RedactedText; those bytes must be
+                // part of the shared whole-build budget before EOF.
+                let mutable matcherReservedCharacters = 0
+
+                let reconcileMatcherOutput () (masked: RedactedText) =
+                    let desired = masker.PendingCharacters + masked.Text.Length
+                    let delta = desired - matcherReservedCharacters
+
+                    if delta > 0 then
+                        bufferedAdmission |> Option.iter (fun buffered -> buffered.Reserve delta)
+                    elif delta < 0 then
+                        releaseBuffered (-delta)
+
+                    // Only the matcher's retained prefix remains local after
+                    // the emitted portion is handed to the framer. Set this
+                    // before Push so an admission exception cannot make the
+                    // finally path release framer-owned credit twice.
+                    matcherReservedCharacters <- masker.PendingCharacters
+
+                let abandonMatcherReservation () =
+                    if matcherReservedCharacters > 0 then
+                        let abandoned = matcherReservedCharacters
+                        matcherReservedCharacters <- 0
+                        releaseBuffered abandoned
+
+                let mutable localReaderStateClosed = false
+
+                let closeLocalState () =
+                    if not localReaderStateClosed then
+                        localReaderStateClosed <- true
+                        framer.Abandon()
+                        abandonMatcherReservation ()
+                        // Frozen readers never receive EOF authority. Drop the
+                        // matcher's ambiguous raw suffix rather than completing
+                        // it into output after the owning stream is closed.
+                        masker.Abandon()
+                        controlPrefix.Clear() |> ignore
+
+                closeLocalReaderState <- closeLocalState
 
                 let feedBuildOutput text =
                     if not (String.IsNullOrEmpty text) then
-                        framer.Push(masker.PushRedacted text)
+                        // Charge decoded process input *before* the matcher.
+                        // A matcher may retain all of an almost-secret prefix
+                        // and return no text for the framer until a later
+                        // chunk or EOF.
+                        bufferedAdmission |> Option.iter (fun buffered -> buffered.Reserve text.Length)
+                        matcherReservedCharacters <- matcherReservedCharacters + text.Length
+                        let masked = masker.PushRedacted text
+                        reconcileMatcherOutput () masked
+
+                        if not (String.IsNullOrEmpty masked.Text) then
+                            framer.Push masked
 
                 let feed text =
                     if controlResolved then
@@ -1553,30 +1778,66 @@ module ProcessGroup =
 
                         if n > 0 then
                             lock callbackGate (fun () ->
-                                policy.Synchronize(fun () -> feed (String(chunk, 0, n))))
+                                if Threading.Volatile.Read(&acceptingRedactedOutput) = 0 then
+                                    closeLocalState ()
+                                elif not (hasOutputFailure ()) then
+                                    try
+                                        policy.Synchronize(fun () ->
+                                            // A freeze can race a reader which
+                                            // already acquired callbackGate.
+                                            // Recheck inside Synchronize before
+                                            // raw reservation or matcher state.
+                                            if Threading.Volatile.Read(&acceptingRedactedOutput) = 0 then
+                                                closeLocalState ()
+                                            else
+                                                feed (String(chunk, 0, n)) )
+                                    with error ->
+                                        // A shared quota rejection must wake an
+                                        // otherwise unbounded run. Keep draining
+                                        // the pipe while the main path terminates
+                                        // and verifies the process group.
+                                        reportOutputFailure error)
                         else
                             reading <- false
 
-                    reachedEof <- true
-
                     lock callbackGate (fun () ->
-                        policy.Synchronize(fun () ->
-                            if not controlResolved && controlPrefix.Length > 0 then
-                                feedBuildOutput (controlPrefix.ToString())
-                                controlPrefix.Clear() |> ignore
+                        try
+                            policy.Synchronize(fun () ->
+                                if Threading.Volatile.Read(&acceptingRedactedOutput) = 0 then
+                                    closeLocalState ()
+                                else
+                                    if not (hasOutputFailure ()) then
+                                        if not controlResolved && controlPrefix.Length > 0 then
+                                            feedBuildOutput (controlPrefix.ToString())
+                                            controlPrefix.Clear() |> ignore
 
-                            framer.Push(masker.CompleteRedacted())
-                            framer.Complete()
-                            completePublication |> Option.iter (fun complete -> complete ())))
+                                        let suffix = masker.CompleteRedacted()
+                                        reconcileMatcherOutput () suffix
+
+                                        if not (String.IsNullOrEmpty suffix.Text) then
+                                            framer.Push suffix
+
+                                        framer.Complete()
+                                    else
+                                        closeLocalState ()
+
+                                    // A direct synchronous Admit can have
+                                    // stalled inside framer.Complete. Recheck
+                                    // after it returns: bounded finalization
+                                    // may have frozen this reader meanwhile.
+                                    if Threading.Volatile.Read(&acceptingRedactedOutput) = 0 then
+                                        closeLocalState ()
+                                    else
+                                        completePublication |> Option.iter (fun complete -> complete ()))
+                        with error ->
+                            closeLocalState ()
+                            reportOutputFailure error)
                 finally
-                    // On an exceptional/cut-off read, never flush an ambiguous
-                    // pending prefix. A real EOF is the sole authority to do so.
-                    if not reachedEof then
-                        controlPrefix.Clear() |> ignore
+                    lock callbackGate (fun () -> closeLocalState ())
 
                     closed.TrySetResult(()) |> ignore
             }
-            :> Tasks.Task
+            (readerTask :> Tasks.Task), freezeRedactedReader
 
         let startRawReader
             (reader: IO.StreamReader)
@@ -1585,7 +1846,7 @@ module ProcessGroup =
             publish
             =
             task {
-                let framer = RawLineFramer(publish, reportOutputLimit)
+                let framer = RawLineFramer((fun _ line -> publish line), ignore, reportOutputLimit)
 
                 try
                     let chunk = Array.zeroCreate<char> 4096
@@ -1618,6 +1879,8 @@ module ProcessGroup =
                         stdoutCallbackGate
                         stdoutClosed
                         (emitRedacted stdoutAdmission stdout stdoutRedacted)
+                        (stdoutAdmission |> Option.bind (fun admission -> admission.Buffered))
+                        (stdoutAdmission |> Option.bind (fun admission -> admission.Close))
                         (stdoutAdmission |> Option.map _.Complete)
                         false)
             | _ -> None
@@ -1630,7 +1893,14 @@ module ProcessGroup =
                         proc.StandardError
                         stderrCallbackGate
                         stderrClosed
-                        handleRedactedStderrLine
+                        (fun consumed line ->
+                            if line.Text.StartsWith(pgidMarker, StringComparison.Ordinal) then
+                                handleStderrLine line.Text
+                                false
+                            else
+                                emitRedacted stderrAdmission stderr stderrRedacted consumed line)
+                        (stderrAdmission |> Option.bind (fun admission -> admission.Buffered))
+                        (stderrAdmission |> Option.bind (fun admission -> admission.Close))
                         (stderrAdmission |> Option.map _.Complete)
                         true)
             | None -> None
@@ -1651,10 +1921,25 @@ module ProcessGroup =
 
                             if n > 0 then
                                 lock captureBuffer (fun () ->
-                                    if n > OutputLimitCharacters - captureBuffer.Length then
+                                    // Capture return is a synchronization
+                                    // boundary. An escaped descendant may keep
+                                    // this pipe open after the bounded EOF wait;
+                                    // continue draining it, but never let that
+                                    // late data reserve run-wide budget or alter
+                                    // a completed step after its snapshot.
+                                    if not acceptingCapturedOutput then
+                                        ()
+                                    elif n > OutputLimitCharacters - captureBuffer.Length then
                                         reportOutputLimit ()
                                     elif not (hasOutputFailure ()) then
-                                        captureBuffer.Append(chunk, 0, n) |> ignore)
+                                        try
+                                            request.ReserveCapturedOutput |> Option.iter (fun reserve -> reserve n)
+                                            captureBuffer.Append(chunk, 0, n) |> ignore
+                                        with error ->
+                                            // Wake even an otherwise unbounded wait;
+                                            // continue draining while cleanup reaps
+                                            // the group, then propagate the cause.
+                                            reportOutputFailure error)
                             else
                                 reading <- false
                     }
@@ -1677,11 +1962,13 @@ module ProcessGroup =
             | Some task -> task
             | None ->
                 redactingStdoutReader
+                |> Option.map fst
                 |> Option.orElse rawStdoutReader
                 |> Option.defaultValue (stdoutClosed.Task :> Tasks.Task)
 
         let stderrReaderCompleted: Tasks.Task =
             redactingStderrReader
+            |> Option.map fst
             |> Option.orElse rawStderrReader
             |> Option.defaultValue (stderrClosed.Task :> Tasks.Task)
 
@@ -2015,9 +2302,9 @@ module ProcessGroup =
                 // the shell itself on both engines. The cause is the SNAPSHOT taken
                 // when the wait ended, never a fresh sample.
                 if waitEnd = WaitEnd.Expired then
-                    publishGeneratedLine "Cancelling nested steps due to timeout"
+                    publishGeneratedLineBeforeCleanup "Cancelling nested steps due to timeout"
 
-                publishGeneratedLine "Sending interrupt signal to process"
+                publishGeneratedLineBeforeCleanup "Sending interrupt signal to process"
 
                 settleBeforeSignal 300
                 let outputBeforeSignal = lock stdout (fun () -> stdout.ToString())
@@ -2045,7 +2332,7 @@ module ProcessGroup =
                         |> Array.exists (fun line -> line.Trim() = "Terminated"))
 
                 if not shellSaidIt then
-                    publishGeneratedLine "Terminated"
+                    publishGeneratedLineBeforeCleanup "Terminated"
                 // Distinguish the two ways a step can fail to finish. Both take
                 // the same signal path; only the reported cause differs.
                 (if waitEnd = WaitEnd.Interrupted then Cancelled else TimedOut), t, completionClock, 300, callbackReadersReachedEof
@@ -2058,6 +2345,23 @@ module ProcessGroup =
                 outputCompletionBudget
                 outputCompletionClock
                 callbackReadersReachedEof
+
+        // A bounded reader wait is also an ownership boundary. Close Walker's
+        // per-stream admission lease before constructing the result so an
+        // escaped pipe holder cannot mutate a later step's shared budget. Do
+        // not let an unexpected direct Close implementation skip remaining
+        // readers or cleanup; retain it for final propagation instead.
+        let mutable deferredReaderCloseFailure: exn option = None
+
+        let freezeRedactingReader reader =
+            try
+                reader |> Option.iter (fun (_, freeze) -> freeze ())
+            with error ->
+                if deferredReaderCloseFailure.IsNone then
+                    deferredReaderCloseFailure <- Some error
+
+        freezeRedactingReader redactingStdoutReader
+        freezeRedactingReader redactingStderrReader
 
         let readerFailure =
             if allReadersCompleted.IsFaulted then
@@ -2130,7 +2434,10 @@ module ProcessGroup =
 
         let capturedText =
             capturedStdout
-            |> Option.map (fun _ -> lock captureBuffer (fun () -> captureBuffer.ToString()))
+            |> Option.map (fun _ ->
+                lock captureBuffer (fun () ->
+                    acceptingCapturedOutput <- false
+                    captureBuffer.ToString()))
 
         let bufferedStdout = lock stdout (fun () -> stdout.ToString())
         let bufferedStderr = lock stderr (fun () -> stderr.ToString())
@@ -2164,6 +2471,12 @@ module ProcessGroup =
         let finalFailure =
             readerFailure
             |> Option.orElse lineCallbackFailure
+            // An in-flight process callback can establish lost host output
+            // independently of a later rejected interrupt narration. Keep
+            // that transport uncertainty first, but never let a bare reader
+            // settlement timeout erase the retained narration failure.
+            |> Option.orElse deferredGeneratedNarrationFailure
+            |> Option.orElse deferredReaderCloseFailure
             |> Option.orElse outputFailure
             |> Option.orElse lineCallbackSettlementTimeout
 

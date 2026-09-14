@@ -63,6 +63,8 @@ type StepRequest =
       /// for stdout and once for stderr so late publication remasking retains
       /// the same independent-stream identity as the raw matchers.
       CreateRedactedAdmission: (unit -> RedactedAdmission) option
+      /// Shared build quota for captured stdout, charged before retention.
+      ReserveCapturedOutput: (int -> unit) option
       /// Named arguments as written (`artifacts:`, `testResults:`, `pattern:`).
       Named: (string * string) list
       /// Where publishing steps write. None disables them by failing closed.
@@ -257,8 +259,30 @@ module Executor =
                     fun () ->
                         let stream = create ()
                         let admit = deliverRedacted (Some stream.Admit) decodedRedactedLine |> Option.defaultValue ignore
-                        { Admit = admit
-                          Complete = stream.Complete })
+                        { stream with
+                            Admit = admit
+                            Buffered =
+                                stream.Buffered
+                                |> Option.map (fun buffered ->
+                                    { buffered with
+                                        Admit =
+                                            fun consumed line ->
+                                                let mutable transferred = false
+                                                let transfer safe =
+                                                    transferred <- true
+                                                    buffered.Admit consumed safe
+                                                try
+                                                    let deliver =
+                                                        deliverRedacted (Some transfer) decodedRedactedLine
+                                                        |> Option.defaultValue ignore
+                                                    deliver line
+                                                with _ ->
+                                                    // Leak-warning admission can fail before
+                                                    // the final record reaches its owner.
+                                                    // The framer has already surrendered this
+                                                    // credit; release it here exactly once.
+                                                    if not transferred then buffered.Release consumed
+                                                    reraise () }) })
 
             let synchronousAdmission =
                 Option.isSome request.OnRedactedAdmission
@@ -292,6 +316,7 @@ module Executor =
                         OnRedactedAdmission =
                             if Option.isSome request.OnRedactedAdmission then onLine else None
                         CreateRedactedAdmission = createRedactedAdmission
+                        ReserveCapturedOutput = request.ReserveCapturedOutput
                         OutputRedaction = outputRedaction
                         SuppressStdoutEcho = request.CaptureStdout }
 

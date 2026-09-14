@@ -29,6 +29,7 @@ module WalkerStep =
             (step: Step)
             (deadline: Deadline option)
             =
+        runCtx.CheckOutputBudget()
         // The argument and the KEY it arrived under travel together. `render`
         // needs the key to ask what quoting the source used, and deriving the
         // two separately is what let `sh` drift onto the wrong rule below.
@@ -314,11 +315,15 @@ module WalkerStep =
                           // external publication drains independently.
                           OnRedactedAdmission = None
                           CreateRedactedAdmission = Some runCtx.CreateRedactedAdmission
+                          ReserveCapturedOutput = Some runCtx.ReserveCapturedOutput
                           // External cancellation only — a failFast sibling. The
                           // deadline reaches the shell runner through TimeoutMs and
                           // self-working steps through DeadlineExpired, so an expired
                           // timeout is still reported as a timeout.
-                          Interrupt = ctx.Interrupt
+                          Interrupt =
+                            Some(fun () ->
+                                runCtx.OutputBudgetExceeded()
+                                || (ctx.Interrupt |> Option.exists (fun interrupted -> interrupted ())))
                           // ties inside one poll break on the WALKER's timestamps:
                           // the sibling stamp against this step's effective deadline
                           InterruptBeatsDeadline =

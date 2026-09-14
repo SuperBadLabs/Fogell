@@ -550,7 +550,8 @@ truncated capture is never returned as a successful shell result. Already
 published log chunks remain available, but the rejected record may be absent.
 
 Persisted runner exceptions publish a bounded `runner-failure` log event with
-an engine-owned cause code: `OUTPUT_LIMIT_EXCEEDED`, `RUNNER_OUT_OF_MEMORY`,
+an engine-owned cause code: `BUILD_OUTPUT_LIMIT_EXCEEDED`,
+`OUTPUT_LIMIT_EXCEEDED`, `RUNNER_OUT_OF_MEMORY`,
 `RUNNER_ACCESS_DENIED`, `RUNNER_IO_ERROR`, or `RUNNER_INTERNAL_ERROR`. The host
 also publishes a fixed `RUN_FAILED` fallback before recording terminal failure.
 Exception messages and inherited runner stderr are not copied into public logs;
@@ -560,10 +561,34 @@ These events classify caught runner failures; they cannot diagnose an abrupt
 kernel kill or guarantee that a process already out of memory can allocate a
 diagnostic.
 
-This bounds individual process invocations. The walker still retains aggregate
-build output and publication history, so many below-limit steps or concurrent
-branches can consume more memory. Keep a worker/container memory limit; this
-change is not a whole-build memory budget or a multi-tenant isolation guarantee.
+A build also shares a cumulative budget of 33,554,432 UTF-16 code units and
+100,000 logical output records across all steps and parallel branches. Console
+records charge masked text, timestamp prefixes, and normalized line terminators.
+Decoded console chunks reserve shared capacity before secret matching, covering
+both an unfinished secret candidate and an unfinished line. Matching reconciles
+that reservation with its retained prefix and emitted text; completing a record
+transfers its credit into the final charge, so parallel unfinished streams cannot
+each consume a separate allowance. Discarding buffered
+text releases its temporary reservation, without refunding retained records.
+`returnStdout` charges raw decoded chunks before retaining them, even when the
+script never prints the result. Captures consume characters without creating
+console records. Positive growth from later secret masking consumes the same
+budget; shortening or discarding a capture does not refund it.
+When a bounded reader wait expires, returning the step closes output admission.
+Late escaped-writer bytes cannot charge a later step; closing a stream does not
+count as EOF for secret masking.
+
+Crossing either build limit prevents further step execution and interrupts
+running shell siblings even when `failFast` is disabled. All parallel branches
+are joined before the failure escapes. Admitted safe output drains before the
+fixed `BUILD_OUTPUT_LIMIT_EXCEEDED` diagnostic; a suffix that cannot be safely
+remasked within the budget is withheld. A publication failure still takes
+precedence and requires reconciliation. Each new run starts with a fresh budget.
+
+These are output-retention limits, not an exact resident-memory ceiling. Object
+and masking provenance overhead, transient copies, arbitrary script data,
+workspace files, and stored artifacts require separate controls. Keep a
+worker/container memory limit; this is not a multi-tenant isolation guarantee.
 
 If progressive event publication fails, Run.Host emits no terminal journal
 record; the failure remains infrastructure truth and the controller requires

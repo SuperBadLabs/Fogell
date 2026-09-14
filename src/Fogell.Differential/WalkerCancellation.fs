@@ -30,6 +30,9 @@ module WalkerCancellation =
     /// When both hold, the earlier event wins: a deadline already past preceded a
     /// sibling seen on this poll.
     let cancellationOf (runCtx: WalkerCtx) (ctx: BranchCtx) (deadline: Deadline option) : Cancellation =
+        // Resource exhaustion is a sticky build-wide failure, not a deadline
+        // or a failFast sibling's semantic status.
+        runCtx.CheckOutputBudget()
         let expiredNow =
             match deadline with
             | Some d -> runCtx.RunClock.ElapsedMilliseconds >= d.AtMs

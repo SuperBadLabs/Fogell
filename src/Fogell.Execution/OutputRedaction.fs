@@ -515,6 +515,20 @@ type internal SeparatorTolerantMasker(maskForms: unit -> string array) =
 
     member this.Complete() = (this.CompleteRedacted()).Text
 
+    /// Drop an unresolved raw suffix when its owning reader is frozen without
+    /// EOF. Unlike [Complete], this must never turn ambiguous process bytes
+    /// into output or manufacture a terminal separator.
+    member _.Abandon() =
+        pending.Clear()
+        matchesByStart.Clear()
+        lastPending <- None
+        logicalIndex <- -1L
+        separatorCount <- 0
+        pendingCr <- false
+        pendingCrOrigin <- -1
+        pendingRawCharacters <- 0
+        resetPatterns ()
+
     member _.PendingCharacters = pendingRawCharacters + if pendingCr then 1 else 0
     member _.MaximumPendingCharacters = maximumPendingCharacters
 
