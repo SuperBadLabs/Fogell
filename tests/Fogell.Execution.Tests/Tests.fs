@@ -5995,6 +5995,20 @@ let maskingOnOutputPath =
                   "stderr is bounded even when stdout is captured"
           }
 
+          test "line capture reserves the full CRLF terminator at the output boundary" {
+              let limit = ProcessGroup.OutputLimitCharacters
+
+              Expect.isTrue
+                  (ProcessGroup.fitsOutputLine 0 (limit - 2) 2)
+                  "a CRLF-terminated line exactly at the bound fits"
+              Expect.isFalse
+                  (ProcessGroup.fitsOutputLine 0 (limit - 1) 2)
+                  "a second CRLF byte cannot exceed the advertised bound"
+              Expect.isFalse
+                  (ProcessGroup.fitsOutputLine (limit - 1) 0 2)
+                  "the existing sink suffix is included in the same CRLF bound"
+          }
+
           test "a stalled output callback cannot grow an unbounded publication queue" {
               let mutable delivered = 0
               use firstCallbackStarted = new Threading.ManualResetEventSlim(false)
