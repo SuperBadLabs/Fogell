@@ -4,8 +4,9 @@ audience: mixed
 category: engineering-board
 purpose: Engineering backlog for reliable self-hosted CI and an evidence-backed Jenkins migration surface.
 lifecycle: live
-last-verified: 2026-08-14
-accounting-verified: 2026-09-04
+last-verified: 2026-09-15
+accounting-verified: 2026-09-15
+verification-scope: Operating policy and derived accounting; ticket claims retain their own evidence dates.
 ---
 
 # Fogell — Execution Board
@@ -143,12 +144,28 @@ The daily work loop starts and ends on HeMan:
    and review-cost instructions supersede the former per-ticket/reopen policy.
    A review of an earlier SHA does not carry forward; record any missing coverage
    or unsupported bot-result format explicitly, without calling the guard green.
-6. Run `scripts/review-coverage.py --pr N` from HeMan after the review record
-   exists and before merge. It names the current full head and refuses until
-   every expected reviewer covered it. The no-argument repository-wide audit
-   remains historical evidence and is not a publication guard.
+6. Use the owner's cost-aware review route: independent local QA and automatic
+   Codex review must cover the final full head. Address findings from every
+   reviewer, including Copilot; a stale Copilot review is disclosed but does not
+   require a replacement PR. Run `scripts/review-coverage.py --pr N --reviewers
+   'chatgpt-codex-connector[bot]'` from HeMan. This explicit expected-reviewer
+   override replaces the former mandatory two-bot route for this workflow;
+   `tickets/FG-199.md` retains the history of that earlier policy.
+   If the tool cannot recognize a newer Codex result format, a recorded manual
+   verification is the fallback: record the bot-authored completed review result
+   by URL/ID and resolve its reported commit to the current full head. For the
+   summary-and-reaction format, require the latest completed summary on that PR
+   and a PR-level no-findings reaction on the same PR by the same bot,
+   timestamped at or after that completion. Record the summary and reaction IDs;
+   a reaction on another PR or on a comment does not qualify, and a reaction
+   alone never suffices. For a formal review, inspect all findings.
+   In either format, verify no findings remain unresolved and record independent
+   QA signoff for that same head. A pending review, new head, or unresolved finding
+   cannot use this fallback. Preserve the tool's nonzero result and the evidence;
+   do not describe it as a passing automated guard. The no-argument repository
+   audit remains historical evidence, not the publication guard.
 7. Use GitHub for required status checks and merge only the exact head that the
-   HeMan gate and final review covered.
+   HeMan gate and the automatic or documented manual review verification covered.
 
 A ticket is done only when all of the following are true:
 

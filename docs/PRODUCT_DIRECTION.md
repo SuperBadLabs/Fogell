@@ -23,9 +23,9 @@ They are regression and migration tools, not the release progress meter.
 
 ## What has landed
 
-The merged production batches bound individual runner output, improve log
-publication throughput, share output budgets across a build, and bound artifact
-publication and interrupted-copy cleanup. The
+The merged production batches have bounded individual runner output, improved
+log publication throughput, introduced shared output budgets across a build,
+and bounded artifact publication and interrupted-copy cleanup. The
 [controller runbook](runbooks/controller-host.md) owns the settings and limits.
 The PRs linked in ADR 0010 own their measured validation results.
 
@@ -79,5 +79,8 @@ Use one PR for a coherent batch, with cheaper implementation agents and an
 independent reviewer where useful. Review shared lifecycle and failure behavior
 before publication. Use automatic GitHub reviews; do not request extra paid
 reviews or replace a PR solely to retrigger a reviewer. Record exact-commit
-coverage and any tooling limitation honestly. Existing required checks and the
-full pre-publication gate remain in force.
+coverage and any tooling limitation honestly. The
+[board operating contract](EXECUTION_BOARD.md#execution-cycle-and-definition-of-done)
+defines the required local-QA/Codex route, optional stale Copilot coverage, and
+the explicit evidence fallback for an unsupported bot-result format. Existing
+required checks and the full pre-publication gate remain in force.
