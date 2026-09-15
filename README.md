@@ -78,8 +78,9 @@ The working loop is therefore:
 3. build, test and generate corpus/differential evidence from HeMan;
 4. run the full local gate and inspect the final diff on HeMan;
 5. publish the already-proven commit to GitHub;
-6. obtain review of the exact head, then run
-   `scripts/review-coverage.py --pr N` from HeMan; and
+6. obtain final-head review and verify coverage using the
+   [board's authoritative review procedure](docs/EXECUTION_BOARD.md#execution-cycle-and-definition-of-done),
+   including its explicit reviewer selection and evidence fallback; and
 7. use GitHub only for final review metadata, required checks and merge.
 
 ## Layout
