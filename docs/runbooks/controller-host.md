@@ -556,6 +556,15 @@ Standalone persisted runs keep artifacts under
 `_artifacts/<job-name>/build@<build-number>`. Different build numbers have separate
 budgets; resuming the same build number continues to charge its retained files.
 Controller-managed runs retain the UUID staging and attempt snapshot layout above.
+Workspace freshness and a new journal do not mint a new persisted build identity;
+use a new build number for a new standalone build.
+
+The fresh single-run and sequence library APIs replace the job workspace and
+require exclusive use of that job. They move the previous artifact namespace
+under `_artifacts/.fogell-artifact-history` before the new run, so earlier files
+remain preserved without consuming the new run's artifact budget. This history
+is outside per-attempt limits and requires the same separate retention policy
+as older snapshots.
 
 ## Acceptance and recovery checks
 

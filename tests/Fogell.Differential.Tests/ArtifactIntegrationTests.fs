@@ -59,6 +59,9 @@ let private pendingBuildId (buildKey: string) =
 let private persistedArtifactKey (jobName: string) (buildNumber: int) =
     Path.Combine(jobName, $"build@{buildNumber}")
 
+let private artifactHistoryRoot (root: string) (scopeKey: string) =
+    Path.Combine(root, "_artifacts", ".fogell-artifact-history", pendingBuildId scopeKey)
+
 let artifactIntegration =
     testList "bounded artifact integration"
         [ test "separate archive steps share bytes and retain only completed files" {
@@ -127,6 +130,75 @@ let artifactIntegration =
                   Expect.equal (File.ReadAllText firstTarget) "12345678" "first build artifact remains in its own store"
                   Expect.equal (File.ReadAllText secondTarget) "abcdefgh" "second build artifact remains in its own store"))
           }
+          test "fresh single runs rotate their stable artifact namespace" {
+              withPolicy limits (fun () -> withRoot (fun root ->
+                  let first = pipeline "sh 'printf 12345678 > first.bin'; archiveArtifacts 'first.bin'"
+                  let second = pipeline "sh 'printf abcdefgh > second.bin'; archiveArtifacts 'second.bin'"
+
+                  for source in [ first; second ] do
+                      match FogellSide.run [] root "fresh-job" source with
+                      | Error why -> failtestf "fresh single run failed: %s" why
+                      | Ok trace -> Expect.equal trace.Result "success" "each fresh run has a new quota"
+
+                  let target = Path.Combine(root, "_artifacts", "fresh-job")
+                  Expect.isFalse (File.Exists(Path.Combine(target, "first.bin"))) "the fresh stable path has no prior artifact"
+                  Expect.equal (File.ReadAllText(Path.Combine(target, "second.bin"))) "abcdefgh" "the stable path holds the new artifact"
+
+                  let historical =
+                      Directory.GetFiles(artifactHistoryRoot root "fresh-job", "first.bin", SearchOption.AllDirectories)
+                  Expect.equal historical.Length 1 "the prior namespace was rotated once"
+                  Expect.equal (File.ReadAllText historical[0]) "12345678" "rotation retains the old bytes privately"))
+          }
+          test "a second retained sequence rotates all prior build artifact keys" {
+              withPolicy limits (fun () -> withRoot (fun root ->
+                  let first = pipeline "sh 'printf 12345678 > first.bin'; archiveArtifacts 'first.bin'"
+                  let second = pipeline "sh 'printf abcdefgh > second.bin'; archiveArtifacts 'second.bin'"
+                  let runSequence () =
+                      match FogellSide.runMany [] root "fresh-sequence" [ first; second ] with
+                      | [ Ok firstTrace; Ok secondTrace ] ->
+                          Expect.equal firstTrace.Result "success" "first retained build succeeds"
+                          Expect.equal secondTrace.Result "success" "second retained build succeeds"
+                      | results -> failtestf "fresh retained sequence failed: %A" results
+
+                  runSequence ()
+                  runSequence ()
+
+                  let target = Path.Combine(root, "_artifacts", "fresh-sequence")
+                  Expect.isTrue (File.Exists(Path.Combine(target, "build@1", "first.bin"))) "new build 1 is retained"
+                  Expect.isTrue (File.Exists(Path.Combine(target, "build@2", "second.bin"))) "new build 2 did not inherit the old build 2 quota"))
+          }
+          test "fresh namespace rotation refuses linked current and history directories" {
+              withPolicy limits (fun () -> withRoot (fun root ->
+                  let source = pipeline "sh 'printf 12345678 > first.bin'; archiveArtifacts 'first.bin'"
+                  let next = pipeline "sh 'printf abcdefgh > second.bin'; archiveArtifacts 'second.bin'"
+                  let runInitial jobName =
+                      match FogellSide.run [] root jobName source with
+                      | Error why -> failtestf "initial fresh run failed: %s" why
+                      | Ok _ -> ()
+
+                  let outside = Path.Combine(root, "outside")
+                  Directory.CreateDirectory outside |> ignore
+
+                  runInitial "linked-target"
+                  let target = Path.Combine(root, "_artifacts", "linked-target")
+                  let saved = Path.Combine(root, "saved-target")
+                  Directory.Move(target, saved)
+                  Directory.CreateSymbolicLink(target, outside) |> ignore
+                  match FogellSide.run [] root "linked-target" next with
+                  | Ok trace -> failtestf "linked artifact target was accepted: %s" trace.Result
+                  | Error why -> Expect.stringContains why "Artifact publication failed." "linked target fails closed"
+                  Expect.isFalse (File.Exists(Path.Combine(outside, "second.bin"))) "linked target cannot redirect publication"
+
+                  runInitial "linked-history"
+                  let history = artifactHistoryRoot root "linked-history"
+                  Directory.CreateDirectory(Path.GetDirectoryName history) |> ignore
+                  Directory.CreateSymbolicLink(history, outside) |> ignore
+                  match FogellSide.run [] root "linked-history" next with
+                  | Ok trace -> failtestf "linked artifact history was accepted: %s" trace.Result
+                  | Error why -> Expect.stringContains why "Artifact publication failed." "linked history fails closed"
+                  Expect.isTrue (File.Exists(Path.Combine(root, "_artifacts", "linked-history", "first.bin"))) "failed rotation preserves the old target"
+                  Expect.isFalse (File.Exists(Path.Combine(outside, "second.bin"))) "linked history cannot redirect rotation"))
+          }
           test "persisted publication refuses unowned pending data before later steps" {
               withPolicy limits (fun () -> withRoot (fun root ->
                   let output = ResizeArray<string>()
@@ -187,11 +259,29 @@ let artifactIntegration =
                   Expect.isTrue (File.Exists(Path.Combine(target, "first.bin"))) "initial published file remains"
                   Expect.isFalse (File.Exists(Path.Combine(target, "second.bin"))) "resume cannot exceed its original quota"))
           }
+          test "fresh workspace does not mint a new persisted artifact identity" {
+              withPolicy limits (fun () -> withRoot (fun root ->
+                  let jobName = "fresh-persisted-job"
+                  let first = pipeline "sh 'printf 12345678 > first.bin'; archiveArtifacts 'first.bin'"
+                  let second = pipeline "sh 'printf abcdefgh > second.bin'; archiveArtifacts 'second.bin'"
+
+                  FogellSide.runPersisted [] root jobName 1 true (hooks ignore) first
+                  |> function
+                      | Error why -> failtestf "initial persisted build failed: %s" why
+                      | Ok _ -> ()
+
+                  FogellSide.runPersisted [] root jobName 1 true (hooks ignore) second
+                  |> expectLimit
+                  let target = Path.Combine(root, "_artifacts", persistedArtifactKey jobName 1)
+                  Expect.isTrue (File.Exists(Path.Combine(target, "first.bin"))) "same build identity retains its artifact bytes"
+                  Expect.isFalse (File.Exists(Path.Combine(target, "second.bin"))) "fresh workspace does not reset the persisted build quota"))
+          }
           test "explicit persisted artifact key preserves controller UUID staging" {
               withPolicy limits (fun () -> withRoot (fun root ->
                   let jobName = "controller-job"
                   let artifactBuildKey = Guid.NewGuid().ToString "N"
                   let source = pipeline "sh 'printf 12345678 > controller.bin'; archiveArtifacts 'controller.bin'"
+                  let second = pipeline "sh 'printf abcdefgh > later.bin'; archiveArtifacts 'later.bin'"
 
                   match
                       FogellSide.runPersistedWithArtifactKey
@@ -211,6 +301,19 @@ let artifactIntegration =
                   Expect.isTrue (File.Exists target) "the supplied UUID remains the exact artifact staging key"
                   Expect.isFalse
                       (Directory.Exists(Path.Combine(root, "_artifacts", persistedArtifactKey jobName 17)))
-                      "the numbered default is not substituted for an explicit controller key"))
+                      "the numbered default is not substituted for an explicit controller key"
+
+                  FogellSide.runPersistedWithArtifactKey
+                      []
+                      root
+                      jobName
+                      artifactBuildKey
+                      17
+                      true
+                      (hooks ignore)
+                      second
+                  |> expectLimit
+                  Expect.isTrue (File.Exists target) "the same controller key retains its prior bytes"
+                  Expect.isFalse (File.Exists(Path.Combine(root, "_artifacts", artifactBuildKey, "later.bin"))) "workspace freshness does not reset controller-keyed quota"))
           } ]
     |> testSequenced

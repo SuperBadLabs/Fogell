@@ -630,10 +630,12 @@ module internal Native =
         requireOpenFlags ()
         |> Result.bind (fun table -> deleteFileWithoutLinksUsing table root relative)
 
-    /// Promote a sidecar file held below one descriptor-validated root into a
+    /// Rename an entry held below one descriptor-validated root into a
     /// destination held below another. Both parent directories remain
-    /// descriptor-pinned while `renameat` resolves their leaf names.
-    let atomicReplaceFileBetweenRootsWithoutLinks
+    /// descriptor-pinned while `renameat` resolves their leaf names. `renameat`
+    /// accepts either a regular file or a directory, which keeps artifact
+    /// namespace rotation O(1) without a recursive path walk.
+    let atomicRenameBetweenRootsWithoutLinks
         (sourceRoot: string)
         (sourceRelative: string)
         (destinationRoot: string)

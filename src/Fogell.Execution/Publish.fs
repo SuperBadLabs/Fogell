@@ -539,7 +539,8 @@ module Publish =
         let segments = value.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
         let reserved =
             [ ".fogell-artifact-pending"
-              ".fogell-artifact-locks" ]
+              ".fogell-artifact-locks"
+              ".fogell-artifact-history" ]
 
         not (String.IsNullOrWhiteSpace value)
         && not (Path.IsPathFullyQualified value)
@@ -748,6 +749,45 @@ module Publish =
 
             tryCleanup 4
 
+    /// Start a fresh artifact namespace without recursively deleting prior
+    /// output. The caller must already own the job lifecycle: fresh Fogell
+    /// runs also recursively replace that job's workspace, so concurrent fresh
+    /// invocations of one job have never been supported. The old namespace is
+    /// moved beneath private store state and the public key is left absent for
+    /// the new attempt to populate.
+    let rotateArtifactNamespace (store: ArtifactStore) (scopeKey: string) (abort: unit -> bool) =
+        validateArtifactLimits store.Limits
+        let target = artifactTarget store scopeKey
+
+        match Native.openDirectoryIfPresentWithoutLinks target with
+        | Ok None -> ()
+        | Error _ -> raise (artifactFailure ())
+        | Ok(Some probe) ->
+            use probe = probe
+            let _, _, lockRelative, lockPath = artifactSidecar store scopeKey
+
+            // A fresh caller owns the job lifecycle; a busy prior writer is
+            // an ownership conflict, so refuse without waiting indefinitely.
+            match acquireArtifactLock store.Root lockRelative lockPath abort true with
+            | None -> raise (artifactFailure ())
+            | Some artifactLock ->
+                use heldLock = artifactLock
+                let historyRelative =
+                    Path.Combine(
+                        ".fogell-artifact-history",
+                        artifactBuildId scopeKey,
+                        Guid.NewGuid().ToString "N")
+
+                match
+                    Native.atomicRenameBetweenRootsWithoutLinks
+                        store.Root
+                        scopeKey
+                        store.Root
+                        historyRelative
+                with
+                | Ok() -> ()
+                | Error _ -> raise (artifactFailure ())
+
     let private enumerateArtifactFiles
         (root: string)
         (scanLimit: int)
@@ -875,7 +915,8 @@ module Publish =
 
         selected |> Seq.sort |> Seq.toList, aborted
 
-    let private stageArtifact
+    let internal stageArtifactUsing
+        (flush: FileStream -> unit)
         (store: ArtifactStore)
         (workspace: string)
         (pendingRelative: string)
@@ -924,7 +965,12 @@ module Publish =
                             output.Write(buffer, 0, count)
                             stagedBytes <- stagedBytes + chunk
 
-                output.Flush(true)
+                // A cancelled sidecar will be removed, so do not wait for a
+                // durable flush (or let its I/O error replace cancellation).
+                if aborted || abort () then
+                    aborted <- true
+                else
+                    flush output
 
             if abort () then
                 aborted <- true
@@ -937,6 +983,9 @@ module Publish =
         finally
             if not preserveTemporary then
                 Native.deleteFileWithoutLinks store.Root temporaryRelative |> ignore
+
+    let private stageArtifact store workspace pendingRelative relative alreadyHeldBytes abort =
+        stageArtifactUsing (fun output -> output.Flush(true)) store workspace pendingRelative relative alreadyHeldBytes abort
 
     /// Copy matched files into this attempt's artifact store under `buildKey`,
     /// preserving relative layout. Limits cover the retained files for this
@@ -999,7 +1048,7 @@ module Publish =
                                                 aborted <- true
                                             else
                                                 match
-                                                    Native.atomicReplaceFileBetweenRootsWithoutLinks
+                                                    Native.atomicRenameBetweenRootsWithoutLinks
                                                         store.Root
                                                         temporaryRelative
                                                         target

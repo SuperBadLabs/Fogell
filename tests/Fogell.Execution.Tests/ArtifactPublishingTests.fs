@@ -278,6 +278,26 @@ let artifactPublishing =
                   Expect.isEmpty (pendingFiles value) "post-copy cancellation deletes the sidecar")
           }
 
+          test "cancelled staging skips the durable flush while completed staging flushes" {
+              withRoot (fun value ->
+                  let workspace = Path.Combine(value, "workspace")
+                  let store = ArtifactStore.underWithLimits value (limits 200000L 200000L 10 100)
+                  writeBytes (Path.Combine(workspace, "payload")) 131072 1uy
+                  let pendingRelative = Path.Combine(".fogell-artifact-pending", sha256 "build-1")
+                  let mutable flushes = 0
+                  let flush (output: FileStream) =
+                      flushes <- flushes + 1
+                      output.Flush(true)
+                  let abort () = pendingFiles value |> Array.exists (fun file -> FileInfo(file).Length > 0L)
+                  let staged = Publish.stageArtifactUsing flush store workspace pendingRelative "payload" 0L abort
+                  Expect.isNone staged "an interrupted copy is discarded"
+                  Expect.equal flushes 0 "cancellation never enters the durable flush"
+                  Expect.isEmpty (pendingFiles value) "cancelled bytes are removed"
+                  let completed = Publish.stageArtifactUsing flush store workspace pendingRelative "payload" 0L (fun () -> false)
+                  Expect.isSome completed "a completed copy is staged"
+                  Expect.equal flushes 1 "completed bytes are durably flushed before promotion")
+          }
+
           test "source symlinks, FIFOs, and matching linked directories cannot publish outside bytes" {
               withRoot (fun value ->
                   let workspace = Path.Combine(value, "workspace")
@@ -364,6 +384,13 @@ let artifactPublishing =
                               polls >= 2)
                       Expect.isTrue aborted "waiting for another writer remains cancellable"
                       Expect.isTrue (polls >= 2) "the lock wait repeatedly polls the cancellation source"
+                      let mutable rotationPolls = 0
+                      expectIo (fun () ->
+                          Publish.rotateArtifactNamespace store "build-1" (fun () ->
+                              rotationPolls <- rotationPolls + 1
+                              rotationPolls >= 3))
+                      Expect.equal rotationPolls 0 "fresh rotation refuses a busy prior writer without a cancellation wait"
+                      Expect.isTrue (File.Exists(Path.Combine(buildTarget value, "result"))) "busy rotation preserves the current artifact namespace"
                   finally
                       release.Set()
                       holder.Wait())
@@ -427,13 +454,50 @@ let artifactPublishing =
                       "the injected task itself remains faulted after releasing its test thread")
           }
 
+          test "fresh namespace rotation preserves prior files and admits a new budget" {
+              withRoot (fun value ->
+                  let workspace = Path.Combine(value, "workspace")
+                  let store = ArtifactStore.underWithLimits value (limits 8L 12L 10 100)
+                  writeBytes (Path.Combine(workspace, "payload")) 8 1uy
+                  archive store workspace [ "payload" ] (fun () -> false) |> ignore
+                  Publish.rotateArtifactNamespace store "build-1" (fun () -> false)
+                  Expect.isFalse (Directory.Exists(buildTarget value)) "the next attempt starts with no public retained set"
+                  let prior = Directory.GetFiles(Path.Combine(value, ".fogell-artifact-history"), "payload", SearchOption.AllDirectories) |> Array.exactlyOne
+                  Expect.sequenceEqual (File.ReadAllBytes prior) (Array.create 8 1uy) "rotation preserves completed prior bytes"
+                  writeBytes (Path.Combine(workspace, "payload")) 8 2uy
+                  archive store workspace [ "payload" ] (fun () -> false) |> ignore
+                  Expect.sequenceEqual (File.ReadAllBytes(Path.Combine(buildTarget value, "payload"))) (Array.create 8 2uy) "the new attempt has an independent retained budget"
+                  Expect.sequenceEqual (File.ReadAllBytes prior) (Array.create 8 1uy) "new publication cannot overwrite history")
+          }
+
+          test "namespace rotation refuses linked source and history directories" {
+              for linkedHistory in [ false; true ] do
+                  withRoot (fun value ->
+                      let store = ArtifactStore.underWithLimits value (limits 8L 12L 10 100)
+                      let outside = Path.Combine(value, "outside")
+                      Directory.CreateDirectory outside |> ignore
+                      let canary = Path.Combine(outside, "canary")
+                      File.WriteAllText(canary, "preserve")
+                      if linkedHistory then
+                          Directory.CreateDirectory(buildTarget value) |> ignore
+                          File.WriteAllText(Path.Combine(buildTarget value, "payload"), "old")
+                          Directory.CreateSymbolicLink(Path.Combine(value, ".fogell-artifact-history"), outside) |> ignore
+                      else
+                          Directory.CreateSymbolicLink(buildTarget value, outside) |> ignore
+                      expectIo (fun () -> Publish.rotateArtifactNamespace store "build-1" (fun () -> false))
+                      Expect.equal (File.ReadAllText canary) "preserve" "rotation does not follow an unsafe directory"
+                      Expect.equal (Directory.GetFileSystemEntries(outside).Length) 1 "no history is published through the link"
+                      if linkedHistory then
+                          Expect.equal (File.ReadAllText(Path.Combine(buildTarget value, "payload"))) "old" "failed rotation leaves prior output in place")
+          }
+
           test "reserved build keys and a linked private sidecar cannot redirect cleanup" {
               withRoot (fun value ->
                   let workspace = Path.Combine(value, "workspace")
                   let store = ArtifactStore.underWithLimits value (limits 100L 100L 10 100)
                   writeBytes (Path.Combine(workspace, "payload")) 4 9uy
 
-                  for reserved in [ ".fogell-artifact-pending"; ".fogell-artifact-locks" ] do
+                  for reserved in [ ".fogell-artifact-pending"; ".fogell-artifact-locks"; ".fogell-artifact-history" ] do
                       expectIo (fun () ->
                           Publish.archiveWithAbort store reserved workspace [ "payload" ] (fun () -> false)
                           |> ignore)

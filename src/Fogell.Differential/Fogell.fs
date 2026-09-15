@@ -689,6 +689,7 @@ module FogellSide =
         (workspaceRoot: string)
         (jobName: string)
         (artifactBuildKey: string)
+        (artifactResetKey: string option)
         (buildNumber: int)
         (previousBuild: BuildStatus option)
         (freshWorkspace: bool)
@@ -735,6 +736,14 @@ module FogellSide =
 
             if freshWorkspace then
                 WalkerGit.resetHistory artifactRoot jobName
+
+            match artifactResetKey with
+            | Some scopeKey ->
+                Publish.rotateArtifactNamespace
+                    (ArtifactStore.underWithLimits artifactRoot artifactLimits)
+                    scopeKey
+                    (fun () -> false)
+            | None -> ()
 
         // SCM definition identity precedes every sealable outcome, including a
         // parser refusal. Jenkins executes the remote bytes, so a local invalid
@@ -1760,6 +1769,7 @@ module FogellSide =
 
     let private runWithArtifactKey
         (artifactBuildKey: string)
+        (artifactResetKey: string option)
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
@@ -1778,6 +1788,7 @@ module FogellSide =
             workspaceRoot
             jobName
             artifactBuildKey
+            artifactResetKey
             buildNumber
             previousBuild
             freshWorkspace
@@ -1801,6 +1812,7 @@ module FogellSide =
         : Result<Trace, string> =
         runWithArtifactKey
             jobName
+            (Some jobName)
             envReplacements
             workspaceRoot
             jobName
@@ -1814,6 +1826,7 @@ module FogellSide =
     let private runWithRuntimeGuard
         (guard: RuntimeGuard)
         (artifactBuildKey: string)
+        (artifactResetKey: string option)
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
@@ -1832,6 +1845,7 @@ module FogellSide =
             workspaceRoot
             jobName
             artifactBuildKey
+            artifactResetKey
             buildNumber
             previousBuild
             freshWorkspace
@@ -1851,7 +1865,7 @@ module FogellSide =
         (script: string)
         =
         try
-            runWithCredentialStore (fun () -> credentials) None None envReplacements workspaceRoot jobName jobName 1 None true None None script
+            runWithCredentialStore (fun () -> credentials) None None envReplacements workspaceRoot jobName jobName (Some jobName) 1 None true None None script
         with ex ->
             Result.Error ex.Message
 
@@ -1864,7 +1878,7 @@ module FogellSide =
         (script: string)
         =
         try
-            runWithCredentialStore credentials None None [] workspaceRoot jobName jobName 1 None true None None script
+            runWithCredentialStore credentials None None [] workspaceRoot jobName jobName (Some jobName) 1 None true None None script
         with ex ->
             Result.Error ex.Message
 
@@ -1888,6 +1902,7 @@ module FogellSide =
                 workspaceRoot
                 jobName
                 jobName
+                (Some jobName)
                 1
                 None
                 true
@@ -1962,6 +1977,7 @@ module FogellSide =
             | Result.Ok _ ->
                 runWithArtifactKey
                     artifactBuildKey
+                    None
                     envReplacements
                     workspaceRoot
                     jobName
@@ -1977,6 +1993,8 @@ module FogellSide =
     /// build number because persisted runs are not necessarily the first build
     /// of a job. Each number receives an independent artifact key; a resumed
     /// invocation of the same number deliberately returns to that same key.
+    /// [freshWorkspace] resets only workspace state; it does not mint another
+    /// artifact identity for this durable build number.
     let runPersisted
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
@@ -2031,6 +2049,7 @@ module FogellSide =
                 workspaceRoot
                 jobName
                 jobName
+                (Some jobName)
                 1
                 None
                 true
@@ -2084,6 +2103,8 @@ module FogellSide =
                         // build a distinct artifact store key so a prior build
                         // cannot consume this build's quota.
                         let artifactBuildKey = numberedArtifactKey jobName (List.length acc + 1)
+                        let artifactResetKey =
+                            if List.isEmpty acc then Some jobName else None
 
                         try
                             match runtimeGuard with
@@ -2091,6 +2112,7 @@ module FogellSide =
                                 runWithRuntimeGuard
                                     guard
                                     artifactBuildKey
+                                    artifactResetKey
                                     envReplacements
                                     workspaceRoot
                                     jobName
@@ -2103,6 +2125,7 @@ module FogellSide =
                             | None ->
                                 runWithArtifactKey
                                     artifactBuildKey
+                                    artifactResetKey
                                     envReplacements
                                     workspaceRoot
                                     jobName
