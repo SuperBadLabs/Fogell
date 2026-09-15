@@ -1785,6 +1785,9 @@ module FogellSide =
             persistence
             script
 
+    let private numberedArtifactKey (jobName: string) (buildNumber: int) =
+        Path.Combine(jobName, $"build@{buildNumber}")
+
     let internal runWith
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
@@ -1938,14 +1941,16 @@ module FogellSide =
 
             Result.Error error.Message
 
-    /// FG-112. Run one build with durability hooks — the restart lane's entry.
-    /// Same walker, same semantics; the hooks journal top-level steps. The
-    /// caller supplies the durable project build number because persisted runs
-    /// are not necessarily the first build of a job.
-    let runPersisted
+    /// Run one build with durability hooks using a caller-owned artifact key.
+    /// Controller-supervised Run.Host supplies its build UUID here because
+    /// ArtifactSnapshots adopts that exact mutable staging directory. The key
+    /// is intentionally separate from [jobName], which continues to govern the
+    /// workspace, Jenkins identity, stash, and SCM history.
+    let runPersistedWithArtifactKey
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
+        (artifactBuildKey: string)
         (buildNumber: int)
         (freshWorkspace: bool)
         (hooks: PersistenceHooks)
@@ -1955,7 +1960,42 @@ module FogellSide =
             match preflightPersistedExecution script with
             | Result.Error why -> Result.Error why
             | Result.Ok _ ->
-                runWith envReplacements workspaceRoot jobName buildNumber None freshWorkspace None (Some hooks) script)
+                runWithArtifactKey
+                    artifactBuildKey
+                    envReplacements
+                    workspaceRoot
+                    jobName
+                    buildNumber
+                    None
+                    freshWorkspace
+                    None
+                    (Some hooks)
+                    script)
+
+    /// FG-112. Run one build with durability hooks — the restart lane's entry.
+    /// Same walker, same semantics; the caller supplies the durable project
+    /// build number because persisted runs are not necessarily the first build
+    /// of a job. Each number receives an independent artifact key; a resumed
+    /// invocation of the same number deliberately returns to that same key.
+    let runPersisted
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (buildNumber: int)
+        (freshWorkspace: bool)
+        (hooks: PersistenceHooks)
+        (script: string)
+        =
+        let artifactBuildKey = numberedArtifactKey jobName buildNumber
+        runPersistedWithArtifactKey
+            envReplacements
+            workspaceRoot
+            jobName
+            artifactBuildKey
+            buildNumber
+            freshWorkspace
+            hooks
+            script
 
     /// FG-052. Run one build of an SCM-DEFINED job: the script is what the
     /// harness pushed to the SCM (the same bytes Jenkins obtains), and the spec
@@ -2043,7 +2083,7 @@ module FogellSide =
                         // history, and BUILD_NUMBER), but give each retained
                         // build a distinct artifact store key so a prior build
                         // cannot consume this build's quota.
-                        let artifactBuildKey = Path.Combine(jobName, $"build@{List.length acc + 1}")
+                        let artifactBuildKey = numberedArtifactKey jobName (List.length acc + 1)
 
                         try
                             match runtimeGuard with

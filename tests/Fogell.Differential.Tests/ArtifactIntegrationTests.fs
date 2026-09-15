@@ -56,6 +56,9 @@ let private pendingBuildId (buildKey: string) =
     |> Convert.ToHexString
     |> fun value -> value.ToLowerInvariant()
 
+let private persistedArtifactKey (jobName: string) (buildNumber: int) =
+    Path.Combine(jobName, $"build@{buildNumber}")
+
 let artifactIntegration =
     testList "bounded artifact integration"
         [ test "separate archive steps share bytes and retain only completed files" {
@@ -83,7 +86,11 @@ let artifactIntegration =
                   let source =
                       "pipeline { agent any stages { stage('prepare') { steps { sh 'printf 12345678 > left.bin; printf abcdefgh > right.bin' } } stage('fanout') { parallel { stage('left') { steps { archiveArtifacts 'left.bin' } } stage('right') { steps { archiveArtifacts 'right.bin' } } } } } }"
                   FogellSide.runPersisted [] root "job" 1 true (hooks output.Add) source |> expectLimit
-                  let files = Directory.GetFiles(Path.Combine(root, "_artifacts", "job"), "*", SearchOption.AllDirectories)
+                  let files =
+                      Directory.GetFiles(
+                          Path.Combine(root, "_artifacts", persistedArtifactKey "job" 1),
+                          "*",
+                          SearchOption.AllDirectories)
                   Expect.equal files.Length 1 "only one parallel file fits"
                   Expect.equal (FileInfo(files[0]).Length) 8L "the winner is complete"
                   Expect.contains output
@@ -123,7 +130,8 @@ let artifactIntegration =
           test "persisted publication refuses unowned pending data before later steps" {
               withPolicy limits (fun () -> withRoot (fun root ->
                   let output = ResizeArray<string>()
-                  let buildKey = "cleanup-job"
+                  let jobName = "cleanup-job"
+                  let buildKey = persistedArtifactKey jobName 1
                   let pending =
                       Path.Combine(root, "_artifacts", ".fogell-artifact-pending", pendingBuildId buildKey)
                   let unowned = Path.Combine(pending, "unowned.txt")
@@ -133,7 +141,7 @@ let artifactIntegration =
                   let source =
                       pipeline "sh 'printf 12345678 > payload.bin'; archiveArtifacts 'payload.bin'; sh 'touch forbidden'"
 
-                  match FogellSide.runPersisted [] root buildKey 1 true (hooks output.Add) source with
+                  match FogellSide.runPersisted [] root jobName 1 true (hooks output.Add) source with
                   | Ok trace -> failtestf "unowned pending data was accepted: %s" trace.Result
                   | Error _ -> ()
 
@@ -141,6 +149,68 @@ let artifactIntegration =
                       "runner-failure: RUNNER_IO_ERROR: runner input/output operation failed"
                       "persisted failure emits the safe I/O classification"
                   Expect.isTrue (File.Exists unowned) "cleanup preserves unowned pending data"
-                  Expect.isFalse (File.Exists(Path.Combine(root, buildKey, "forbidden"))) "later steps do not execute"))
+                  Expect.isFalse (File.Exists(Path.Combine(root, jobName, "forbidden"))) "later steps do not execute"))
+          }
+          test "persisted build numbers publish into independent artifact stores" {
+              withPolicy limits (fun () -> withRoot (fun root ->
+                  let jobName = "persisted-job"
+                  let first = pipeline "sh 'printf 12345678 > first.bin'; archiveArtifacts 'first.bin'"
+                  let second = pipeline "sh 'printf abcdefgh > second.bin'; archiveArtifacts 'second.bin'"
+
+                  match FogellSide.runPersisted [] root jobName 1 true (hooks ignore) first with
+                  | Error why -> failtestf "first persisted build failed: %s" why
+                  | Ok trace -> Expect.equal trace.Result "success" "first persisted build succeeds"
+
+                  match FogellSide.runPersisted [] root jobName 2 false (hooks ignore) second with
+                  | Error why -> failtestf "second persisted build inherited quota: %s" why
+                  | Ok trace -> Expect.equal trace.Result "success" "second persisted build has a new quota"
+
+                  let firstTarget = Path.Combine(root, "_artifacts", persistedArtifactKey jobName 1, "first.bin")
+                  let secondTarget = Path.Combine(root, "_artifacts", persistedArtifactKey jobName 2, "second.bin")
+                  Expect.equal (File.ReadAllText firstTarget) "12345678" "build 1 has its own published bytes"
+                  Expect.equal (File.ReadAllText secondTarget) "abcdefgh" "build 2 has its own published bytes"))
+          }
+          test "resuming a persisted build retains its artifact quota" {
+              withPolicy limits (fun () -> withRoot (fun root ->
+                  let jobName = "resumed-job"
+                  let first = pipeline "sh 'printf 12345678 > first.bin'; archiveArtifacts 'first.bin'"
+                  let second = pipeline "sh 'printf abcdefgh > second.bin'; archiveArtifacts 'second.bin'"
+
+                  FogellSide.runPersisted [] root jobName 1 true (hooks ignore) first
+                  |> function
+                      | Error why -> failtestf "initial persisted build failed: %s" why
+                      | Ok _ -> ()
+
+                  FogellSide.runPersisted [] root jobName 1 false (hooks ignore) second
+                  |> expectLimit
+                  let target = Path.Combine(root, "_artifacts", persistedArtifactKey jobName 1)
+                  Expect.isTrue (File.Exists(Path.Combine(target, "first.bin"))) "initial published file remains"
+                  Expect.isFalse (File.Exists(Path.Combine(target, "second.bin"))) "resume cannot exceed its original quota"))
+          }
+          test "explicit persisted artifact key preserves controller UUID staging" {
+              withPolicy limits (fun () -> withRoot (fun root ->
+                  let jobName = "controller-job"
+                  let artifactBuildKey = Guid.NewGuid().ToString "N"
+                  let source = pipeline "sh 'printf 12345678 > controller.bin'; archiveArtifacts 'controller.bin'"
+
+                  match
+                      FogellSide.runPersistedWithArtifactKey
+                          []
+                          root
+                          jobName
+                          artifactBuildKey
+                          17
+                          true
+                          (hooks ignore)
+                          source
+                  with
+                  | Error why -> failtestf "explicit controller artifact key failed: %s" why
+                  | Ok trace -> Expect.equal trace.Result "success" "controller-keyed persisted build succeeds"
+
+                  let target = Path.Combine(root, "_artifacts", artifactBuildKey, "controller.bin")
+                  Expect.isTrue (File.Exists target) "the supplied UUID remains the exact artifact staging key"
+                  Expect.isFalse
+                      (Directory.Exists(Path.Combine(root, "_artifacts", persistedArtifactKey jobName 17)))
+                      "the numbered default is not substituted for an explicit controller key"))
           } ]
     |> testSequenced

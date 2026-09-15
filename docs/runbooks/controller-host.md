@@ -552,6 +552,11 @@ attempt's admission budget. These settings scope artifact publishing only:
 they do not impose retention limits on build history, the global workspace, or
 other workspace and stash data.
 
+Standalone persisted runs keep artifacts under
+`_artifacts/<job-name>/build@<build-number>`. Different build numbers have separate
+budgets; resuming the same build number continues to charge its retained files.
+Controller-managed runs retain the UUID staging and attempt snapshot layout above.
+
 ## Acceptance and recovery checks
 
 From HeMan, with the PostgreSQL container and host port selected:
