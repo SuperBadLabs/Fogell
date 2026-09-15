@@ -105,7 +105,9 @@ host administrator
 FG-042b).
 
 Artifact publication applies operator-configured file-size, retained-byte,
-file-count, and scan-entry ceilings. Every archive step and parallel branch in
+file-count, and scan-work ceilings. Filesystem entries, compiled glob patterns,
+and glob evaluations each have an independent ceiling, so many nonmatching
+patterns cannot multiply the admitted scan work. Every archive step and parallel branch in
 an attempt shares admission under a build-specific lock. Copying charges actual
 bytes before writing a chunk, polls cancellation, and promotes completed files
 atomically from an unpublished sidecar. Completed files survive a later refusal;

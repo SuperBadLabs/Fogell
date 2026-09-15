@@ -893,21 +893,33 @@ module Publish =
         =
         // Archive scanning accepts untrusted Jenkinsfile patterns. Its regexes
         // are generated from glob literals only, so the non-backtracking engine
-        // preserves those matches while bounding per-entry matcher CPU.
+        // bounds each match. Independent compilation and evaluation counters
+        // prevent pattern count from multiplying the filesystem-entry budget.
+        let mutable compiledPatterns = 0
         let matchers =
             patterns
             |> List.map (fun pattern ->
+                if compiledPatterns >= limits.MaxScanEntries then
+                    raise (ArtifactLimitExceededException ArtifactLimitReason.ScanEntries)
+                compiledPatterns <- compiledPatterns + 1
                 let compiled = compileGlobRegex false pattern
                 let regex = Regex(compiled.ToString(), compiled.Options ||| RegexOptions.NonBacktracking)
                 fun (relative: string) -> regex.IsMatch relative)
         let selected = List<string>()
         let seen = HashSet<string>(StringComparer.Ordinal)
+        let mutable matcherEvaluations = 0
 
         let aborted =
             if List.isEmpty matchers then false
             else
                 enumerateArtifactFiles workspace limits.MaxScanEntries abort (fun relative ->
-                    if matchers |> List.exists (fun matcher -> matcher relative) then
+                    let matches =
+                        matchers |> List.exists (fun matcher ->
+                            if matcherEvaluations >= limits.MaxScanEntries then
+                                raise (ArtifactLimitExceededException ArtifactLimitReason.ScanEntries)
+                            matcherEvaluations <- matcherEvaluations + 1
+                            matcher relative)
+                    if matches then
                         if seen.Add relative then
                             if selected.Count >= limits.MaxFiles then
                                 raise (ArtifactLimitExceededException ArtifactLimitReason.FileCount)

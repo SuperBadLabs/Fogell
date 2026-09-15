@@ -185,6 +185,36 @@ let artifactPublishing =
                       archive store workspace [ "*" ] (fun () -> false)))
           }
 
+          test "glob evaluations cannot multiply the scan-entry work budget" {
+              withRoot (fun value ->
+                  let workspace = Path.Combine(value, "workspace")
+                  let store = ArtifactStore.underWithLimits value (limits 100L 100L 10 6)
+                  writeBytes (Path.Combine(workspace, "one")) 1 1uy
+                  writeBytes (Path.Combine(workspace, "two")) 1 2uy
+                  let copied, aborted = archive store workspace [ "x*"; "y*"; "z*" ] (fun () -> false)
+                  Expect.isEmpty copied "six nonmatching evaluations fit the work ceiling"
+                  Expect.isFalse aborted "exhausting exactly the budget is not cancellation"
+                  expectLimit ArtifactLimitReason.ScanEntries (fun () ->
+                      archive store workspace [ "x*"; "y*"; "z*"; "q*" ] (fun () -> false))
+                  Expect.isFalse (Directory.Exists(buildTarget value)) "over-budget matching publishes nothing"
+                  Expect.sequenceEqual
+                      (archive store workspace [ "*" ] (fun () -> false) |> fst)
+                      [ "one"; "two" ]
+                      "a normal control scan has its own work budget")
+          }
+
+          test "glob compilation is bounded even for an empty workspace" {
+              withRoot (fun value ->
+                  let workspace = Path.Combine(value, "workspace")
+                  Directory.CreateDirectory workspace |> ignore
+                  let store = ArtifactStore.underWithLimits value (limits 100L 100L 10 3)
+                  Expect.isEmpty
+                      (archive store workspace [ "x*"; "y*"; "z*" ] (fun () -> false) |> fst)
+                      "the exact pattern compilation ceiling is usable"
+                  expectLimit ArtifactLimitReason.ScanEntries (fun () ->
+                      archive store workspace [ "x*"; "y*"; "z*"; "q*" ] (fun () -> false)))
+          }
+
           test "parallel writers share the retained total rather than each admitting a local budget" {
               withRoot (fun value ->
                   let workspace = Path.Combine(value, "workspace")

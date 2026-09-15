@@ -533,7 +533,7 @@ limit. If a setting is absent, the controller uses these defaults:
 | `FOGELL_ARTIFACT_MAX_FILE_BYTES` | `268435456` (256 MiB) | One published file |
 | `FOGELL_ARTIFACT_MAX_TOTAL_BYTES` | `1073741824` (1 GiB) | One build attempt's retained files plus active temporary bytes |
 | `FOGELL_ARTIFACT_MAX_FILES` | `10000` | Published files in one attempt |
-| `FOGELL_ARTIFACT_MAX_SCAN_ENTRIES` | `100000` | One bounded artifact scan |
+| `FOGELL_ARTIFACT_MAX_SCAN_ENTRIES` | `100000` | Filesystem entries, compiled globs, and glob evaluations; each bounded independently per scan |
 
 The total budget belongs to the build and is shared by every archive call,
 including parallel steps. A completed file remains retained for the current
