@@ -291,7 +291,8 @@ let private run () =
                           TrustPool = config.TrustPool
                           StateRoot = config.StateRoot
                           MaxPipelineBytes = config.MaxPipelineBytes
-                          MaxLogChunks = config.MaxLogChunks }
+                          MaxLogChunks = config.MaxLogChunks
+                          ArtifactLimits = config.ArtifactLimits }
                         app
                     |> ignore
 

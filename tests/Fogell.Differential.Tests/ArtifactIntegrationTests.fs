@@ -2,6 +2,8 @@ module Fogell.Differential.ArtifactIntegrationTests
 
 open System
 open System.IO
+open System.Security.Cryptography
+open System.Text
 open Expecto
 open Fogell.Differential
 open Fogell.Execution
@@ -48,6 +50,11 @@ let private hooks (publish: string -> unit) : PersistenceHooks =
       PollInputAnswer = None
       OnInputClosed = fun _ _ _ -> ()
       OnInputAnswerVoided = fun _ _ _ -> () }
+
+let private pendingBuildId (buildKey: string) =
+    SHA256.HashData(Encoding.UTF8.GetBytes buildKey)
+    |> Convert.ToHexString
+    |> fun value -> value.ToLowerInvariant()
 
 let artifactIntegration =
     testList "bounded artifact integration"
@@ -96,5 +103,44 @@ let artifactIntegration =
                       (pipeline "sh 'printf 12345678 > okay.bin'; archiveArtifacts 'okay.bin'") with
                   | Error why -> failtestf "control build refused: %s" why
                   | Ok trace -> Expect.equal trace.Result "success" "another build has its own capacity"))
+          }
+          test "retained builds publish into independent per-build artifact stores" {
+              withPolicy limits (fun () -> withRoot (fun root ->
+                  let first = pipeline "sh 'printf 12345678 > first.bin'; archiveArtifacts 'first.bin'"
+                  let second = pipeline "sh 'printf abcdefgh > second.bin'; archiveArtifacts 'second.bin'"
+
+                  match FogellSide.runMany [] root "retained-job" [ first; second ] with
+                  | [ Ok firstTrace; Ok secondTrace ] ->
+                      Expect.equal firstTrace.Result "success" "first retained build has its own quota"
+                      Expect.equal secondTrace.Result "success" "second retained build does not inherit the first quota"
+                  | results -> failtestf "retained archive sequence failed: %A" results
+
+                  let firstTarget = Path.Combine(root, "_artifacts", "retained-job", "build@1", "first.bin")
+                  let secondTarget = Path.Combine(root, "_artifacts", "retained-job", "build@2", "second.bin")
+                  Expect.equal (File.ReadAllText firstTarget) "12345678" "first build artifact remains in its own store"
+                  Expect.equal (File.ReadAllText secondTarget) "abcdefgh" "second build artifact remains in its own store"))
+          }
+          test "persisted publication refuses unowned pending data before later steps" {
+              withPolicy limits (fun () -> withRoot (fun root ->
+                  let output = ResizeArray<string>()
+                  let buildKey = "cleanup-job"
+                  let pending =
+                      Path.Combine(root, "_artifacts", ".fogell-artifact-pending", pendingBuildId buildKey)
+                  let unowned = Path.Combine(pending, "unowned.txt")
+                  Directory.CreateDirectory pending |> ignore
+                  File.WriteAllText(unowned, "do-not-delete")
+
+                  let source =
+                      pipeline "sh 'printf 12345678 > payload.bin'; archiveArtifacts 'payload.bin'; sh 'touch forbidden'"
+
+                  match FogellSide.runPersisted [] root buildKey 1 true (hooks output.Add) source with
+                  | Ok trace -> failtestf "unowned pending data was accepted: %s" trace.Result
+                  | Error _ -> ()
+
+                  Expect.equal output[output.Count - 1]
+                      "runner-failure: RUNNER_IO_ERROR: runner input/output operation failed"
+                      "persisted failure emits the safe I/O classification"
+                  Expect.isTrue (File.Exists unowned) "cleanup preserves unowned pending data"
+                  Expect.isFalse (File.Exists(Path.Combine(root, buildKey, "forbidden"))) "later steps do not execute"))
           } ]
     |> testSequenced

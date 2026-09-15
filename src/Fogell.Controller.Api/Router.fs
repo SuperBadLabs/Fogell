@@ -9,6 +9,7 @@ open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.Routing
 open Fogell.Domain
+open Fogell.Execution
 open Fogell.Store
 
 /// FG-060. The public API.
@@ -26,7 +27,8 @@ type ApiState =
       /// never from caller-supplied filesystem roots.
       StateRoot: string
       MaxPipelineBytes: int
-      MaxLogChunks: int }
+      MaxLogChunks: int
+      ArtifactLimits: ArtifactLimits }
 
 module Router =
 
@@ -558,7 +560,12 @@ module Router =
                             match opened with
                             | ArtifactSnapshotNotFound ->
                                 let migrate () =
-                                    ArtifactSnapshots.finalize state.StateRoot org build attempt
+                                    ArtifactSnapshots.finalizeWithLimits
+                                        state.ArtifactLimits
+                                        state.StateRoot
+                                        org
+                                        build
+                                        attempt
                                     |> Result.map ignore
                                 match
                                     state.Store.MigrateLegacyArtifactSnapshot(

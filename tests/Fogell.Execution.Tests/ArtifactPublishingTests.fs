@@ -449,7 +449,25 @@ let artifactPublishing =
                   Expect.isFalse
                       (Publish.cleanupPending store "build-1" (fun () -> false))
                       "linked sidecar storage is refused rather than treated as private stale state"
+                  expectIo (fun () -> archive store workspace [ "payload" ] (fun () -> false) |> ignore)
                   Expect.isTrue (File.Exists canary) "cleanup never deletes a file through a linked sidecar root")
+          }
+
+          test "unexpected pending entries fail publication rather than report cancellation" {
+              withRoot (fun value ->
+                  let workspace = Path.Combine(value, "workspace")
+                  let store = ArtifactStore.underWithLimits value (limits 100L 100L 10 100)
+                  writeBytes (Path.Combine(workspace, "payload")) 4 1uy
+                  let pending = Path.Combine(value, ".fogell-artifact-pending", sha256 "build-1")
+                  Directory.CreateDirectory pending |> ignore
+                  let unexpected = Path.Combine(pending, "unowned.txt")
+                  File.WriteAllText(unexpected, "preserve me")
+                  expectIo (fun () -> archive store workspace [ "payload" ] (fun () -> false) |> ignore)
+                  Expect.equal (File.ReadAllText unexpected) "preserve me" "unrecognized state is preserved"
+                  Expect.isFalse (Directory.Exists(buildTarget value)) "nothing is published after cleanup failure"
+                  let copied, aborted = archive store workspace [ "payload" ] (fun () -> true)
+                  Expect.isTrue aborted "actual cancellation retains its interruption result"
+                  Expect.isEmpty copied "cancelled archive does not publish")
           }
 
           test "a FIFO substituted for the sidecar lock fails promptly without publishing" {

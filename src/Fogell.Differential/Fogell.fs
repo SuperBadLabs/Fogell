@@ -688,6 +688,7 @@ module FogellSide =
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
+        (artifactBuildKey: string)
         (buildNumber: int)
         (previousBuild: BuildStatus option)
         (freshWorkspace: bool)
@@ -1539,7 +1540,7 @@ module FogellSide =
                 let alwaysFailFast = WalkerRules.alwaysFailFast pipeline
                 // FG-105: step execution lives in WalkerStep.
                 let runStepInner =
-                    WalkerStep.runStepInner runCtx envForWith beforeShellLaunch workspace artifactRoot jobName
+                    WalkerStep.runStepInner runCtx envForWith beforeShellLaunch workspace artifactRoot artifactBuildKey
 
                 // FG-105: when-evaluation lives in WalkerWhen.
                 let evalWhen =
@@ -1757,7 +1758,8 @@ module FogellSide =
                 settleTerminalOutput (Some active) runCtx.FlushOutput runCtx.CheckOutputBudget
                 Unchecked.defaultof<Result<Trace, string>>
 
-    let internal runWith
+    let private runWithArtifactKey
+        (artifactBuildKey: string)
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
@@ -1775,6 +1777,30 @@ module FogellSide =
             envReplacements
             workspaceRoot
             jobName
+            artifactBuildKey
+            buildNumber
+            previousBuild
+            freshWorkspace
+            scm
+            persistence
+            script
+
+    let internal runWith
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (buildNumber: int)
+        (previousBuild: BuildStatus option)
+        (freshWorkspace: bool)
+        (scm: ScmSpec option)
+        (persistence: PersistenceHooks option)
+        (script: string)
+        : Result<Trace, string> =
+        runWithArtifactKey
+            jobName
+            envReplacements
+            workspaceRoot
+            jobName
             buildNumber
             previousBuild
             freshWorkspace
@@ -1784,6 +1810,7 @@ module FogellSide =
 
     let private runWithRuntimeGuard
         (guard: RuntimeGuard)
+        (artifactBuildKey: string)
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
@@ -1801,6 +1828,7 @@ module FogellSide =
             envReplacements
             workspaceRoot
             jobName
+            artifactBuildKey
             buildNumber
             previousBuild
             freshWorkspace
@@ -1820,7 +1848,7 @@ module FogellSide =
         (script: string)
         =
         try
-            runWithCredentialStore (fun () -> credentials) None None envReplacements workspaceRoot jobName 1 None true None None script
+            runWithCredentialStore (fun () -> credentials) None None envReplacements workspaceRoot jobName jobName 1 None true None None script
         with ex ->
             Result.Error ex.Message
 
@@ -1833,7 +1861,7 @@ module FogellSide =
         (script: string)
         =
         try
-            runWithCredentialStore credentials None None [] workspaceRoot jobName 1 None true None None script
+            runWithCredentialStore credentials None None [] workspaceRoot jobName jobName 1 None true None None script
         with ex ->
             Result.Error ex.Message
 
@@ -1855,6 +1883,7 @@ module FogellSide =
                 None
                 []
                 workspaceRoot
+                jobName
                 jobName
                 1
                 None
@@ -1961,6 +1990,7 @@ module FogellSide =
                 envReplacements
                 workspaceRoot
                 jobName
+                jobName
                 1
                 None
                 true
@@ -2008,11 +2038,19 @@ module FogellSide =
                         | Error why -> raise (RuntimeGuardFailure $"Fogell runtime guard failed: {why}"))
 
                     let r =
+                        // Archive publication is attempt-scoped. Keep the job
+                        // identity everywhere else (workspace, stash, SCM
+                        // history, and BUILD_NUMBER), but give each retained
+                        // build a distinct artifact store key so a prior build
+                        // cannot consume this build's quota.
+                        let artifactBuildKey = Path.Combine(jobName, $"build@{List.length acc + 1}")
+
                         try
                             match runtimeGuard with
                             | Some guard ->
                                 runWithRuntimeGuard
                                     guard
+                                    artifactBuildKey
                                     envReplacements
                                     workspaceRoot
                                     jobName
@@ -2023,7 +2061,8 @@ module FogellSide =
                                     None
                                     script
                             | None ->
-                                runWith
+                                runWithArtifactKey
+                                    artifactBuildKey
                                     envReplacements
                                     workspaceRoot
                                     jobName

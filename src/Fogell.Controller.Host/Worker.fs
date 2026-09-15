@@ -385,7 +385,8 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                 atomicDefinition definitionPath claim.PipelineSource
                 Directory.CreateDirectory workspaceRoot |> ignore
                 match
-                    ArtifactSnapshots.prepareRetry
+                    ArtifactSnapshots.prepareRetryWithLimits
+                        config.ArtifactLimits
                         config.StateRoot
                         claim.OrganizationId.Value
                         claim.BuildId.Value
@@ -866,7 +867,8 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                 match plan.Terminal with
                                 | Some status ->
                                     match
-                                        ArtifactSnapshots.finalize
+                                        ArtifactSnapshots.finalizeWithLimits
+                                            config.ArtifactLimits
                                             config.StateRoot
                                             claim.OrganizationId.Value
                                             claim.BuildId.Value

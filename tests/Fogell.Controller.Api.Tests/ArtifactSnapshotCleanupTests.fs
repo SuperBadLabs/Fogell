@@ -114,6 +114,31 @@ let artifactSnapshotCleanup =
                       holder.Wait())
           }
 
+          test "configured scan bound is used while cleaning pending crash files" {
+              withRoot (fun stateRoot ->
+                  let org = Guid.NewGuid()
+                  let build = Guid.NewGuid()
+                  let attempt = Guid.NewGuid()
+                  let _, artifactRoot, staging, _ = layout stateRoot org build
+                  Directory.CreateDirectory staging |> ignore
+                  File.WriteAllText(Path.Combine(staging, "result.bin"), "complete")
+                  let pending = stalePending artifactRoot build
+                  File.WriteAllText(Path.Combine(pending, "second.part"), "incomplete")
+                  let limits = { ArtifactLimits.Defaults with MaxScanEntries = 1 }
+
+                  match ArtifactSnapshots.finalizeWithLimits limits stateRoot org build attempt with
+                  | Ok target -> failtestf "scan-bound cleanup unexpectedly finalized %s" target
+                  | Error error ->
+                      Expect.stringContains error "busy or incomplete" "bounded cleanup refuses an over-limit scan"
+                      Expect.isTrue (Directory.Exists staging) "mutable staging remains for bounded recovery"
+                      Expect.equal (Directory.GetFiles(pending, "*.part").Length) 1 "one unscanned pending file remains recoverable"
+                      match ArtifactSnapshots.prepareRetryWithLimits limits stateRoot org build (Some attempt) with
+                      | Error why -> failtestf "bounded retry cleanup did not finish the remaining file: %s" why
+                      | Ok () ->
+                          Expect.isEmpty (Directory.GetFiles(pending, "*.part")) "retry preparation uses the same bounded policy"
+                          Expect.isFalse (Directory.Exists staging) "successful retry preparation freezes parent staging")
+          }
+
           test "prepareRetry freezes parent bytes and keeps child staging isolated" {
               withRoot (fun stateRoot ->
                   let org = Guid.NewGuid()

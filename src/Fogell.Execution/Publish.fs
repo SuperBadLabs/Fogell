@@ -957,7 +957,8 @@ module Publish =
         | Some artifactLock ->
             use heldLock = artifactLock
             if not (removePendingFiles store pendingRelative pending store.Limits.MaxScanEntries abort) then
-                [], true
+                if abort () then [], true
+                else raise (artifactFailure ())
             else
                 let retained, initialRetainedBytes, initialRetainedFiles, retainedAborted =
                     retainedArtifacts target store.Limits abort

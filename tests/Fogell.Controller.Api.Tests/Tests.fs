@@ -76,7 +76,8 @@ let private startServer maxLogChunks =
           TrustPool = "trusted-linux"
           StateRoot = stateRoot
           MaxPipelineBytes = maxPipelineBytes
-          MaxLogChunks = maxLogChunks }
+          MaxLogChunks = maxLogChunks
+          ArtifactLimits = ArtifactLimits.Defaults }
         app
     |> ignore
 
