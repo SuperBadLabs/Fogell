@@ -369,6 +369,64 @@ let artifactPublishing =
                       holder.Wait())
           }
 
+          test "a failed lock acquisition releases its named mutex before another archive waits" {
+              withRoot (fun value ->
+                  let workspace = Path.Combine(value, "workspace")
+                  let store = ArtifactStore.underWithLimits value (limits 100L 100L 10 100)
+                  writeBytes (Path.Combine(workspace, "result")) 4 6uy
+                  let buildId = sha256 "build-1"
+                  let lockRelative = Path.Combine(".fogell-artifact-locks", buildId + ".lock")
+                  let lockPath = Path.Combine(Path.GetFullPath value, lockRelative)
+
+                  // Keep another handle open so disposing the failing caller's
+                  // Mutex does not mask a missing ReleaseMutex.
+                  use survivingHandle = new Mutex(false, artifactMutexName value)
+                  use releaseFailingThread = new ManualResetEventSlim(false)
+                  let observedFailure = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+                  let failingAcquisition =
+                      Task.Run(fun () ->
+                          try
+                              Publish.acquireArtifactLockUsing
+                                  (fun _ -> raise (IOException "injected lock failure"))
+                                  value
+                                  lockRelative
+                                  lockPath
+                                  (fun () -> false)
+                                  false
+                              |> ignore
+                              failtest "the injected lock callback unexpectedly returned"
+                          with error ->
+                              observedFailure.SetException error |> ignore
+                              // Keep this OS thread alive after it has reported
+                              // the exception. The old implementation retained
+                              // mutex ownership on this thread, so a different
+                              // archive task would hit its bounded abort below.
+                              releaseFailingThread.Wait()
+                              Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw())
+
+                  try
+                      Expect.throwsT<IOException>
+                          (fun () -> observedFailure.Task.GetAwaiter().GetResult())
+                          "the lock acquisition failure reaches its caller"
+
+                      let deadline = System.Diagnostics.Stopwatch.StartNew()
+                      let recovery =
+                          Task.Run(fun () ->
+                              archive store workspace [ "result" ] (fun () ->
+                                  deadline.Elapsed >= TimeSpan.FromSeconds 2.0))
+
+                      Expect.isTrue (recovery.Wait(TimeSpan.FromSeconds 3.0)) "a later writer cannot remain blocked by a failed owner"
+                      let copied, aborted = recovery.Result
+                      Expect.isFalse aborted "the later archive acquires the released mutex before its bounded abort"
+                      Expect.sequenceEqual copied [ "result" ] "the recovered writer publishes normally"
+                  finally
+                      releaseFailingThread.Set()
+
+                  Expect.throwsT<IOException>
+                      (fun () -> failingAcquisition.GetAwaiter().GetResult())
+                      "the injected task itself remains faulted after releasing its test thread")
+          }
+
           test "reserved build keys and a linked private sidecar cannot redirect cleanup" {
               withRoot (fun value ->
                   let workspace = Path.Combine(value, "workspace")

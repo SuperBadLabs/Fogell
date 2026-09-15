@@ -606,7 +606,8 @@ module Publish =
     /// other processes. Its name is derived from a lock identity outside the
     /// frozen snapshot directory. Polling WaitOne(0) keeps an archive deadline
     /// observable while another worker owns the build.
-    let private acquireArtifactLock
+    let internal acquireArtifactLockUsing
+        (tryAcquire: FileStream -> bool)
         (storeRoot: string)
         (lockRelative: string)
         (lockPath: string)
@@ -623,10 +624,11 @@ module Publish =
                 raise (artifactFailure ())
         let mutable acquired = false
         let mutable cancelled = false
+        let mutable ownsGate = false
 
         try
             while not acquired && not cancelled do
-                let mutable ownsGate = false
+                ownsGate <- false
 
                 try
                     ownsGate <- gate.WaitOne 0
@@ -634,10 +636,11 @@ module Publish =
                     ownsGate <- true
 
                 if ownsGate then
-                    if Native.tryAcquireExclusiveFileLock stream then
+                    if tryAcquire stream then
                         acquired <- true
                     else
                         gate.ReleaseMutex()
+                        ownsGate <- false
 
                 if not acquired then
                     if nonBlocking then
@@ -652,10 +655,19 @@ module Publish =
                 stream.Dispose()
                 gate.Dispose()
                 None
-        with ex ->
-            stream.Dispose()
-            gate.Dispose()
-            raise ex
+        with _ ->
+            // Closing a named mutex handle does not release ownership while
+            // another caller still has it open. An acquisition I/O failure
+            // must release the gate before propagating to keep waiters live.
+            try
+                if ownsGate then gate.ReleaseMutex()
+            finally
+                try stream.Dispose()
+                finally gate.Dispose()
+            reraise ()
+
+    let private acquireArtifactLock =
+        acquireArtifactLockUsing Native.tryAcquireExclusiveFileLock
 
     let private removePendingFiles
         (store: ArtifactStore)
