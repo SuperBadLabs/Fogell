@@ -695,6 +695,13 @@ module FogellSide =
         (persistence: PersistenceHooks option)
         (script: string)
         : Result<Trace, string> =
+        // Validate operator policy before preparing or wiping a workspace, and
+        // capture it once so withEnv/parallel branches cannot relax the limits.
+        let artifactLimits =
+            match ArtifactPolicy.loadEnvironment () with
+            | Ok limits -> limits
+            | Error reason -> invalidArg "artifactLimits" reason
+
         // FG-220. Jenkins compares report mtimes with the build's persisted
         // scheduling/start timestamp, never with the later junit invocation.
         // Capture the closest Fogell analogue at build entry, before preflight.
@@ -789,10 +796,12 @@ module FogellSide =
             // one stated contract (see WalkerCtx.fs for its two-lock discipline).
             // These rebinds keep call sites unchanged.
             let runCtx =
-                WalkerCtx.create
-                    buildStartTimeInMillis
-                    isRestartedRun
-                    (persistence |> Option.map (fun hooks -> hooks.OnOutput))
+                let context =
+                    WalkerCtx.create
+                        buildStartTimeInMillis
+                        isRestartedRun
+                        (persistence |> Option.map (fun hooks -> hooks.OnOutput))
+                { context with ArtifactLimits = artifactLimits }
 
             try
                 // FG-053. The SCRIPT decides whether a timestamp-shaped prefix is
@@ -1876,6 +1885,8 @@ module FogellSide =
         | error ->
             let diagnostic =
                 match error with
+                | :? ArtifactLimitExceededException ->
+                    "runner-failure: ARTIFACT_LIMIT_EXCEEDED: artifact publication exceeded its retention limit"
                 | :? BuildOutputLimitExceededException ->
                     "runner-failure: BUILD_OUTPUT_LIMIT_EXCEEDED: build output exceeded the shared retention limit"
                 | :? OutputLimitExceededException ->

@@ -2,6 +2,7 @@ namespace Fogell.Controller.Api
 
 open System
 open System.IO
+open Fogell.Execution
 
 /// Attempt-keyed publication for archived output. The build-keyed directory is
 /// mutable retry staging; the attempt directory is the stable public identity.
@@ -15,6 +16,14 @@ module ArtifactSnapshots =
             let snapshots = Path.Combine(workspaceRoot, "_artifact-snapshots")
             let target = Path.Combine(snapshots, attemptId.ToString "N")
             Directory.CreateDirectory snapshots |> ignore
+
+            let cleanupPending () =
+                let store = ArtifactStore.under (Path.Combine(workspaceRoot, "_artifacts"))
+
+                if Publish.cleanupPending store (buildId.ToString "N") (fun () -> false) then
+                    Ok()
+                else
+                    Error "artifact pending cleanup is busy or incomplete"
 
             let verifyPublished operationError =
                 match Directory.Exists staging, Directory.Exists target with
@@ -34,22 +43,34 @@ module ArtifactSnapshots =
 
             match Directory.Exists staging, Directory.Exists target with
             | true, false ->
-                try
-                    Directory.Move(staging, target)
-                    verifyPublished None
-                with ex ->
-                    // A concurrent recovery/adoption caller may have completed
-                    // the same atomic move after the pre-check. That is the
-                    // idempotent success state; every other collision remains
-                    // an error rather than guessing which bytes won.
-                    verifyPublished (Some ex.Message)
+                match cleanupPending () with
+                | Error error -> Error error
+                | Ok () ->
+                    try
+                        Directory.Move(staging, target)
+                        verifyPublished None
+                    with ex ->
+                        // A concurrent recovery/adoption caller may have completed
+                        // the same atomic move after the pre-check. That is the
+                        // idempotent success state; every other collision remains
+                        // an error rather than guessing which bytes won.
+                        verifyPublished (Some ex.Message)
             | false, false ->
-                try
-                    Directory.CreateDirectory target |> ignore
-                    verifyPublished None
-                with ex ->
-                    verifyPublished (Some ex.Message)
-            | false, true
+                match cleanupPending () with
+                | Error error -> Error error
+                | Ok () ->
+                    try
+                        Directory.CreateDirectory target |> ignore
+                        verifyPublished None
+                    with ex ->
+                        verifyPublished (Some ex.Message)
+            | false, true ->
+                // The first selected source can die after its private sidecar
+                // exists but before build staging exists.  Cleanup is also
+                // idempotent for a replay after the snapshot move committed.
+                match cleanupPending () with
+                | Error error -> Error error
+                | Ok () -> verifyPublished None
             | true, true ->
                 // The two existence reads are not atomic. Recheck the actual
                 // post-state before accepting idempotence or reporting a real

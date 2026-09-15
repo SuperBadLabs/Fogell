@@ -25,7 +25,8 @@ let persistedFailureDiagnostics =
                     UnauthorizedAccessException(sensitive), "RUNNER_ACCESS_DENIED"
                     InvalidOperationException(sensitive), "RUNNER_INTERNAL_ERROR"
                     OutputLimitExceededException(), "OUTPUT_LIMIT_EXCEEDED"
-                    BuildOutputLimitExceededException(), "BUILD_OUTPUT_LIMIT_EXCEEDED" ]
+                    BuildOutputLimitExceededException(), "BUILD_OUTPUT_LIMIT_EXCEEDED"
+                    ArtifactLimitExceededException(ArtifactLimitReason.TotalBytes), "ARTIFACT_LIMIT_EXCEEDED" ]
 
               for error, code in cases do
                   let published = ResizeArray<string>()
@@ -12574,6 +12575,7 @@ let main argv =
             "Fogell.Differential"
             [ BuildOutputBudgetTests.buildOutputBudget
               BuildOutputIntegrationTests.buildOutputIntegration
+              ArtifactIntegrationTests.artifactIntegration
               TerminalOutputSettlementTests.terminalOutputSettlement
               persistedFailureDiagnostics
               progressiveOutputPublication

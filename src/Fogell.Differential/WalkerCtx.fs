@@ -75,7 +75,10 @@ type private PendingPublication =
 ///  * deadline tokens are minted here, per declaration, so expiry ownership
 ///    can be announced by the scope whose bound actually fired.
 type WalkerCtx =
-    { /// Append one build-output line, masked against every secret bound so far.
+    { /// Trusted publication policy captured once at run entry, shared by all
+      /// archive steps. Pipeline environment bindings cannot change it.
+      ArtifactLimits: ArtifactLimits
+      /// Append one build-output line, masked against every secret bound so far.
       ///
       /// MEASURED (FG-036): declarative Jenkins emits parallel branch output
       /// with NO `[branchName]` prefix — that belongs to the scripted
@@ -852,7 +855,8 @@ module WalkerCtx =
 
                 safe, Secrets.detectLeaks secrets safe.Text)
 
-        { Emit = emit
+        { ArtifactLimits = ArtifactLimits.Defaults
+          Emit = emit
           EmitRedacted = emitRedacted
           Admit = admit
           CreateRedactedAdmission =

@@ -344,7 +344,7 @@ module WalkerStep =
                           MaskingSecrets = Some runCtx.BoundSecrets
                           MaskingSecretsLock = Some runCtx.MaskingSecretsLock
                           Named = renderedNamed
-                          Artifacts = Some(ArtifactStore.under artifactRoot)
+                          Artifacts = Some(ArtifactStore.underWithLimits artifactRoot runCtx.ArtifactLimits)
                           BuildKey = jobName }
 
         // Jenkins' JUnit step has two outcome channels: the build result and a

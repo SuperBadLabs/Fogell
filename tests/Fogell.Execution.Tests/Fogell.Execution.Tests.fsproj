@@ -2,6 +2,7 @@
   <PropertyGroup><OutputType>Exe</OutputType><IsPackable>false</IsPackable></PropertyGroup>
   <ItemGroup>
     <Compile Include="CaptureOutputBudgetTests.fs" />
+    <Compile Include="ArtifactPublishingTests.fs" />
     <Compile Include="Tests.fs" />
   </ItemGroup>
   <ItemGroup>

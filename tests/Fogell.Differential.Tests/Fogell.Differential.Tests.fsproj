@@ -8,6 +8,7 @@
     <Compile Include="BuildOutputBudgetTests.fs" />
     <Compile Include="BuildOutputIntegrationTests.fs" />
     <Compile Include="TerminalOutputSettlementTests.fs" />
+    <Compile Include="ArtifactIntegrationTests.fs" />
     <Compile Include="Tests.fs" />
   </ItemGroup>
   <ItemGroup>

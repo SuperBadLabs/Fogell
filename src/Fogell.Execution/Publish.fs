@@ -1,7 +1,11 @@
 namespace Fogell.Execution
 
 open System
+open System.Collections.Generic
 open System.IO
+open System.Security.Cryptography
+open System.Text
+open System.Threading
 open System.Text.RegularExpressions
 
 /// Where published artifacts and test results are collected. Kept separate from
@@ -9,9 +13,19 @@ open System.Text.RegularExpressions
 /// sees — and so the differential's workspace hash is not perturbed by the act
 /// of archiving.
 type ArtifactStore =
-    { Root: string }
+    { Root: string
+      Limits: ArtifactLimits }
 
-    static member under(root: string) = { Root = root }
+    static member under(root: string) =
+        { Root = root
+          Limits = ArtifactLimits.Defaults }
+
+    static member underWithLimits(root: string) (limits: ArtifactLimits) =
+        { Root = root
+          Limits = limits }
+
+    static member withLimits(limits: ArtifactLimits) (store: ArtifactStore) =
+        { store with Limits = limits }
 
 /// FG-042 / FG-043. Artifact archiving and test-result ingest.
 ///
@@ -519,52 +533,476 @@ module Publish =
                     |> Seq.sortBy (fun candidate -> candidate.Relative)
                     |> Seq.toList)
 
-    /// Copy matched files into the artifact store under `buildKey`, preserving
-    /// relative layout. Returns the sorted relative paths actually published.
-    /// `abort` is polled BETWEEN files.
-    ///
-    /// REVIEW FIX (Codex, PR #14): a `timeout` deadline only ever reached the shell
-    /// runner, so an `archiveArtifacts` starting just before the deadline copied for
-    /// as long as it liked while Jenkins would have aborted the block. Checking a
-    /// predicate per file makes the deadline real for this step too. It is still not
-    /// interruptible *within* a single large file copy, which is stated rather than
-    /// implied.
-    let archiveWithAbort (store: ArtifactStore) (buildKey: string) (workspace: string) (patterns: string list) (abort: unit -> bool) =
-        let target = Path.Combine(store.Root, buildKey)
+    let private artifactFailure () = IOException("Artifact publication failed.")
 
-        let matched =
+    let private strictRelativePath (value: string) =
+        let segments = value.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+        let reserved =
+            [ ".fogell-artifact-pending"
+              ".fogell-artifact-locks" ]
+
+        not (String.IsNullOrWhiteSpace value)
+        && not (Path.IsPathFullyQualified value)
+        && (segments
+            |> Array.forall (fun segment -> not (String.IsNullOrEmpty segment) && segment <> "." && segment <> ".."))
+        && not (reserved |> List.contains segments.[0])
+
+    let private artifactBuildId (buildKey: string) =
+        SHA256.HashData(Encoding.UTF8.GetBytes buildKey)
+        |> Convert.ToHexString
+        |> fun value -> value.ToLowerInvariant()
+
+    let private artifactTarget (store: ArtifactStore) (buildKey: string) =
+        if not (strictRelativePath buildKey) then
+            raise (artifactFailure ())
+
+        let root = Path.GetFullPath store.Root
+        let target = Path.GetFullPath(Path.Combine(root, buildKey))
+        let prefix = root.TrimEnd(Path.DirectorySeparatorChar) + string Path.DirectorySeparatorChar
+
+        if not (target.StartsWith(prefix, StringComparison.Ordinal)) then
+            raise (artifactFailure ())
+
+        target
+
+    let private artifactSidecar (store: ArtifactStore) (buildKey: string) =
+        let root = Path.GetFullPath store.Root
+        let id = artifactBuildId buildKey
+        let relative = Path.Combine(".fogell-artifact-pending", id)
+        let lockRelative = Path.Combine(".fogell-artifact-locks", id + ".lock")
+        relative, Path.Combine(root, relative), lockRelative, Path.Combine(root, lockRelative)
+
+    let private requireUnlinkedArtifactTarget (target: string) =
+        match Native.openDirectoryIfPresentWithoutLinks target with
+        | Ok(Some handle) -> handle.Dispose()
+        | Ok None -> ()
+        | Error _ -> raise (artifactFailure ())
+
+    let private validateArtifactLimits (limits: ArtifactLimits) =
+        if
+            limits.MaxFileBytes < 0L
+            || limits.MaxTotalBytes < 0L
+            || limits.MaxFiles < 0
+            || limits.MaxScanEntries < 0
+        then
+            invalidArg "limits" "Artifact limits must be non-negative."
+
+    type private HeldArtifactLock(gate: Mutex, stream: FileStream) =
+        interface IDisposable with
+            member _.Dispose() =
+                try
+                    Native.releaseExclusiveFileLock stream
+                finally
+                    try
+                        stream.Dispose()
+                    finally
+                        try
+                            gate.ReleaseMutex()
+                        finally
+                            gate.Dispose()
+
+    /// The named kernel mutex has no process-local build dictionary to leak,
+    /// while still serializing parallel calls in this process and writers in
+    /// other processes. Its name is derived from a lock identity outside the
+    /// frozen snapshot directory. Polling WaitOne(0) keeps an archive deadline
+    /// observable while another worker owns the build.
+    let private acquireArtifactLock
+        (storeRoot: string)
+        (lockRelative: string)
+        (lockPath: string)
+        (abort: unit -> bool)
+        (nonBlocking: bool)
+        =
+        let name = "fogell-artifact-" + artifactBuildId lockPath
+        let gate = new Mutex(false, name)
+        let stream =
+            match Native.openOrCreateFileWithoutLinks storeRoot lockRelative with
+            | Ok stream -> stream
+            | Error _ ->
+                gate.Dispose()
+                raise (artifactFailure ())
+        let mutable acquired = false
+        let mutable cancelled = false
+
+        try
+            while not acquired && not cancelled do
+                let mutable ownsGate = false
+
+                try
+                    ownsGate <- gate.WaitOne 0
+                with :? AbandonedMutexException ->
+                    ownsGate <- true
+
+                if ownsGate then
+                    if Native.tryAcquireExclusiveFileLock stream then
+                        acquired <- true
+                    else
+                        gate.ReleaseMutex()
+
+                if not acquired then
+                    if nonBlocking then
+                        cancelled <- true
+                    elif abort () then
+                        cancelled <- true
+                    else
+                        Thread.Sleep 20
+
+            if acquired then Some(new HeldArtifactLock(gate, stream) :> IDisposable)
+            else
+                stream.Dispose()
+                gate.Dispose()
+                None
+        with ex ->
+            stream.Dispose()
+            gate.Dispose()
+            raise ex
+
+    let private removePendingFiles
+        (store: ArtifactStore)
+        (pendingRelative: string)
+        (pending: string)
+        (scanLimit: int)
+        (abort: unit -> bool)
+        =
+        match Native.openDirectoryIfPresentWithoutLinks pending with
+        | Ok None -> true
+        | Error _ -> false
+        | Ok(Some descriptor) ->
+            use descriptor = descriptor
+            let mutable entries = 0
+            let mutable complete = true
+
+            try
+                use files =
+                    DirectoryInfo(Native.directoryDescriptorPath descriptor)
+                        .EnumerateFileSystemInfos()
+                        .GetEnumerator()
+
+                while complete && files.MoveNext() do
+                    if abort () || entries >= scanLimit then
+                        complete <- false
+                    else
+                        entries <- entries + 1
+                        let entry = files.Current
+
+                        if
+                            entry :? DirectoryInfo
+                            || entry.Attributes.HasFlag FileAttributes.ReparsePoint
+                            || not (entry.Name.EndsWith(".part", StringComparison.Ordinal))
+                        then
+                            complete <- false
+                        else
+                            let relative = Path.Combine(pendingRelative, entry.Name)
+
+                            match Native.deleteFileWithoutLinks store.Root relative with
+                            | Ok() -> ()
+                            | Error _ -> complete <- false
+
+                complete
+            with :? IOException -> false
+                 | :? UnauthorizedAccessException -> false
+
+    /// Remove stale, unpublished staging files for one build.  It never waits
+    /// on a writer; callers which need cleanup during controller finalization
+    /// can retry after a false return.
+    let cleanupPending (store: ArtifactStore) (buildKey: string) (abort: unit -> bool) =
+        validateArtifactLimits store.Limits
+        if not (strictRelativePath buildKey) then
+            false
+        else
+            // Validate the key's target shape without opening the staging
+            // directory. A concurrent snapshot finalizer may move that target;
+            // sidecar cleanup has its own descriptor-anchored custody checks.
+            artifactTarget store buildKey |> ignore
+            let pendingRelative, pending, lockRelative, lockPath = artifactSidecar store buildKey
+
+            let rec tryCleanup remaining =
+                // Finalizers often race after another one has already cleaned this
+                // sidecar. The absence fast path makes that case idempotent without
+                // acquiring a kernel mutex.
+                match Native.openDirectoryIfPresentWithoutLinks pending with
+                | Ok None -> true
+                | Error _ -> false
+                | Ok(Some probe) ->
+                    use probe = probe
+                    match acquireArtifactLock store.Root lockRelative lockPath abort true with
+                    | Some artifactLock ->
+                        use heldLock = artifactLock
+                        removePendingFiles store pendingRelative pending store.Limits.MaxScanEntries abort
+                    | None when remaining > 0 && not (abort ()) ->
+                        Thread.Sleep 10
+                        tryCleanup (remaining - 1)
+                    | None -> false
+
+            tryCleanup 4
+
+    let private enumerateArtifactFiles
+        (root: string)
+        (scanLimit: int)
+        (abort: unit -> bool)
+        (onFile: string -> unit)
+        =
+        // Queue only logical paths. Each is reopened under the no-follow policy
+        // when visited, so a broad tree cannot accumulate one live descriptor
+        // per sibling directory.
+        let pending = Stack<string>()
+        let mutable entries = 0
+        let mutable aborted = false
+
+        match Native.openDirectoryIfPresentWithoutLinks root with
+        | Ok(Some descriptor) ->
+            descriptor.Dispose()
+            pending.Push("")
+        | Ok None -> ()
+        | Error _ -> raise (artifactFailure ())
+
+        while pending.Count > 0 && not aborted do
+            if abort () then
+                aborted <- true
+            else
+                let logical = pending.Pop()
+                let path =
+                    if String.IsNullOrEmpty logical then root
+                    else Path.Combine(root, logical.Replace('/', Path.DirectorySeparatorChar))
+
+                use descriptor =
+                    match Native.openDirectoryWithoutLinks path with
+                    | Ok descriptor -> descriptor
+                    | Error _ -> raise (artifactFailure ())
+
+                use children =
+                    DirectoryInfo(Native.directoryDescriptorPath descriptor)
+                        .EnumerateFileSystemInfos()
+                        .GetEnumerator()
+
+                while children.MoveNext() && not aborted do
+                    if abort () then
+                        aborted <- true
+                    elif entries >= scanLimit then
+                        raise (ArtifactLimitExceededException ArtifactLimitReason.ScanEntries)
+                    else
+                        entries <- entries + 1
+                        let entry = children.Current
+                        let relative =
+                            if String.IsNullOrEmpty logical then entry.Name else logical + "/" + entry.Name
+                        let isDirectory = entry :? DirectoryInfo
+                        let isLink = entry.Attributes.HasFlag FileAttributes.ReparsePoint
+
+                        if isDirectory then
+                            // A linked directory is never traversed. Validate
+                            // an ordinary child descriptor now, then reopen
+                            // it by its logical path on visit without holding
+                            // unbounded sibling descriptors.
+                            if not isLink then
+                                match Native.openChildDirectoryWithoutLinks descriptor entry.Name with
+                                | Ok child ->
+                                    child.Dispose()
+                                    pending.Push relative
+                                | Error _ -> raise (artifactFailure ())
+                        else
+                            onFile relative
+
+        aborted
+
+    let private retainedArtifacts (target: string) (limits: ArtifactLimits) (abort: unit -> bool) =
+        let retained = Dictionary<string, int64>(StringComparer.Ordinal)
+        let mutable bytes = 0L
+        let mutable files = 0
+
+        let aborted =
+            enumerateArtifactFiles target limits.MaxScanEntries abort (fun relative ->
+                let length =
+                    match Native.openFileWithoutLinks target (relative.Replace('/', Path.DirectorySeparatorChar)) with
+                    | Error _ -> raise (artifactFailure ())
+                    | Ok stream ->
+                        use stream = stream
+                        stream.Length
+
+                if length > limits.MaxFileBytes then
+                    raise (ArtifactLimitExceededException ArtifactLimitReason.FileBytes)
+
+                if bytes > limits.MaxTotalBytes - length then
+                    raise (ArtifactLimitExceededException ArtifactLimitReason.TotalBytes)
+
+                if files >= limits.MaxFiles then
+                    raise (ArtifactLimitExceededException ArtifactLimitReason.FileCount)
+
+                retained.[relative] <- length
+                bytes <- bytes + length
+                files <- files + 1)
+
+        retained, bytes, files, aborted
+
+    let private selectedArtifacts
+        (workspace: string)
+        (patterns: string list)
+        (limits: ArtifactLimits)
+        (abort: unit -> bool)
+        =
+        // Archive scanning accepts untrusted Jenkinsfile patterns. Its regexes
+        // are generated from glob literals only, so the non-backtracking engine
+        // preserves those matches while bounding per-entry matcher CPU.
+        let matchers =
             patterns
-            |> List.collect (expandGlob workspace)
-            |> List.distinct
-            |> List.sort
+            |> List.map (fun pattern ->
+                let compiled = compileGlobRegex false pattern
+                let regex = Regex(compiled.ToString(), compiled.Options ||| RegexOptions.NonBacktracking)
+                fun (relative: string) -> regex.IsMatch relative)
+        let selected = List<string>()
+        let seen = HashSet<string>(StringComparer.Ordinal)
 
-        let published = System.Collections.Generic.List<string>()
+        let aborted =
+            if List.isEmpty matchers then false
+            else
+                enumerateArtifactFiles workspace limits.MaxScanEntries abort (fun relative ->
+                    if matchers |> List.exists (fun matcher -> matcher relative) then
+                        if seen.Add relative then
+                            if selected.Count >= limits.MaxFiles then
+                                raise (ArtifactLimitExceededException ArtifactLimitReason.FileCount)
+                            selected.Add relative)
 
-        // REVIEW FIX (Codex, PR #14 round 11): with `allowEmptyArchive: true` and no
-        // matches, the copy loop never runs, so neither polling site was reached and an
-        // interrupt during the (potentially long) glob scan left the step Successful.
-        // Poll once after expansion, before the loop can decline to execute.
-        let mutable aborted = abort ()
+        selected |> Seq.sort |> Seq.toList, aborted
 
-        for relative in matched do
-            if not aborted then
-                if abort () then
-                    aborted <- true
+    let private stageArtifact
+        (store: ArtifactStore)
+        (workspace: string)
+        (pendingRelative: string)
+        (relative: string)
+        (alreadyHeldBytes: int64)
+        (abort: unit -> bool)
+        =
+        let temporaryRelative = Path.Combine(pendingRelative, Guid.NewGuid().ToString("N") + ".part")
+        let mutable stagedBytes = 0L
+        let mutable aborted = false
+        let buffer = Array.zeroCreate<byte> 65536
+
+        let mutable preserveTemporary = false
+
+        try
+            match Native.openFileWithoutLinks workspace (relative.Replace('/', Path.DirectorySeparatorChar)) with
+            | Error _ -> raise (artifactFailure ())
+            | Ok source ->
+                use input = source
+                use output =
+                    match Native.createNewFileWithoutLinks store.Root temporaryRelative with
+                    | Ok stream -> stream
+                    | Error _ -> raise (artifactFailure ())
+
+                let mutable reading = true
+
+                while reading && not aborted do
+                    if abort () then
+                        aborted <- true
+                    else
+                        let count = input.Read(buffer, 0, buffer.Length)
+
+                        if count = 0 then
+                            reading <- false
+                        else
+                            let chunk = int64 count
+
+                            // Charge the observed bytes before each write. This
+                            // catches a source which grows after descriptor open.
+                            if stagedBytes > store.Limits.MaxFileBytes - chunk then
+                                raise (ArtifactLimitExceededException ArtifactLimitReason.FileBytes)
+
+                            if stagedBytes > store.Limits.MaxTotalBytes - alreadyHeldBytes - chunk then
+                                raise (ArtifactLimitExceededException ArtifactLimitReason.TotalBytes)
+
+                            output.Write(buffer, 0, count)
+                            stagedBytes <- stagedBytes + chunk
+
+                output.Flush(true)
+
+            if abort () then
+                aborted <- true
+
+            if aborted then
+                None
+            else
+                preserveTemporary <- true
+                Some(temporaryRelative, stagedBytes)
+        finally
+            if not preserveTemporary then
+                Native.deleteFileWithoutLinks store.Root temporaryRelative |> ignore
+
+    /// Copy matched files into this attempt's artifact store under `buildKey`,
+    /// preserving relative layout. Limits cover the retained files for this
+    /// attempt plus the active sidecar file; historical snapshots and store
+    /// retention are deliberately outside this admission boundary. Copies are
+    /// cancellable within a file. A completed file remains published after a
+    /// later abort; the active file stays in the sidecar and is deleted, so it
+    /// cannot appear in a frozen snapshot. An overwrite needs headroom for its
+    /// old retained bytes and its staged replacement until atomic promotion.
+    let archiveWithAbort (store: ArtifactStore) (buildKey: string) (workspace: string) (patterns: string list) (abort: unit -> bool) =
+        validateArtifactLimits store.Limits
+        let target = artifactTarget store buildKey
+        requireUnlinkedArtifactTarget target
+        let pendingRelative, pending, lockRelative, lockPath = artifactSidecar store buildKey
+
+        match acquireArtifactLock store.Root lockRelative lockPath abort false with
+        | None -> [], true
+        | Some artifactLock ->
+            use heldLock = artifactLock
+            if not (removePendingFiles store pendingRelative pending store.Limits.MaxScanEntries abort) then
+                [], true
+            else
+                let retained, initialRetainedBytes, initialRetainedFiles, retainedAborted =
+                    retainedArtifacts target store.Limits abort
+                let mutable retainedBytes = initialRetainedBytes
+                let mutable retainedFiles = initialRetainedFiles
+
+                if retainedAborted || abort () then
+                    [], true
                 else
-                    let dest = Path.Combine(target, relative)
-                    Directory.CreateDirectory(Path.GetDirectoryName dest) |> ignore
-                    File.Copy(Path.Combine(workspace, relative), dest, true)
-                    published.Add relative
+                    let matched, scanAborted = selectedArtifacts workspace patterns store.Limits abort
 
-                    // REVIEW FIX (Codex, PR #14 round 9): polling only BEFORE each copy
-                    // meant an interrupt firing during the only or final copy had no
-                    // later iteration to observe it, so `aborted` stayed false and the
-                    // step returned Success — a timeout expiring while the build stays
-                    // green. A copy cannot be interrupted mid-file, but once it returns
-                    // the interruption must still be classified.
-                    if abort () then aborted <- true
+                    if scanAborted || abort () then
+                        [], true
+                    else
+                        let published = List<string>()
+                        let mutable aborted = false
 
-        List.ofSeq published, aborted
+                        for relative in matched do
+                            if not aborted then
+                                if abort () then
+                                    aborted <- true
+                                else
+                                    let previous =
+                                        match retained.TryGetValue relative with
+                                        | true, bytes -> bytes
+                                        | _ -> 0L
+
+                                    let existed = retained.ContainsKey relative
+
+                                    if not existed && retainedFiles >= store.Limits.MaxFiles then
+                                        raise (ArtifactLimitExceededException ArtifactLimitReason.FileCount)
+
+                                    match stageArtifact store workspace pendingRelative relative retainedBytes abort with
+                                    | None -> aborted <- true
+                                    | Some (temporaryRelative, bytes) ->
+                                        try
+                                            if abort () then
+                                                aborted <- true
+                                            else
+                                                match
+                                                    Native.atomicReplaceFileBetweenRootsWithoutLinks
+                                                        store.Root
+                                                        temporaryRelative
+                                                        target
+                                                        (relative.Replace('/', Path.DirectorySeparatorChar))
+                                                with
+                                                | Error _ -> raise (artifactFailure ())
+                                                | Ok() -> ()
+                                                retained.[relative] <- bytes
+                                                retainedBytes <- retainedBytes + bytes - previous
+                                                if not existed then
+                                                    retainedFiles <- retainedFiles + 1
+                                                published.Add relative
+                                        finally
+                                            Native.deleteFileWithoutLinks store.Root temporaryRelative |> ignore
+
+                        List.ofSeq published, aborted || abort ()
 
     let archive store buildKey workspace patterns =
         archiveWithAbort store buildKey workspace patterns (fun () -> false) |> fst

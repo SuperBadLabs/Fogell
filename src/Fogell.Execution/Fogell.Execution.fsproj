@@ -8,6 +8,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Native.fs" />
+    <Compile Include="ArtifactPublishing.fs" />
+    <Compile Include="ArtifactPolicy.fs" />
     <Compile Include="Workspace.fs" />
     <Compile Include="OutputRedaction.fs" />
     <Compile Include="ProcessGroup.fs" />

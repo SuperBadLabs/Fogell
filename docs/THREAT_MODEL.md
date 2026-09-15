@@ -104,6 +104,19 @@ host administrator
 [`ArtifactSnapshots.fs`](../src/Fogell.Controller.Api/ArtifactSnapshots.fs);
 FG-042b).
 
+Artifact publication applies operator-configured file-size, retained-byte,
+file-count, and scan-entry ceilings. Every archive step and parallel branch in
+an attempt shares admission under a build-specific lock. Copying charges actual
+bytes before writing a chunk, polls cancellation, and promotes completed files
+atomically from an unpublished sidecar. Completed files survive a later refusal;
+an interrupted replacement preserves the previous file. Controller finalization
+cleans crash leftovers before freezing the attempt snapshot. These limits do
+not bound workspace generation, earlier attempt snapshots, or total controller
+disk usage. Ordinary same-UID writes and mount substitution remain outside this
+publication boundary; use filesystem quotas and workload isolation for those
+controls ([`Publish.fs`](../src/Fogell.Execution/Publish.fs),
+[operator limits](runbooks/controller-host.md)).
+
 **Partial, not tenant authorization.** The bearer has no subject, role,
 organization membership, or project claim. A holder is a global operator who
 may select organization/project identifiers. Forced database RLS limits a

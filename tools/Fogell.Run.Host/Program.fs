@@ -84,6 +84,13 @@ let main argv =
         eprintfn "FOGELL_CONTROLLER_LIVENESS_PIPE must be exactly 1 when set"
         exit 2
 
+    // Refuse malformed operator policy before creating durable run state.
+    match Fogell.Execution.ArtifactPolicy.loadEnvironment () with
+    | Ok _ -> ()
+    | Error reason ->
+        eprintfn "%s" reason
+        exit 2
+
     let eventPath =
         match Environment.GetEnvironmentVariable "FOGELL_EVENT_FILE" with
         | null
