@@ -27,6 +27,9 @@ module internal Native =
     let private OpenTruncate = 0x200
 
     [<Literal>]
+    let private OpenExclusive = 0x80
+
+    [<Literal>]
     let private OpenNonBlocking = 0x800
 
     [<Literal>]
@@ -114,11 +117,45 @@ module internal Native =
     [<DllImport("libc", EntryPoint = "mkdirat", SetLastError = true)>]
     extern int private makeDirectoryAt(int directoryDescriptor, string path, int mode)
 
+    [<DllImport("libc", EntryPoint = "flock", SetLastError = true)>]
+    extern int private flock(int descriptor, int operation)
+
+    [<DllImport("libc", EntryPoint = "unlinkat", SetLastError = true)>]
+    extern int private unlinkAt(int directoryDescriptor, string path, int flags)
+
+    [<DllImport("libc", EntryPoint = "renameat", SetLastError = true)>]
+    extern int private renameAt(int oldDirectoryDescriptor, string oldPath, int newDirectoryDescriptor, string newPath)
+
     [<DllImport("libc", EntryPoint = "realpath", SetLastError = true)>]
     extern nativeint private realpath(string path, nativeint resolvedPath)
 
     [<DllImport("libc", EntryPoint = "free")>]
     extern void private free(nativeint pointer)
+
+    [<Literal>]
+    let private LockExclusiveNonBlocking = 6 // LOCK_EX | LOCK_NB
+
+    [<Literal>]
+    let private Unlock = 8 // LOCK_UN
+
+    [<Literal>]
+    let private EWouldBlock = 11
+
+    /// Try to take an advisory whole-file lock without blocking.  Artifact
+    /// publication combines this cross-process lock with a named mutex so
+    /// in-process callers share one deterministic ownership boundary too.
+    let tryAcquireExclusiveFileLock (stream: FileStream) =
+        let locked = flock(stream.SafeFileHandle.DangerousGetHandle() |> int, LockExclusiveNonBlocking)
+
+        if locked = 0 then
+            true
+        elif Marshal.GetLastPInvokeError() = EWouldBlock then
+            false
+        else
+            raise (IOException("Artifact lock is unavailable."))
+
+    let releaseExclusiveFileLock (stream: FileStream) =
+        flock(stream.SafeFileHandle.DangerousGetHandle() |> int, Unlock) |> ignore
 
     let private physicalPath path =
         let pointer = realpath (path, nativeint 0)
@@ -442,6 +479,7 @@ module internal Native =
         (table: LinuxOpenFlags.Table)
         (workspace: string)
         (relative: string)
+        (creationMode: int)
         : Result<FileStream, string> =
         if not (OperatingSystem.IsLinux()) then
             Error "unstash link containment requires Linux descriptor semantics"
@@ -500,7 +538,8 @@ module internal Native =
                                 leaf,
                                 OpenWriteOnly
                                 ||| OpenCreate
-                                ||| OpenTruncate
+                                ||| creationMode
+                                ||| OpenNonBlocking
                                 ||| table.NoFollow
                                 ||| OpenCloseOnExec,
                                 384)
@@ -519,7 +558,161 @@ module internal Native =
 
     let createWorkspaceFileWithoutLinks (workspace: string) (relative: string) : Result<FileStream, string> =
         requireOpenFlags ()
-        |> Result.bind (fun table -> createWorkspaceFileWithoutLinksUsing table workspace relative)
+        |> Result.bind (fun table -> createWorkspaceFileWithoutLinksUsing table workspace relative OpenTruncate)
+
+    /// Create a new file below a descriptor-validated root.  Artifact sidecars
+    /// use this rather than pathname creation so an existing link cannot turn a
+    /// temporary write into an external write.
+    let createNewFileWithoutLinks (workspace: string) (relative: string) : Result<FileStream, string> =
+        requireOpenFlags ()
+        |> Result.bind (fun table -> createWorkspaceFileWithoutLinksUsing table workspace relative OpenExclusive)
+
+    /// Open one no-follow, descriptor-anchored lock file without changing its
+    /// contents. The caller owns the returned stream and its advisory lock.
+    let openOrCreateFileWithoutLinks (workspace: string) (relative: string) : Result<FileStream, string> =
+        requireOpenFlags ()
+        |> Result.bind (fun table -> createWorkspaceFileWithoutLinksUsing table workspace relative 0)
+        |> Result.bind (fun stream ->
+            try
+                if stream.CanSeek then
+                    stream.Length |> ignore
+                    Ok stream
+                else
+                    stream.Dispose()
+                    Error "lock target is non-seekable or unavailable"
+            with ex ->
+                stream.Dispose()
+                Error $"lock target is non-seekable or unavailable ({ex.GetType().Name})")
+
+    /// Delete a regular sidecar entry through its pinned parent directory.  A
+    /// final symlink is unlinked as an entry and never followed.
+    let private deleteFileWithoutLinksUsing
+        (table: LinuxOpenFlags.Table)
+        (root: string)
+        (relative: string)
+        : Result<unit, string> =
+        if
+            String.IsNullOrEmpty relative
+            || Path.IsPathFullyQualified relative
+            || relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+               |> Array.exists (fun segment -> segment = "" || segment = "." || segment = "..")
+        then
+            Error "delete target is not a strict relative path"
+        else
+            match openDirectoryWithoutLinks root with
+            | Error why -> Error why
+            | Ok rootHandle ->
+                let mutable current = rootHandle
+
+                try
+                    let segments = relative.Split(Path.DirectorySeparatorChar)
+                    let directories = segments |> Array.take (segments.Length - 1)
+                    let mutable failure: string option = None
+
+                    for segment in directories do
+                        if Option.isNone failure then
+                            match openChildDirectoryWithoutLinksUsing table current segment with
+                            | Ok child ->
+                                current.Dispose()
+                                current <- child
+                            | Error why -> failure <- Some why
+
+                    match failure with
+                    | Some why -> Error why
+                    | None ->
+                        let removed = unlinkAt(current.DangerousGetHandle() |> int, segments.[segments.Length - 1], 0)
+                        if removed = 0 || Marshal.GetLastPInvokeError() = 2 then Ok()
+                        else Error "delete target is unavailable"
+                finally
+                    current.Dispose()
+
+    let deleteFileWithoutLinks (root: string) (relative: string) : Result<unit, string> =
+        requireOpenFlags ()
+        |> Result.bind (fun table -> deleteFileWithoutLinksUsing table root relative)
+
+    /// Rename an entry held below one descriptor-validated root into a
+    /// destination held below another. Both parent directories remain
+    /// descriptor-pinned while `renameat` resolves their leaf names. `renameat`
+    /// accepts either a regular file or a directory, which keeps artifact
+    /// namespace rotation O(1) without a recursive path walk.
+    let atomicRenameBetweenRootsWithoutLinks
+        (sourceRoot: string)
+        (sourceRelative: string)
+        (destinationRoot: string)
+        (destinationRelative: string)
+        : Result<unit, string> =
+        let strict relative =
+            not (String.IsNullOrEmpty relative)
+            && not (Path.IsPathFullyQualified relative)
+            && (relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                |> Array.forall (fun segment -> segment <> "" && segment <> "." && segment <> ".."))
+
+        let openParent (table: LinuxOpenFlags.Table) (root: string) (relative: string) (create: bool) =
+            let rootResult =
+                if create then openOrCreateDirectoryWithoutLinks table root
+                else openDirectoryWithoutLinks root
+
+            match rootResult with
+            | Error why -> Error why
+            | Ok rootHandle ->
+                let mutable current = rootHandle
+                let segments = relative.Split(Path.DirectorySeparatorChar)
+                let mutable failure: string option = None
+                let flags =
+                    OpenReadOnly
+                    ||| OpenNonBlocking
+                    ||| table.Directory
+                    ||| table.NoFollow
+                    ||| OpenCloseOnExec
+
+                for segment in segments |> Array.take (segments.Length - 1) do
+                    if Option.isNone failure then
+                        let parent = current.DangerousGetHandle() |> int
+                        let mutable child = openFileAt(parent, segment, flags, 0)
+
+                        if child < 0 && create && Marshal.GetLastPInvokeError() = 2 then
+                            let made = makeDirectoryAt(parent, segment, 511)
+                            if made = 0 || Marshal.GetLastPInvokeError() = 17 then
+                                child <- openFileAt(parent, segment, flags, 0)
+
+                        if child < 0 then
+                            failure <- Some "artifact parent is linked, missing, or unavailable"
+                        else
+                            current.Dispose()
+                            current <- new SafeFileHandle(nativeint child, true)
+
+                match failure with
+                | Some why ->
+                    current.Dispose()
+                    Error why
+                | None -> Ok(current, segments.[segments.Length - 1])
+
+        if not (OperatingSystem.IsLinux()) || not (strict sourceRelative) || not (strict destinationRelative) then
+            Error "artifact promotion path is unavailable"
+        else
+            requireOpenFlags ()
+            |> Result.bind (fun table ->
+                match openParent table sourceRoot sourceRelative false with
+                | Error why -> Error why
+                | Ok(sourceParent, sourceLeaf) ->
+                    use sourceParent = sourceParent
+
+                    match openParent table destinationRoot destinationRelative true with
+                    | Error why -> Error why
+                    | Ok(destinationParent, destinationLeaf) ->
+                        use destinationParent = destinationParent
+
+                        let moved =
+                            renameAt(
+                                sourceParent.DangerousGetHandle() |> int,
+                                sourceLeaf,
+                                destinationParent.DangerousGetHandle() |> int,
+                                destinationLeaf)
+
+                        if moved = 0 then
+                            Ok()
+                        else
+                            Error "artifact target promotion failed")
 
     /// Signal a single process. Returns false when it no longer exists.
     let signalProcess (pid: int) (signum: int) : bool =

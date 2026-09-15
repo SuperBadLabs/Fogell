@@ -6,6 +6,7 @@ open System.Runtime.InteropServices
 open System.Text
 open Microsoft.Win32.SafeHandles
 open Fogell.Domain
+open Fogell.Execution
 
 type ControllerConfig =
     { RuntimeDatabaseUrl: string
@@ -20,6 +21,7 @@ type ControllerConfig =
       MaxLogChunks: int
       PollMilliseconds: int
       LeaseSeconds: int
+      ArtifactLimits: ArtifactLimits
       /// FG-026b. Which registered external-effect producers are enabled.
       EffectProducers: EffectProducerConfig }
 
@@ -410,6 +412,7 @@ module ControllerConfig =
         let maxLogs = positiveInt "FOGELL_MAX_LOG_CHUNKS" 1 10000
         let poll = positiveInt "FOGELL_WORKER_POLL_MS" 25 60000
         let lease = positiveInt "FOGELL_WORKER_LEASE_SECONDS" 10 3600
+        let artifactLimits = ArtifactPolicy.loadEnvironment ()
         let workerTiming =
             match poll, lease with
             | Ok pollMilliseconds, Ok leaseSeconds ->
@@ -422,10 +425,12 @@ module ControllerConfig =
                     maxLogs |> Result.map string
                     poll |> Result.map string
                     lease |> Result.map string
-                    workerTiming |> Result.map string ] with
-        | Error error, _
-        | _, Error error -> Error error
-        | Ok _, Ok _ ->
+                    workerTiming |> Result.map string ],
+              artifactLimits with
+        | Error error, _, _
+        | _, Error error, _
+        | _, _, Error error -> Error error
+        | Ok _, Ok _, Ok artifactLimits ->
             let runtimeValue = value runtime
             let maintenanceValue = value maintenance
             let tokenPath = value tokenFile
@@ -477,6 +482,7 @@ module ControllerConfig =
                                           MaxLogChunks = value maxLogs
                                           PollMilliseconds = value poll
                                           LeaseSeconds = value lease
+                                          ArtifactLimits = artifactLimits
                                           EffectProducers = effectProducers }
 
     let internal loadWithSetsidLauncher setsidLauncher =

@@ -2971,9 +2971,10 @@ module WalkerOrchestration =
                     let mutable criticalFailure: exn option = None
                     let failureRank (error: exn) =
                         match error with
-                        | :? OutputPublicationException -> 3
-                        | :? RuntimeGuardFailure -> 2
-                        | :? BuildOutputLimitExceededException -> 1
+                        | :? OutputPublicationException -> 4
+                        | :? RuntimeGuardFailure -> 3
+                        | :? BuildOutputLimitExceededException -> 2
+                        | :? ArtifactLimitExceededException -> 1
                         | _ -> 0
                     let retainCritical error =
                         if failureRank error > (criticalFailure |> Option.map failureRank |> Option.defaultValue -1) then

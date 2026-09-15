@@ -2,11 +2,18 @@ namespace Fogell.Controller.Api
 
 open System
 open System.IO
+open Fogell.Execution
 
 /// Attempt-keyed publication for archived output. The build-keyed directory is
 /// mutable retry staging; the attempt directory is the stable public identity.
 module ArtifactSnapshots =
-    let finalize stateRoot (organizationId: Guid) (buildId: Guid) (attemptId: Guid) =
+    let finalizeWithLimits
+        (limits: ArtifactLimits)
+        stateRoot
+        (organizationId: Guid)
+        (buildId: Guid)
+        (attemptId: Guid)
+        =
         try
             let workspaceRoot =
                 Path.Combine(stateRoot, "workspaces", organizationId.ToString "N")
@@ -15,6 +22,15 @@ module ArtifactSnapshots =
             let snapshots = Path.Combine(workspaceRoot, "_artifact-snapshots")
             let target = Path.Combine(snapshots, attemptId.ToString "N")
             Directory.CreateDirectory snapshots |> ignore
+
+            let cleanupPending () =
+                let store =
+                    ArtifactStore.underWithLimits (Path.Combine(workspaceRoot, "_artifacts")) limits
+
+                if Publish.cleanupPending store (buildId.ToString "N") (fun () -> false) then
+                    Ok()
+                else
+                    Error "artifact pending cleanup is busy or incomplete"
 
             let verifyPublished operationError =
                 match Directory.Exists staging, Directory.Exists target with
@@ -34,22 +50,34 @@ module ArtifactSnapshots =
 
             match Directory.Exists staging, Directory.Exists target with
             | true, false ->
-                try
-                    Directory.Move(staging, target)
-                    verifyPublished None
-                with ex ->
-                    // A concurrent recovery/adoption caller may have completed
-                    // the same atomic move after the pre-check. That is the
-                    // idempotent success state; every other collision remains
-                    // an error rather than guessing which bytes won.
-                    verifyPublished (Some ex.Message)
+                match cleanupPending () with
+                | Error error -> Error error
+                | Ok () ->
+                    try
+                        Directory.Move(staging, target)
+                        verifyPublished None
+                    with ex ->
+                        // A concurrent recovery/adoption caller may have completed
+                        // the same atomic move after the pre-check. That is the
+                        // idempotent success state; every other collision remains
+                        // an error rather than guessing which bytes won.
+                        verifyPublished (Some ex.Message)
             | false, false ->
-                try
-                    Directory.CreateDirectory target |> ignore
-                    verifyPublished None
-                with ex ->
-                    verifyPublished (Some ex.Message)
-            | false, true
+                match cleanupPending () with
+                | Error error -> Error error
+                | Ok () ->
+                    try
+                        Directory.CreateDirectory target |> ignore
+                        verifyPublished None
+                    with ex ->
+                        verifyPublished (Some ex.Message)
+            | false, true ->
+                // The first selected source can die after its private sidecar
+                // exists but before build staging exists.  Cleanup is also
+                // idempotent for a replay after the snapshot move committed.
+                match cleanupPending () with
+                | Error error -> Error error
+                | Ok () -> verifyPublished None
             | true, true ->
                 // The two existence reads are not atomic. Recheck the actual
                 // post-state before accepting idempotence or reporting a real
@@ -58,12 +86,22 @@ module ArtifactSnapshots =
         with ex ->
             Error ex.Message
 
+    /// Compatibility entry point for library and older test callers which do
+    /// not have controller configuration. Production callers use
+    /// finalizeWithLimits so cleanup observes the startup-validated policy.
+    let finalize stateRoot organizationId buildId attemptId =
+        finalizeWithLimits ArtifactLimits.Defaults stateRoot organizationId buildId attemptId
+
     /// Before a retry starts, freeze any build-keyed bytes left by its exact
     /// parent. The child then archives into a newly created staging directory
     /// and cannot inherit parent-only files from the pre-attempt layout.
-    let prepareRetry stateRoot organizationId buildId parentAttemptId =
+    let prepareRetryWithLimits limits stateRoot organizationId buildId parentAttemptId =
         match parentAttemptId with
         | None -> Ok()
         | Some parent ->
-            finalize stateRoot organizationId buildId parent
+            finalizeWithLimits limits stateRoot organizationId buildId parent
             |> Result.map ignore
+
+    /// Compatibility entry point for callers without parsed controller policy.
+    let prepareRetry stateRoot organizationId buildId parentAttemptId =
+        prepareRetryWithLimits ArtifactLimits.Defaults stateRoot organizationId buildId parentAttemptId

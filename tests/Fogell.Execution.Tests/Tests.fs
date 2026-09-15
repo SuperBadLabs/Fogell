@@ -6694,6 +6694,7 @@ let main argv =
                 (testList
                     "Fogell.Execution"
                     [ CaptureOutputBudgetTests.captureOutputBudget
+                      ArtifactPublishingTests.artifactPublishing
                       workspaceHygiene
                       shellExecution
                       environmentIsolation

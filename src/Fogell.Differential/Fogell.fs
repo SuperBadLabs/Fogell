@@ -688,6 +688,8 @@ module FogellSide =
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
+        (artifactBuildKey: string)
+        (artifactResetKey: string option)
         (buildNumber: int)
         (previousBuild: BuildStatus option)
         (freshWorkspace: bool)
@@ -695,6 +697,13 @@ module FogellSide =
         (persistence: PersistenceHooks option)
         (script: string)
         : Result<Trace, string> =
+        // Validate operator policy before preparing or wiping a workspace, and
+        // capture it once so withEnv/parallel branches cannot relax the limits.
+        let artifactLimits =
+            match ArtifactPolicy.loadEnvironment () with
+            | Ok limits -> limits
+            | Error reason -> invalidArg "artifactLimits" reason
+
         // FG-220. Jenkins compares report mtimes with the build's persisted
         // scheduling/start timestamp, never with the later junit invocation.
         // Capture the closest Fogell analogue at build entry, before preflight.
@@ -727,6 +736,14 @@ module FogellSide =
 
             if freshWorkspace then
                 WalkerGit.resetHistory artifactRoot jobName
+
+            match artifactResetKey with
+            | Some scopeKey ->
+                Publish.rotateArtifactNamespace
+                    (ArtifactStore.underWithLimits artifactRoot artifactLimits)
+                    scopeKey
+                    (fun () -> false)
+            | None -> ()
 
         // SCM definition identity precedes every sealable outcome, including a
         // parser refusal. Jenkins executes the remote bytes, so a local invalid
@@ -789,10 +806,12 @@ module FogellSide =
             // one stated contract (see WalkerCtx.fs for its two-lock discipline).
             // These rebinds keep call sites unchanged.
             let runCtx =
-                WalkerCtx.create
-                    buildStartTimeInMillis
-                    isRestartedRun
-                    (persistence |> Option.map (fun hooks -> hooks.OnOutput))
+                let context =
+                    WalkerCtx.create
+                        buildStartTimeInMillis
+                        isRestartedRun
+                        (persistence |> Option.map (fun hooks -> hooks.OnOutput))
+                { context with ArtifactLimits = artifactLimits }
 
             try
                 // FG-053. The SCRIPT decides whether a timestamp-shaped prefix is
@@ -1530,7 +1549,7 @@ module FogellSide =
                 let alwaysFailFast = WalkerRules.alwaysFailFast pipeline
                 // FG-105: step execution lives in WalkerStep.
                 let runStepInner =
-                    WalkerStep.runStepInner runCtx envForWith beforeShellLaunch workspace artifactRoot jobName
+                    WalkerStep.runStepInner runCtx envForWith beforeShellLaunch workspace artifactRoot artifactBuildKey
 
                 // FG-105: when-evaluation lives in WalkerWhen.
                 let evalWhen =
@@ -1748,7 +1767,9 @@ module FogellSide =
                 settleTerminalOutput (Some active) runCtx.FlushOutput runCtx.CheckOutputBudget
                 Unchecked.defaultof<Result<Trace, string>>
 
-    let internal runWith
+    let private runWithArtifactKey
+        (artifactBuildKey: string)
+        (artifactResetKey: string option)
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
@@ -1766,6 +1787,35 @@ module FogellSide =
             envReplacements
             workspaceRoot
             jobName
+            artifactBuildKey
+            artifactResetKey
+            buildNumber
+            previousBuild
+            freshWorkspace
+            scm
+            persistence
+            script
+
+    let private numberedArtifactKey (jobName: string) (buildNumber: int) =
+        Path.Combine(jobName, $"build@{buildNumber}")
+
+    let internal runWith
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (buildNumber: int)
+        (previousBuild: BuildStatus option)
+        (freshWorkspace: bool)
+        (scm: ScmSpec option)
+        (persistence: PersistenceHooks option)
+        (script: string)
+        : Result<Trace, string> =
+        runWithArtifactKey
+            jobName
+            (Some jobName)
+            envReplacements
+            workspaceRoot
+            jobName
             buildNumber
             previousBuild
             freshWorkspace
@@ -1775,6 +1825,8 @@ module FogellSide =
 
     let private runWithRuntimeGuard
         (guard: RuntimeGuard)
+        (artifactBuildKey: string)
+        (artifactResetKey: string option)
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
@@ -1792,6 +1844,8 @@ module FogellSide =
             envReplacements
             workspaceRoot
             jobName
+            artifactBuildKey
+            artifactResetKey
             buildNumber
             previousBuild
             freshWorkspace
@@ -1811,7 +1865,7 @@ module FogellSide =
         (script: string)
         =
         try
-            runWithCredentialStore (fun () -> credentials) None None envReplacements workspaceRoot jobName 1 None true None None script
+            runWithCredentialStore (fun () -> credentials) None None envReplacements workspaceRoot jobName jobName (Some jobName) 1 None true None None script
         with ex ->
             Result.Error ex.Message
 
@@ -1824,7 +1878,7 @@ module FogellSide =
         (script: string)
         =
         try
-            runWithCredentialStore credentials None None [] workspaceRoot jobName 1 None true None None script
+            runWithCredentialStore credentials None None [] workspaceRoot jobName jobName (Some jobName) 1 None true None None script
         with ex ->
             Result.Error ex.Message
 
@@ -1847,6 +1901,8 @@ module FogellSide =
                 []
                 workspaceRoot
                 jobName
+                jobName
+                (Some jobName)
                 1
                 None
                 true
@@ -1876,6 +1932,8 @@ module FogellSide =
         | error ->
             let diagnostic =
                 match error with
+                | :? ArtifactLimitExceededException ->
+                    "runner-failure: ARTIFACT_LIMIT_EXCEEDED: artifact publication exceeded its retention limit"
                 | :? BuildOutputLimitExceededException ->
                     "runner-failure: BUILD_OUTPUT_LIMIT_EXCEEDED: build output exceeded the shared retention limit"
                 | :? OutputLimitExceededException ->
@@ -1898,14 +1956,16 @@ module FogellSide =
 
             Result.Error error.Message
 
-    /// FG-112. Run one build with durability hooks — the restart lane's entry.
-    /// Same walker, same semantics; the hooks journal top-level steps. The
-    /// caller supplies the durable project build number because persisted runs
-    /// are not necessarily the first build of a job.
-    let runPersisted
+    /// Run one build with durability hooks using a caller-owned artifact key.
+    /// Controller-supervised Run.Host supplies its build UUID here because
+    /// ArtifactSnapshots adopts that exact mutable staging directory. The key
+    /// is intentionally separate from [jobName], which continues to govern the
+    /// workspace, Jenkins identity, stash, and SCM history.
+    let runPersistedWithArtifactKey
         (envReplacements: (string * string) list)
         (workspaceRoot: string)
         (jobName: string)
+        (artifactBuildKey: string)
         (buildNumber: int)
         (freshWorkspace: bool)
         (hooks: PersistenceHooks)
@@ -1915,7 +1975,45 @@ module FogellSide =
             match preflightPersistedExecution script with
             | Result.Error why -> Result.Error why
             | Result.Ok _ ->
-                runWith envReplacements workspaceRoot jobName buildNumber None freshWorkspace None (Some hooks) script)
+                runWithArtifactKey
+                    artifactBuildKey
+                    None
+                    envReplacements
+                    workspaceRoot
+                    jobName
+                    buildNumber
+                    None
+                    freshWorkspace
+                    None
+                    (Some hooks)
+                    script)
+
+    /// FG-112. Run one build with durability hooks — the restart lane's entry.
+    /// Same walker, same semantics; the caller supplies the durable project
+    /// build number because persisted runs are not necessarily the first build
+    /// of a job. Each number receives an independent artifact key; a resumed
+    /// invocation of the same number deliberately returns to that same key.
+    /// [freshWorkspace] resets only workspace state; it does not mint another
+    /// artifact identity for this durable build number.
+    let runPersisted
+        (envReplacements: (string * string) list)
+        (workspaceRoot: string)
+        (jobName: string)
+        (buildNumber: int)
+        (freshWorkspace: bool)
+        (hooks: PersistenceHooks)
+        (script: string)
+        =
+        let artifactBuildKey = numberedArtifactKey jobName buildNumber
+        runPersistedWithArtifactKey
+            envReplacements
+            workspaceRoot
+            jobName
+            artifactBuildKey
+            buildNumber
+            freshWorkspace
+            hooks
+            script
 
     /// FG-052. Run one build of an SCM-DEFINED job: the script is what the
     /// harness pushed to the SCM (the same bytes Jenkins obtains), and the spec
@@ -1950,6 +2048,8 @@ module FogellSide =
                 envReplacements
                 workspaceRoot
                 jobName
+                jobName
+                (Some jobName)
                 1
                 None
                 true
@@ -1997,11 +2097,22 @@ module FogellSide =
                         | Error why -> raise (RuntimeGuardFailure $"Fogell runtime guard failed: {why}"))
 
                     let r =
+                        // Archive publication is attempt-scoped. Keep the job
+                        // identity everywhere else (workspace, stash, SCM
+                        // history, and BUILD_NUMBER), but give each retained
+                        // build a distinct artifact store key so a prior build
+                        // cannot consume this build's quota.
+                        let artifactBuildKey = numberedArtifactKey jobName (List.length acc + 1)
+                        let artifactResetKey =
+                            if List.isEmpty acc then Some jobName else None
+
                         try
                             match runtimeGuard with
                             | Some guard ->
                                 runWithRuntimeGuard
                                     guard
+                                    artifactBuildKey
+                                    artifactResetKey
                                     envReplacements
                                     workspaceRoot
                                     jobName
@@ -2012,7 +2123,9 @@ module FogellSide =
                                     None
                                     script
                             | None ->
-                                runWith
+                                runWithArtifactKey
+                                    artifactBuildKey
+                                    artifactResetKey
                                     envReplacements
                                     workspaceRoot
                                     jobName

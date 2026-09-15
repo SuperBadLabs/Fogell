@@ -9,6 +9,7 @@ open System.Threading.Tasks
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
 open Fogell.Domain
+open Fogell.Execution
 open Fogell.Journal
 open Fogell.Store
 open Fogell.Controller.Api
@@ -384,7 +385,8 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                 atomicDefinition definitionPath claim.PipelineSource
                 Directory.CreateDirectory workspaceRoot |> ignore
                 match
-                    ArtifactSnapshots.prepareRetry
+                    ArtifactSnapshots.prepareRetryWithLimits
+                        config.ArtifactLimits
                         config.StateRoot
                         claim.OrganizationId.Value
                         claim.BuildId.Value
@@ -469,6 +471,8 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             // every run, so BUILD_NUMBER/BUILD_ID could select or overwrite
                             // another build's external resources.
                             start.Environment["FOGELL_BUILD_NUMBER"] <- string claim.BuildNumber
+                            for name, value in ArtifactPolicy.environmentValues config.ArtifactLimits do
+                                start.Environment[name] <- value
 
                             let child = new Process()
 
@@ -863,7 +867,8 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                 match plan.Terminal with
                                 | Some status ->
                                     match
-                                        ArtifactSnapshots.finalize
+                                        ArtifactSnapshots.finalizeWithLimits
+                                            config.ArtifactLimits
                                             config.StateRoot
                                             claim.OrganizationId.Value
                                             claim.BuildId.Value

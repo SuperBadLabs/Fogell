@@ -457,7 +457,7 @@ audit_build_path_sources() {
   [ "$(rg -F -c 'beforeShellLaunch |> Option.iter (fun verify -> verify cwd environment)' "$walker_step")" = 1 ] || return 1
   [ "$(rg -F -c 'Environment = environment' "$walker_step")" = 1 ] || return 1
   [ "$(rg -F -c 'let mutable criticalFailure: exn option = None' "$walker_orchestration")" = 1 ] || return 1
-  [ "$(rg -F -c '| :? RuntimeGuardFailure -> 2' "$walker_orchestration")" = 1 ] || return 1
+  [ "$(rg -F -c '| :? RuntimeGuardFailure -> 3' "$walker_orchestration")" = 1 ] || return 1
   [ "$(rg -F -c '| Some failure -> raise failure' "$walker_orchestration")" = 1 ] || return 1
 }
 
@@ -739,7 +739,7 @@ fi
 echo "  refused parallel runtime-guard absorption mutant"
 
 cp src/Fogell.Differential/WalkerOrchestration.fs "$scratch/WalkerOrchestration.fs"
-sed -i 's/| :? RuntimeGuardFailure -> 2/| :? RuntimeGuardFailure -> 0/' "$scratch/WalkerOrchestration.fs"
+sed -i 's/| :? RuntimeGuardFailure -> 3/| :? RuntimeGuardFailure -> 0/' "$scratch/WalkerOrchestration.fs"
 if cmp -s src/Fogell.Differential/WalkerOrchestration.fs "$scratch/WalkerOrchestration.fs"; then
   echo "RUNTIME-PIN PROOF FAILED: parallel runtime-guard ranking mutant did not apply" >&2; exit 1
 fi

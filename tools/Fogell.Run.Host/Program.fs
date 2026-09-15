@@ -45,43 +45,52 @@ open Fogell.Journal
 /// usage: fogell-run-host <jenkinsfile> <workspace-root> <job-name> <journal> [approvals-dir]
 [<EntryPoint>]
 let main argv =
-    match Environment.GetEnvironmentVariable "FOGELL_CONTROLLER_LIVENESS_PIPE" with
-    | null
-    | "" -> ()
-    | "1" when OperatingSystem.IsLinux() ->
-        // PDEATHSIG follows the particular native thread that forked this
-        // process, not the controller process lifetime. A controller-owned pipe
-        // is process-scoped instead: every exit shape closes its writer. Run the
-        // blocking read on a dedicated background thread; any byte is a protocol
-        // violation, and EOF terminates Run.Host so its own step-watchdog pipes
-        // close and reap nested groups.
-        let monitor =
-            Thread(
-                ThreadStart(fun () ->
-                    let refuse reason =
-                        eprintfn "controller liveness supervision refused: %s" reason
-                        Environment.Exit 70
+    let controllerSupervised =
+        match Environment.GetEnvironmentVariable "FOGELL_CONTROLLER_LIVENESS_PIPE" with
+        | null
+        | "" -> false
+        | "1" when OperatingSystem.IsLinux() ->
+            // PDEATHSIG follows the particular native thread that forked this
+            // process, not the controller process lifetime. A controller-owned pipe
+            // is process-scoped instead: every exit shape closes its writer. Run the
+            // blocking read on a dedicated background thread; any byte is a protocol
+            // violation, and EOF terminates Run.Host so its own step-watchdog pipes
+            // close and reap nested groups.
+            let monitor =
+                Thread(
+                    ThreadStart(fun () ->
+                        let refuse reason =
+                            eprintfn "controller liveness supervision refused: %s" reason
+                            Environment.Exit 70
 
-                    try
-                        use input = Console.OpenStandardInput()
-                        let probe = Array.zeroCreate<byte> 1
-                        let read = input.Read(probe, 0, probe.Length)
+                        try
+                            use input = Console.OpenStandardInput()
+                            let probe = Array.zeroCreate<byte> 1
+                            let read = input.Read(probe, 0, probe.Length)
 
-                        if read = 0 then
-                            refuse "controller liveness pipe closed"
-                        else
-                            refuse "controller liveness pipe carried unexpected data"
-                    with error ->
-                        refuse $"controller liveness pipe failed: {error.GetType().Name}"))
+                            if read = 0 then
+                                refuse "controller liveness pipe closed"
+                            else
+                                refuse "controller liveness pipe carried unexpected data"
+                        with error ->
+                            refuse $"controller liveness pipe failed: {error.GetType().Name}"))
 
-        monitor.IsBackground <- true
-        monitor.Name <- "fogell-controller-liveness"
-        monitor.Start()
-    | "1" ->
-        eprintfn "controller liveness-pipe supervision is supported only on Linux"
-        exit 2
-    | _ ->
-        eprintfn "FOGELL_CONTROLLER_LIVENESS_PIPE must be exactly 1 when set"
+            monitor.IsBackground <- true
+            monitor.Name <- "fogell-controller-liveness"
+            monitor.Start()
+            true
+        | "1" ->
+            eprintfn "controller liveness-pipe supervision is supported only on Linux"
+            exit 2
+        | _ ->
+            eprintfn "FOGELL_CONTROLLER_LIVENESS_PIPE must be exactly 1 when set"
+            exit 2
+
+    // Refuse malformed operator policy before creating durable run state.
+    match Fogell.Execution.ArtifactPolicy.loadEnvironment () with
+    | Ok _ -> ()
+    | Error reason ->
+        eprintfn "%s" reason
         exit 2
 
     let eventPath =
@@ -1187,7 +1196,24 @@ let main argv =
         // the workspace is already prepared above — never re-wipe here
         let persistedRun =
             try
-                Choice1Of2(FogellSide.runPersisted [] workspaceRoot jobName buildNumber false hooks script)
+                let result =
+                    if controllerSupervised then
+                        // The Worker passes the controller build UUID as
+                        // jobName. ArtifactSnapshots adopts this exact staging
+                        // directory after terminal publication.
+                        FogellSide.runPersistedWithArtifactKey
+                            []
+                            workspaceRoot
+                            jobName
+                            jobName
+                            buildNumber
+                            false
+                            hooks
+                            script
+                    else
+                        FogellSide.runPersisted [] workspaceRoot jobName buildNumber false hooks script
+
+                Choice1Of2 result
             with :? OutputPublicationException as failure ->
                 Choice2Of2 failure
 

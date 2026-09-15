@@ -520,6 +520,52 @@ terminal publication committed first, the later cancellation reports the
 existing terminal result. Shutdown, lease loss, or an incomplete terminal drain
 remain reconciliation conditions and never enter this natural-exit arbitration.
 
+### Artifact publishing limits and cleanup
+
+Set these optional environment variables on the controller before startup.
+It validates them and forwards the policy to each runner; pipeline environment
+bindings cannot override it.
+They use strict positive decimal values; the file limit cannot exceed the total
+limit. If a setting is absent, the controller uses these defaults:
+
+| Variable | Default | Applies to |
+| --- | ---: | --- |
+| `FOGELL_ARTIFACT_MAX_FILE_BYTES` | `268435456` (256 MiB) | One published file |
+| `FOGELL_ARTIFACT_MAX_TOTAL_BYTES` | `1073741824` (1 GiB) | One build attempt's retained files plus active temporary bytes |
+| `FOGELL_ARTIFACT_MAX_FILES` | `10000` | Published files in one attempt |
+| `FOGELL_ARTIFACT_MAX_SCAN_ENTRIES` | `100000` | Filesystem entries, compiled globs, and glob evaluations; each bounded independently per scan |
+
+The total budget belongs to the build and is shared by every archive call,
+including parallel steps. A completed file remains retained for the current
+attempt, so a later call charges against it. Replacing a file needs headroom
+for both the old retained bytes and the new staged bytes until the replacement
+is committed. Cancellation removes the active `.part` file; completed files
+remain available. Empty private sidecar directories and lock files may remain.
+
+Mutable files live under `_artifacts/<build-id>` while an attempt runs. Retry
+preparation first freezes the old directory under
+`_artifact-snapshots/<attempt-id>` and gives the new attempt an empty mutable
+directory. Finalization removes crash leftovers through a bounded, nonblocking
+pending cleanup; a busy lock fails finalization closed so reconciliation can
+retry it. Historical snapshots remain immutable and are outside the new
+attempt's admission budget. These settings scope artifact publishing only:
+they do not impose retention limits on build history, the global workspace, or
+other workspace and stash data.
+
+Standalone persisted runs keep artifacts under
+`_artifacts/<job-name>/build@<build-number>`. Different build numbers have separate
+budgets; resuming the same build number continues to charge its retained files.
+Controller-managed runs retain the UUID staging and attempt snapshot layout above.
+Workspace freshness and a new journal do not mint a new persisted build identity;
+use a new build number for a new standalone build.
+
+The fresh single-run and sequence library APIs replace the job workspace and
+require exclusive use of that job. They move the previous artifact namespace
+under `_artifacts/.fogell-artifact-history` before the new run, so earlier files
+remain preserved without consuming the new run's artifact budget. This history
+is outside per-attempt limits and requires the same separate retention policy
+as older snapshots.
+
 ## Acceptance and recovery checks
 
 From HeMan, with the PostgreSQL container and host port selected:
@@ -550,7 +596,7 @@ truncated capture is never returned as a successful shell result. Already
 published log chunks remain available, but the rejected record may be absent.
 
 Persisted runner exceptions publish a bounded `runner-failure` log event with
-an engine-owned cause code: `BUILD_OUTPUT_LIMIT_EXCEEDED`,
+an engine-owned cause code: `ARTIFACT_LIMIT_EXCEEDED`, `BUILD_OUTPUT_LIMIT_EXCEEDED`,
 `OUTPUT_LIMIT_EXCEEDED`, `RUNNER_OUT_OF_MEMORY`,
 `RUNNER_ACCESS_DENIED`, `RUNNER_IO_ERROR`, or `RUNNER_INTERNAL_ERROR`. The host
 also publishes a fixed `RUN_FAILED` fallback before recording terminal failure.

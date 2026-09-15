@@ -22,7 +22,7 @@ module WalkerStep =
             (beforeShellLaunch: (string -> (string * string) list -> unit) option)
             (workspace: string)
             (artifactRoot: string)
-            (jobName: string)
+            (artifactBuildKey: string)
             (ctx: BranchCtx)
             (stage: Stage)
             (cwd: string)
@@ -344,8 +344,8 @@ module WalkerStep =
                           MaskingSecrets = Some runCtx.BoundSecrets
                           MaskingSecretsLock = Some runCtx.MaskingSecretsLock
                           Named = renderedNamed
-                          Artifacts = Some(ArtifactStore.under artifactRoot)
-                          BuildKey = jobName }
+                          Artifacts = Some(ArtifactStore.underWithLimits artifactRoot runCtx.ArtifactLimits)
+                          BuildKey = artifactBuildKey }
 
         // Jenkins' JUnit step has two outcome channels: the build result and a
         // WarningAction attached to the current Pipeline node. Stage post observes

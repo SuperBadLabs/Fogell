@@ -76,7 +76,8 @@ let private startServer maxLogChunks =
           TrustPool = "trusted-linux"
           StateRoot = stateRoot
           MaxPipelineBytes = maxPipelineBytes
-          MaxLogChunks = maxLogChunks }
+          MaxLogChunks = maxLogChunks
+          ArtifactLimits = ArtifactLimits.Defaults }
         app
     |> ignore
 
@@ -584,7 +585,9 @@ let private controllerConfigurationVariables =
       "FOGELL_API_TOKEN_FILE"; "FOGELL_LISTEN_URL"; "FOGELL_STATE_ROOT"
       "FOGELL_RUN_HOST_PATH"; "FOGELL_LOCAL_TRUST_POOL"
       "FOGELL_MAX_PIPELINE_BYTES"; "FOGELL_MAX_LOG_CHUNKS"
-      "FOGELL_WORKER_POLL_MS"; "FOGELL_WORKER_LEASE_SECONDS" ]
+      "FOGELL_WORKER_POLL_MS"; "FOGELL_WORKER_LEASE_SECONDS"
+      ArtifactPolicy.MaxFileBytesVariable; ArtifactPolicy.MaxTotalBytesVariable
+      ArtifactPolicy.MaxFilesVariable; ArtifactPolicy.MaxScanEntriesVariable ]
 
 let private withControllerConfiguration f =
     let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-setsid-validation-" + Guid.NewGuid().ToString("N"))
@@ -609,6 +612,8 @@ let private withControllerConfiguration f =
     set "FOGELL_MAX_LOG_CHUNKS" "100"
     set "FOGELL_WORKER_POLL_MS" "50"
     set "FOGELL_WORKER_LEASE_SECONDS" "60"
+    for name, value in ArtifactPolicy.environmentValues ArtifactLimits.Defaults do
+        set name value
 
     try f root tokenFile runHost
     finally
@@ -716,6 +721,70 @@ let private executionLauncherValidation =
                   (WorkerLaunch.tryStart (fun () -> false) (fun () -> true))
                   WorkerLaunch.Launched
                   "a successful Process.Start result is explicit"
+          }
+
+          test "artifact policy defaults and normalized child values are stable" {
+              let empty _ = null
+              let limits =
+                  match ArtifactPolicy.load empty with
+                  | Ok value -> value
+                  | Error error -> failtestf "default artifact policy refused: %s" error
+
+              Expect.equal limits ArtifactLimits.Defaults "unset knobs use the bounded defaults"
+              Expect.equal
+                  (ArtifactPolicy.environmentValues limits)
+                  [ ArtifactPolicy.MaxFileBytesVariable, "268435456"
+                    ArtifactPolicy.MaxTotalBytesVariable, "1073741824"
+                    ArtifactPolicy.MaxFilesVariable, "10000"
+                    ArtifactPolicy.MaxScanEntriesVariable, "100000" ]
+                  "child-facing values are normalized invariant decimal strings"
+          }
+
+          test "artifact policy rejects malformed, overflowing, and cross-field values without echoing input" {
+              let load pairs =
+                  let getter name = pairs |> Map.tryFind name |> Option.toObj
+                  ArtifactPolicy.load getter
+
+              for name, raw in
+                  [ ArtifactPolicy.MaxFileBytesVariable, "0"
+                    ArtifactPolicy.MaxTotalBytesVariable, "-1"
+                    ArtifactPolicy.MaxFilesVariable, "1.0"
+                    ArtifactPolicy.MaxScanEntriesVariable, "9223372036854775808" ] do
+                  match load (Map.ofList [ name, raw ]) with
+                  | Ok value -> failtestf "%s=%s unexpectedly accepted as %A" name raw value
+                  | Error error ->
+                      Expect.stringContains error name "the refusal names the variable"
+                      Expect.isFalse (error.Contains raw) "the refusal does not echo untrusted raw input"
+
+              match
+                  load
+                      (Map.ofList
+                          [ ArtifactPolicy.MaxFileBytesVariable, "9"
+                            ArtifactPolicy.MaxTotalBytesVariable, "8" ])
+              with
+              | Ok value -> failtestf "file ceiling above total ceiling accepted: %A" value
+              | Error error ->
+                  Expect.stringContains error ArtifactPolicy.MaxFileBytesVariable "cross-field refusal names file ceiling"
+                  Expect.stringContains error ArtifactPolicy.MaxTotalBytesVariable "cross-field refusal names total ceiling"
+          }
+
+          test "startup exposes configured artifact limits" {
+              withControllerConfiguration (fun _ _ _ ->
+                  Environment.SetEnvironmentVariable(ArtifactPolicy.MaxFileBytesVariable, "4096")
+                  Environment.SetEnvironmentVariable(ArtifactPolicy.MaxTotalBytesVariable, "8192")
+                  Environment.SetEnvironmentVariable(ArtifactPolicy.MaxFilesVariable, "7")
+                  Environment.SetEnvironmentVariable(ArtifactPolicy.MaxScanEntriesVariable, "11")
+
+                  match ControllerConfig.loadWithSetsidLauncher ControllerConfig.trustedSetsidLauncher with
+                  | Error error -> failtestf "configured artifact policy refused: %s" error
+                  | Ok config ->
+                      Expect.equal
+                          config.ArtifactLimits
+                          { MaxFileBytes = 4096L
+                            MaxTotalBytes = 8192L
+                            MaxFiles = 7
+                            MaxScanEntries = 11 }
+                          "controller retains the validated policy")
           } ]
 
 let private tokenFileIntegrity =
@@ -2415,6 +2484,7 @@ let effectDispatch =
               MaxLogChunks = 100
               PollMilliseconds = 50
               LeaseSeconds = leaseSeconds
+              ArtifactLimits = ArtifactLimits.Defaults
               EffectProducers = { FileDropRoot = Some dropRoot; KillAt = None } }
 
         new LocalWorker(
@@ -3764,6 +3834,7 @@ let main argv =
                           databaseStartupBoundary
                           hostFootprint
                           executionLauncherValidation
+                          Fogell.Controller.Api.ArtifactSnapshotCleanupTests.artifactSnapshotCleanup
                           tokenFileIntegrity
                           authorization
                           effectDispatch
