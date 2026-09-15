@@ -139,6 +139,11 @@ The daily work loop starts and ends on HeMan:
    local gate and does not license publication.
 5. Publish the already-proven commit to GitHub and obtain final review of that
    exact head. A finding returns the work to HeMan for correction and validation.
+   This route requires automatic Codex review on PR opening and on new commits;
+   each correction push must receive its own final-head review. If that integration
+   does not run, restore its automatic trigger before merging rather than using
+   an earlier review. The manual-request procedure in older handoffs described
+   the previous trigger policy, not a requirement to request review on every push.
    Use automatic GitHub review; do not request additional paid review or churn
    replacement PRs solely to obtain another review. The owner's current batching
    and review-cost instructions supersede the former per-ticket/reopen policy.

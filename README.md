@@ -9,8 +9,8 @@ the [pipeline contract](docs/architecture/PIPELINE_CONTRACT.md) separates requir
 behavior from what the current implementation has proven.
 
 The current authoring input remains Jenkinsfile syntax. A planned versioned
-migration profile will define its supported subset; current proven, accepted,
-and rejected behavior is recorded in the
+migration profile will define its supported subset; current proven parity,
+parse admission, and rejection evidence is recorded in the
 [compatibility evidence](docs/COMPATIBILITY-SCORECARD.md). There is no new native
 syntax or general Jenkinsfile translator in this change.
 
