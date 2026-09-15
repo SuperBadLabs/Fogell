@@ -1,8 +1,11 @@
 # Architecture charter
 
-Fogell is an end-to-end F# CI engine that accepts Jenkins pipelines where
-compatibility is proven, reports unsupported behavior precisely, and executes
-them with per-step durability.
+Fogell is a self-hosted F# CI engine with its own
+[pipeline contract](PIPELINE_CONTRACT.md) and an explicit Jenkins migration
+surface. [ADR 0010](../adr/0010-production-first-ci.md) makes production
+readiness the release priority. Full Jenkins compatibility is not a goal.
+Implemented guarantees and remaining work are distinguished in the
+[release gates](../PRODUCT_DIRECTION.md).
 
 ## Non-negotiable boundaries
 
@@ -28,7 +31,10 @@ them with per-step durability.
 Behavior is classified as **proven compatible** (differential receipt exists),
 **accepted** (parses and runs, parity unproven), or **rejected** (named error).
 Binary Jenkins plugin compatibility is not promised; plugin *steps* are
-implemented natively and ranked by corpus demand.
+implemented natively when a supported user workflow justifies them. Corpus
+coverage informs migration cost; it does not determine release readiness.
+Existing proven behavior keeps its regression checks. Intentional future
+divergence requires an explicit contract/version change and migration guidance.
 
 ## Performance contract
 

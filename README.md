@@ -1,10 +1,26 @@
 # Fogell
 
-End-to-end F# CI engine targeting near-100% Jenkins compatibility.
+Reliable, self-hosted CI in F#, with an explicit Jenkins migration path.
+
+Fogell prioritizes predictable execution, bounded resource use, and recoverable
+operations. Full Jenkins compatibility is not a release goal. The
+[product direction and release gates](docs/PRODUCT_DIRECTION.md) govern new work;
+the [pipeline contract](docs/architecture/PIPELINE_CONTRACT.md) separates required
+behavior from what the current implementation has proven.
+
+The current authoring input remains Jenkinsfile syntax. A planned versioned
+migration profile will define its supported subset; current proven, accepted,
+and rejected behavior is recorded in the
+[compatibility evidence](docs/COMPATIBILITY-SCORECARD.md). There is no new native
+syntax or general Jenkinsfile translator in this change.
+
+Current deployment is a pre-release, single-node Linux controller. Supported
+workloads and isolation assumptions are bounded by the
+[current-tree threat model](docs/THREAT_MODEL.md).
 
 Named for Superbad's Fogell — the real identity behind the McLovin fake ID.
 
-## Why end-to-end
+## Implementation
 
 The measured 74.3% lowering tax (Groovy AST → static IR) is an artifact of
 splitting the front end from the engine, not a property of Jenkins

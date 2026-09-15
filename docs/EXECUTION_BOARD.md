@@ -2,7 +2,7 @@
 title: Fogell Execution Board
 audience: mixed
 category: engineering-board
-purpose: Command board for taking Fogell from an empty F# workspace to a private prerelease with differential Jenkins evidence.
+purpose: Engineering backlog for reliable self-hosted CI and an evidence-backed Jenkins migration surface.
 lifecycle: live
 last-verified: 2026-08-14
 accounting-verified: 2026-09-04
@@ -10,9 +10,22 @@ accounting-verified: 2026-09-04
 
 # Fogell — Execution Board
 
-Mission: **a faster and better Jenkins.** Near-100% compatibility is the goal;
-`adr/0001` defines what "compatible" is permitted to mean, and `adr/0004`
-forbids claiming it without a receipt.
+Mission: **reliable, self-hosted CI with an explicit Jenkins migration path.**
+
+**Binding direction, 2026-09-15:** [ADR 0010](adr/0010-production-first-ci.md)
+supersedes near-100% compatibility and corpus coverage as the release goal.
+[Production release gates](PRODUCT_DIRECTION.md#release-gates) determine the
+next work: storage admission and workspace bounds, historical retention, then
+operational recovery and a controlled pilot. Correctness and security failures
+in supported workflows remain urgent.
+
+The track tables below retain their historical ticket status and evidence. Their
+old cross-track ranking is superseded; an open compatibility-only ticket is
+unselected until a supported user workflow justifies it. This does not mark
+those tickets done, remove tests, or relax the truth of compatibility claims.
+ADR 0001 still defines those claims and ADR 0004 still requires their receipts.
+PR #446's proposed capability ranking must be re-triaged under ADR 0010 before
+its remaining material can be adopted.
 
 Lineage: front end inspired by **Forge** (same Groovy-parser approach,
 `adr/0002`); architecture and evidence discipline inspired by **McLoving**
@@ -28,7 +41,9 @@ Lineage: front end inspired by **Forge** (same Groovy-parser approach,
   not the normal edit-test loop and it is not an oracle substitute. Its hosted
   gate cannot see the mounted corpus or the pinned Jenkins controller, so a green
   GitHub check never replaces the full pre-publication run on HeMan.
-- One coherent commit per ticket. No work on a dirty checkout.
+- Group related tickets into one reviewable PR. Use cheaper implementation and
+  independent QA agents where appropriate; retain clear ownership of each
+  change and validate the combined result.
 - Every ticket states a falsifiable acceptance criterion. "Done" means the
   criterion was measured, not that code was written.
 - Corpus manifest verified before any scoring run (`corpus/README.md`).
@@ -122,12 +137,12 @@ The daily work loop starts and ends on HeMan:
    HeMan. A run that skips the corpus-dependent scorecard check is not the full
    local gate and does not license publication.
 5. Publish the already-proven commit to GitHub and obtain final review of that
-   exact head. A finding returns the work to HeMan. For a Codex finding, prove the
-   correction there, push it, and request `@codex review`. Copilot cannot be
-   re-requested; for a Copilot finding that changes the head, close the unmerged PR
-   and open the proved correction as a replacement PR so its open event obtains a
-   new Copilot review. Repeat that replacement if Copilot finds another issue. A
-   review of an earlier SHA does not carry forward.
+   exact head. A finding returns the work to HeMan for correction and validation.
+   Use automatic GitHub review; do not request additional paid review or churn
+   replacement PRs solely to obtain another review. The owner's current batching
+   and review-cost instructions supersede the former per-ticket/reopen policy.
+   A review of an earlier SHA does not carry forward; record any missing coverage
+   or unsupported bot-result format explicitly, without calling the guard green.
 6. Run `scripts/review-coverage.py --pr N` from HeMan after the review record
    exists and before merge. It names the current full head and refuses until
    every expected reviewer covered it. The no-argument repository-wide audit
@@ -149,7 +164,13 @@ A ticket is done only when all of the following are true:
 GitHub proves the published commit passed the checks available there. HeMan proves
 the commit was ready to publish. Neither statement is a substitute for the other.
 
-### Batch composition (measured, not assumed)
+### Historical batch measurements
+
+The measurements below remain useful risk evidence. Their per-ticket PR and
+Jenkins-first rules are superseded by the current operating contract and ADR
+0010: group coherent work, review cross-cutting invariants independently, and
+probe Jenkins when changing a compatibility claim. Production-only work is
+validated against the Fogell contract and operational failure cases.
 
 Derived from 117 review findings across PRs #11–#17, counted rather than recalled:
 
@@ -349,7 +370,7 @@ pass did not do, and whose absence produced a table that was 55% wrong.**
 | **DISTINCT** | platform work whose acceptance McLoving's existing work does NOT discharge — `FG-026`'s four-state effect ledger is the worked example, and it is the bucket the first draft of this table had no room for | a priority — it is Fogell's to build |
 | **NEITHER** | Fogell-specific, not platform | a priority, as today |
 
-**UNIQUE is the whole justification for Fogell existing separately**, and it is one thing:
+**Historical differentiation argument, superseded as product strategy by ADR 0010:**
 the breadth of Groovy it executes at runtime. The generated scorecard owns the current hand-written case-receipt count (a population authored FOR this engine, and NOT the
 corpus tier-1 count, which is `tier1=16`); `admitted=184` of 228 corpus files parse without a corpus execution receipt, across declarative and scripted forms, parallel branches, conditionals, and 15 modelled steps.
 Against that, McLoving's compiler admits ONE job and its step catalogue holds ONE mapping, and
@@ -365,7 +386,7 @@ receipt" to "why are two engines racing for the same receipt". **Review refuted 
 refutation is simple: A RECEIPT CERTIFIES THE ENGINE THAT PRODUCED IT.** McLoving's result says
 nothing about Fogell's compatibility and does not answer FG-200, whose stated question is the
 COST of executing a real corpus file through Fogell. FG-200 stands exactly as written, and
-Track 2 stays binding for the reason it already gave. The comparison remains interesting to an
+Track 2 remained binding under that historical decision, since superseded by ADR 0010. The comparison remains interesting to an
 owner deciding where to spend; it is not a fact about Fogell's evidence.
 
 **WHAT THIS SECTION DELIBERATELY DOES NOT DO.**
@@ -387,7 +408,10 @@ owner deciding where to spend; it is not a fact about Fogell's evidence.
   it", read that crate properly.** Every pass over this comparison found the previous pass
   wrong — runbook, then architecture docs, then code, then the code sweep itself.
 
-### The three tracks, and which one is binding
+### Historical track ranking — superseded by ADR 0010
+
+The argument below records the prior decision. It no longer selects the next
+work or defines release readiness; use the production release gates above.
 
 **THE CLASS SYSTEM RANKS DEFECTS, AND TWO KINDS OF OPEN WORK ARE NOT DEFECTS.** `adr/0001`'s
 A-E ordering answers "is the engine correct", which was the right question while correctness
@@ -409,7 +433,8 @@ ordered list it was.
 | **2 — Evidence** | what is PROVEN about the engine against real jobs | how much of the corpus a claim can cover |
 | **3 — Process** | guarantees currently held by attention rather than by a checker | how quietly the guarantee fails |
 
-**TRACK 2 IS BINDING AS OF 2026-08-15, AND THE ARGUMENT IS A DENOMINATOR.** The hand-written
+**TRACK 2 WAS BINDING UNDER THE 2026-08-15 DECISION, NOW SUPERSEDED BY ADR 0010.**
+The historical argument was a denominator. The hand-written
 suite is 187 of 187 proven (one case diverged for four days as FG-201, found and fixed 2026-08-17) and the corpus is `tier1=16` of 228 ("tier1=1" until 2026-09-04, "tier1=3", "tier1=5" and "tier1=9" for a few hours each that day, then twelve until 2026-09-06, thirteen until 2026-09-07, "tier1=14" until FG-258, and fifteen until FG-261): all but sixteen receipts this engine has
 prove a case written for it. That is not a criticism of the suite, which found and fixed
 real class-A defects all month — it is that a synthetic population cannot answer "does this
@@ -425,7 +450,7 @@ walked (FG-200; FG-242 walked it twice more on 2026-09-04). And it
 does not rank the tracks against each other row by row. WHEN THIS WAS WRITTEN nobody had measured what a
 first corpus receipt costs; **FG-200 has since reported (an inert surface costs seconds to run
 and an order of magnitude more to select and account), and FG-242 measured that only three corpus files have such a surface,
-so the claim that Track 2 is binding now rests on a measured denominator: 3 of 228 proven, and the
+so the historical binding claim rested on a measured denominator: 3 of 228 proven, and the
 next receipt gated on capability rather than on selection.**
 
 **HOW TO READ THE NEXT ACTION.** Track 3's FG-199 is a local post-publication,
@@ -435,8 +460,9 @@ and its head and review record exist. The blocking gate runs its offline
 known-bad proof without GitHub credentials or network; the live guard itself
 runs only at the review-to-merge boundary. The no-argument historical audit is
 evidence of the backlog, not a required merge guard. In the implementation queue, the
-first active ticket is FG-177; its branch, edit-test loop and evidence stay on
-HeMan until its commit is ready to publish.
+historical first active ticket was FG-177. That selection is superseded by
+ADR 0010; the current next batch is storage safety. Branch, edit-test loop and
+evidence remain on HeMan until the commit is ready to publish.
 
 ### Track 1 — Correctness
 

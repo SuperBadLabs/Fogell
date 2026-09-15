@@ -1,6 +1,6 @@
 # ADR 0001: Compatibility tiers
 
-Status: Accepted
+Status: Accepted; capability-ranking policy superseded by [ADR 0010](0010-production-first-ci.md).
 
 Three tiers, never collapsed into one number:
 
@@ -14,4 +14,5 @@ engine reported 146 non-empty IRs and had exactly **5** files with proven
 parity; a single percentage would have implied 64%.
 
 Binary plugin compatibility is not promised. Plugin *steps* are implemented
-natively, ranked by corpus demand, not by popularity lists.
+natively when a supported CI workflow needs them. ADR 0010 governs selection;
+corpus demand is migration evidence, not the product priority queue.

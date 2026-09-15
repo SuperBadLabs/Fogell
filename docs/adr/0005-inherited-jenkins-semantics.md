@@ -1,7 +1,10 @@
 # ADR 0005: Which Jenkins behaviors to match, and which to beat
 
-Status: Accepted
+Status: Accepted for the Jenkins migration surface; scope clarified by [ADR 0010](0010-production-first-ci.md).
 
+The measured contracts below remain regression obligations for the supported
+Jenkins migration surface. They do not require Fogell to implement every Jenkins
+behavior or make Jenkins the authority for future Fogell-specific capabilities.
 Compatibility means matching Jenkins' *contracts*, not reproducing its defects.
 Derived from a 48-entry black-box behavioral spec of Jenkins 2.568.1
 (`/sn8100/work/exchange/jenkins-behavior-spec`).
