@@ -169,6 +169,12 @@ observed=$(
 # failure-path File.Delete is outside this pattern): a
 # process-local file the host publishes at startup before the Store exists,
 # under no attempt authority — a self-attestation, not an external effect.
+# StoragePool.fs reads descriptor-bound filesystem geometry, mount identity
+# and the operator's identity marker. StoragePoolLease.fs locks the pool and
+# durably updates its fixed-size dirty marker. StorageAdmission.fs publishes
+# the bounded local admission diagnostic with file and directory fsync. These
+# are controller storage guards, not destination invocations; their native
+# entry points and stream/move sites remain individually pinned below.
 expected=$(printf '%s\n' \
   "1 $dispatch_fs .Kill()" \
   "7 $registry_fs DllImport" \
@@ -178,6 +184,13 @@ expected=$(printf '%s\n' \
   "1 $worker_fs new Process" \
   "1 $host_dir/Program.fs File.Move" \
   "1 $host_dir/Program.fs FileStream" \
+  "5 $host_dir/StoragePool.fs DllImport" \
+  "1 $host_dir/StoragePool.fs FileStream" \
+  "4 $host_dir/StoragePoolLease.fs DllImport" \
+  "1 $host_dir/StoragePoolLease.fs FileStream" \
+  "3 $host_dir/StorageAdmission.fs DllImport" \
+  "1 $host_dir/StorageAdmission.fs FileStream" \
+  "1 $host_dir/StorageAdmission.fs File.Move" \
   "2 $host_dir/Config.fs File.Open" \
   "4 $host_dir/Config.fs DllImport" \
   "4 $host_dir/ProcessGroup.fs DllImport" \

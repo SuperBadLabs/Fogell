@@ -8216,7 +8216,7 @@ fi
                   + buildFakeBin
                   + ":${PATH}'\nFG222_BUILD_LOG = '"
                   + buildLog
-                  + "' } stages { stage('probe') { steps { checkout(scm); sh '/usr/bin/env | /usr/bin/sort > build.env' } } } }"
+                  + "' } stages { stage('probe') { steps { checkout(scm); sh '/usr/bin/mktemp > default-temp-location; /usr/bin/env | /usr/bin/sort > build.env' } } } }"
 
               try
                   for path in [ root; source; controllerFakeBin; buildFakeBin; workspaceRoot ] do
@@ -8288,10 +8288,18 @@ fi
                       "the run-scoped build HOME is private"
 
                   let buildEnvironment = IO.File.ReadAllText(IO.Path.Combine(workspace, "build.env"))
+                  let buildTemp = IO.Path.Combine(buildHome, "tmp")
                   Expect.stringContains
                       buildEnvironment
                       $"HOME={buildHome}"
                       "the build sees only its run-scoped HOME"
+                  Expect.stringContains
+                      buildEnvironment
+                      $"TMPDIR={buildTemp}"
+                      "the build sees its run-scoped temporary directory"
+                  Expect.isTrue (IO.Directory.Exists buildTemp) "the build-local temporary directory exists before launch"
+                  let defaultTemp = IO.File.ReadAllText(IO.Path.Combine(workspace, "default-temp-location")).Trim()
+                  Expect.stringStarts defaultTemp buildTemp "mktemp writes beneath the build-local temporary directory"
                   for name in [ "SSH_AUTH_SOCK"; "GIT_ASKPASS"; "FG222_LOG" ] do
                       Expect.isFalse
                           (buildEnvironment.Contains($"{name}="))

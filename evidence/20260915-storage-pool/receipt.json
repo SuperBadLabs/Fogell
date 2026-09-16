@@ -1,0 +1,356 @@
+{
+  "schema": 1,
+  "baseline_commit": "daccf6cd17d711f3ef608b71d5e68eafee4c590d",
+  "environment": {
+    "host": "Luigi",
+    "runtime": "rootless Podman",
+    "controller_memory": "2 GiB",
+    "controller_cpus": 2,
+    "workspace_filesystem": "tmpfs",
+    "pool_bytes": 67108864,
+    "pool_inodes": 2048,
+    "min_free_bytes": 8388608,
+    "min_free_inodes": 128,
+    "persistence_claim": false
+  },
+  "changed_source_sha256": {
+    "scripts/prove-storage-pool.sh": "60f3cd2db94e0b30659fa57e609a53d0a28977778d4f02a3cd1c778237bfcd72",
+    "scripts/storage-pool.py": "b2a3089339f522269fd845043e402021513ea28f1c116aa97b675fceda0335f5",
+    "src/Fogell.Controller.Host/Config.fs": "062b79b81ae14924c865da674cc1f2d179b535417e9a15d9a87d41a162f74d7a",
+    "src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj": "efe775f644c2ae8046be2ce80850c488a10e93f1c46258f2ac49a50eb1468d55",
+    "src/Fogell.Controller.Host/Program.fs": "01658a374245a59fe7b826518e04555f9c04a062d0780d527a7b5366e6240377",
+    "src/Fogell.Controller.Host/StorageAdmission.fs": "ae931db91be14952bfabffe75b62b72ddc33b74d61c4a2d338597b3232c48622",
+    "src/Fogell.Controller.Host/StoragePool.fs": "a017a102dd48c95c8eb5743a4f74f8fae17abcefdb24c5ab23a236b9bf35d4b2",
+    "src/Fogell.Controller.Host/StoragePoolLease.fs": "c7bafeccdcc679602842563914fb4bddac1980d5ac1bc84db2f2ea4ea9e6fc81",
+    "src/Fogell.Controller.Host/Worker.fs": "5b82e8d0bc2120a84c0a67b82a9f99ab41bae8a48881e55f18aca0d0f061954e",
+    "src/Fogell.Differential/Fogell.fs": "6936d41cf96824bd1cc979244087c186a8d3f8c415351779c185205fa58dab95",
+    "src/Fogell.Execution/ProcessGroup.fs": "0d93b2aa59eaff6ce07dfad16f2b3e7994d458c52fdba9dc4b6f0aad1d97ca89",
+    "tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj": "04b4c21b7357802962df025985512607b6dcfaa25c1910316eebca9e2fdea99c",
+    "tests/Fogell.Controller.Api.Tests/StoragePoolTests.fs": "574ebd2bbd8ef815434c75c7178535a6f204f1d6d6b3d34836e7ca2c6600e727",
+    "tests/Fogell.Controller.Api.Tests/Tests.fs": "4f26a0ef18f65fccb55431165e2f35691eb3be6d31fe6bb27d37c2d1884ca930",
+    "tests/Fogell.Differential.Tests/Tests.fs": "c2f6d97f11b0dbeb323dc344b2252e11c50f2f6d01c7e9c4237e9f55921eeb4b",
+    "tests/Fogell.Execution.Tests/Tests.fs": "992e450927e6179d806686e1143de807768bcd4d58af803e8c7d09f060a8b436"
+  },
+  "binary_sha256": {
+    "app/runner/Fogell.Domain.pdb": "d9938a6083057d2ce061f1835ef9bff12fdded2dd4e40bd572987ce645cc79ad",
+    "app/runner/Fogell.Groovy.Parser.pdb": "3901162a4af1effd6d710402d476f800709c466902516d1f5f4f6c8afc5ff327",
+    "app/runner/Fogell.Pipeline.Parser.dll": "9b320c19df3ad4e1e8173356dfce529329ec1e72c620c6235273afbc6105e4d8",
+    "app/runner/Fogell.Run.Host": "bd88358b9e74e5e3192ecb0578418096c1ec5c76fbd2c5aad84d8a3be420fb71",
+    "app/runner/Fogell.Differential.pdb": "754d98c6990cc3bc95c1aba10c8cd0e75d5f910640b18e44a09f7341355d77b3",
+    "app/runner/Fogell.Pipeline.Parser.pdb": "0027d0df1ca747d46083f06b9a497b6dea71e509b6dacad4fd19d045a6b42237",
+    "app/runner/Fogell.Run.Host.runtimeconfig.json": "b8c96c8e08db914e4f705e2ecf079036d2036df95a37086baa199cc708073837",
+    "app/runner/Fogell.Ir.pdb": "14e5edb44e2f9fa0da6086fc944b9e9715dcfeb3025c36e3df13a8acf55f73c9",
+    "app/runner/Fogell.Execution.pdb": "c12f4b42ee5fe5e9ca23a51062760926b9b339cc271af86b6a54f36870a61be9",
+    "app/runner/Fogell.Groovy.pdb": "58ec0631aa31c2bac65edce69f82db29eea14db1e24a4257970005ae43e1af7d",
+    "app/runner/FParsec.dll": "147154cd8e33699c1458cd7653b78d6c93c2ea272e9aeb3f838af95af2a82b23",
+    "app/runner/Fogell.Admission.dll": "cdcca9e2678a1a95d03bfcf3d097cff407a0ce0c424d39686241762a58a5f00d",
+    "app/runner/Fogell.Run.Host.dll": "1007332d7355895f5bdc953e5fbe45276bf4a41774dec2847b304878edaa91ca",
+    "app/runner/Fogell.Journal.pdb": "3568ad6f2b50a1d454507bbc23fc4ea438e35b4135f79831a4398d384db0404c",
+    "app/runner/Fogell.Run.Host.pdb": "670d7d866a20ec3578deb8e9f5808eddb447737a7212e20997a4339cc13d9b11",
+    "app/runner/Fogell.Groovy.Interpreter.dll": "98eebb4668b19596a4427719f91e6b5f024a05546134bd95d35fb413fce41867",
+    "app/runner/FSharp.Core.dll": "d02fbb41897592806a580ad18ae3ddef4c34d3c62204beb2f0b4f828f44cdf06",
+    "app/runner/Fogell.Journal.dll": "16d0e58426a356e78a0a82ca83135e9a9c95889174f9c7ce1d07c7352de1c205",
+    "app/runner/Fogell.Differential.dll": "6b8a8ebbb24a5d482238d9bab4eb2314b045ead3089eb7e6768792a8f6e591dd",
+    "app/runner/Fogell.Groovy.dll": "b6d98308c11c931e784dd058a37545104ec86c8c91e7cc9cc00c6a473129c4f5",
+    "app/runner/FParsecCS.dll": "1822de41fcf78bf92de841f03e9a5c78db7fb1eb19cf699f78e06f064e0d4013",
+    "app/runner/Fogell.Run.Host.deps.json": "bc94278d0ccfd439f5896568462f414005db6b72cb2afdf202f278888b06a1a6",
+    "app/runner/Fogell.Groovy.Interpreter.pdb": "3341d7b63d60fcaa60682c013a6b8c98130af5c8af599f3d6bb0ff4725a651ac",
+    "app/runner/Fogell.Admission.pdb": "c379f17db178dcc9ed07f0e676d8246faedf4a6f1e4b427ec0d6f2121c111520",
+    "app/runner/Fogell.Groovy.Parser.dll": "afa51b4de353120c4d607dafe25cd795591215f28c53a578c9699b39b8dd10cd",
+    "app/runner/Fogell.Domain.dll": "90d4392fa0f4915e2da64ea630abebf12c82117da9b721a7bdd60a3cf619a1eb",
+    "app/runner/Fogell.Ir.dll": "079d306a755f6e29658215024361d050471a8bbf3c847dddb13354fe449ce1f9",
+    "app/runner/Fogell.Execution.dll": "b14db01229443b19964b4cd7f10c843ff37193b6ecceadaab5c646d428bd36d0",
+    "app/controller/Fogell.Controller.Host.staticwebassets.endpoints.json": "c1686417e8d5c31bba969f12b6f3d2b35e6609adb5ca42f212261a3a02771aac",
+    "app/controller/web.config": "dfdb97bdf91de715c0da01447ba2f574c11799792313aa168ddfa5012029b237",
+    "app/controller/Fogell.Domain.pdb": "d9938a6083057d2ce061f1835ef9bff12fdded2dd4e40bd572987ce645cc79ad",
+    "app/controller/Fogell.Groovy.Parser.pdb": "3901162a4af1effd6d710402d476f800709c466902516d1f5f4f6c8afc5ff327",
+    "app/controller/Fogell.Pipeline.Parser.dll": "9b320c19df3ad4e1e8173356dfce529329ec1e72c620c6235273afbc6105e4d8",
+    "app/controller/Fogell.Controller.Api.dll": "0ee571f5daa84ebe60f32a6ad4d271a8ab65a6e2828be43976c2cb2c2e5fd803",
+    "app/controller/Fogell.Differential.pdb": "754d98c6990cc3bc95c1aba10c8cd0e75d5f910640b18e44a09f7341355d77b3",
+    "app/controller/Fogell.Pipeline.Parser.pdb": "0027d0df1ca747d46083f06b9a497b6dea71e509b6dacad4fd19d045a6b42237",
+    "app/controller/Fogell.Ir.pdb": "14e5edb44e2f9fa0da6086fc944b9e9715dcfeb3025c36e3df13a8acf55f73c9",
+    "app/controller/Fogell.Execution.pdb": "c12f4b42ee5fe5e9ca23a51062760926b9b339cc271af86b6a54f36870a61be9",
+    "app/controller/Fogell.Store.pdb": "2f65c087d7330581f4922870abfff245feceb24457b7520a3c6421bebbbf52d1",
+    "app/controller/Fogell.Groovy.pdb": "58ec0631aa31c2bac65edce69f82db29eea14db1e24a4257970005ae43e1af7d",
+    "app/controller/FParsec.dll": "147154cd8e33699c1458cd7653b78d6c93c2ea272e9aeb3f838af95af2a82b23",
+    "app/controller/Fogell.Controller.Host.deps.json": "54873cef2f0c42cb6bfe2185106e92f34ccb3baf1811be7077509402c429937c",
+    "app/controller/Fogell.Controller.Host.pdb": "f85afef42c965891c9d2d5ce8ed024ca11c9260caa192c524338405bd18a1887",
+    "app/controller/Fogell.Admission.dll": "cdcca9e2678a1a95d03bfcf3d097cff407a0ce0c424d39686241762a58a5f00d",
+    "app/controller/Fogell.Controller.Host": "e34168364c9408727fea2a9938b90110b9aeeaa508d46fece0b0067210b67cd0",
+    "app/controller/Fogell.Controller.Host.dll": "363c45719bf443fe2849ce716a7f5b2b3060b32240bf29eb568266a2f2d35509",
+    "app/controller/Fogell.Journal.pdb": "3568ad6f2b50a1d454507bbc23fc4ea438e35b4135f79831a4398d384db0404c",
+    "app/controller/Npgsql.dll": "1c15a55a4fb6444ca4aa22e070f1d1cf4fd5e97233f0eae1feef72e203b4a1c9",
+    "app/controller/Fogell.Groovy.Interpreter.dll": "98eebb4668b19596a4427719f91e6b5f024a05546134bd95d35fb413fce41867",
+    "app/controller/FSharp.Core.dll": "d02fbb41897592806a580ad18ae3ddef4c34d3c62204beb2f0b4f828f44cdf06",
+    "app/controller/Fogell.Controller.Api.pdb": "7a4a528f9e7d4571a64f37d6ba8eff2e37303add2a07274750a0609b2de64143",
+    "app/controller/Fogell.Journal.dll": "16d0e58426a356e78a0a82ca83135e9a9c95889174f9c7ce1d07c7352de1c205",
+    "app/controller/Fogell.Differential.dll": "6b8a8ebbb24a5d482238d9bab4eb2314b045ead3089eb7e6768792a8f6e591dd",
+    "app/controller/Fogell.Groovy.dll": "b6d98308c11c931e784dd058a37545104ec86c8c91e7cc9cc00c6a473129c4f5",
+    "app/controller/FParsecCS.dll": "1822de41fcf78bf92de841f03e9a5c78db7fb1eb19cf699f78e06f064e0d4013",
+    "app/controller/Fogell.Controller.Host.runtimeconfig.json": "6c5fa7b8f6dae094c858871dea895816f537164dbef8e75c9c1d038bcf369eb1",
+    "app/controller/Fogell.Groovy.Interpreter.pdb": "3341d7b63d60fcaa60682c013a6b8c98130af5c8af599f3d6bb0ff4725a651ac",
+    "app/controller/Fogell.Admission.pdb": "c379f17db178dcc9ed07f0e676d8246faedf4a6f1e4b427ec0d6f2121c111520",
+    "app/controller/Fogell.Groovy.Parser.dll": "afa51b4de353120c4d607dafe25cd795591215f28c53a578c9699b39b8dd10cd",
+    "app/controller/Fogell.Domain.dll": "90d4392fa0f4915e2da64ea630abebf12c82117da9b721a7bdd60a3cf619a1eb",
+    "app/controller/Fogell.Ir.dll": "079d306a755f6e29658215024361d050471a8bbf3c847dddb13354fe449ce1f9",
+    "app/controller/Fogell.Store.dll": "9a681bb2a824c4e860f02352c05d10626672d11cb9d82d237c2b5080070fc150",
+    "app/controller/Fogell.Execution.dll": "b14db01229443b19964b4cd7f10c843ff37193b6ecceadaab5c646d428bd36d0",
+    "app/runner/pt-BR/FSharp.Core.resources.dll": "0f229bc4cd7d1dda68159f99cacdcb9a1d365c63fb90aebc6b297bd9e0ebd2cc",
+    "app/runner/tr/FSharp.Core.resources.dll": "f2921cb3f61423ec3f5c757fa398c31525c2f0a97052044d566ce0f7eb287f9f",
+    "app/runner/zh-Hans/FSharp.Core.resources.dll": "df52190cdaceaddbfa2b2813d4b0e955f1683e97d0431e65030517ad692e3031",
+    "app/runner/cs/FSharp.Core.resources.dll": "d8bed9a1a675aef622f05591fd4fcd746bc893c8f6fc5632018c5eb68e5deffd",
+    "app/runner/ru/FSharp.Core.resources.dll": "edcb2e60dca2eb3697e7663229211a94baedb69b0fd92a1b042f9b2aa7719328",
+    "app/runner/it/FSharp.Core.resources.dll": "4f74faa2ef6d9a0988e7176cfcf0d3ebf8e180dc465ab436da48065e0d176e12",
+    "app/runner/de/FSharp.Core.resources.dll": "e7c81ac2f2363a32f41006a4d8343e620fb38145e6a38b3764be0b8ab28a4aca",
+    "app/runner/pl/FSharp.Core.resources.dll": "30d631e5857b9c7f112890dbc19db1640fe00649a67d60a60bbfb46ad059ef87",
+    "app/runner/fr/FSharp.Core.resources.dll": "31290c3202fd14f1a2a35fa699f224766b21044fe317c8e9c000aba555b1d100",
+    "app/runner/zh-Hant/FSharp.Core.resources.dll": "5f1f986c4a175e7b67ff7ba4b5c21c121c670375f2e90e0b4551df72d2655e9b",
+    "app/runner/ja/FSharp.Core.resources.dll": "faa56a6b5f142468ee07f50a0e7e5571527d9b8663fc2f3d31c51cd9eeaf9e0d",
+    "app/runner/ko/FSharp.Core.resources.dll": "e4c7e85864fbc63fb932c39cba27cdf9f465bb5728120997c52f72fd6e1d33dc",
+    "app/runner/es/FSharp.Core.resources.dll": "c909638a3a6f86702d1636268df18d61c0fbc177be73fd8010368f82b6e44e11",
+    "app/controller/pt-BR/FSharp.Core.resources.dll": "0f229bc4cd7d1dda68159f99cacdcb9a1d365c63fb90aebc6b297bd9e0ebd2cc",
+    "app/controller/tr/FSharp.Core.resources.dll": "f2921cb3f61423ec3f5c757fa398c31525c2f0a97052044d566ce0f7eb287f9f",
+    "app/controller/zh-Hans/FSharp.Core.resources.dll": "df52190cdaceaddbfa2b2813d4b0e955f1683e97d0431e65030517ad692e3031",
+    "app/controller/cs/FSharp.Core.resources.dll": "d8bed9a1a675aef622f05591fd4fcd746bc893c8f6fc5632018c5eb68e5deffd",
+    "app/controller/ru/FSharp.Core.resources.dll": "edcb2e60dca2eb3697e7663229211a94baedb69b0fd92a1b042f9b2aa7719328",
+    "app/controller/it/FSharp.Core.resources.dll": "4f74faa2ef6d9a0988e7176cfcf0d3ebf8e180dc465ab436da48065e0d176e12",
+    "app/controller/de/FSharp.Core.resources.dll": "e7c81ac2f2363a32f41006a4d8343e620fb38145e6a38b3764be0b8ab28a4aca",
+    "app/controller/pl/FSharp.Core.resources.dll": "30d631e5857b9c7f112890dbc19db1640fe00649a67d60a60bbfb46ad059ef87",
+    "app/controller/fr/FSharp.Core.resources.dll": "31290c3202fd14f1a2a35fa699f224766b21044fe317c8e9c000aba555b1d100",
+    "app/controller/zh-Hant/FSharp.Core.resources.dll": "5f1f986c4a175e7b67ff7ba4b5c21c121c670375f2e90e0b4551df72d2655e9b",
+    "app/controller/ja/FSharp.Core.resources.dll": "faa56a6b5f142468ee07f50a0e7e5571527d9b8663fc2f3d31c51cd9eeaf9e0d",
+    "app/controller/ko/FSharp.Core.resources.dll": "e4c7e85864fbc63fb932c39cba27cdf9f465bb5728120997c52f72fd6e1d33dc",
+    "app/controller/es/FSharp.Core.resources.dll": "c909638a3a6f86702d1636268df18d61c0fbc177be73fd8010368f82b6e44e11"
+  },
+  "observations": [
+    {
+      "files": 89,
+      "test": "final_binary_manifest_verified",
+      "time": 1789531996.599
+    },
+    {
+      "response": {
+        "code": 200,
+        "data": {
+          "status": "ready"
+        },
+        "seconds": 0.301
+      },
+      "test": "final_controller_ready",
+      "time": 1789531998.193
+    },
+    {
+      "after": {
+        "available_bytes": 67088384,
+        "available_inodes": 1988,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "before": {
+        "available_bytes": 67088384,
+        "available_inodes": 1988,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "test": "pool_control_writable",
+      "time": 1789532012.012
+    },
+    {
+      "build_id": "c5fae761-62b0-4dba-b3e8-036cb38e6b69",
+      "expected": "success",
+      "pool_dirty": false,
+      "seconds": 1.402,
+      "status": "success",
+      "test": "normal_control",
+      "time": 1789532013.739
+    },
+    {
+      "before": {
+        "available_bytes": 67088384,
+        "available_inodes": 1985,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "controller_state_writable": true,
+      "diagnostic": "head: error writing 'standard output': No space left on device\n",
+      "enospc": true,
+      "exhausted": {
+        "available_bytes": 0,
+        "available_inodes": 1984,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "exit_code": 1,
+      "restored": {
+        "available_bytes": 67088384,
+        "available_inodes": 1985,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "test": "kernel_byte_enospc",
+      "time": 1789532016.433
+    },
+    {
+      "build_id": "96c78e11-b254-424a-b31a-09e3c3798d17",
+      "expected": "failure",
+      "pool_dirty": false,
+      "seconds": 1.509,
+      "status": "failure",
+      "test": "workspace_byte_enospc",
+      "time": 1789532018.279
+    },
+    {
+      "before": {
+        "available_bytes": 67088384,
+        "available_inodes": 1982,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "controller_state_writable": true,
+      "diagnostic": "sh: 1: cannot create /lab/state/workspaces/.lab-inode-proof-1982: No space left on device\n",
+      "enospc": true,
+      "exhausted": {
+        "available_bytes": 67088384,
+        "available_inodes": 0,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "exit_code": 2,
+      "restored": {
+        "available_bytes": 67088384,
+        "available_inodes": 1982,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "test": "kernel_inode_enospc",
+      "time": 1789532020.93
+    },
+    {
+      "build_id": "cc5df9e2-e9dc-4d4e-a479-12f8651ac749",
+      "expected": "failure",
+      "pool_dirty": false,
+      "seconds": 1.715,
+      "status": "failure",
+      "test": "workspace_inode_enospc",
+      "time": 1789532022.916
+    },
+    {
+      "build_id": "87fa76e0-19e8-409c-9160-079ceea6880a",
+      "expected": "failure",
+      "pool_dirty": false,
+      "seconds": 1.509,
+      "status": "failure",
+      "test": "stash_copy_enospc",
+      "time": 1789532025.581
+    },
+    {
+      "attempt_state": "queued",
+      "build_id": "9007079e-eac4-42b4-8f77-befd70347df1",
+      "durable_decision": "storage_pool_byte_pressure",
+      "runner_present": false,
+      "test": "pressure_refusal",
+      "time": 1789532029.547
+    },
+    {
+      "build_id": "9007079e-eac4-42b4-8f77-befd70347df1",
+      "status": "success",
+      "test": "pressure_relieved_control",
+      "time": 1789532030.689
+    },
+    {
+      "readiness": 503,
+      "test": "second_controller_blocked",
+      "time": 1789532033.424
+    },
+    {
+      "restored_readiness": 200,
+      "test": "wrong_marker_refused",
+      "time": 1789532037.608,
+      "wrong_readiness": 503
+    },
+    {
+      "attempt_state": "running",
+      "build_id": "d71fb0ef-9552-4c69-99f7-0f1e5876d888",
+      "marker_remains_dirty": true,
+      "readiness": 503,
+      "test": "dirty_sigkill_restart_refused",
+      "time": 1789532041.781
+    },
+    {
+      "claim": "tmpfs enforced aggregate workspace/stash pool bytes and inodes",
+      "test": "storage_bench_complete",
+      "time": 1789532041.781
+    },
+    {
+      "init_only_live": true,
+      "test": "final_writer_extinction",
+      "time": 1789532139.352,
+      "zombies": 10
+    },
+    {
+      "build_id": "ba94e729-a0f8-48db-9580-803b9bc0933d",
+      "build_tmpdir_inside_pool": true,
+      "pool_dirty": false,
+      "record_sha256": "f9fadf05f67dc6e984ad3b34f5530f066956f8b3d35639aa8cc19b59affd9b16",
+      "status": "success",
+      "test": "final_explicit_recovery_control",
+      "time": 1789532143.016
+    },
+    {
+      "attempt_state": "queued",
+      "build_id": "65017d1c-ed43-4117-838d-10b1e1307251",
+      "durable_decision": "storage_pool_inode_pressure",
+      "runner_present": false,
+      "test": "final_inode_pressure_refusal",
+      "time": 1789532146.291
+    },
+    {
+      "build_id": "65017d1c-ed43-4117-838d-10b1e1307251",
+      "status": "success",
+      "test": "final_inode_pressure_relieved_control",
+      "time": 1789532147.65
+    },
+    {
+      "attempt_state": "queued",
+      "build_id": "fc2fd308-a5ce-4d48-a11c-988e9cd1d3c4",
+      "pool_dirty": false,
+      "readiness": 503,
+      "runner_present": false,
+      "test": "final_decision_write_failure_refused",
+      "time": 1789532150.753
+    },
+    {
+      "build_id": "fc2fd308-a5ce-4d48-a11c-988e9cd1d3c4",
+      "status": "success",
+      "test": "final_decision_write_relieved_control",
+      "time": 1789532151.971
+    },
+    {
+      "test": "final_all_checks_complete",
+      "time": 1789532151.971
+    },
+    {
+      "controller": "fogell-storage-controller-20260915",
+      "network": "fogell-storage-net-20260915",
+      "pod": "fogell-storage-pod-20260915",
+      "postgres": "fogell-storage-postgres-20260915",
+      "test": "cleanup",
+      "time": 1789532211.066
+    },
+    {
+      "owned_resources_absent": true,
+      "test": "final_cleanup_verified",
+      "time": 1789532211.517,
+      "preexisting_container_count_unchanged": 5
+    }
+  ],
+  "recovery_receipts": [
+    {
+      "action": "explicit_recovery",
+      "old_record_sha256": "f9fadf05f67dc6e984ad3b34f5530f066956f8b3d35639aa8cc19b59affd9b16",
+      "operator_note": "final-binary-luigi-proof-all-execution-processes-zombies",
+      "pool_id": "luigi-storage-20260915",
+      "writers_extinct_attested": "true"
+    }
+  ]
+}

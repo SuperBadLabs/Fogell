@@ -197,6 +197,8 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
 
     let owner = $"local:{Environment.MachineName}:{Environment.ProcessId}:{Guid.NewGuid():N}"
     let stateRootReadiness = ControllerConfig.createStateRootReadinessCache config
+    let storageAdmission = new StorageAdmission(config.StateRoot, config.StoragePool)
+    let mutable lastStorageRefusal: string option = None
     let diagnosticDrainBufferBytes = 64 * 1024
     let diagnosticDrainGraceMilliseconds = 2000
     let eventReadBufferBytes = 64 * 1024
@@ -367,9 +369,21 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                     orgKey,
                     $"{claim.AttemptId.Value:N}-{claim.Fence.Value}")
             let workspaceRoot = Path.Combine(config.StateRoot, "workspaces", orgKey)
-            let neutralHome = Path.Combine(config.StateRoot, "neutral-home")
-            let tempRoot = Path.Combine(config.StateRoot, "tmp")
+            let scratchRoot =
+                match config.StoragePool with
+                | None -> config.StateRoot
+                | Some _ -> Path.Combine(workspaceRoot, "_runtime", claim.AttemptId.Value.ToString("N"))
+            let neutralHome = Path.Combine(scratchRoot, "neutral-home")
+            let tempRoot = Path.Combine(scratchRoot, "tmp")
             let mutable terminalPublished = false
+            let mutable childStartAttempted = false
+            use _storageDisposition =
+                { new IDisposable with
+                    member _.Dispose() =
+                        if not childStartAttempted || terminalPublished then
+                            storageAdmission.Complete()
+                        else
+                            storageAdmission.Uncertain() }
             use _eventFile =
                 WorkerPaths.deleteEventFileAfterTerminalPublication
                     (fun () -> terminalPublished)
@@ -529,6 +543,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             if not (ProcessGroup.enableChildSubreaper ()) then
                                 invalidOp "could not establish Linux child-subreaper ownership for Run.Host descendants"
 
+                            childStartAttempted <- true
                             child.Start())
 
                 let launched =
@@ -985,7 +1000,11 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                     stateRootReadiness.Fresh
                     (fun dependency -> requeueUnstartedClaim dependency claim)
             then
-                do! runReadyClaim claim stoppingToken
+                match storageAdmission.Begin($"{claim.OrganizationId.Value:N}/{claim.AttemptId.Value:N}/{claim.Fence.Value}") with
+                | Ok () -> do! runReadyClaim claim stoppingToken
+                | Error reason ->
+                    store.RequeueOwnedAttempt(claim.OrganizationId, claim.AttemptId, claim.Fence, owner) |> ignore
+                    logger.LogWarning("Storage admission refused before launch: {Reason}", reason)
         }
 
     /// One organization's share of a worker scan: expire lost local leases, then
@@ -996,22 +1015,30 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
         task {
             store.RequeueExpiredLocalAttempts org |> ignore
 
-            match
+            match storageAdmission.CheckStart() with
+            | Error reason ->
+                if lastStorageRefusal <> Some reason then
+                    logger.LogWarning("Storage admission refused: {Reason}", reason)
+                    lastStorageRefusal <- Some reason
+                return false
+            | Ok () ->
+              lastStorageRefusal <- None
+              match
                 store.ClaimNextExecution(
                     org,
                     owner,
                     config.TrustPool,
                     [ "linux" ],
                     config.LeaseSeconds)
-            with
-            | Error error ->
-                logger.LogError("FG-224 claim refused: {Reason}", error)
-                return false
-            | Ok None -> return false
-            | Ok(Some claim) ->
-                lastClaimedOrganization <- Some org
-                do! runClaim claim stoppingToken
-                return true
+              with
+              | Error error ->
+                  logger.LogError("FG-224 claim refused: {Reason}", error)
+                  return false
+              | Ok None -> return false
+              | Ok(Some claim) ->
+                  lastClaimedOrganization <- Some org
+                  do! runClaim claim stoppingToken
+                  return true
         }
 
     /// FG-026b. One classification pass over every organization. Sequential,
@@ -1083,6 +1110,8 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                     do! Task.Delay(config.PollMilliseconds, stoppingToken)
         }
 
+    member _.StorageReady() = storageAdmission.Ready()
+
     /// The in-process crash-window tests drive the production scan for one
     /// organization through this seam; it is the same code ExecuteAsync runs.
     member internal _.ScanOrganization(org: OrganizationId, stoppingToken: CancellationToken) =
@@ -1102,4 +1131,10 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
     override _.ExecuteAsync(stoppingToken: CancellationToken) =
         // Two independent loops on one cancellation token: the claim scan and
         // the reconciliation cadence. Neither waits on the other.
-        Task.WhenAll(scanLoop stoppingToken, reconciliationLoop stoppingToken)
+        task {
+            try
+                let! _ = Task.WhenAll(scanLoop stoppingToken, reconciliationLoop stoppingToken)
+                return ()
+            finally
+                (storageAdmission :> IDisposable).Dispose()
+        }

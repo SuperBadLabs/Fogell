@@ -5,7 +5,10 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="EffectRegistry.fs" />
+    <Compile Include="StoragePool.fs" />
+    <Compile Include="StoragePoolLease.fs" />
     <Compile Include="Config.fs" />
+    <Compile Include="StorageAdmission.fs" />
     <Compile Include="EventStream.fs" />
     <Compile Include="ProcessGroup.fs" />
     <Compile Include="WorkerScheduling.fs" />
