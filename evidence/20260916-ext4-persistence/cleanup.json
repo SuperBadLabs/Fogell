@@ -11,5 +11,6 @@
     "Restarts"
   ],
   "retained": "inert task disk files and evidence; no running task VM",
-  "no_host_reboot": true
+  "no_host_reboot": true,
+  "copied_api_token_absent": true
 }

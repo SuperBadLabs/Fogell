@@ -96,6 +96,14 @@ rejected. [Harness instructions](../../scripts/prove-storage-persistence/README.
 describe recreating the disposable lab; SSH keys, tokens, disk images, and
 binaries are intentionally excluded from this repository.
 
+Review added a `finally` wrapper that removes the campaign client's temporary
+host API-token copy on success or exception. The original measured campaign
+source is retained in `measured-harness/campaign.py`; `receipt.json` maps its
+hash to that path. The captured campaign results are unchanged. Targeted tests
+cover the wrapper's success and failure paths, and the residual token from the
+recorded run was removed explicitly. The verifier was also strengthened to
+reject a drive whose discard mode differs from the measured `discard=ignore`.
+
 Preliminary setup trials exposed overlapping guest/container NAT ranges and
 restricted-network forwarding, then a fixed fixture slug collision. Those
 trials are not included in the passing campaign counts. The final harness

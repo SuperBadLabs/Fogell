@@ -175,7 +175,7 @@ def cycle(number):
     controller(True);api.ready();succeeds(queued)
     record('recovered_idle_reboot',cycle=number,queued_build=queued,status='success',state=snapshot(),receipts=complete)
 
-def run_campaign():
+def main():
     token=vm.guest(['sudo','cat',STATE+'/api-token']).stdout.strip();(vm.ROOT/'token').write_text(token);(vm.ROOT/'token').chmod(0o600)
     api.sql(f"INSERT INTO organizations(id,slug) VALUES('{api.ORG}','persistence-verified'); INSERT INTO projects(id,organization_id,slug) VALUES('{api.PROJECT}','{api.ORG}','persistence-verified');")
     topology=vm.guest(['sudo','findmnt','--json','-o','TARGET,SOURCE,FSTYPE,OPTIONS,UUID']).stdout
@@ -191,13 +191,5 @@ def run_campaign():
     controller(False);assert_state(snapshot(),False)
     record('campaign_pass',active_cuts=3,receipt_before_clear_cuts=3,after_clear_cuts=3,clean_reboots=1)
     vm.stop('campaign-complete')
-
-def main():
-    try:
-        run_campaign()
-    finally:
-        # Only the guest retains its credential for a later, explicit boot.
-        # Never leave the API client's temporary host-side copy in retained evidence.
-        (vm.ROOT/'token').unlink(missing_ok=True)
 
 if __name__=='__main__':main()

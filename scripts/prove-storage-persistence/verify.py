@@ -215,7 +215,13 @@ def qemu_arguments(args, description):
             set(fields) == {"file", "format", "if", "cache", "aio", "discard"},
             f"{description}: unexpected QEMU drive fields",
         )
-        require(fields["if"] == "virtio" and fields["cache"] == "none" and fields["aio"] == "native", f"{description}: unsafe disk cache arguments")
+        require(
+            fields["if"] == "virtio"
+            and fields["cache"] == "none"
+            and fields["aio"] == "native"
+            and fields["discard"] == "ignore",
+            f"{description}: unsafe QEMU drive arguments",
+        )
         parsed.append(fields)
     require([(item["file"], item["format"]) for item in parsed] == list(DRIVES), f"{description}: wrong QEMU disk order, files, or formats")
 
@@ -337,6 +343,11 @@ def self_test(results, events, mounts):
         index = next(index for index, item in enumerate(args) if "cache=none" in item)
         args[index] = args[index].replace("cache=none", "cache=unsafe")
     changed(unsafe_cache, "unsafe disk cache")
+    def unsafe_discard(_, events, __):
+        args = next(row for row in events if row.get("test") == "vm_start")["qemu_args"]
+        index = next(index for index, item in enumerate(args) if "discard=ignore" in item)
+        args[index] = args[index].replace("discard=ignore", "discard=unmap")
+    changed(unsafe_discard, "unsafe disk discard")
     def wrong_idle_sha(rows, _, __):
         for row in rows:
             snapshot = row.get("state")

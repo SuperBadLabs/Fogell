@@ -1,8 +1,11 @@
 # Storage persistence evidence harness
 
-This directory contains the measured harness used for the isolated Ubuntu 24.04
-KVM/QEMU persistence campaign.  It is an operator-run lab artifact, not a
-general installation or production deployment tool.
+This directory contains the harness for the isolated Ubuntu 24.04 KVM/QEMU
+persistence campaign. It is an operator-run lab artifact, not a general
+installation or production deployment tool. The recorded campaign predates the
+host-token cleanup wrapper added during review; its original source is retained
+under `evidence/20260916-ext4-persistence/measured-harness/`. The evidence receipt
+maps measured source paths and separately pins the current verifier.
 
 The campaign exercises a Fogell controller and worker against three persistent
 guest ext4 filesystems: controller state, the bounded workspaces pool, and
@@ -32,7 +35,14 @@ guest-key.pub
 ```
 
 Keep that directory private.  `campaign.py` writes a short-lived copy of the
-guest API token there with mode `0600`, as required for its local API client.
+guest API token there with mode `0600`, as required for its local API client,
+and removes that host-side copy in `finally` on success or exception. If the
+host harness itself is forcibly killed, remove its `token` file manually after
+stopping API access; Python cleanup cannot run after host process SIGKILL.
+The guest retains its own token on its disk for an explicit later boot.
+
+Run `python3 test-campaign-cleanup.py` to check success, mid-campaign failure,
+and failure before token creation without booting a guest.
 
 ## Safety boundary
 
