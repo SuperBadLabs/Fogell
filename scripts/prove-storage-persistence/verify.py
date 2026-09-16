@@ -5,6 +5,7 @@ import argparse
 import copy
 import hashlib
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -36,6 +37,48 @@ MOUNTS = {
 }
 POOL_ID = "ext4persistence20260916"
 IDLE_SHA256 = hashlib.sha256(bytes(4096)).hexdigest()
+EVENT_SEQUENCE = (
+    ("vm_start", "campaign-start"),
+    ("guest_boot", "campaign-start"),
+    ("vm_clean_shutdown", "clean-control"),
+    ("vm_start", "clean-control-reboot"),
+    ("guest_boot", "clean-control-reboot"),
+) + tuple(
+    item
+    for cycle in CYCLES
+    for item in (
+        ("vm_power_cut", f"active-{cycle}"),
+        ("vm_start", f"active-reboot-{cycle}"),
+        ("guest_boot", f"active-reboot-{cycle}"),
+        ("vm_power_cut", f"receipt-before-clear-{cycle}"),
+        ("vm_start", f"receipt-reboot-{cycle}"),
+        ("guest_boot", f"receipt-reboot-{cycle}"),
+        ("vm_power_cut", f"after-clear-{cycle}"),
+        ("vm_start", f"idle-reboot-{cycle}"),
+        ("guest_boot", f"idle-reboot-{cycle}"),
+    )
+) + (("vm_clean_shutdown", "campaign-complete"),)
+RESULT_SEQUENCE = (
+    ("durable_topology", None, None),
+    ("baseline_control", None, None),
+    ("ext4_bytes_pressure", None, None),
+    ("ext4_inodes_pressure", None, None),
+    ("before_clean_shutdown", None, None),
+    ("clean_reboot_control", None, None),
+) + tuple(
+    item
+    for cycle in CYCLES
+    for item in (
+        ("active_checkpoint", cycle, None),
+        ("dirty_reboot_refused", cycle, None),
+        ("recovery_refused", cycle, "missing-attestation"),
+        ("recovery_refused", cycle, "wrong-hash"),
+        ("receipt_fsync_checkpoint", cycle, None),
+        ("receipt_reboot_refused", cycle, None),
+        ("explicit_recovery", cycle, None),
+        ("recovered_idle_reboot", cycle, None),
+    )
+) + (("campaign_pass", None, None),)
 
 
 class EvidenceError(ValueError):
@@ -130,7 +173,54 @@ def receipt_values(receipts, dirty_sha, count, description):
         require(record.get("writers_extinct_attested") == "true", f"{description}: no extinction attestation")
 
 
-def verify_results(rows):
+def verify_results(rows, events):
+    require(len(rows) == len(RESULT_SEQUENCE), f"expected {len(RESULT_SEQUENCE)} result records, found {len(rows)}")
+    previous_time = None
+    for index, (row, expected) in enumerate(zip(rows, RESULT_SEQUENCE)):
+        expected_test, expected_cycle, expected_reason = expected
+        require((row["test"], row.get("cycle")) == (expected_test, expected_cycle), f"result {index} is not {expected_test}")
+        if expected_reason is not None:
+            require(row.get("reason") == expected_reason, f"result {index} has the wrong negative-control reason")
+        timestamp = row.get("time")
+        require(type(timestamp) in (int, float) and math.isfinite(timestamp), f"result {index} has no finite timestamp")
+        require(previous_time is None or timestamp > previous_time, f"result {index} timestamp is not strictly increasing")
+        previous_time = timestamp
+
+    def event_time(test, label):
+        match = [event for event in events if event["test"] == test and event.get("label") == label]
+        require(len(match) == 1, f"missing lifecycle boundary {test} {label}")
+        return match[0]["time"]
+
+    def within(row, begin, end, description):
+        require(begin < row["time"] < end, f"{description} falls outside its VM lifecycle window")
+
+    initial_boot = event_time("guest_boot", "campaign-start")
+    clean_stop = event_time("vm_clean_shutdown", "clean-control")
+    for row in rows[:5]:
+        within(row, initial_boot, clean_stop, row["test"])
+    clean_reboot = event_time("guest_boot", "clean-control-reboot")
+    active_one_cut = event_time("vm_power_cut", "active-1")
+    within(rows[5], clean_reboot, active_one_cut, "clean reboot control")
+    cursor = 6
+    for cycle in CYCLES:
+        active, dirty, missing_attestation, wrong_hash, checkpoint, receipt_refused, recovered, idle = rows[cursor:cursor + 8]
+        previous_boot = clean_reboot if cycle == 1 else event_time("guest_boot", f"idle-reboot-{cycle - 1}")
+        active_cut = event_time("vm_power_cut", f"active-{cycle}")
+        within(active, previous_boot, active_cut, f"cycle {cycle} active checkpoint")
+        active_reboot = event_time("guest_boot", f"active-reboot-{cycle}")
+        receipt_cut = event_time("vm_power_cut", f"receipt-before-clear-{cycle}")
+        for row in (dirty, missing_attestation, wrong_hash, checkpoint):
+            within(row, active_reboot, receipt_cut, f"cycle {cycle} {row['test']}")
+        receipt_reboot = event_time("guest_boot", f"receipt-reboot-{cycle}")
+        after_clear_cut = event_time("vm_power_cut", f"after-clear-{cycle}")
+        for row in (receipt_refused, recovered):
+            within(row, receipt_reboot, after_clear_cut, f"cycle {cycle} {row['test']}")
+        idle_reboot = event_time("guest_boot", f"idle-reboot-{cycle}")
+        next_boundary = event_time("vm_power_cut", f"active-{cycle + 1}") if cycle < 3 else event_time("vm_clean_shutdown", "campaign-complete")
+        within(idle, idle_reboot, next_boundary, f"cycle {cycle} recovered idle control")
+        cursor += 8
+    within(rows[-1], event_time("guest_boot", "idle-reboot-3"), event_time("vm_clean_shutdown", "campaign-complete"), "campaign pass")
+
     topology = one(rows, "durable_topology")
     require(topology.get("postgres_parameters") == "on\non\non", "durable topology lacks PostgreSQL sync settings")
     pool = topology.get("pool", {})
@@ -260,6 +350,15 @@ def verify_mounts(document):
 
 
 def verify_events(rows):
+    require(len(rows) == len(EVENT_SEQUENCE), f"expected {len(EVENT_SEQUENCE)} lifecycle events, found {len(rows)}")
+    previous_time = None
+    for index, (event, expected) in enumerate(zip(rows, EVENT_SEQUENCE)):
+        require((event["test"], event.get("label")) == expected, f"event {index} is not {expected[0]} {expected[1]}")
+        timestamp = event.get("time")
+        require(type(timestamp) in (int, float) and math.isfinite(timestamp), f"event {index} has no finite timestamp")
+        require(previous_time is None or timestamp > previous_time, f"event {index} timestamp is not strictly increasing")
+        previous_time = timestamp
+
     starts = [row for row in rows if row["test"] == "vm_start"]
     require(starts, "no VM starts")
     identities = None
@@ -310,8 +409,8 @@ def verify_events(rows):
 
 
 def verify(results, events, mounts):
-    verify_results(results)
     verify_events(events)
+    verify_results(results, events)
     verify_mounts(mounts)
 
 
@@ -375,6 +474,29 @@ def self_test(results, events, mounts):
     changed(aliased_disk, "aliased state and pool disk")
     changed(lambda r, e, m: e.__delitem__(next(index for index, row in enumerate(e) if row.get("test") == "guest_boot" and row.get("label") == "campaign-start")), "missing initial boot")
     changed(lambda r, e, m: next(row for row in e if row.get("test") == "vm_clean_shutdown" and row.get("label") == "clean-control").update(container_id="wrong-container"), "clean shutdown predecessor")
+    def reordered_events(_, events, __):
+        active = next(index for index, row in enumerate(events) if row.get("test") == "vm_power_cut" and row.get("label") == "active-1")
+        reboot = next(index for index, row in enumerate(events) if row.get("test") == "vm_start" and row.get("label") == "active-reboot-1")
+        events[active], events[reboot] = events[reboot], events[active]
+    changed(reordered_events, "reordered active reboot")
+    def duplicate_event(_, events, __):
+        events.append(copy.deepcopy(events[-1]))
+    changed(duplicate_event, "duplicate lifecycle event")
+    def missing_event(_, events, __):
+        del events[6]
+    changed(missing_event, "missing lifecycle event")
+    def reordered_results(results, _, __):
+        results[6], results[7] = results[7], results[6]
+    changed(reordered_results, "reordered result records")
+    def cross_window_result(results, events, __):
+        results[6]["time"] = next(event["time"] for event in events if event.get("label") == "active-1") + 0.1
+    changed(cross_window_result, "result outside VM window")
+    def nonfinite_event(_, events, __):
+        events[5]["time"] = float("nan")
+    changed(nonfinite_event, "nonfinite event timestamp")
+    def backward_event(_, events, __):
+        events[6]["time"] = events[5]["time"]
+    changed(backward_event, "backward event timestamp")
 
 
 def main():

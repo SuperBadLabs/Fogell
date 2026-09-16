@@ -3,7 +3,7 @@
 This directory contains the harness for the isolated Ubuntu 24.04 KVM/QEMU
 persistence campaign. It is an operator-run lab artifact, not a general
 installation or production deployment tool. The recorded campaign predates the
-host-token cleanup wrapper added during review; its original source is retained
+host-token and VM failure cleanup added during review; its original sources are retained
 under `evidence/20260916-ext4-persistence/measured-harness/`. The evidence receipt
 maps measured source paths and separately pins the current verifier.
 
@@ -43,6 +43,16 @@ The guest retains its own token on its disk for an explicit later boot.
 
 Run `python3 test-campaign-cleanup.py` to check success, mid-campaign failure,
 and failure before token creation without booting a guest.
+Run `python3 test-vm-boot-cleanup.py` to check failed starts, SSH timeouts,
+early exits, interruption, evidence-write failure, and container ownership.
+Run `python3 test-vm-stop-cleanup.py` for shutdown failures and name-replacement
+cases. The VM helper removes its own container if boot or shutdown fails after
+ownership is established. A fresh
+ownership label prevents cleanup from removing an unrelated container that
+wins a race for the fixed name. Shutdown commands and cleanup use the owned
+container's immutable ID. A cleanup failure raises an error; when another
+exception is already active, that exception is retained with a cleanup-failure
+note.
 
 ## Safety boundary
 

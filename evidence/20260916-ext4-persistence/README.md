@@ -91,7 +91,9 @@ python3 scripts/prove-storage-persistence/verify.py \
 
 The checker validates controls, exact state/receipt preservation, receipt
 content hashes, the resumed build IDs, all cut/boot identities, ext4 topology,
-and exact QEMU drive paths/formats/cache settings. Negative mutations must be
+and exact QEMU drive paths/formats/cache settings. It requires the exact
+33-event and 31-result sequences, strictly increasing finite timestamps, and
+each result's placement within its corresponding boot/cut interval. Negative mutations must be
 rejected. [Harness instructions](../../scripts/prove-storage-persistence/README.md)
 describe recreating the disposable lab; SSH keys, tokens, disk images, and
 binaries are intentionally excluded from this repository.
@@ -103,6 +105,14 @@ hash to that path. The captured campaign results are unchanged. Targeted tests
 cover the wrapper's success and failure paths, and the residual token from the
 recorded run was removed explicitly. The verifier was also strengthened to
 reject a drive whose discard mode differs from the measured `discard=ignore`.
+Subsequent review added cleanup when VM boot or shutdown fails after container
+ownership is established; nineteen isolated tests cover failure and ownership
+cases without starting a guest.
+The original measured VM helper is retained in `measured-harness/vm.py` and
+mapped by the receipt. Lifecycle and result ordering checks were added after
+collection, with reordered, duplicated, missing, invalid-time, and wrong-window
+mutations rejected. These harness/verifier corrections do not change the
+recorded nine-cut campaign or its deployed application binaries.
 
 Preliminary setup trials exposed overlapping guest/container NAT ranges and
 restricted-network forwarding, then a fixed fixture slug collision. Those
