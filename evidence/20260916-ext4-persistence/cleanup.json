@@ -1,0 +1,16 @@
+{
+  "vm_absent": true,
+  "toolbox_image_absent": true,
+  "protected_services_unchanged": 5,
+  "compared_fields": [
+    "Id",
+    "Names",
+    "State",
+    "StartedAt",
+    "Pid",
+    "Restarts"
+  ],
+  "retained": "inert task disk files and evidence; no running task VM",
+  "no_host_reboot": true,
+  "copied_api_token_absent": true
+}

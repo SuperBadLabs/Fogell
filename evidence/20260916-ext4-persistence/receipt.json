@@ -1,0 +1,45 @@
+{
+  "active_cuts": 3,
+  "after_clear_cuts": 3,
+  "application_files_verified": 89,
+  "bundle_archive_sha256": "576c87e5d793f26e9fb7f56d4327e581403f2349a98b3e7b0e97994b636cd446",
+  "clean_control_reboots": 1,
+  "created_at": "2026-09-16T17:06:09.031638+00:00",
+  "host": "luigi",
+  "measured_harness_paths": {
+    "api.py": "evidence/20260916-ext4-persistence/measured-harness/api.py",
+    "campaign.py": "evidence/20260916-ext4-persistence/measured-harness/campaign.py",
+    "collect.py": "evidence/20260916-ext4-persistence/measured-harness/collect.py",
+    "guest-disks.sh": "scripts/prove-storage-persistence/guest-disks.sh",
+    "guest-setup.sh": "scripts/prove-storage-persistence/guest-setup.sh",
+    "recovery-cutpoint.py": "scripts/prove-storage-persistence/recovery-cutpoint.py",
+    "vm.py": "evidence/20260916-ext4-persistence/measured-harness/vm.py"
+  },
+  "measured_harness_sha256": {
+    "api.py": "29c7d24ea0b98981bda751b21b7b94c489ed774408f94c5977106cf0a2dd0bfe",
+    "campaign.py": "7fee2ae7357598d1f38f6a6383f0f47d7cfdff8401ae27a5489579502182a621",
+    "collect.py": "bb7217fa17d40b01136ad28c6ffc8bdc67252c0a261ca7dd877813abaf64fe46",
+    "guest-disks.sh": "0cbb34b20c06be2d5b9df1429692ada3594107e3fc46195e1d1666e73f67fc27",
+    "guest-setup.sh": "23af3f87e56be55e1402b130d707471fd5202c5bb4e056c51843745897ea7fda",
+    "recovery-cutpoint.py": "68b482eb510309937fd4eb7211dc3077556de1eeed34f0357cd9757635a76b8e",
+    "vm.py": "96ec01db4594a5c2567a613813b551a9fe6b59c27a90fb94f0253b2fe248f50b"
+  },
+  "post_collection_corrections": [
+    "Host API token removed in finally; original campaign bytes archived and mapped above. Three isolated cleanup-path tests passed.",
+    "Verifier rejects any discard mode except ignore, with a negative unmap mutation.",
+    "Residual host API token from recorded campaign removed explicitly; cleanup.json records absence.",
+    "VM boot and shutdown clean up by immutable owned ID, with a unique creation label protecting name races. Nineteen isolated lifecycle/ownership tests passed; measured vm.py is archived and mapped above.",
+    "Verifier requires exact lifecycle and result sequences, finite increasing timestamps, and matching result/cut/boot windows, with negative mutations.",
+    "Campaign and collector callers track immutable owned VM IDs and clean up running or stopped containers after failures; guest/API transport uses the owned ID. Cleanup failures preserve the primary exception and collector logging is restored. Original api.py and collect.py are archived and mapped above; isolated caller fault tests cover these paths."
+  ],
+  "qemu_version": "QEMU emulator version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)",
+  "raw_receipts_verified": 6,
+  "receipt_before_clear_cuts": 3,
+  "result": "pass",
+  "schema": 1,
+  "scope": "persistent ext4 single-writer pool; abrupt KVM guest loss and reboot; not physical host power loss",
+  "source_commit": "7e558e0f2ea665fd00422c840f5bf7690c325767",
+  "ubuntu_image_sha256": "612b2c0cc1bc413a6cb8c38fd611794caf0f2b436c50013d8b3794db12ad7354",
+  "verification_note": "Verifier strengthened after collection; recorded results unchanged. Supplemental receipt content and binary manifest compared directly.",
+  "verification_sha256": "6dadabe0a52e751f74d97e8b52bce52d4899c4aa2a2e4d3d5b73d42be5c3bb5f"
+}
