@@ -61,6 +61,8 @@ def open_tree(path: str, name: str) -> int:
     current = os.open("/", flags)
     try:
         for part in clean.split("/")[1:]:
+            if not part:  # Only the already-validated root path has no component.
+                continue
             try:
                 next_fd = os.open(part, flags, dir_fd=current)
             except OSError as error:
@@ -129,6 +131,19 @@ def open_regular(pool_fd: int, name: str, access: int, description: str) -> tupl
     except Exception:
         os.close(fd)
         raise
+
+
+def require_empty_lost_found(pool_fd: int) -> None:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        fd = os.open("lost+found", flags, dir_fd=pool_fd)
+    except OSError as error:
+        refuse(f"workspace pool lost+found cannot be opened without following links: {error.strerror}")
+    try:
+        if os.listdir(fd):
+            refuse("workspace pool lost+found contains recovered entries; init never adopts existing data")
+    finally:
+        os.close(fd)
 
 
 def read_exact(fd: int, size: int, description: str) -> bytes:
@@ -318,9 +333,7 @@ def init(args: argparse.Namespace) -> int:
         if entries - KNOWN_EMPTY_ENTRIES:
             refuse("workspace pool is not empty; init never overwrites or adopts existing data")
         if "lost+found" in entries:
-            info = os.stat("lost+found", dir_fd=pool_fd, follow_symlinks=False)
-            if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
-                refuse("workspace pool lost+found is not an ordinary directory")
+            require_empty_lost_found(pool_fd)
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
         created: list[tuple[str, int]] = []
         failure: Exception | None = None

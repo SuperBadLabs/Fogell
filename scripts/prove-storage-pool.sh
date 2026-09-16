@@ -40,7 +40,7 @@ trap cleanup EXIT
 mkdir -p "$pool" "$receipt_dir"
 mount -t tmpfs -o size=8m,nr_inodes=1024 tmpfs "$pool"
 
-for rollback_case in post-marker partial-state directory-fsync preexisting-marker state-oexcl replaced-marker; do
+for rollback_case in post-marker partial-state directory-fsync preexisting-marker state-oexcl replaced-marker lost-found-empty lost-found-nonempty; do
   rollback_state_root="$root/rollback-$rollback_case/state"
   mkdir -p "$rollback_state_root/workspaces"
   mount -t tmpfs -o size=2m,nr_inodes=256 tmpfs "$rollback_state_root/workspaces"
@@ -62,6 +62,23 @@ module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 pool_id = "rollback-proof"
+
+# The controller accepts / as a state root; the helper must open that directory
+# directly without trying to open an empty relative component.
+root_fd = module.open_tree("/", "state root")
+try:
+    root_stat = os.stat("/")
+    assert module.identity(root_fd) == module.FileIdentity(root_stat.st_dev, root_stat.st_ino)
+finally:
+    os.close(root_fd)
+for malformed in ("//", "/tmp/", "/tmp//pool", "/tmp/../pool"):
+    try:
+        unexpected_fd = module.open_tree(malformed, "state root")
+    except module.PoolError:
+        continue
+    os.close(unexpected_fd)
+    raise AssertionError(f"malformed state root unexpectedly accepted: {malformed}")
+print("root-state-path-and-malformed-components: passed")
 
 
 def paths(root):
@@ -97,7 +114,7 @@ def assert_successful_retry(root):
     assert stat.S_IMODE(state.stat().st_mode) == 0o600
 
 
-post_marker, partial_state, directory_fsync, existing_marker, state_oexcl, replaced_marker = roots
+post_marker, partial_state, directory_fsync, existing_marker, state_oexcl, replaced_marker, empty_lost_found, nonempty_lost_found = roots
 
 original_write = module.write_exact
 def fail_after_marker(fd, data, description):
@@ -185,6 +202,22 @@ assert displaced.exists(), "the original inode must not be mistaken for the repl
 marker.unlink()
 displaced.unlink()
 assert_successful_retry(replaced_marker)
+
+pool, marker, state = paths(empty_lost_found)
+(pool / "lost+found").mkdir()
+invoke(empty_lost_found)
+assert marker.exists() and state.exists(), "an empty filesystem-created lost+found is permitted"
+
+pool, marker, state = paths(nonempty_lost_found)
+lost_found = pool / "lost+found"
+lost_found.mkdir()
+recovered = lost_found / "recovered-file"
+recovered.write_bytes(b"recovered data")
+recovered_identity = (recovered.stat().st_dev, recovered.stat().st_ino)
+expect_failure(nonempty_lost_found)
+assert not marker.exists() and not state.exists(), "nonempty lost+found must be rejected before metadata creation"
+assert recovered.read_bytes() == b"recovered data"
+assert (recovered.stat().st_dev, recovered.stat().st_ino) == recovered_identity
 print("rollback-init-faults-and-preexisting-metadata: passed")
 PY
 

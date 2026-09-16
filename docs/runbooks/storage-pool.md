@@ -27,8 +27,10 @@ finite, nonzero filesystem byte and inode totals. Stop existing controllers
 before enabling this policy; an older binary does not participate in the pool
 locks. A current controller with no policy refuses an initialized pool.
 
-The mount must be empty except for its filesystem-created `lost+found`
-directory. After mounting it, run once as the service operator:
+The mount must be empty except for an empty filesystem-created `lost+found`
+directory. Recovered files inside `lost+found` must be handled before
+initialization; the helper never adopts or deletes them. After mounting it,
+run once as the service operator:
 
 ```sh
 scripts/storage-pool.py init \
