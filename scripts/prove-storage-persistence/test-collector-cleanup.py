@@ -132,10 +132,63 @@ class CollectorCleanup(unittest.TestCase):
         self.assertIn("stop failed", notes)
         self.assertIn("inspect failed", notes)
 
+    def test_boot_conflict_does_not_remove_preexisting_tracked_id(self):
+        collect.vm.register_owned(IDENT)
+        primary = AssertionError("test VM container name already exists")
+        original_record = collect.vm.record
+        with tempfile.TemporaryDirectory() as directory:
+            before = pathlib.Path(directory) / "before.json"
+            before.write_text(json.dumps([]), encoding="utf-8")
+            with mock.patch("sys.argv", ["collect.py", "--protected-before", str(before)]), mock.patch.object(
+                collect, "protected_projection", return_value=[]
+            ), mock.patch.object(collect.vm, "boot", side_effect=primary), mock.patch.object(
+                collect.vm, "run"
+            ) as run, mock.patch.object(collect.vm, "inspect") as inspect:
+                with self.assertRaises(AssertionError) as raised:
+                    collect.main()
+        self.assertIs(raised.exception, primary)
+        run.assert_not_called()
+        inspect.assert_not_called()
+        self.assertEqual(collect.vm.active_owned_id(), IDENT)
+        self.assertIs(collect.vm.record, original_record)
+
+    def test_boot_failure_retries_registered_id_when_first_cleanup_failed(self):
+        state = {
+            "Id": IDENT,
+            "Config": {"Labels": {"io.fogell.persistence.boot": "d" * 32}},
+            "State": {"Running": False, "Pid": 42},
+        }
+        removed = []
+        primary = RuntimeError("boot record failed")
+        def boot(_):
+            collect.vm.register_owned(IDENT)
+            raise primary
+        def inspect(container_id=None):
+            self.assertEqual(container_id, IDENT)
+            return None if removed else state
+        def run(args, **_):
+            self.assertEqual(args, ["podman", "rm", "--force", IDENT])
+            removed.append(IDENT)
+            return mock.Mock(stdout="")
+        with tempfile.TemporaryDirectory() as directory:
+            before = pathlib.Path(directory) / "before.json"
+            before.write_text(json.dumps([]), encoding="utf-8")
+            with mock.patch("sys.argv", ["collect.py", "--protected-before", str(before)]), mock.patch.object(
+                collect, "protected_projection", return_value=[]
+            ), mock.patch.object(collect.vm, "boot", side_effect=boot), mock.patch.object(
+                collect.vm, "inspect", side_effect=inspect
+            ), mock.patch.object(collect.vm, "run", side_effect=run):
+                with self.assertRaises(RuntimeError) as raised:
+                    collect.main()
+        self.assertIs(raised.exception, primary)
+        self.assertEqual(removed, [IDENT])
+        self.assertIsNone(collect.vm.OWNED_ID)
+
     def test_main_failure_points_use_captured_id_and_restore_callback(self):
         failure_points = ("guest", "disks", "qemu", "protected", "record", "write")
         for point in failure_points:
             with self.subTest(point=point), tempfile.TemporaryDirectory() as directory:
+                collect.vm.OWNED_ID = None
                 before = pathlib.Path(directory) / "before.json"
                 before.write_text(json.dumps([]), encoding="utf-8")
                 primary = RuntimeError(point + " failed")
@@ -163,7 +216,7 @@ class CollectorCleanup(unittest.TestCase):
                     with self.assertRaises(RuntimeError) as raised:
                         collect.main()
                     self.assertIs(raised.exception, primary)
-                    collect.finish_collector.assert_called_once_with(None if point == "record" else IDENT, primary)
+                    collect.finish_collector.assert_called_once_with(IDENT, primary)
                     if point != "record":
                         guest.assert_called_once_with(IDENT)
                 self.assertIs(collect.vm.record, original_record)

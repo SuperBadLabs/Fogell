@@ -150,6 +150,7 @@ def main():
     original_record = vm.record
     vm.record = collector_record
     container_id = None
+    previous_owned_id = vm.active_owned_id()
     try:
         vm.boot("evidence-collection")
         container_id = vm.active_owned_id()
@@ -163,6 +164,12 @@ def main():
             fail("protected services changed during campaign")
         write_json(vm.ROOT / "supplemental.json", collected)
     except BaseException as primary:
+        # vm.boot registers immediately after podman run. If its own first
+        # removal failed before boot returned, retry that exact retained ID.
+        if container_id is None:
+            candidate = vm.active_owned_id()
+            if candidate != previous_owned_id:
+                container_id = candidate
         try:
             finish_collector(container_id, primary)
         except BaseException as cleanup_error:
