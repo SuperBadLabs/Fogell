@@ -58,3 +58,8 @@ the new receipt does not claim a fresh Luigi run. Later changes only clarify
 diagnostic ownership and uncertain starts, and reuse the existing fenced-requeue
 logging helper. Their validation belongs to the full local/hosted gates, not to
 the measured binary recorded in either sandbox receipt.
+
+A later operator-helper correction rolls back its own metadata after failed
+initialization. The rootless operator proof covers interrupted writes, directory
+sync failure, clean retry, and preservation of existing/replaced metadata. This
+helper-only correction is not attributed to the earlier sandbox campaigns.

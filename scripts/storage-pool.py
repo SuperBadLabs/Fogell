@@ -155,6 +155,61 @@ def write_exact(fd: int, data: bytes, description: str) -> None:
     os.fsync(fd)
 
 
+def close_created_metadata(created: list[tuple[str, int]]) -> list[str]:
+    failures: list[str] = []
+    for name, fd in reversed(created):
+        try:
+            os.close(fd)
+        except OSError as error:
+            failures.append(f"{name} descriptor cannot be closed ({error.strerror})")
+    return failures
+
+
+def unlink_created_metadata(pool_fd: int, created: list[tuple[str, int]]) -> list[str]:
+    """Remove only files created by this init invocation, in reverse order.
+
+    The mounted-pool directory flock coordinates Fogell controllers and this
+    helper.  The still-open O_EXCL descriptors supply the expected identities;
+    pathname revalidation detects an observed replacement before deletion.
+    This is not a hostile same-UID race boundary.
+    """
+    failures: list[str] = []
+    for name, fd in reversed(created):
+        try:
+            expected = identity(fd)
+        except OSError as error:
+            failures.append(f"{name} descriptor cannot be inspected for rollback ({error.strerror})")
+            continue
+        try:
+            path_status = os.stat(name, dir_fd=pool_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            # The created name is already absent. Do not turn that into a
+            # deletion of a later entry if a cooperating actor removed it.
+            continue
+        except OSError as error:
+            failures.append(f"{name} cannot be inspected for rollback ({error.strerror})")
+            continue
+        try:
+            path_identity = FileIdentity(path_status.st_dev, path_status.st_ino)
+            if path_identity != expected:
+                failures.append(f"{name} was replaced before rollback")
+                continue
+            if not stat.S_ISREG(path_status.st_mode):
+                failures.append(f"{name} is no longer a regular file before rollback")
+                continue
+            try:
+                os.unlink(name, dir_fd=pool_fd)
+            except OSError as error:
+                failures.append(f"{name} cannot be removed during rollback ({error.strerror})")
+        except Exception as error:
+            failures.append(f"{name} rollback failed ({type(error).__name__})")
+    try:
+        os.fsync(pool_fd)
+    except OSError as error:
+        failures.append(f"workspace pool directory cannot be fsynced after rollback ({error.strerror})")
+    return failures
+
+
 def valid_pool_id(pool_id: str) -> str:
     allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
     if not pool_id or len(pool_id) > 64 or any(character not in allowed for character in pool_id):
@@ -267,22 +322,35 @@ def init(args: argparse.Namespace) -> int:
             if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
                 refuse("workspace pool lost+found is not an ordinary directory")
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
-        marker_fd = state_fd = None
+        created: list[tuple[str, int]] = []
+        failure: Exception | None = None
         try:
             marker_fd = os.open(MARKER_FILE, flags, 0o600, dir_fd=pool_fd)
+            created.append((MARKER_FILE, marker_fd))
             os.fchmod(marker_fd, 0o600)
             write_exact(marker_fd, pool_id.encode("utf-8"), "storage pool marker")
             state_fd = os.open(STATE_FILE, flags, 0o600, dir_fd=pool_fd)
+            created.append((STATE_FILE, state_fd))
             os.fchmod(state_fd, 0o600)
             write_exact(state_fd, bytes(STATE_BYTES), "storage pool state")
             os.fsync(pool_fd)
         except FileExistsError:
-            refuse("storage pool marker or state already exists; init never overwrites")
-        finally:
-            if state_fd is not None:
-                os.close(state_fd)
-            if marker_fd is not None:
-                os.close(marker_fd)
+            failure = PoolError("storage pool marker or state already exists; init never overwrites")
+        except PoolError as error:
+            failure = error
+        except OSError as error:
+            failure = PoolError(f"storage pool initialization failed ({error.strerror})")
+        except Exception as error:
+            failure = PoolError(f"storage pool initialization failed ({type(error).__name__})")
+        if failure is not None:
+            rollback_failures = unlink_created_metadata(pool_fd, created) if created else []
+            rollback_failures.extend(close_created_metadata(created))
+            if rollback_failures:
+                refuse(f"{failure}; metadata rollback incomplete: {'; '.join(rollback_failures)}")
+            raise failure
+        close_failures = close_created_metadata(created)
+        if close_failures:
+            refuse(f"storage pool initialization metadata close failed: {'; '.join(close_failures)}")
     finally:
         os.close(pool_fd)
         os.close(root_fd)

@@ -47,6 +47,12 @@ workspaces/.fogell-pool-state    mode 0600, exactly 4096 zero bytes
 It never overwrites or adopts either file. Both files and the workspace
 directory are fsynced before success.
 
+If initialization reports a write or sync failure, it rolls back only metadata
+created by that invocation while retaining the pool lock. Existing or observed
+replacement files are preserved. An incomplete rollback is reported explicitly;
+do not treat it, or an interrupted initializer, as a successfully initialized
+pool.
+
 Set all five variables on every controller sharing this pool:
 
 ```text
