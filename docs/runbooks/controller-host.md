@@ -184,6 +184,14 @@ advances the fence. A concurrent cancellation request remains set for the
 replacement to observe before launch. Neither loss path materializes work,
 begins execution, or enters reconciliation. The worker never recreates a missing
 root.
+For a hard aggregate bound on workspace, stash, artifact, and runner scratch
+writes, configure the opt-in [bounded storage pool](storage-pool.md). It requires
+a separate operator-provisioned filesystem at `STATE_ROOT/workspaces`, finite
+byte and inode limits, all five `FOGELL_STORAGE_POOL_*` settings, and initialized
+pool markers. Ordinary directories and missing mounts fail closed. This mode
+admits one local writer; a dirty crash marker requires explicit reconciliation.
+The default without these settings remains unmanaged workspace storage.
+
 Put the state root on storage whose loss/recovery policy matches the PostgreSQL
 database; an incomplete journal is a reconciliation
 event, not permission to guess success.

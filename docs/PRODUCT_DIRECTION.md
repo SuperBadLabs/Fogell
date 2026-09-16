@@ -29,8 +29,14 @@ and bounded artifact publication and interrupted-copy cleanup. The
 [controller runbook](runbooks/controller-host.md) owns the settings and limits.
 The PRs linked in ADR 0010 own their measured validation results.
 
-These controls do not bound arbitrary workspace writes or total historical
-storage. Missing terminal execution evidence still requires reconciliation.
+The opt-in [bounded storage pool](runbooks/storage-pool.md) adds kernel-enforced
+aggregate workspace, stash, artifact, and runner scratch limits for one local
+worker. It requires an operator-provisioned dedicated filesystem with finite
+bytes and inodes. Free-space guards control admission; an exclusive durable
+pool marker prevents overlapping Fogell writers and blocks uncertain restart.
+It is not a per-build quota, concurrent-worker reservation, or history-retention
+policy. Without this opt-in policy, arbitrary workspace writes remain unbounded.
+Missing terminal execution evidence still requires reconciliation.
 
 ## Release gates
 
@@ -46,10 +52,12 @@ over this sequence.
 | 3 — Operator recovery | Installation, upgrade/rollback, paired database/state backup and restore, reconciliation procedures, and useful health/capacity signals. | Run the procedures against a disposable deployment, including interrupted upgrade and stale workers after restore. Record recovery time and any data loss; compare them with explicit release targets. Do not claim a target before measuring it. |
 | 4 — Controlled pilot | A versioned migration profile, actionable eligibility report, named representative CI jobs, and a sustained load/failure campaign. | A pipeline gets a supported, needs-change, or refused disposition with reasons. Approved jobs run through Controller.Host, preserve expected outputs and artifacts, and survive the declared cancellation/restart cases. Pin the profile, workload, concurrency, duration, resource limits, and pass thresholds before the campaign. Include Fogell building and testing itself as a candidate workload, subject to that profile. |
 
-For batch 1, filesystem quotas or a stronger worker boundary may be required.
-Application-side byte counting alone cannot contain an arbitrary shell writer.
-The design must choose and demonstrate the actual enforcement mechanism before
-calling workspace bounds complete.
+Batch 1's first implementation uses a dedicated filesystem as the aggregate
+write boundary and admits one Fogell writer at a time. The storage-pool runbook
+states its enforcement, recovery, and trust assumptions. Per-build isolation
+and concurrent workers would require independently enforced slots or quotas;
+application byte counting cannot provide either. Persistent deployment and
+recovery evidence remain necessary before closing the broader release gate.
 
 ## Selecting work from the existing board
 

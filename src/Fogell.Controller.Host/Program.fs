@@ -262,7 +262,8 @@ let private run () =
                     |> ignore
                     builder.Services.AddSingleton<ControllerConfig>(config) |> ignore
                     builder.Services.AddSingleton<Store>(runtimeStore) |> ignore
-                    builder.Services.AddHostedService<LocalWorker>() |> ignore
+                    builder.Services.AddSingleton<LocalWorker>() |> ignore
+                    builder.Services.AddHostedService<LocalWorker>(fun services -> services.GetRequiredService<LocalWorker>()) |> ignore
                     let app = builder.Build()
 
                     app.UseExceptionHandler(fun errorApp ->
@@ -281,7 +282,7 @@ let private run () =
                                     runtimeStore.Ping
                                     runtimeStore.RuntimeCapabilities
                                     (fun () -> ControllerConfig.executionLaunchersReady config)
-                                    (fun () -> stateRootReadiness.Cached()))
+                                    (fun () -> stateRootReadiness.Cached() && app.Services.GetRequiredService<LocalWorker>().StorageReady()))
                                 ctx))
                     |> ignore
 

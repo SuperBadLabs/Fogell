@@ -517,11 +517,13 @@ let environmentIsolation =
                   psi
                   [ "PATH", requestedPath
                     "HOME", neutralHome
+                    "TMPDIR", IO.Path.Combine(neutralHome, "tmp")
                     "DECLARED", "pipeline-value" ]
 
-              Expect.equal psi.Environment.Count 3 "no ambient or pre-seeded key survives replacement"
+              Expect.equal psi.Environment.Count 4 "no ambient or pre-seeded key survives replacement"
               Expect.equal psi.Environment["PATH"] requestedPath "explicit PATH remains"
               Expect.equal psi.Environment["HOME"] neutralHome "neutral build HOME remains"
+              Expect.equal psi.Environment["TMPDIR"] (IO.Path.Combine(neutralHome, "tmp")) "build-local TMPDIR remains"
               Expect.equal psi.Environment["DECLARED"] "pipeline-value" "declared value remains"
 
               for name, value in planted do
@@ -531,6 +533,7 @@ let environmentIsolation =
 
           test "a real shell receives only neutral metadata and declared input" {
               let neutralHome = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-agent-home-test")
+              let neutralTemp = IO.Path.Combine(neutralHome, "tmp")
               let environment =
                   LaunchEnvironment.buildBaseline neutralHome
                   @ [ "DECLARED", "pipeline-value" ]
@@ -539,6 +542,7 @@ let environmentIsolation =
                   environment
                   [ "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
                     "HOME", neutralHome
+                    "TMPDIR", neutralTemp
                     "DECLARED", "pipeline-value" ]
                   "the implicit baseline cannot widen without changing this contract"
 
@@ -550,6 +554,7 @@ let environmentIsolation =
               Expect.equal result.Status Success "the shell completed"
               Expect.stringContains result.Stdout "DECLARED=pipeline-value" "declared env is present"
               Expect.stringContains result.Stdout $"HOME={neutralHome}" "neutral HOME is present"
+              Expect.stringContains result.Stdout $"TMPDIR={neutralTemp}" "build-local TMPDIR is present"
               Expect.stringContains result.Stdout "PATH=" "approved PATH is present"
 
               for name in [ "FOGELL_CREDENTIALS"; "FOGELL_CREDENTIALS_FILE"; "DATABASE_URL"; "CONTROLLER_API_TOKEN"; "SSH_AUTH_SOCK" ] do
@@ -559,6 +564,7 @@ let environmentIsolation =
           test "the production controller SCM snapshot copies only approved names" {
               let planted =
                   [ "SSH_AUTH_SOCK", "fg222-approved-agent"
+                    "TMPDIR", "/tmp/fogell-controller-scm"
                     "FG222_CUSTOM_SCM", "fg222-approved-custom"
                     "FOGELL_SCM_ENV_ALLOWLIST", "FG222_CUSTOM_SCM"
                     "CONTROLLER_API_TOKEN", "fg222-denied-api"
@@ -576,7 +582,7 @@ let environmentIsolation =
 
                   let allowed =
                       set
-                          [ "PATH"; "HOME"; "USER"; "LOGNAME"; "XDG_CONFIG_HOME"
+                          [ "PATH"; "HOME"; "TMPDIR"; "USER"; "LOGNAME"; "XDG_CONFIG_HOME"
                             "SSH_AUTH_SOCK"; "SSH_ASKPASS"; "GIT_ASKPASS"; "GIT_SSH"; "GIT_SSH_COMMAND"
                             "GIT_CONFIG_GLOBAL"; "GIT_CONFIG_SYSTEM"; "GIT_SSL_CAINFO"
                             "SSL_CERT_FILE"; "SSL_CERT_DIR"
@@ -588,6 +594,7 @@ let environmentIsolation =
                       Expect.isTrue (allowed.Contains key) $"production SCM profile contains only approved key {key}"
 
                   Expect.equal psi.Environment["SSH_AUTH_SOCK"] "fg222-approved-agent" "standard SCM authority is present"
+                  Expect.equal psi.Environment["TMPDIR"] "/tmp/fogell-controller-scm" "controller SCM temp root is explicit"
                   Expect.equal psi.Environment["FG222_CUSTOM_SCM"] "fg222-approved-custom" "opted-in authority is present"
                   Expect.isFalse (psi.Environment.ContainsKey "FOGELL_SCM_ENV_ALLOWLIST") "the selector is not copied"
                   Expect.isFalse (psi.Environment.ContainsKey "CONTROLLER_API_TOKEN") "unapproved API control is absent"

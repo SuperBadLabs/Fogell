@@ -2485,6 +2485,7 @@ let effectDispatch =
               PollMilliseconds = 50
               LeaseSeconds = leaseSeconds
               ArtifactLimits = ArtifactLimits.Defaults
+              StoragePool = None
               EffectProducers = { FileDropRoot = Some dropRoot; KillAt = None } }
 
         new LocalWorker(
@@ -3830,7 +3831,8 @@ let main argv =
                 (testSequenced
                     (testList
                         "Fogell.Controller.Api"
-                        [ stateRootReadiness
+                        [ Fogell.Controller.Api.StoragePoolTests.tests
+                          stateRootReadiness
                           databaseStartupBoundary
                           hostFootprint
                           executionLauncherValidation

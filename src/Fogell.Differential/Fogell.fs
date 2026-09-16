@@ -802,6 +802,11 @@ module FogellSide =
             ensurePrivateDirectory buildHomeRoot
             let buildHome = agentHome workspaceRoot jobName buildNumber
             ensurePrivateDirectory buildHome
+            // A build's default temporary files must stay under the same
+            // workspace root as HOME.  This is created before the baseline is
+            // assembled so tools such as mktemp never fall back to a controller
+            // filesystem when the caller did not declare TMPDIR explicitly.
+            ensurePrivateDirectory (Path.Combine(buildHome, "tmp"))
             // FG-105: the run-scoped mutable state lives in WalkerCtx — one record,
             // one stated contract (see WalkerCtx.fs for its two-lock discipline).
             // These rebinds keep call sites unchanged.
@@ -1174,7 +1179,8 @@ module FogellSide =
                 let jenkinsProvided =
                     // FG-110: in a sequence these must INCREMENT — Jenkins' do, and
                     // `when { environment name: 'BUILD_NUMBER' ... }` selects on them.
-                    // FG-222: PATH and HOME are the measured compatibility baseline.
+                    // FG-222: PATH, HOME, and build-local TMPDIR are the measured
+                    // compatibility baseline.
                     // They enter the same explicit map used by GStrings, shell and
                     // runtime Git. No other controller variable is build-visible.
                     LaunchEnvironment.buildBaseline buildHome

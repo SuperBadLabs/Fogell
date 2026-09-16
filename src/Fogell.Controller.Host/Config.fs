@@ -22,6 +22,7 @@ type ControllerConfig =
       PollMilliseconds: int
       LeaseSeconds: int
       ArtifactLimits: ArtifactLimits
+      StoragePool: StoragePoolPolicy option
       /// FG-026b. Which registered external-effect producers are enabled.
       EffectProducers: EffectProducerConfig }
 
@@ -413,6 +414,7 @@ module ControllerConfig =
         let poll = positiveInt "FOGELL_WORKER_POLL_MS" 25 60000
         let lease = positiveInt "FOGELL_WORKER_LEASE_SECONDS" 10 3600
         let artifactLimits = ArtifactPolicy.loadEnvironment ()
+        let storagePool = StoragePool.parse Environment.GetEnvironmentVariable
         let workerTiming =
             match poll, lease with
             | Ok pollMilliseconds, Ok leaseSeconds ->
@@ -425,7 +427,8 @@ module ControllerConfig =
                     maxLogs |> Result.map string
                     poll |> Result.map string
                     lease |> Result.map string
-                    workerTiming |> Result.map string ],
+                    workerTiming |> Result.map string
+                    storagePool |> Result.map string ],
               artifactLimits with
         | Error error, _, _
         | _, Error error, _
@@ -483,6 +486,7 @@ module ControllerConfig =
                                           PollMilliseconds = value poll
                                           LeaseSeconds = value lease
                                           ArtifactLimits = artifactLimits
+                                          StoragePool = value storagePool
                                           EffectProducers = effectProducers }
 
     let internal loadWithSetsidLauncher setsidLauncher =

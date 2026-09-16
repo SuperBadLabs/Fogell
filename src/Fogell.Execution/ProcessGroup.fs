@@ -27,12 +27,13 @@ module LaunchEnvironment =
     let private selected names = names |> List.choose ambient
 
     /// The measured environment-of-necessity for Jenkins compatibility. PATH is
-    /// required by ordinary shell commands. HOME is a Fogell-owned neutral path,
-    /// not the controller account's home; three sealed cases require it to exist.
+    /// required by ordinary shell commands. HOME and TMPDIR are Fogell-owned
+    /// build-local paths, not the controller account's home or temporary area.
     /// Everything else must be declared by the build.
     let buildBaseline agentHome =
         [ "PATH", FallbackPath
-          "HOME", agentHome ]
+          "HOME", agentHome
+          "TMPDIR", IO.Path.Combine(agentHome, "tmp") ]
 
     /// Construct an opaque controller-SCM profile from already validated
     /// controller configuration. It cannot be passed to a build launcher.
@@ -88,6 +89,7 @@ module LaunchEnvironment =
         let standard =
             [ "PATH"
               "HOME"
+              "TMPDIR"
               "USER"
               "LOGNAME"
               "XDG_CONFIG_HOME"

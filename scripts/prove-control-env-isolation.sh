@@ -58,6 +58,8 @@ pipeline {
                             printf '%s' "$WITH_ENV" > withenv.txt
                             printf '%s' "$PATH" > path.txt
                             printf '%s' "$HOME" > home.txt
+                            printf '%s' "$TMPDIR" > tmpdir.txt
+                            /usr/bin/mktemp > default-temp.txt
                             printf '%s' "$TOKEN" > credential.txt
                             echo "credential=$TOKEN"
                         '''
@@ -115,7 +117,7 @@ judge() {
   local actual_path
   actual_path=$(cat "$ws/path.txt" 2>/dev/null || true)
   case "$actual_path" in
-    /fg222/withenv:"$LIVE"/fakebin:*) ;;
+    /fg222/withenv:"$state"/fakebin:*) ;;
     *) echo "  FAIL: PATH overlay order is wrong [$actual_path]"; failures=$((failures + 1)) ;;
   esac
   local build_home
@@ -128,14 +130,26 @@ judge() {
     || { echo "  FAIL: HOME is not the neutral build path"; failures=$((failures + 1)); }
   [ -d "$build_home" ] \
     || { echo "  FAIL: build-scoped neutral HOME was not materialized"; failures=$((failures + 1)); }
+  local build_tmp
+  build_tmp=$(cat "$ws/tmpdir.txt" 2>/dev/null || true)
+  [ "$build_tmp" = "$build_home/tmp" ] \
+    || { echo "  FAIL: TMPDIR is not the build-local temporary directory [$build_tmp]"; failures=$((failures + 1)); }
+  [ -d "$build_tmp" ] && [ "$(stat -c %a "$build_tmp" 2>/dev/null || true)" = 700 ] \
+    || { echo "  FAIL: build-local TMPDIR was not materialized privately"; failures=$((failures + 1)); }
+  local default_temp
+  default_temp=$(cat "$ws/default-temp.txt" 2>/dev/null || true)
+  case "$default_temp" in
+    "$build_tmp"/*) [ -f "$default_temp" ] || { echo "  FAIL: mktemp result was not materialized"; failures=$((failures + 1)); } ;;
+    *) echo "  FAIL: mktemp escaped build-local TMPDIR [$default_temp]"; failures=$((failures + 1)) ;;
+  esac
   [ "$(cat "$ws/credential.txt" 2>/dev/null || true)" = "$CREDENTIAL_SECRET" ] \
     || { echo "  FAIL: explicit credential binding was lost"; failures=$((failures + 1)); }
   [ -s "$ws/child.env" ] || { echo "  FAIL: shell env capture missing"; failures=$((failures + 1)); }
   [ -s "$state/build-git.env" ] && grep -qx __CALL__ "$state/build-git.env" \
     || { echo "  FAIL: build Git did not traverse the recording launcher"; failures=$((failures + 1)); }
 
-  local shell_allowed=' BUILD_DISPLAY_NAME BUILD_ID BUILD_NUMBER DECLARED EXECUTOR_NUMBER GIT_CAPTURE HOME JOB_BASE_NAME JOB_NAME NODE_NAME PATH PWD TOKEN TOKEN_FILE WITH_ENV WORKSPACE '
-  local git_allowed=' BUILD_DISPLAY_NAME BUILD_ID BUILD_NUMBER DECLARED EXECUTOR_NUMBER GIT_CAPTURE HOME JOB_BASE_NAME JOB_NAME NODE_NAME PATH PWD WORKSPACE __CALL__ '
+  local shell_allowed=' BUILD_DISPLAY_NAME BUILD_ID BUILD_NUMBER DECLARED EXECUTOR_NUMBER GIT_CAPTURE HOME JOB_BASE_NAME JOB_NAME NODE_NAME PATH PWD TMPDIR TOKEN TOKEN_FILE WITH_ENV WORKSPACE '
+  local git_allowed=' BUILD_DISPLAY_NAME BUILD_ID BUILD_NUMBER DECLARED EXECUTOR_NUMBER GIT_CAPTURE HOME JOB_BASE_NAME JOB_NAME NODE_NAME PATH PWD TMPDIR WORKSPACE __CALL__ '
   local name
   while IFS='=' read -r name _; do
     case "$shell_allowed" in
@@ -150,8 +164,46 @@ judge() {
     esac
   done < "$state/build-git.env"
 
+  local tmp_status
+  if awk -v expected="$build_tmp" '
+      index($0, "TMPDIR=") == 1 { count++; if ($0 != "TMPDIR=" expected) wrong = 1 }
+      END { if (wrong) exit 2; if (count != 1) exit 3 }
+    ' "$ws/child.env"; then
+    :
+  else
+    tmp_status=$?
+    case "$tmp_status" in
+      2) echo "  FAIL: child.env has a non-build-local TMPDIR" ;;
+      *) echo "  FAIL: child.env does not contain exactly one build-local TMPDIR" ;;
+    esac
+    failures=$((failures + 1))
+  fi
+  if awk -v expected="$build_tmp" '
+      $0 == "__CALL__" {
+        calls++
+        if (!opened || count != 1) bad_count = 1
+        opened = 0; count = 0
+        next
+      }
+      { opened = 1 }
+      index($0, "TMPDIR=") == 1 { count++; if ($0 != "TMPDIR=" expected) wrong = 1 }
+      END {
+        if (wrong) exit 2
+        if (calls == 0 || opened || bad_count) exit 3
+      }
+    ' "$state/build-git.env"; then
+    :
+  else
+    tmp_status=$?
+    case "$tmp_status" in
+      2) echo "  FAIL: build-git.env has a non-build-local TMPDIR" ;;
+      *) echo "  FAIL: build-git.env does not contain exactly one build-local TMPDIR per call" ;;
+    esac
+    failures=$((failures + 1))
+  fi
+
   for capture in "$ws/child.env" "$state/build-git.env"; do
-    for name in FOGELL_CREDENTIALS FOGELL_CREDENTIALS_FILE DATABASE_URL CONTROLLER_API_TOKEN SSH_AUTH_SOCK GIT_ASKPASS TMPDIR; do
+    for name in FOGELL_CREDENTIALS FOGELL_CREDENTIALS_FILE DATABASE_URL CONTROLLER_API_TOKEN SSH_AUTH_SOCK GIT_ASKPASS; do
       ! grep -q "^${name}=" "$capture" 2>/dev/null \
         || { echo "  FAIL: $(basename "$capture") inherited $name"; failures=$((failures + 1)); }
     done
@@ -169,12 +221,32 @@ judge() {
 }
 
 expect_planted_failure() {
-  local label=$1 state=$2
-  if judge "$state" >/dev/null 2>&1; then
+  local label=$1 state=$2 expected=${3:-} output
+  if output=$(judge "$state" 2>&1); then
     echo "  FAIL: checker accepted planted $label state"
     exit 1
   fi
+  if [ -n "$expected" ] && ! grep -Fq "$expected" <<<"$output"; then
+    echo "  FAIL: checker rejected planted $label without naming [$expected]"
+    exit 1
+  fi
   echo "  checker rejected planted $label state"
+}
+
+copy_fixture() {
+  local state=$1 file
+  cp -a "$LIVE" "$state"
+  # Captures contain absolute LIVE paths.  Normalize only owned text fixtures
+  # so a copied clean control remains accepted before its planted mutation.
+  for file in \
+    "$state/ws/job/home.txt" "$state/ws/job/tmpdir.txt" "$state/ws/job/default-temp.txt" \
+    "$state/ws/job/path.txt" "$state/ws/job/child.env" "$state/build-git.env"; do
+    sed -i "s|$LIVE|$state|g" "$file"
+  done
+  if ! judge "$state" >/dev/null 2>&1; then
+    echo "  FAIL: copied clean control was rejected before a planted mutation"
+    exit 1
+  fi
 }
 
 judge_status "$run_status" live
@@ -187,17 +259,23 @@ if rg -n 'Environment\.GetEnvironmentVariable(s)?' src/Fogell.Differential/GStri
 fi
 
 for spec in ordinary-status:7 timeout-status:124 signal-status:143; do
-  label=${spec%%:*}; value=${spec##*:}; state="$LAB/planted-$label"; cp -a "$LIVE" "$state"
+  label=${spec%%:*}; value=${spec##*:}; state="$LAB/planted-$label"; copy_fixture "$state"
   printf '%s\n' "$value" > "$state/run.status"; expect_planted_failure "$label" "$state"
 done
 
-state="$LAB/planted-simple"; cp -a "$LIVE" "$state"; printf 'simple=present' > "$state/ws/job/simple.txt"; expect_planted_failure simple-gstring "$state"
-state="$LAB/planted-complex"; cp -a "$LIVE" "$state"; printf 'complex=present' > "$state/ws/job/complex.txt"; expect_planted_failure complex-gstring "$state"
-state="$LAB/planted-shell"; cp -a "$LIVE" "$state"; printf 'CONTROLLER_API_TOKEN=%s\n' "$API_CONTROL" >> "$state/ws/job/child.env"; expect_planted_failure shell-env "$state"
-state="$LAB/planted-git"; cp -a "$LIVE" "$state"; printf 'SSH_AUTH_SOCK=%s\n' "$SCM_CONTROL" >> "$state/build-git.env"; expect_planted_failure build-git-env "$state"
-state="$LAB/planted-home"; cp -a "$LIVE" "$state"; printf '/home/controller' > "$state/ws/job/home.txt"; expect_planted_failure controller-home "$state"
-state="$LAB/planted-declared"; cp -a "$LIVE" "$state"; printf lost > "$state/ws/job/declared.txt"; expect_planted_failure declared-env "$state"
-state="$LAB/planted-credential"; cp -a "$LIVE" "$state"; printf lost > "$state/ws/job/credential.txt"; expect_planted_failure credential-binding "$state"
-state="$LAB/planted-mask"; cp -a "$LIVE" "$state"; sed -i "s/credential=\*\*\*\*/credential=$CREDENTIAL_SECRET/g" "$state/run.log"; expect_planted_failure credential-mask "$state"
+state="$LAB/planted-simple"; copy_fixture "$state"; printf 'simple=present' > "$state/ws/job/simple.txt"; expect_planted_failure simple-gstring "$state"
+state="$LAB/planted-complex"; copy_fixture "$state"; printf 'complex=present' > "$state/ws/job/complex.txt"; expect_planted_failure complex-gstring "$state"
+state="$LAB/planted-shell"; copy_fixture "$state"; printf 'CONTROLLER_API_TOKEN=%s\n' "$API_CONTROL" >> "$state/ws/job/child.env"; expect_planted_failure shell-env "$state"
+state="$LAB/planted-git"; copy_fixture "$state"; printf 'SSH_AUTH_SOCK=%s\n' "$SCM_CONTROL" >> "$state/build-git.env"; expect_planted_failure build-git-env "$state"
+state="$LAB/planted-shell-tmpdir"; copy_fixture "$state"; printf 'TMPDIR=%s\n' "$TMPDIR_CONTROL" >> "$state/ws/job/child.env"; expect_planted_failure shell-controller-tmpdir "$state" 'child.env has a non-build-local TMPDIR'
+state="$LAB/planted-git-tmpdir"; copy_fixture "$state"; printf 'TMPDIR=%s\n' "$TMPDIR_CONTROL" >> "$state/build-git.env"; expect_planted_failure build-git-controller-tmpdir "$state" 'build-git.env has a non-build-local TMPDIR'
+state="$LAB/planted-shell-wrong-tmpdir"; copy_fixture "$state"; printf 'TMPDIR=%s\n' "$LAB/foreign-tmp" >> "$state/ws/job/child.env"; expect_planted_failure shell-wrong-tmpdir "$state" 'child.env has a non-build-local TMPDIR'
+state="$LAB/planted-git-wrong-tmpdir"; copy_fixture "$state"; printf 'TMPDIR=%s\n' "$LAB/foreign-tmp" >> "$state/build-git.env"; expect_planted_failure build-git-wrong-tmpdir "$state" 'build-git.env has a non-build-local TMPDIR'
+state="$LAB/planted-git-missing-tmpdir"; copy_fixture "$state"; awk 'BEGIN { removed = 0 } /^TMPDIR=/ && !removed { removed = 1; next } { print }' "$state/build-git.env" > "$state/build-git.env.tmp"; mv "$state/build-git.env.tmp" "$state/build-git.env"; expect_planted_failure build-git-missing-tmpdir "$state" 'build-git.env does not contain exactly one build-local TMPDIR per call'
+state="$LAB/planted-shell-missing-tmpdir"; copy_fixture "$state"; sed -i '/^TMPDIR=/d' "$state/ws/job/child.env"; expect_planted_failure shell-missing-tmpdir "$state" 'child.env does not contain exactly one build-local TMPDIR'
+state="$LAB/planted-home"; copy_fixture "$state"; printf '/home/controller' > "$state/ws/job/home.txt"; expect_planted_failure controller-home "$state"
+state="$LAB/planted-declared"; copy_fixture "$state"; printf lost > "$state/ws/job/declared.txt"; expect_planted_failure declared-env "$state"
+state="$LAB/planted-credential"; copy_fixture "$state"; printf lost > "$state/ws/job/credential.txt"; expect_planted_failure credential-binding "$state"
+state="$LAB/planted-mask"; copy_fixture "$state"; sed -i "s/credential=\*\*\*\*/credential=$CREDENTIAL_SECRET/g" "$state/run.log"; expect_planted_failure credential-mask "$state"
 
 echo "FG-222 controller environment proof: PASS"

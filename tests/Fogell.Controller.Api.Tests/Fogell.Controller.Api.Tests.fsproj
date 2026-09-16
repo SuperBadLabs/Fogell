@@ -2,6 +2,7 @@
   <PropertyGroup><OutputType>Exe</OutputType><IsPackable>false</IsPackable></PropertyGroup>
   <ItemGroup>
     <Compile Include="ArtifactSnapshotCleanupTests.fs" />
+    <Compile Include="StoragePoolTests.fs" />
     <Compile Include="Tests.fs" />
   </ItemGroup>
   <ItemGroup>
