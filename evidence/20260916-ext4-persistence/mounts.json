@@ -1,0 +1,185 @@
+{
+   "filesystems": [
+      {
+         "target": "/",
+         "source": "/dev/vda1",
+         "fstype": "ext4",
+         "options": "rw,relatime,discard,errors=remount-ro,commit=30",
+         "uuid": "9a3e62be-4b82-4a7a-8f47-0b25d728fa3a",
+         "children": [
+            {
+               "target": "/sys",
+               "source": "sysfs",
+               "fstype": "sysfs",
+               "options": "rw,nosuid,nodev,noexec,relatime",
+               "uuid": null,
+               "children": [
+                  {
+                     "target": "/sys/kernel/security",
+                     "source": "securityfs",
+                     "fstype": "securityfs",
+                     "options": "rw,nosuid,nodev,noexec,relatime",
+                     "uuid": null
+                  },{
+                     "target": "/sys/fs/cgroup",
+                     "source": "cgroup2",
+                     "fstype": "cgroup2",
+                     "options": "rw,nosuid,nodev,noexec,relatime,nsdelegate,memory_recursiveprot",
+                     "uuid": null
+                  },{
+                     "target": "/sys/fs/pstore",
+                     "source": "pstore",
+                     "fstype": "pstore",
+                     "options": "rw,nosuid,nodev,noexec,relatime",
+                     "uuid": null
+                  },{
+                     "target": "/sys/fs/bpf",
+                     "source": "bpf",
+                     "fstype": "bpf",
+                     "options": "rw,nosuid,nodev,noexec,relatime,mode=700",
+                     "uuid": null
+                  },{
+                     "target": "/sys/kernel/debug",
+                     "source": "debugfs",
+                     "fstype": "debugfs",
+                     "options": "rw,nosuid,nodev,noexec,relatime",
+                     "uuid": null
+                  },{
+                     "target": "/sys/kernel/tracing",
+                     "source": "tracefs",
+                     "fstype": "tracefs",
+                     "options": "rw,nosuid,nodev,noexec,relatime",
+                     "uuid": null
+                  },{
+                     "target": "/sys/fs/fuse/connections",
+                     "source": "fusectl",
+                     "fstype": "fusectl",
+                     "options": "rw,nosuid,nodev,noexec,relatime",
+                     "uuid": null
+                  },{
+                     "target": "/sys/kernel/config",
+                     "source": "configfs",
+                     "fstype": "configfs",
+                     "options": "rw,nosuid,nodev,noexec,relatime",
+                     "uuid": null
+                  }
+               ]
+            },{
+               "target": "/proc",
+               "source": "proc",
+               "fstype": "proc",
+               "options": "rw,nosuid,nodev,noexec,relatime",
+               "uuid": null,
+               "children": [
+                  {
+                     "target": "/proc/sys/fs/binfmt_misc",
+                     "source": "systemd-1",
+                     "fstype": "autofs",
+                     "options": "rw,relatime,fd=32,pgrp=1,timeout=0,minproto=5,maxproto=5,direct,pipe_ino=3165",
+                     "uuid": null,
+                     "children": [
+                        {
+                           "target": "/proc/sys/fs/binfmt_misc",
+                           "source": "binfmt_misc",
+                           "fstype": "binfmt_misc",
+                           "options": "rw,nosuid,nodev,noexec,relatime",
+                           "uuid": null
+                        }
+                     ]
+                  }
+               ]
+            },{
+               "target": "/dev",
+               "source": "udev",
+               "fstype": "devtmpfs",
+               "options": "rw,nosuid,relatime,size=1985468k,nr_inodes=496367,mode=755,inode64",
+               "uuid": null,
+               "children": [
+                  {
+                     "target": "/dev/pts",
+                     "source": "devpts",
+                     "fstype": "devpts",
+                     "options": "rw,nosuid,noexec,relatime,gid=5,mode=620,ptmxmode=000",
+                     "uuid": null
+                  },{
+                     "target": "/dev/shm",
+                     "source": "tmpfs",
+                     "fstype": "tmpfs",
+                     "options": "rw,nosuid,nodev,inode64",
+                     "uuid": null
+                  },{
+                     "target": "/dev/hugepages",
+                     "source": "hugetlbfs",
+                     "fstype": "hugetlbfs",
+                     "options": "rw,nosuid,nodev,relatime,pagesize=2M",
+                     "uuid": null
+                  },{
+                     "target": "/dev/mqueue",
+                     "source": "mqueue",
+                     "fstype": "mqueue",
+                     "options": "rw,nosuid,nodev,noexec,relatime",
+                     "uuid": null
+                  }
+               ]
+            },{
+               "target": "/run",
+               "source": "tmpfs",
+               "fstype": "tmpfs",
+               "options": "rw,nosuid,nodev,noexec,relatime,size=400984k,mode=755,inode64",
+               "uuid": null,
+               "children": [
+                  {
+                     "target": "/run/lock",
+                     "source": "tmpfs",
+                     "fstype": "tmpfs",
+                     "options": "rw,nosuid,nodev,noexec,relatime,size=5120k,inode64",
+                     "uuid": null
+                  },{
+                     "target": "/run/user/1000",
+                     "source": "tmpfs",
+                     "fstype": "tmpfs",
+                     "options": "rw,nosuid,nodev,relatime,size=400980k,nr_inodes=100245,mode=700,uid=1000,gid=1000,inode64",
+                     "uuid": null
+                  }
+               ]
+            },{
+               "target": "/var/lib/postgresql",
+               "source": "/dev/vdd",
+               "fstype": "ext4",
+               "options": "rw,relatime",
+               "uuid": "5afeb833-c2bd-45c2-9464-d24c0abdff11"
+            },{
+               "target": "/srv/fogell/state",
+               "source": "/dev/vdc",
+               "fstype": "ext4",
+               "options": "rw,relatime",
+               "uuid": "06181a53-0e1f-4ba0-9710-210829700c72",
+               "children": [
+                  {
+                     "target": "/srv/fogell/state/workspaces",
+                     "source": "/dev/vdb",
+                     "fstype": "ext4",
+                     "options": "rw,relatime",
+                     "uuid": "e1fe42a0-4774-4a5d-b2b0-4f597c8ab487"
+                  }
+               ]
+            },{
+               "target": "/boot",
+               "source": "/dev/vda16",
+               "fstype": "ext4",
+               "options": "rw,relatime",
+               "uuid": "47e87460-6f19-41ce-8fb0-5e896fcb3673",
+               "children": [
+                  {
+                     "target": "/boot/efi",
+                     "source": "/dev/vda15",
+                     "fstype": "vfat",
+                     "options": "rw,relatime,fmask=0077,dmask=0077,codepage=437,iocharset=iso8859-1,shortname=mixed,errors=remount-ro",
+                     "uuid": "B303-7D7B"
+                  }
+               ]
+            }
+         ]
+      }
+   ]
+}

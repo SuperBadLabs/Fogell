@@ -56,8 +56,15 @@ Batch 1's first implementation uses a dedicated filesystem as the aggregate
 write boundary and admits one Fogell writer at a time. The storage-pool runbook
 states its enforcement, recovery, and trust assumptions. Per-build isolation
 and concurrent workers would require independently enforced slots or quotas;
-application byte counting cannot provide either. Persistent deployment and
-recovery evidence remain necessary before closing the broader release gate.
+application byte counting cannot provide either. The
+[persistent ext4 campaign](../evidence/20260916-ext4-persistence/README.md)
+closes the VM crash/reboot evidence gap for this single-writer profile: nine
+abrupt guest terminations cover active execution, a synced recovery receipt
+before clearing, and the completed clear. Dirty state refuses new work after
+reboot; explicit recovery preserves receipts and permits the queued control.
+This is not physical-host power-loss certification or paired backup/restore
+proof. Retention is the next delivery batch; operator recovery remains a
+separate release gate.
 
 ## Selecting work from the existing board
 

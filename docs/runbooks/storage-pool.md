@@ -76,6 +76,17 @@ A rootless Podman lab may use a dedicated tmpfs with explicit `size` and inode
 limits. Tmpfs is not production recovery storage: reboot loses its workspace
 bytes and dirty-state evidence. Use persistent ext4 for production.
 
+The [persistent ext4 evidence](../../evidence/20260916-ext4-persistence/README.md)
+records a rootless Podman/KVM guest with separate workspace, state, and
+PostgreSQL filesystems. Byte/inode exhaustion, a clean reboot, and three rounds
+of each of three abrupt VM cut points passed against the merged Release
+binaries. The dirty record and synced receipts survived reboot, and recovery
+required the expected hash and an explicit writers-extinct attestation.
+This measures guest crash persistence on the recorded configuration; it does
+not establish physical-host power-loss behavior, arbitrary backing-store
+durability, or backup/restore correctness. Keep the provisioning and recovery
+requirements below even when using that tested profile.
+
 ## Runtime scope and trust boundary
 
 The mount covers workspaces, their `@tmp` durable-script siblings, artifacts,

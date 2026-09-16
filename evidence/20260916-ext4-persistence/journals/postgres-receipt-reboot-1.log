@@ -1,0 +1,3 @@
+Sep 16 16:55:13 fogell-persistence systemd[1]: Starting postgresql@16-main.service - PostgreSQL Cluster 16-main...
+Sep 16 16:55:13 fogell-persistence postgresql@16-main[708]: Removed stale pid file.
+Sep 16 16:55:16 fogell-persistence systemd[1]: Started postgresql@16-main.service - PostgreSQL Cluster 16-main.
