@@ -30,6 +30,9 @@ type StorageAdmission(stateRoot: string, policy: StoragePoolPolicy option) =
 
     // Keep one bounded current decision on the controller filesystem. This is
     // deliberately outside the pool: ENOSPC must not erase the refusal reason.
+    // Only the lease owner may replace it. Before ownership, structural or
+    // contention refusals use worker logs/readiness, preserving an owner's
+    // durable decision when another controller probes the same state root.
     let persist decision =
         try
             if lease.IsSome && lastDecision <> Some decision then

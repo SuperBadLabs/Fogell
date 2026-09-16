@@ -543,6 +543,9 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             if not (ProcessGroup.enableChildSubreaper ()) then
                                 invalidOp "could not establish Linux child-subreaper ownership for Run.Host descendants"
 
+                            // A throwing Start is not proof that no child was
+                            // created. Retain dirty state once launch is entered;
+                            // only a pre-launch refusal proves no writer exists.
                             childStartAttempted <- true
                             child.Start())
 
@@ -956,9 +959,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                                         claim.AttemptId.Value))
         }
 
-    let requeueUnstartedClaim dependency (claim: ExecutionClaim) =
-        let dependencyName = WorkerControl.postOfferDependencyName dependency
-
+    let requeueUnstartedClaim dependencyName (claim: ExecutionClaim) =
         let requeueResult =
             try
                 Ok(
@@ -998,13 +999,12 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                 WorkerControl.afterOfferReady
                     (fun () -> ControllerConfig.executionLaunchersReady config)
                     stateRootReadiness.Fresh
-                    (fun dependency -> requeueUnstartedClaim dependency claim)
+                    (fun dependency -> requeueUnstartedClaim (WorkerControl.postOfferDependencyName dependency) claim)
             then
                 match storageAdmission.Begin($"{claim.OrganizationId.Value:N}/{claim.AttemptId.Value:N}/{claim.Fence.Value}") with
                 | Ok () -> do! runReadyClaim claim stoppingToken
                 | Error reason ->
-                    store.RequeueOwnedAttempt(claim.OrganizationId, claim.AttemptId, claim.Fence, owner) |> ignore
-                    logger.LogWarning("Storage admission refused before launch: {Reason}", reason)
+                    requeueUnstartedClaim $"storage pool ({reason})" claim
         }
 
     /// One organization's share of a worker scan: expire lost local leases, then

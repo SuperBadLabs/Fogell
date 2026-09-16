@@ -1,0 +1,390 @@
+{
+  "binary_manifest": {
+    "path": "binary-manifest.sha256",
+    "release_file_count": 89,
+    "sha256": "67a565a2048896bc10e65ccbbacf2e36995743c9d9500b73ada58ced72197175"
+  },
+  "campaign": "fresh local isolated Podman validation; not Luigi",
+  "cleanup": {
+    "controller": "fogell-storage-controller-20260916-marker0600",
+    "network": "fogell-storage-net-20260916-marker0600",
+    "pod": "fogell-storage-pod-20260916-marker0600",
+    "postgres": "fogell-storage-postgres-20260916-marker0600",
+    "test": "cleanup",
+    "time": 1789537198.963
+  },
+  "date": "2026-09-16",
+  "evidence_limit": "The prior full Luigi campaign remains preserved as the baseline. A fresh Luigi binary upload was blocked by automatic approval review, so the final exact-0600 permission correction was validated in this separate local HeMan campaign.",
+  "full_campaign_completed": {
+    "test": "final_all_checks_complete",
+    "time": 1789537141.653
+  },
+  "host": "HeMan",
+  "kernel_pool_controls": {
+    "byte": {
+      "before": {
+        "available_bytes": 67100672,
+        "available_inodes": 2038,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "controller_state_writable": true,
+      "diagnostic": "head: error writing 'standard output': No space left on device\n",
+      "enospc": true,
+      "exhausted": {
+        "available_bytes": 0,
+        "available_inodes": 2037,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "exit_code": 1,
+      "restored": {
+        "available_bytes": 67100672,
+        "available_inodes": 2038,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "test": "kernel_byte_enospc",
+      "time": 1789536992.496
+    },
+    "inode": {
+      "before": {
+        "available_bytes": 67100672,
+        "available_inodes": 2035,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "controller_state_writable": true,
+      "diagnostic": "sh: 1: cannot create /lab/state/workspaces/.lab-inode-proof-2035: No space left on device\n",
+      "enospc": true,
+      "exhausted": {
+        "available_bytes": 67100672,
+        "available_inodes": 0,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "exit_code": 2,
+      "restored": {
+        "available_bytes": 67100672,
+        "available_inodes": 2035,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "test": "kernel_inode_enospc",
+      "time": 1789536993.964
+    }
+  },
+  "marker_permission_controls": {
+    "control_build_id": "a5c18b35-f176-4ec4-8a6f-3df8d8c54b60",
+    "control_build_status": "success",
+    "readiness_0600": 200,
+    "readiness_0644": 503,
+    "readiness_0666": 503,
+    "test": "permissive_marker_modes_refused",
+    "time": 1789537004.784
+  },
+  "observations": [
+    {
+      "app_stopped": true,
+      "test": "migration_capability_refusal",
+      "time": 1789536978.319
+    },
+    {
+      "response": {
+        "code": 200,
+        "data": {
+          "status": "ready"
+        },
+        "seconds": 0.074
+      },
+      "test": "ready",
+      "time": 1789536979.19
+    },
+    {
+      "after": {
+        "available_bytes": 67100672,
+        "available_inodes": 2045,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "before": {
+        "available_bytes": 67100672,
+        "available_inodes": 2045,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "test": "pool_control_writable",
+      "time": 1789536990.743
+    },
+    {
+      "build_id": "8060ba9f-0b7f-493c-b801-72c69e862c36",
+      "expected": "success",
+      "pool_dirty": false,
+      "seconds": 0.561,
+      "status": "success",
+      "test": "normal_control",
+      "time": 1789536991.534
+    },
+    {
+      "before": {
+        "available_bytes": 67100672,
+        "available_inodes": 2038,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "controller_state_writable": true,
+      "diagnostic": "head: error writing 'standard output': No space left on device\n",
+      "enospc": true,
+      "exhausted": {
+        "available_bytes": 0,
+        "available_inodes": 2037,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "exit_code": 1,
+      "restored": {
+        "available_bytes": 67100672,
+        "available_inodes": 2038,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "test": "kernel_byte_enospc",
+      "time": 1789536992.496
+    },
+    {
+      "build_id": "cf5a4907-e190-4aa4-8241-4fd204377cdf",
+      "expected": "failure",
+      "pool_dirty": false,
+      "seconds": 0.415,
+      "status": "failure",
+      "test": "workspace_byte_enospc",
+      "time": 1789536993.038
+    },
+    {
+      "before": {
+        "available_bytes": 67100672,
+        "available_inodes": 2035,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "controller_state_writable": true,
+      "diagnostic": "sh: 1: cannot create /lab/state/workspaces/.lab-inode-proof-2035: No space left on device\n",
+      "enospc": true,
+      "exhausted": {
+        "available_bytes": 67100672,
+        "available_inodes": 0,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "exit_code": 2,
+      "restored": {
+        "available_bytes": 67100672,
+        "available_inodes": 2035,
+        "total_bytes": 67108864,
+        "total_inodes": 2048
+      },
+      "test": "kernel_inode_enospc",
+      "time": 1789536993.964
+    },
+    {
+      "build_id": "3946961c-ec32-438b-a46a-872dc70b096e",
+      "expected": "failure",
+      "pool_dirty": false,
+      "seconds": 0.619,
+      "status": "failure",
+      "test": "workspace_inode_enospc",
+      "time": 1789536994.685
+    },
+    {
+      "build_id": "74b0ac16-8f30-4144-83b6-f8512e344946",
+      "expected": "failure",
+      "pool_dirty": false,
+      "seconds": 0.414,
+      "status": "failure",
+      "test": "stash_copy_enospc",
+      "time": 1789536995.51
+    },
+    {
+      "attempt_state": "queued",
+      "build_id": "96b4ecf5-050b-46d3-85f9-829141b6c6f0",
+      "durable_decision": "storage_pool_byte_pressure",
+      "runner_present": false,
+      "test": "pressure_refusal",
+      "time": 1789536998.113
+    },
+    {
+      "build_id": "96b4ecf5-050b-46d3-85f9-829141b6c6f0",
+      "status": "success",
+      "test": "pressure_relieved_control",
+      "time": 1789536998.628
+    },
+    {
+      "readiness": 503,
+      "test": "second_controller_blocked",
+      "time": 1789536999.663
+    },
+    {
+      "restored_readiness": 200,
+      "test": "wrong_marker_refused",
+      "time": 1789537001.313,
+      "wrong_readiness": 503
+    },
+    {
+      "control_build_id": "a5c18b35-f176-4ec4-8a6f-3df8d8c54b60",
+      "control_build_status": "success",
+      "readiness_0600": 200,
+      "readiness_0644": 503,
+      "readiness_0666": 503,
+      "test": "permissive_marker_modes_refused",
+      "time": 1789537004.784
+    },
+    {
+      "attempt_state": "running",
+      "build_id": "b6997f4d-2e2c-4e5a-abfc-1d34ca18df7c",
+      "marker_remains_dirty": true,
+      "readiness": 503,
+      "test": "dirty_sigkill_restart_refused",
+      "time": 1789537006.614
+    },
+    {
+      "claim": "tmpfs enforced aggregate workspace/stash pool bytes and inodes",
+      "test": "storage_bench_complete",
+      "time": 1789537006.614
+    },
+    {
+      "init_only_live": true,
+      "test": "final_writer_extinction",
+      "time": 1789537016.856,
+      "zombies": 5
+    },
+    {
+      "build_id": "37c258ad-5029-497e-9013-793acb0ff496",
+      "build_tmpdir_inside_pool": true,
+      "pool_dirty": false,
+      "record_sha256": "72cc60ffb30f4efb3641b0c2e6d5f3188729607b0bedb502445ab5d7545920b4",
+      "status": "success",
+      "test": "final_explicit_recovery_control",
+      "time": 1789537018.508
+    },
+    {
+      "attempt_state": "queued",
+      "build_id": "7132c268-feb3-4ce5-8a24-f7fdfc56bd83",
+      "durable_decision": "storage_pool_inode_pressure",
+      "runner_present": false,
+      "test": "final_inode_pressure_refusal",
+      "time": 1789537020.944
+    },
+    {
+      "build_id": "7132c268-feb3-4ce5-8a24-f7fdfc56bd83",
+      "status": "success",
+      "test": "final_inode_pressure_relieved_control",
+      "time": 1789537021.429
+    },
+    {
+      "attempt_state": "queued",
+      "build_id": "62f6b8cb-a72b-4157-ae60-49c0001bf3d9",
+      "pool_dirty": false,
+      "readiness": 503,
+      "runner_present": false,
+      "test": "final_decision_write_failure_refused",
+      "time": 1789537023.929
+    },
+    {
+      "build_id": "62f6b8cb-a72b-4157-ae60-49c0001bf3d9",
+      "status": "success",
+      "test": "final_decision_write_relieved_control",
+      "time": 1789537024.475
+    },
+    {
+      "test": "final_all_checks_complete",
+      "time": 1789537024.475
+    },
+    {
+      "init_only_live": true,
+      "test": "final_writer_extinction",
+      "time": 1789537134.06,
+      "zombies": 10
+    },
+    {
+      "build_id": "f27f6677-7969-4fb9-b3b1-0cc7c8018cb0",
+      "build_tmpdir_inside_pool": true,
+      "pool_dirty": false,
+      "record_sha256": "7e0bcabbcea602edf5dae146f377621d8efc1f5b7ce6ec215be1471b8942da0f",
+      "status": "success",
+      "test": "final_explicit_recovery_control",
+      "time": 1789537135.779
+    },
+    {
+      "attempt_state": "queued",
+      "build_id": "79f2cc57-174a-4192-b04d-159d59bd3ef3",
+      "durable_decision": "storage_pool_inode_pressure",
+      "runner_present": false,
+      "test": "final_inode_pressure_refusal",
+      "time": 1789537138.239
+    },
+    {
+      "build_id": "79f2cc57-174a-4192-b04d-159d59bd3ef3",
+      "status": "success",
+      "test": "final_inode_pressure_relieved_control",
+      "time": 1789537138.736
+    },
+    {
+      "attempt_state": "queued",
+      "build_id": "6eef1e8e-aef7-4a2a-882e-d00b5c17c8c5",
+      "pool_dirty": false,
+      "readiness": 503,
+      "runner_present": false,
+      "test": "final_decision_write_failure_refused",
+      "time": 1789537141.191
+    },
+    {
+      "build_id": "6eef1e8e-aef7-4a2a-882e-d00b5c17c8c5",
+      "status": "success",
+      "test": "final_decision_write_relieved_control",
+      "time": 1789537141.653
+    },
+    {
+      "test": "final_all_checks_complete",
+      "time": 1789537141.653
+    },
+    {
+      "controller": "fogell-storage-controller-20260916-marker0600",
+      "network": "fogell-storage-net-20260916-marker0600",
+      "pod": "fogell-storage-pod-20260916-marker0600",
+      "postgres": "fogell-storage-postgres-20260916-marker0600",
+      "test": "cleanup",
+      "time": 1789537198.963
+    }
+  ],
+  "recovery": {
+    "old_record_sha256": "7e0bcabbcea602edf5dae146f377621d8efc1f5b7ce6ec215be1471b8942da0f",
+    "operator_note": "final-binary-heman-proof-all-execution-processes-zombies",
+    "post_recovery_control": {
+      "build_id": "f27f6677-7969-4fb9-b3b1-0cc7c8018cb0",
+      "build_tmpdir_inside_pool": true,
+      "pool_dirty": false,
+      "record_sha256": "7e0bcabbcea602edf5dae146f377621d8efc1f5b7ce6ec215be1471b8942da0f",
+      "status": "success",
+      "test": "final_explicit_recovery_control",
+      "time": 1789537135.779
+    },
+    "receipt": {
+      "action": "explicit_recovery",
+      "old_record_sha256": "7e0bcabbcea602edf5dae146f377621d8efc1f5b7ce6ec215be1471b8942da0f",
+      "operator_note": "final-binary-heman-proof-all-execution-processes-zombies",
+      "pool_id": "luigi-storage-20260916-marker0600",
+      "writers_extinct_attested": "true"
+    },
+    "receipt_path": "recovery-receipts/storage-pool-recovery-20260916T053854Z-6a45bc085c84548a.json",
+    "writers_extinct_attested": "true"
+  },
+  "runtime_archive_sha256": "638d7c5c0b979521113d9b1e67ca5a10d7c23dbf486d49269c97188f17a4e726",
+  "source_commit": "509abd208b26a451bd184d301e8462980b291fdc",
+  "source_hashes": [
+    "56d52680679b8d67e0a67bbda433ace8417d99c9e4aa6fe96bba2cb4594d4460  /home/srikanth/projects/fogell-worktrees/storage-safety/src/Fogell.Controller.Host/StoragePool.fs",
+    "e259b9161399eb2950dff61820d37b646a447f72078d5aa7ed56f56518dac247  /home/srikanth/projects/fogell-worktrees/storage-safety/tests/Fogell.Controller.Api.Tests/StoragePoolTests.fs",
+    "b2a3089339f522269fd845043e402021513ea28f1c116aa97b675fceda0335f5  /home/srikanth/projects/fogell-worktrees/storage-safety/scripts/storage-pool.py",
+    "509abd208b26a451bd184d301e8462980b291fdc"
+  ],
+  "validation_scope": "Measured source 509abd208b26a451bd184d301e8462980b291fdc. Later changes document pre-lease diagnostics and uncertain starts, and route storage-refusal requeue outcomes through the existing logging helper; those later edits are validated by the full local and hosted gates, not claimed as this binary."
+}

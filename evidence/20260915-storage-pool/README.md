@@ -1,6 +1,6 @@
 # Bounded workspace pool validation
 
-The [receipt](receipt.json) records the final controller binary's Luigi campaign,
+The [receipt](receipt.json) records the measured controller binary's Luigi campaign,
 its 89-file binary manifest, changed source hashes against the named base, and
 an explicit recovery receipt. Times are Unix seconds. Cleanup preserves the
 five pre-existing containers and removes the task's containers, pod, network,
@@ -41,3 +41,20 @@ concurrent worker slots, retention, or hostile same-UID isolation. Tmpfs survive
 an application-process crash inside the living sandbox, but not destruction of
 that sandbox or a host reboot. See the [runbook](../../docs/runbooks/storage-pool.md)
 for the production policy and operator responsibilities.
+
+## Marker-permission correction
+
+The subsequent [HeMan receipt](marker-permissions-20260916.json) records a fresh
+local Podman campaign for source `509abd208b26a451bd184d301e8462980b291fdc`,
+with its own Release binary manifest. A `0600` pool-ID marker returned readiness
+200 and a successful build; `0644` and `0666` returned 503. The full exhaustion,
+pressure, crash, explicit recovery, and diagnostic-write campaign also passed,
+and the owned sandbox resources were removed. The runtime now requires reported
+`statx` mode bits and exact `0600`, including rejection of special bits.
+
+Automatic approval review rejected uploading the new bundle to Luigi, so this
+correction's campaign ran locally. The original Luigi receipt is preserved;
+the new receipt does not claim a fresh Luigi run. Later changes only clarify
+diagnostic ownership and uncertain starts, and reuse the existing fenced-requeue
+logging helper. Their validation belongs to the full local/hosted gates, not to
+the measured binary recorded in either sandbox receipt.

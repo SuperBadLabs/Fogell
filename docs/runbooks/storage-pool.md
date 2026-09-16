@@ -81,6 +81,19 @@ idle; any nonzero byte is dirty. Fogell fsyncs an active record before
 materialization or child launch, then clears it only after a durable terminal
 result or a proven path where no child started.
 
+Entering `Process.Start` makes the launch uncertain even if that call throws:
+an exception alone is not evidence that no child was created. Such failures
+retain the dirty record and require the same explicit reconciliation as other
+uncertain launches.
+
+Only the controller holding the pool lease updates the bounded
+`storage-admission.json` on the state-root filesystem. It records capacity
+pressure and other decisions after ownership. Structural configuration or
+lock-contention failures before ownership appear in worker logs and readiness
+503; they do not overwrite the active owner's durable decision. Storage
+refusals after a claim also log whether the fenced requeue succeeded, lost
+authority, or failed.
+
 The controller holds exclusive nonblocking `flock` locks for its lifetime on
 the mounted `workspaces` directory and then on the state file, in that order.
 The directory lock keeps cooperating controllers from splitting their state
