@@ -1,6 +1,6 @@
 """Minimal controller API client for the owned persistence guest."""
 import json, ssl, time, urllib.error, urllib.request, uuid
-from vm import ROOT, guest, run, API_PORT, active_owned_id, require_owned
+from vm import ROOT, guest, run, API_PORT
 BASE = f'https://127.0.0.1:{API_PORT}'
 ORG = 'a0000000-0000-4000-8000-000000000373'
 PROJECT = 'b0000000-0000-4000-8000-000000000373'
@@ -44,8 +44,9 @@ print(json.dumps(result))
 """
 
 def request(path, method='GET', body=None, headers=None, auth=True, timeout=12):
+    from vm import NAME
     values={'path':path,'method':method,'body':body,'headers':dict(headers or {}),'auth':auth,'timeout':timeout}
-    result=run(['podman','exec','-i',require_owned(active_owned_id()),'python3','-c',HTTP_CLIENT],input=json.dumps(values),timeout=timeout+8)
+    result=run(['podman','exec','-i',NAME,'python3','-c',HTTP_CLIENT],input=json.dumps(values),timeout=timeout+8)
     return json.loads(result.stdout)
 
 

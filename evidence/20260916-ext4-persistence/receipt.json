@@ -7,9 +7,9 @@
   "created_at": "2026-09-16T17:06:09.031638+00:00",
   "host": "luigi",
   "measured_harness_paths": {
-    "api.py": "scripts/prove-storage-persistence/api.py",
+    "api.py": "evidence/20260916-ext4-persistence/measured-harness/api.py",
     "campaign.py": "evidence/20260916-ext4-persistence/measured-harness/campaign.py",
-    "collect.py": "scripts/prove-storage-persistence/collect.py",
+    "collect.py": "evidence/20260916-ext4-persistence/measured-harness/collect.py",
     "guest-disks.sh": "scripts/prove-storage-persistence/guest-disks.sh",
     "guest-setup.sh": "scripts/prove-storage-persistence/guest-setup.sh",
     "recovery-cutpoint.py": "scripts/prove-storage-persistence/recovery-cutpoint.py",
@@ -29,7 +29,8 @@
     "Verifier rejects any discard mode except ignore, with a negative unmap mutation.",
     "Residual host API token from recorded campaign removed explicitly; cleanup.json records absence.",
     "VM boot and shutdown clean up by immutable owned ID, with a unique creation label protecting name races. Nineteen isolated lifecycle/ownership tests passed; measured vm.py is archived and mapped above.",
-    "Verifier requires exact lifecycle and result sequences, finite increasing timestamps, and matching result/cut/boot windows, with negative mutations."
+    "Verifier requires exact lifecycle and result sequences, finite increasing timestamps, and matching result/cut/boot windows, with negative mutations.",
+    "Campaign and collector callers track immutable owned VM IDs and clean up running or stopped containers after failures; guest/API transport uses the owned ID. Cleanup failures preserve the primary exception and collector logging is restored. Original api.py and collect.py are archived and mapped above; isolated caller fault tests cover these paths."
   ],
   "qemu_version": "QEMU emulator version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)",
   "raw_receipts_verified": 6,

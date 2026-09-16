@@ -19,8 +19,9 @@ class BootCleanup(unittest.TestCase):
         self.collide = False
         self.stack = contextlib.ExitStack()
         self.addCleanup(self.stack.close)
+        vm.OWNED_ID = None
         self.stack.enter_context(mock.patch.object(vm, "run", self.fake_run))
-        self.stack.enter_context(mock.patch.object(vm, "inspect", lambda: self.container))
+        self.stack.enter_context(mock.patch.object(vm, "inspect", lambda container_id=None: self.container))
         self.stack.enter_context(mock.patch.object(vm, "disk_identity", return_value={}))
         self.records = self.stack.enter_context(mock.patch.object(vm, "record"))
         self.guest = self.stack.enter_context(mock.patch.object(
@@ -48,6 +49,7 @@ class BootCleanup(unittest.TestCase):
         self.assertEqual(vm.boot("test"), "boot-id")
         self.assertEqual(self.removed, [])
         self.assertEqual(self.container["Id"], self.created_id)
+        self.assertEqual(vm.active_owned_id(), self.created_id)
 
     def test_start_record_failure_removes_owned_id(self):
         self.records.side_effect = OSError("evidence write failed")
@@ -104,6 +106,30 @@ class BootCleanup(unittest.TestCase):
             vm.boot("test")
         self.assertEqual(self.removed, [])
         self.assertEqual(self.container["Id"], self.other_id)
+
+    def test_adoption_resets_stale_id_and_refuses_absent_or_unowned_name(self):
+        vm.OWNED_ID = self.created_id
+        self.assertIsNone(vm.adopt_named_owned())
+        self.assertIsNone(vm.active_owned_id())
+        self.container = {"Id": self.other_id, "Config": {"Labels": None}}
+        self.assertIsNone(vm.adopt_named_owned())
+        self.assertEqual(self.removed, [])
+
+    def test_adoption_requires_well_formed_harness_label(self):
+        self.container = {
+            "Id": self.created_id,
+            "Config": {"Labels": {"io.fogell.persistence.boot": "not-a-valid-owner"}},
+        }
+        self.assertIsNone(vm.adopt_named_owned())
+        self.container["Config"]["Labels"]["io.fogell.persistence.boot"] = "d" * 32
+        self.assertEqual(vm.adopt_named_owned(), self.created_id)
+
+    def test_malformed_config_or_labels_are_refused_without_removal(self):
+        for config in (None, [], "invalid", {"Labels": []}, {"Labels": "invalid"}):
+            with self.subTest(config=config):
+                self.container = {"Id": self.created_id, "Config": config}
+                self.assertIsNone(vm.adopt_named_owned())
+                self.assertEqual(self.removed, [])
 
 
 if __name__ == "__main__":

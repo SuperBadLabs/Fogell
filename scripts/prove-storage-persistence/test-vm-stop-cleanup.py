@@ -23,6 +23,8 @@ class StopCleanup(unittest.TestCase):
         self.cleanup_failure = None
         self.stack = contextlib.ExitStack()
         self.addCleanup(self.stack.close)
+        vm.OWNED_ID = self.ident
+        self.inspect_by_id_calls = 0
         self.stack.enter_context(mock.patch.object(vm, "run", self.fake_run))
         self.inspector = self.stack.enter_context(mock.patch.object(vm, "inspect", self.inspect))
         self.records = self.stack.enter_context(mock.patch.object(vm, "record"))
@@ -33,7 +35,8 @@ class StopCleanup(unittest.TestCase):
         if container_id is None:
             return self.before
         self.assertEqual(container_id, self.ident)
-        return self.after
+        self.inspect_by_id_calls += 1
+        return self.before if self.inspect_by_id_calls == 1 else self.after
 
     def fake_run(self, args, **kwargs):
         if args[:3] == ["podman", "rm", "--force"]:
@@ -92,9 +95,16 @@ class StopCleanup(unittest.TestCase):
 
     def test_unknown_owner_is_not_removed(self):
         self.before["Config"]["Labels"] = None
-        with self.assertRaisesRegex(AssertionError, "without harness ownership"):
+        with self.assertRaisesRegex(AssertionError, "differs from the owned target"):
             vm.stop("test")
         self.guest.assert_not_called()
+        self.assertEqual(self.removed, [])
+
+    def test_explicit_id_refuses_different_observed_owned_vm(self):
+        self.before["Id"] = "b" * 64
+        self.before["Config"]["Labels"] = {"io.fogell.persistence.boot": "e" * 32}
+        with self.assertRaisesRegex(AssertionError, "differs from the owned target"):
+            vm.stop("test", container_id=self.ident)
         self.assertEqual(self.removed, [])
 
     def test_cleanup_failure_preserves_primary_exception(self):

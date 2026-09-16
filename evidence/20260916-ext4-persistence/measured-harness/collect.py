@@ -55,7 +55,7 @@ def host_protected():
     return protected_projection(rows)
 
 
-def guest_evidence(container_id):
+def guest_evidence():
     code = r'''
 import hashlib,json,pathlib,subprocess
 manifest=pathlib.Path("/home/ubuntu/fogell-bundle/binary-manifest.sha256")
@@ -82,7 +82,7 @@ pg=subprocess.run(["sudo","-u","postgres","psql","-X","-At","-d","fogell","-c","
 dotnet=subprocess.run(["/opt/fogell/dotnet/dotnet","--list-runtimes"],check=True,text=True,capture_output=True).stdout.strip().splitlines()
 print(json.dumps({"binary_manifest":entries,"dotnet_runtimes":dotnet,"helper_sha256":hashlib.sha256(pathlib.Path("/opt/fogell/storage-pool.py").read_bytes()).hexdigest(),"kernel":subprocess.run(["uname","-r"],check=True,text=True,capture_output=True).stdout.strip(),"mount_topology":mounts,"postgres_durability":pg,"receipts":receipts},sort_keys=True))
 '''
-    result = vm.guest(["sudo", "python3", "-c", code], container_id=container_id)
+    result = vm.guest(["sudo", "python3", "-c", code])
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as error:
@@ -100,8 +100,8 @@ def host_disks():
     }
 
 
-def qemu_version(container_id):
-    return vm.run(["podman", "exec", container_id, "qemu-system-x86_64", "--version"]).stdout.splitlines()[0]
+def qemu_version():
+    return vm.run(["podman", "exec", vm.NAME, "qemu-system-x86_64", "--version"]).stdout.splitlines()[0]
 
 
 def write_json(path, value):
@@ -118,30 +118,6 @@ def write_json(path, value):
             os.unlink(temporary)
 
 
-def finish_collector(container_id, primary=None):
-    if container_id is None:
-        return
-    cleanup_error = None
-    try:
-        vm.stop("evidence-collection", container_id=container_id)
-    except BaseException as error:
-        if primary is not None:
-            primary.add_note("Collector VM stop also failed: " + str(error))
-        else:
-            cleanup_error = error
-    try:
-        vm.cleanup_owned(container_id, primary or cleanup_error)
-    except BaseException as error:
-        if primary is not None:
-            primary.add_note("Collector VM removal also failed: " + str(error))
-        elif cleanup_error is not None:
-            cleanup_error.add_note("Collector VM removal also failed: " + str(error))
-        else:
-            cleanup_error = error
-    if cleanup_error is not None:
-        raise cleanup_error
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--protected-before", type=pathlib.Path, required=True)
@@ -149,32 +125,22 @@ def main():
     before = protected_projection(json.loads(args.protected_before.read_text(encoding="utf-8")))
     original_record = vm.record
     vm.record = collector_record
-    container_id = None
+    booted = False
     try:
         vm.boot("evidence-collection")
-        container_id = vm.active_owned_id()
-        assert container_id is not None, "collector boot did not register an owned VM"
-        collected = guest_evidence(container_id)
+        booted = True
+        collected = guest_evidence()
         collected["host_disks"] = host_disks()
-        collected["qemu_version"] = qemu_version(container_id)
+        collected["qemu_version"] = qemu_version()
         after = host_protected()
         collected["protected_services"] = {"before": before, "after": after, "unchanged": before == after}
         if before != after:
             fail("protected services changed during campaign")
-        write_json(vm.ROOT / "supplemental.json", collected)
-    except BaseException as primary:
-        try:
-            finish_collector(container_id, primary)
-        except BaseException as cleanup_error:
-            primary.add_note("Collector VM cleanup also failed: " + str(cleanup_error))
-        finally:
-            vm.record = original_record
-        raise
-    else:
-        try:
-            finish_collector(container_id)
-        finally:
-            vm.record = original_record
+    finally:
+        if booted and vm.inspect() and vm.inspect()["State"]["Running"]:
+            vm.stop("evidence-collection")
+        vm.record = original_record
+    write_json(vm.ROOT / "supplemental.json", collected)
 
 
 if __name__ == "__main__":

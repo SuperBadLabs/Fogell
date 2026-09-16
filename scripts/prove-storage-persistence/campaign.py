@@ -193,11 +193,36 @@ def run_campaign():
     vm.stop('campaign-complete')
 
 def main():
+    primary=None
     try:
+        assert vm.adopt_named_owned() is not None, 'campaign requires an active harness-owned VM'
         run_campaign()
-    finally:
-        # Only the guest retains its credential for a later, explicit boot.
-        # Never leave the API client's temporary host-side copy in retained evidence.
-        (vm.ROOT/'token').unlink(missing_ok=True)
+    except BaseException as error:
+        primary=error
+        try:
+            vm.cleanup_active_owned(primary)
+        except BaseException as cleanup_error:
+            primary.add_note('Owned VM cleanup also failed: '+str(cleanup_error))
+        finally:
+            try:
+                (vm.ROOT/'token').unlink(missing_ok=True)
+            except BaseException as cleanup_error:
+                primary.add_note('Host API-token cleanup also failed: '+str(cleanup_error))
+        raise
+    else:
+        cleanup_error=None
+        try:
+            vm.cleanup_active_owned()
+        except BaseException as error:
+            cleanup_error=error
+        try:
+            (vm.ROOT/'token').unlink(missing_ok=True)
+        except BaseException as error:
+            if cleanup_error is not None:
+                cleanup_error.add_note('Host API-token cleanup also failed: '+str(error))
+            else:
+                raise
+        if cleanup_error is not None:
+            raise cleanup_error
 
 if __name__=='__main__':main()

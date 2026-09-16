@@ -98,21 +98,20 @@ rejected. [Harness instructions](../../scripts/prove-storage-persistence/README.
 describe recreating the disposable lab; SSH keys, tokens, disk images, and
 binaries are intentionally excluded from this repository.
 
-Review added a `finally` wrapper that removes the campaign client's temporary
-host API-token copy on success or exception. The original measured campaign
-source is retained in `measured-harness/campaign.py`; `receipt.json` maps its
-hash to that path. The captured campaign results are unchanged. Targeted tests
-cover the wrapper's success and failure paths, and the residual token from the
-recorded run was removed explicitly. The verifier was also strengthened to
-reject a drive whose discard mode differs from the measured `discard=ignore`.
-Subsequent review added cleanup when VM boot or shutdown fails after container
-ownership is established; nineteen isolated tests cover failure and ownership
-cases without starting a guest.
-The original measured VM helper is retained in `measured-harness/vm.py` and
-mapped by the receipt. Lifecycle and result ordering checks were added after
-collection, with reordered, duplicated, missing, invalid-time, and wrong-window
-mutations rejected. These harness/verifier corrections do not change the
-recorded nine-cut campaign or its deployed application binaries.
+Post-collection review strengthened harness cleanup and evidence verification.
+The runnable campaign removes its temporary host API-token copy on success or
+exception; the recorded run's residual copy was removed explicitly. Boot,
+shutdown, campaign, and collector failures clean up their own VM by immutable
+container ID, including stopped containers, without targeting a replacement
+name. Cleanup errors preserve the original failure, and collector logging is
+restored even if teardown fails. Isolated fault tests cover these paths.
+
+Original measured sources are retained under `measured-harness/` and mapped by
+`receipt.json`; the verifier is pinned separately. The verifier now rejects a
+drive whose discard mode differs from `ignore`, enforces lifecycle/result
+ordering and timestamp windows, and rejects negative mutations. These
+post-collection corrections do not change the recorded nine-cut campaign or
+its deployed application binaries.
 
 Preliminary setup trials exposed overlapping guest/container NAT ranges and
 restricted-network forwarding, then a fixed fixture slug collision. Those

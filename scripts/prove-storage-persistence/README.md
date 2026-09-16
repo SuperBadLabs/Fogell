@@ -36,23 +36,26 @@ guest-key.pub
 
 Keep that directory private.  `campaign.py` writes a short-lived copy of the
 guest API token there with mode `0600`, as required for its local API client,
-and removes that host-side copy in `finally` on success or exception. If the
+and removes that host-side copy on success or exception. If the
 host harness itself is forcibly killed, remove its `token` file manually after
 stopping API access; Python cleanup cannot run after host process SIGKILL.
 The guest retains its own token on its disk for an explicit later boot.
 
-Run `python3 test-campaign-cleanup.py` to check success, mid-campaign failure,
-and failure before token creation without booting a guest.
-Run `python3 test-vm-boot-cleanup.py` to check failed starts, SSH timeouts,
-early exits, interruption, evidence-write failure, and container ownership.
-Run `python3 test-vm-stop-cleanup.py` for shutdown failures and name-replacement
-cases. The VM helper removes its own container if boot or shutdown fails after
-ownership is established. A fresh
-ownership label prevents cleanup from removing an unrelated container that
-wins a race for the fixed name. Shutdown commands and cleanup use the owned
-container's immutable ID. A cleanup failure raises an error; when another
-exception is already active, that exception is retained with a cleanup-failure
-note.
+Run the isolated cleanup tests without booting a guest:
+
+```sh
+for test in test-*.py; do python3 "$test" || exit; done
+```
+
+The campaign adopts its initial labeled VM and tracks each subsequent boot by
+immutable container ID. The collector tracks its own boot. Both callers clean
+up their owned VM on success or failure, including an already-stopped VM;
+a replacement container with the same name is not targeted. Boot and shutdown
+failures also clean up after ownership is established. Tests cover caller
+failures, interruption, ownership changes, stopped containers, and cleanup
+errors. The collector restores its logging callback even when teardown fails.
+A cleanup failure raises an error; when another exception is already active,
+that exception is retained with a cleanup-failure note.
 
 ## Safety boundary
 
@@ -123,6 +126,8 @@ by this repository.
    python3 vm.py boot provision --provision
    ```
 
+   In a new Python process, call `vm.adopt_named_owned()` before using
+   `vm.copy_to_guest` or `vm.guest`; transports require the captured owned ID.
    Copy the two guest-only shell scripts into the guest and run them there as
    root.  Do not execute those scripts from the host.
 
