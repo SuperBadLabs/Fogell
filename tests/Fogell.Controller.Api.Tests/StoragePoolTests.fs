@@ -63,7 +63,9 @@ let private makeStateFile root (bytes: byte array) =
 let private makeLeaseRoot root =
     let workspaces = Path.Combine(root, "workspaces")
     Directory.CreateDirectory workspaces |> ignore
-    File.WriteAllText(Path.Combine(workspaces, ".fogell-pool-id"), poolId)
+    let marker = Path.Combine(workspaces, ".fogell-pool-id")
+    File.WriteAllText(marker, poolId)
+    File.SetUnixFileMode(marker, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
     makeStateFile root (Array.zeroCreate<byte> 4096) |> ignore
     workspaces
 
@@ -177,6 +179,25 @@ let tests =
                         makeLeaseRoot root |> ignore
                         StoragePool.probe root policy
                         |> expectErrorContaining "dedicated filesystem" "same-filesystem workspaces have no enforced pool boundary")
+                }
+
+                test "a pool-ID marker requires exact private mode 0600" {
+                    withRoot (fun root ->
+                        let workspaces = makeLeaseRoot root
+                        let marker = Path.Combine(workspaces, ".fogell-pool-id")
+
+                        for mode in
+                            [ UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.GroupRead ||| UnixFileMode.OtherRead
+                              UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.GroupRead ||| UnixFileMode.GroupWrite ||| UnixFileMode.OtherRead ||| UnixFileMode.OtherWrite
+                              UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.SetUser
+                              UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.StickyBit ] do
+                            File.SetUnixFileMode(marker, mode)
+                            StoragePool.probe root policy
+                            |> expectErrorContaining "exact mode 0600" "a permissive pool-ID marker is refused before use"
+
+                        File.SetUnixFileMode(marker, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
+                        StoragePool.probe root policy
+                        |> expectErrorContaining "dedicated filesystem" "an exact 0600 marker passes marker validation")
                 }
 
                 test "a pool-ID symlink is refused before the same-filesystem decision" {

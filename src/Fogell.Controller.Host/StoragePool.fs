@@ -75,6 +75,9 @@ module StoragePool =
     let private StatxType = 0x1u
 
     [<Literal>]
+    let private StatxMode = 0x2u
+
+    [<Literal>]
     let private StatxInode = 0x100u
 
     [<Literal>]
@@ -88,6 +91,12 @@ module StoragePool =
 
     [<Literal>]
     let private FileTypeMask = 0xF000us
+
+    [<Literal>]
+    let private PermissionMask = 0x0FFFus
+
+    [<Literal>]
+    let private MarkerMode = 0x0180us
 
     /// `struct statx`, including `stx_mnt_id` at offset 0x90.  This declaration
     /// intentionally targets Linux's 64-bit ABI; a 32-bit process refuses
@@ -409,14 +418,16 @@ module StoragePool =
         else
             use marker = owned fd
             let mutable status = Unchecked.defaultof<LinuxStatx>
-            let required = StatxType ||| StatxSize
+            let required = StatxType ||| StatxMode ||| StatxSize
 
             if statx (descriptor marker, "", AtEmptyPath, required, &status) <> 0 then
                 Error $"FOGELL storage pool marker statx failed (errno {errno ()})"
             elif status.Mask &&& required <> required then
-                Error "FOGELL storage pool marker statx did not report type and size"
+                Error "FOGELL storage pool marker statx did not report type, mode, and size"
             elif status.Mode &&& FileTypeMask <> RegularFileType then
                 Error "FOGELL storage pool marker must be a regular file"
+            elif status.Mode &&& PermissionMask <> MarkerMode then
+                Error "FOGELL storage pool marker must have exact mode 0600"
             elif status.Size > maxMarkerBytes then
                 Error $"FOGELL storage pool marker exceeds {maxMarkerBytes} bytes"
             else
