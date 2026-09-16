@@ -73,48 +73,66 @@ type StorageAdmission(stateRoot: string, policy: StoragePoolPolicy option) =
         else Ok ()
 
     let unmanaged () =
-        try
-            if [ ".fogell-pool-id"; ".fogell-pool-state" ]
-               |> List.exists (fun name -> Path.Exists(Path.Combine(stateRoot, "workspaces", name))) then
-                Error "storage_pool_policy_required"
-            else Ok ()
-        with _ -> Error "storage_pool_configuration_unavailable"
+        let marker (path: string) =
+            try
+                // Unlike Path.Exists, GetAttributes distinguishes a confirmed
+                // missing leaf (including ENOTDIR on an ancestor) from an
+                // access or metadata failure. It observes a dangling symlink
+                // as a link, so that operator state still requires a policy.
+                File.GetAttributes path |> ignore
+                Ok true
+            with
+            | :? FileNotFoundException
+            | :? DirectoryNotFoundException -> Ok false
+            | _ -> Error "storage_pool_configuration_unavailable"
+
+        [ ".fogell-pool-id"; ".fogell-pool-state" ]
+        |> List.fold
+            (fun result name ->
+                result
+                |> Result.bind (fun found ->
+                    if found then Ok true
+                    else marker (Path.Combine(stateRoot, "workspaces", name))))
+            (Ok false)
+        |> Result.bind (fun found -> if found then Error "storage_pool_policy_required" else Ok ())
 
     let check () =
-        match policy with
-        | None -> unmanaged ()
-        | Some _ when disposed -> Error "storage_gate_closed"
-        | Some configured ->
-            // Acquire the exclusive lock even under pressure, so only its owner
-            // publishes the durable decision. Zero guards here do not weaken
-            // the filesystem size/identity checks; guards are applied below.
-            StoragePool.probe stateRoot { configured with MinFreeBytes = 0UL; MinFreeInodes = 0UL }
-            |> Result.bind (fun observed ->
-                observation <- Some observed
-                match identity with
-                | Some pinned when pinned <> observed.Identity -> Error "storage_pool_replaced"
-                | _ ->
-                    let owned =
-                        match lease with
-                        | Some held -> Ok held
-                        | None ->
-                            StoragePoolLease.tryOpen stateRoot
-                            |> Result.map (fun opened ->
-                                lease <- Some opened
-                                identity <- Some opened.Identity
-                                opened)
-                    owned
-                    |> Result.bind (fun held ->
-                        // Recheck against the actual locked directory, not a
-                        // pathname observation made before acquiring its lock.
-                        StoragePool.probePinned
-                            stateRoot
-                            { configured with MinFreeBytes = 0UL; MinFreeInodes = 0UL }
-                            held.Identity
-                        |> Result.bind (fun fresh ->
-                            observation <- Some fresh
-                            held.CheckIdle()
-                            |> Result.bind (fun () -> capacity configured fresh))))
+        if disposed then
+            Error "storage_gate_closed"
+        else
+            match policy with
+            | None -> unmanaged ()
+            | Some configured ->
+                // Acquire the exclusive lock even under pressure, so only its owner
+                // publishes the durable decision. Zero guards here do not weaken
+                // the filesystem size/identity checks; guards are applied below.
+                StoragePool.probe stateRoot { configured with MinFreeBytes = 0UL; MinFreeInodes = 0UL }
+                |> Result.bind (fun observed ->
+                    observation <- Some observed
+                    match identity with
+                    | Some pinned when pinned <> observed.Identity -> Error "storage_pool_replaced"
+                    | _ ->
+                        let owned =
+                            match lease with
+                            | Some held -> Ok held
+                            | None ->
+                                StoragePoolLease.tryOpen stateRoot
+                                |> Result.map (fun opened ->
+                                    lease <- Some opened
+                                    identity <- Some opened.Identity
+                                    opened)
+                        owned
+                        |> Result.bind (fun held ->
+                            // Recheck against the actual locked directory, not a
+                            // pathname observation made before acquiring its lock.
+                            StoragePool.probePinned
+                                stateRoot
+                                { configured with MinFreeBytes = 0UL; MinFreeInodes = 0UL }
+                                held.Identity
+                            |> Result.bind (fun fresh ->
+                                observation <- Some fresh
+                                held.CheckIdle()
+                                |> Result.bind (fun () -> capacity configured fresh))))
 
     let decide result =
         match result with
@@ -124,7 +142,7 @@ type StorageAdmission(stateRoot: string, policy: StoragePoolPolicy option) =
             | Ok () -> Error reason
             | Error failure -> Error failure
 
-    member _.CheckStart() = lock sync (fun () -> if active then Error "storage_pool_busy" else check () |> decide)
+    member _.CheckStart() = lock sync (fun () -> if disposed then Error "storage_gate_closed" elif active then Error "storage_pool_busy" else check () |> decide)
 
     member _.Begin(attempt: string) =
         lock sync (fun () ->
@@ -158,15 +176,18 @@ type StorageAdmission(stateRoot: string, policy: StoragePoolPolicy option) =
 
     member _.Ready() =
         lock sync (fun () ->
-            match policy with
-            | None -> unmanaged () |> Result.isOk
-            | Some configured ->
-                if active then
-                    match StoragePool.probe stateRoot configured with
-                    | Ok observation -> identity = Some observation.Identity
-                    | Error _ -> false
-                else
-                    check () |> decide |> Result.isOk)
+            if disposed then
+                false
+            else
+                match policy with
+                | None -> unmanaged () |> Result.isOk
+                | Some configured ->
+                    if active then
+                        match StoragePool.probe stateRoot configured with
+                        | Ok observation -> identity = Some observation.Identity
+                        | Error _ -> false
+                    else
+                        check () |> decide |> Result.isOk)
 
     interface IDisposable with
         member _.Dispose() =

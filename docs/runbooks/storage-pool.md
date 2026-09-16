@@ -26,6 +26,8 @@ The controller requires 64-bit Linux with `statx` mount-ID reporting and
 finite, nonzero filesystem byte and inode totals. Stop existing controllers
 before enabling this policy; an older binary does not participate in the pool
 locks. A current controller with no policy refuses an initialized pool.
+An unconfigured controller also refuses work when it cannot determine whether
+pool-control metadata exists; lookup failures are never treated as an opt-out.
 
 The mount must be empty except for an empty filesystem-created `lost+found`
 directory. Recovered files inside `lost+found` must be handled before

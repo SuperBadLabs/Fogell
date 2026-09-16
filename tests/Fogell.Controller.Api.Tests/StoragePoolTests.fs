@@ -89,6 +89,58 @@ let tests =
                   admission.CheckStart()
                   |> expectErrorContaining "policy_required" "an unconfigured worker never claims the shared pool")
           }
+          test "an unconfigured controller permits only confirmed absent pool metadata" {
+              withRoot (fun root ->
+                  use admission = new StorageAdmission(root, None)
+                  admission.CheckStart() |> expectOk "an ordinary state root without pool metadata is usable" |> ignore
+                  Expect.isTrue (admission.Ready()) "missing workspaces is a confirmed absence, not a pool"
+
+                  let missingRoot = Path.Combine(root, "new-state-root")
+                  use missingAdmission = new StorageAdmission(missingRoot, None)
+                  missingAdmission.CheckStart() |> expectOk "a new state root has no pool metadata" |> ignore
+
+                  let nonDirectoryRoot = Path.Combine(root, "not-a-directory")
+                  File.WriteAllText(nonDirectoryRoot, "ordinary file")
+                  use nonDirectoryAdmission = new StorageAdmission(nonDirectoryRoot, None)
+                  nonDirectoryAdmission.CheckStart() |> expectOk "ENOTDIR confirms the marker leaf is absent")
+          }
+          test "unconfigured admission treats dangling pool metadata links as present" {
+              withRoot (fun root ->
+                  let workspaces = Path.Combine(root, "workspaces")
+                  Directory.CreateDirectory workspaces |> ignore
+                  File.CreateSymbolicLink(Path.Combine(workspaces, ".fogell-pool-id"), Path.Combine(root, "missing-marker"))
+                  |> ignore
+                  use admission = new StorageAdmission(root, None)
+                  admission.CheckStart()
+                  |> expectErrorContaining "policy_required" "a dangling marker link still initializes pool metadata")
+          }
+          test "unconfigured admission fails closed when workspace metadata cannot be read" {
+              withRoot (fun root ->
+                  let workspaces = Path.Combine(root, "workspaces")
+                  Directory.CreateDirectory workspaces |> ignore
+                  File.WriteAllText(Path.Combine(workspaces, ".fogell-pool-id"), poolId)
+                  let originalMode = File.GetUnixFileMode workspaces
+                  File.SetUnixFileMode(workspaces, enum<UnixFileMode> 0)
+
+                  try
+                      use admission = new StorageAdmission(root, None)
+                      admission.CheckStart()
+                      |> expectErrorContaining "configuration_unavailable" "inaccessible metadata cannot be treated as absent"
+                      admission.Begin "org/attempt/1"
+                      |> expectErrorContaining "configuration_unavailable" "post-offer admission also refuses inaccessible metadata"
+                      Expect.isFalse (admission.Ready()) "readiness is closed when marker metadata cannot be read"
+                  finally
+                      File.SetUnixFileMode(workspaces, originalMode))
+          }
+          test "a disposed storage admission is closed for configured and unconfigured policies" {
+              withRoot (fun root ->
+                  for configured in [ None; Some policy ] do
+                      let admission = new StorageAdmission(root, configured)
+                      (admission :> IDisposable).Dispose()
+                      admission.CheckStart() |> expectErrorContaining "storage_gate_closed" "disposed admission cannot start"
+                      admission.Begin "org/attempt/1" |> expectErrorContaining "storage_gate_closed" "disposed admission cannot begin"
+                      Expect.isFalse (admission.Ready()) "disposed admission is never ready")
+          }
           testList
               "policy parsing and pure admission"
               [ test "an absent policy remains an explicit opt-out" {
