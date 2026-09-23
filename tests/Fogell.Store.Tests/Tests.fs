@@ -61,6 +61,23 @@ let private admitOk input =
     | Ok a -> a
     | Error e -> failtestf "admission failed: %s" e
 
+let private expectReconciliationDiagnostics org project build reason expectedAttempts =
+    let feedback = store.ReadFeedback(org, project, build, 0, 100) |> Option.get
+    Expect.equal feedback.Status "reconciliation_required" "typed evidence and reconciliation status are visible together"
+    let typed = feedback.Chunks |> List.filter (fun chunk -> chunk.Diagnostic.IsSome)
+    Expect.equal typed.Length (List.length expectedAttempts) "one durable diagnostic per transitioned attempt"
+    for chunk in typed do
+        let diagnostic = chunk.Diagnostic |> Option.bind ExecutionDiagnostic.decode |> Option.get
+        Expect.equal diagnostic.Category "infrastructure" "reconciliation is infrastructure evidence"
+        Expect.equal diagnostic.ResultCode "reconciliation_required" "uncertainty is not a terminal success"
+        Expect.equal diagnostic.Message reason "stable actionable reconciliation reason"
+        Expect.equal chunk.Body "" "typed reason does not depend on a textual log body"
+    Expect.equal
+        (typed |> List.map (fun chunk -> chunk.DiagnosticId.Value.Split(':')[0]) |> Set.ofList)
+        (expectedAttempts |> List.map (fun (attempt: AttemptId) -> attempt.Value.ToString()) |> Set.ofList)
+        "diagnostic identities bind the exact transitioned attempts"
+    feedback
+
 let private runningAttempt org project key owner leaseSeconds =
     let admitted = admitOk (newBuild org project key [ "effect" ])
 
@@ -1172,7 +1189,8 @@ let tenantIsolation =
                         GRANT SELECT, UPDATE ON attempts, nodes, builds TO {roleName};
                         GRANT SELECT, UPDATE ON effect_checkpoints TO {roleName};
                         GRANT INSERT ON events, outbox TO {roleName};
-                        GRANT USAGE ON SEQUENCE events_id_seq, outbox_id_seq, effect_checkpoints_uncertain_seq TO {roleName}"
+                        GRANT SELECT, INSERT ON log_chunks TO {roleName};
+                        GRANT USAGE ON SEQUENCE events_id_seq, outbox_id_seq, log_chunks_id_seq, effect_checkpoints_uncertain_seq TO {roleName}"
 
                   let maintenanceBuilder = Npgsql.NpgsqlConnectionStringBuilder(connectionString)
                   maintenanceBuilder.Options <- $"-c role={roleName}"
@@ -1243,7 +1261,9 @@ let tenantIsolation =
                   Expect.equal (reasonRow.GetString 5) (admitted.AttemptId.Value.ToString()) "outbox binds the attempt"
                   reasonRow.Close()
 
+                  expectReconciliationDiagnostics org project admitted.BuildId "restore_epoch_advanced" [ admitted.AttemptId ] |> ignore
                   restrictedStore.ActivateRestore() |> ignore
+                  expectReconciliationDiagnostics org project admitted.BuildId "restore_epoch_advanced" [ admitted.AttemptId ] |> ignore
                   Expect.equal
                       (restrictedStore.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
                       1
@@ -1826,6 +1846,8 @@ let fencing =
               let outboxBefore = store.CountOutbox org
 
               Expect.equal (store.RequeueExpiredLocalAttempts org) 1 "the pre-launch offer was recovered"
+              let offeredFeedback = store.ReadFeedback(org, project, admitted.BuildId, 0, 100) |> Option.get
+              Expect.isEmpty offeredFeedback.Chunks "safe offered requeue must not publish a false reconciliation diagnostic"
               Expect.equal
                   (store.AttemptState(org, admitted.AttemptId))
                   (Some("queued", oldClaim.Fence.Value, None))
@@ -1872,6 +1894,7 @@ let fencing =
                           (Ok ExecutionStarted)
                           $"{state} fixture crossed the launch boundary"
 
+                  Expect.isTrue (store.AppendLog(org, admitted.BuildId, admitted.AttemptId, 0, "before-controller-crash")) "pre-crash evidence persisted"
                   use conn = new Npgsql.NpgsqlConnection(connectionString)
                   conn.Open()
                   use makeExpired = conn.CreateCommand()
@@ -1899,6 +1922,10 @@ let fencing =
                   let outboxBefore = store.CountOutbox org
 
                   Expect.equal (store.RequeueExpiredLocalAttempts org) 1 $"expiry scan handled {state} once"
+                  let feedback = expectReconciliationDiagnostics org project admitted.BuildId "lease_expired" [ admitted.AttemptId ]
+                  Expect.equal (feedback.Chunks |> List.map (fun chunk -> chunk.Sequence)) [ 0; 1 ] "crash diagnostic continues the persisted cursor without gaps"
+                  Expect.equal feedback.Chunks.Head.Body "before-controller-crash" "existing evidence survives recovery"
+                  Expect.isFalse (store.AppendLogFenced(org, admitted.BuildId, admitted.AttemptId, claim.Fence, owner, 2, "stale-after-crash")) "expired owner cannot overwrite recovery evidence"
                   Expect.equal
                       (store.AttemptState(org, admitted.AttemptId))
                       (Some("reconciliation_required", claim.Fence.Value, None))
@@ -1954,6 +1981,8 @@ let fencing =
                       (store.RequeueExpiredLocalAttempts org)
                       0
                       $"a repeated expiry scan does not republish {state}"
+                  let repeated = expectReconciliationDiagnostics org project admitted.BuildId "lease_expired" [ admitted.AttemptId ]
+                  Expect.equal repeated.Chunks feedback.Chunks "repeat sweeps preserve exact diagnostic identity and cursor"
                   Expect.equal
                       (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
                       1
@@ -1966,6 +1995,48 @@ let fencing =
                       (store.ClaimNextExecution(org, "local:replacement", "trusted-linux", [ "linux" ], 60))
                       (Ok None)
                       $"{state} was not offered to another worker"
+          }
+
+          test "lease recovery diagnostics roll back atomically and allocate independent build cursors" {
+              let org, project = freshProject ()
+              let fixtures =
+                  [ for i in 1..2 do
+                        let admitted, fence = runningAttempt org project $"diagnostic-rollback-{i}" $"local:diagnostic-rollback-{i}" 60
+                        Expect.isTrue (store.AppendLog(org, admitted.BuildId, admitted.AttemptId, 0, "before-crash")) "existing log persisted"
+                        yield admitted, fence ]
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use expire = conn.CreateCommand()
+              expire.CommandText <-
+                  "UPDATE attempts SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE organization_id = @o;
+                   UPDATE builds SET next_log_sequence = 2147483647 WHERE organization_id = @o"
+              expire.Parameters.AddWithValue("o", org.Value) |> ignore
+              expire.ExecuteNonQuery() |> ignore
+              let outboxBefore = store.CountOutbox org
+              try
+                  Expect.throws
+                      (fun () -> store.RequeueExpiredLocalAttempts org |> ignore)
+                      "a forced diagnostic cursor allocation failure must abort reconciliation publication"
+              finally
+                  use repair = conn.CreateCommand()
+                  repair.CommandText <- "UPDATE builds SET next_log_sequence = 1 WHERE organization_id = @o"
+                  repair.Parameters.AddWithValue("o", org.Value) |> ignore
+                  repair.ExecuteNonQuery() |> ignore
+              for admitted, fence in fixtures do
+                  Expect.equal (store.AttemptState(org, admitted.AttemptId)) (Some("running", fence.Value, None)) "failed diagnostic transaction preserves attempt state"
+                  Expect.equal (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required")) 0 "no partial reason event escaped"
+                  Expect.equal (store.ReadLog(org, project, admitted.BuildId, 0)) (Some [ 0, "before-crash" ]) "prior evidence remains intact"
+              Expect.equal (store.CountOutbox org) outboxBefore "no partial outbox escaped"
+              let recovered =
+                  [ 1..4 ]
+                  |> List.map (fun _ -> async { return Store(connectionString).RequeueExpiredLocalAttempts org })
+                  |> Async.Parallel
+                  |> Async.RunSynchronously
+              Expect.equal (Array.sum recovered) 2 "concurrent recovery publishes each expired attempt exactly once"
+              for admitted, _ in fixtures do
+                  let feedback = expectReconciliationDiagnostics org project admitted.BuildId "lease_expired" [ admitted.AttemptId ]
+                  Expect.equal (feedback.Chunks |> List.map (fun chunk -> chunk.Sequence)) [ 0; 1 ] "each build independently continues its cursor"
+              Expect.equal (store.CountOutbox org) (outboxBefore + 2) "one outbox per successful recovered attempt"
           }
 
           test "one expiry scan publishes every ambiguous attempt across legacy nodes and retry history" {
@@ -2037,6 +2108,8 @@ let fencing =
 
               let outboxBefore = store.CountOutbox org
               Expect.equal (store.RequeueExpiredLocalAttempts org) 3 "one scan moved all three ambiguous attempts"
+              let feedback = expectReconciliationDiagnostics org project admitted.BuildId "lease_expired" [ admitted.AttemptId; secondAttempt; retryAttempt ]
+              Expect.equal (feedback.Chunks |> List.map (fun chunk -> chunk.Sequence)) [ 0; 1; 2 ] "multiple attempts share one unique contiguous build cursor"
               Expect.equal
                   (store.AttemptState(org, admitted.AttemptId))
                   (Some("reconciliation_required", firstClaim.Fence.Value, None))
@@ -2107,6 +2180,8 @@ let fencing =
                   "three attempts across two distinct nodes produced three per-attempt events"
               Expect.equal (store.CountOutbox org) (outboxBefore + 3) "three moved attempts produced three outbox rows"
               Expect.equal (store.RequeueExpiredLocalAttempts org) 0 "a second batch scan moves nothing"
+              let repeated = expectReconciliationDiagnostics org project admitted.BuildId "lease_expired" [ admitted.AttemptId; secondAttempt; retryAttempt ]
+              Expect.equal repeated.Chunks feedback.Chunks "batch retry cannot duplicate typed reconciliation evidence"
               Expect.equal
                   (store.CountEvents(org, admitted.BuildId, "attempt.reconciliation_required"))
                   3

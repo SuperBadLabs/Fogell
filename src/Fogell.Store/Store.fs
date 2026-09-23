@@ -225,6 +225,33 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             tx.Dispose()
             reraise ()
 
+    // Called only while the transitioning attempt and build are locked, in the
+    // same transaction as their reconciliation status and durable event/outbox.
+    // Separate statements avoid updating a build twice in one PostgreSQL CTE.
+    let appendReconciliationDiagnostic
+        (conn: NpgsqlConnection) (tx: NpgsqlTransaction) (org: OrganizationId)
+        (buildId: Guid) (attemptId: Guid) (reason: string) =
+        use diagnostic = conn.CreateCommand()
+        diagnostic.Transaction <- tx
+        diagnostic.CommandText <-
+            "WITH allocation AS (
+                 UPDATE builds SET next_log_sequence = next_log_sequence + 1
+                  WHERE organization_id = @o AND id = @b
+                 RETURNING next_log_sequence - 1 AS build_sequence
+             )
+             INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, build_sequence, body, diagnostic)
+             SELECT @o, @b, @a,
+                    (SELECT COALESCE(MAX(sequence), -1) + 1 FROM log_chunks WHERE organization_id = @o AND attempt_id = @a),
+                    allocation.build_sequence, '', @diagnostic::jsonb FROM allocation"
+        diagnostic.Parameters.AddWithValue("o", org.Value) |> ignore
+        diagnostic.Parameters.AddWithValue("b", buildId) |> ignore
+        diagnostic.Parameters.AddWithValue("a", attemptId) |> ignore
+        diagnostic.Parameters.AddWithValue("diagnostic",
+            ExecutionDiagnostic.create "infrastructure" "reconciliation_required" reason
+            |> ExecutionDiagnostic.serialize) |> ignore
+        if diagnostic.ExecuteNonQuery() <> 1 then
+            failwith "reconciliation diagnostic was not published exactly once"
+
     let lockExecutionAuthority
         (conn: NpgsqlConnection)
         (tx: NpgsqlTransaction)
@@ -2326,7 +2353,9 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                             (SELECT count(*) FROM reconciled_nodes),
                             (SELECT count(*) FROM reconciled_builds),
                             (SELECT count(*) FROM emitted_events),
-                            (SELECT count(*) FROM emitted_outbox)"
+                            (SELECT count(*) FROM emitted_outbox),
+                            ARRAY(SELECT build_id FROM moved ORDER BY build_id, attempt_id),
+                            ARRAY(SELECT attempt_id FROM moved ORDER BY build_id, attempt_id)"
                 invalidate.Parameters.AddWithValue("o", org.Value) |> ignore
                 invalidate.Parameters.AddWithValue("e", epoch) |> ignore
                 use invalidated = invalidate.ExecuteReader()
@@ -2336,7 +2365,11 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                 if invalidated.GetInt64 3 <> moved || invalidated.GetInt64 4 <> moved then
                     failwith "restore reconciliation truth was not emitted exactly once per invalidated attempt"
 
+                let builds = invalidated.GetFieldValue<Guid array> 5
+                let attempts = invalidated.GetFieldValue<Guid array> 6
                 invalidated.Close()
+                for build, attempt in Array.zip builds attempts do
+                    appendReconciliationDiagnostic conn tx org build attempt "restore_epoch_advanced"
 
                 // FG-026b. The epoch bump above is visible inside this transaction,
                 // so every prepared/applied checkpoint captured under the previous
@@ -2771,11 +2804,18 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                     (SELECT count(*)::integer FROM reconciled_nodes),
                     (SELECT count(*)::integer FROM reconciled_builds),
                     (SELECT count(*)::integer FROM published_events),
-                    (SELECT count(*)::integer FROM published_outbox)"
+                    (SELECT count(*)::integer FROM published_outbox),
+                    ARRAY(SELECT build_id FROM reconciliation_rows ORDER BY build_id, attempt_id),
+                    ARRAY(SELECT attempt_id FROM reconciliation_rows ORDER BY build_id, attempt_id)"
         cmd.Parameters.AddWithValue("o", org.Value) |> ignore
         use reader = cmd.ExecuteReader()
-        let count = if reader.Read() then reader.GetInt32 0 else 0
+        if not (reader.Read()) then failwith "lease recovery did not return its transition evidence"
+        let count = reader.GetInt32 0
+        let builds = reader.GetFieldValue<Guid array> 5
+        let attempts = reader.GetFieldValue<Guid array> 6
         reader.Close()
+        for build, attempt in Array.zip builds attempts do
+            appendReconciliationDiagnostic conn tx org build attempt "lease_expired"
         tx.Commit()
         count
 
@@ -2896,27 +2936,7 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                 | :? Guid as value -> value
                 | _ -> failwith "reconciled attempt has no build lineage"
 
-            // The same fenced state transition publishes typed infrastructure
-            // evidence before its reconciliation status can become visible.
-            use diagnostic = conn.CreateCommand()
-            diagnostic.Transaction <- tx
-            diagnostic.CommandText <-
-                "WITH allocation AS (
-                     UPDATE builds SET next_log_sequence = next_log_sequence + 1
-                      WHERE organization_id = @o AND id = @b
-                     RETURNING next_log_sequence - 1 AS build_sequence
-                 )
-                 INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, build_sequence, body, diagnostic)
-                 SELECT @o, @b, @a,
-                        (SELECT COALESCE(MAX(sequence), -1) + 1 FROM log_chunks WHERE organization_id = @o AND attempt_id = @a),
-                        allocation.build_sequence, '', @diagnostic::jsonb FROM allocation"
-            diagnostic.Parameters.AddWithValue("o", org.Value) |> ignore
-            diagnostic.Parameters.AddWithValue("b", buildId) |> ignore
-            diagnostic.Parameters.AddWithValue("a", attempt.Value) |> ignore
-            diagnostic.Parameters.AddWithValue("diagnostic",
-                ExecutionDiagnostic.create "infrastructure" "reconciliation_required" reason
-                |> ExecutionDiagnostic.serialize) |> ignore
-            diagnostic.ExecuteNonQuery() |> ignore
+            appendReconciliationDiagnostic conn tx org buildId attempt.Value reason
 
             let eventPayload = JsonSerializer.Serialize(dict [ "reason", reason ])
             use event = conn.CreateCommand()
