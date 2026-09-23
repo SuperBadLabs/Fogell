@@ -91,6 +91,10 @@ The maintenance identity that performs a restore (`ActivateRestore`) needs
 sequence `effect_checkpoints_uncertain_seq` in addition to its attempt, node,
 build, event and outbox grants: a restore now classifies pre-restore
 prepared/applied effects in the same transaction as the epoch bump.
+It also needs `SELECT, INSERT` on `log_chunks` and `USAGE` on
+`log_chunks_id_seq`: each invalidated attempt receives a typed
+`restore_epoch_advanced` diagnostic in that transaction. A missing grant fails
+the entire restore activation rather than publishing status without its reason.
 
 The controller currently has no authenticated approval broker. Fresh admission
 therefore rejects an `input` step unless a usable explicit, inherited stage, or

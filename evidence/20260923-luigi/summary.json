@@ -1,0 +1,453 @@
+{
+  "schema_version": 2,
+  "passed": true,
+  "verifier_sha256": "4e68d18e2e154bcef440f6b6226e3d3ec3ab71ff7f4667f09393cf9e77168d7e",
+  "adversarial_setup_failures": {
+    "count": 1,
+    "baseline_v1": [
+      {
+        "receipt": "campaigns/adversarial-v1/receipt.json",
+        "receipt_sha256": "25eaa34d2c3d83b8638a0851e397cc934e42e99cf31b87609f7e559b7aa8f637",
+        "controller_container_id": "b8e15254370b3105ddfda67ce70ab0ca0d0aaf337e35b88ef26fd491d5f8ab14",
+        "passed": false,
+        "classification": "read_only_setup_failure; no jobs or scenarios executed",
+        "error": "ValueError:command_failed:podman",
+        "commands": 5,
+        "readiness_requests": 1
+      }
+    ],
+    "intermediate_v2": [],
+    "qualification_v3": []
+  },
+  "baseline_v1": {
+    "identity": {
+      "controller_container_id": "b8e15254370b3105ddfda67ce70ab0ca0d0aaf337e35b88ef26fd491d5f8ab14",
+      "postgres_container_id": "63735da0013f0bc0cdb664bb45c4540b989c28cef12dbc13b58a3c2aa2b2125b",
+      "source_commit": "47424dedd94fdeab39e70939cc396b488d29ae30"
+    },
+    "tool_sha256": "473f42276054b3ad9dd94145481f3e9018f706871951779ebd49628d2adc083d",
+    "receipt": "campaigns/pilot/receipt.json",
+    "measurements": {
+      "loops": 100,
+      "loop_p50_ms": 28553.223085124046,
+      "loop_p95_ms": 29961.71980095096,
+      "diagnostic_p50_ms": 12933.927024016157,
+      "diagnostic_p95_ms": 13384.538693120703
+    },
+    "per_kind_terminal_latency": {
+      "failed": {
+        "observations": 100,
+        "p50_ms": 13288.326343055815,
+        "p95_ms": 13703.914368990809
+      },
+      "corrected": {
+        "observations": 100,
+        "p50_ms": 13157.698289025575,
+        "p95_ms": 13797.856725053862
+      }
+    },
+    "loop_latency": {
+      "observations": 100,
+      "p50_ms": 28553.223085124046,
+      "p95_ms": 29961.71980095096
+    },
+    "diagnostic_latency": {
+      "observations": 100,
+      "p50_ms": 12933.927024016157,
+      "p95_ms": 13384.538693120703
+    },
+    "retention": {
+      "phases": 20,
+      "sweeps": 60,
+      "maintenance_elapsed_ms": 1361646,
+      "physical_bytes_reclaimed": 1282430636,
+      "selected_logical_bytes": 1301174236,
+      "selected_builds": 200,
+      "expired_builds": 200
+    },
+    "resources": {
+      "samples": 823,
+      "state_content_peak_bytes": 76953461,
+      "host_free_min_bytes": 355567886336,
+      "cgroups": {
+        "controller": {
+          "memory.current": 825298944,
+          "memory.peak": 884637696,
+          "pids.current": 118
+        },
+        "postgres": {
+          "memory.current": 291930112,
+          "memory.peak": 295059456,
+          "pids.current": 10
+        }
+      },
+      "memory_peak_scope": "kernel cgroup lifetime high-water mark; memory.current peak is sampled during this campaign"
+    }
+  },
+  "historical_adversarial_v1": {
+    "receipt": "campaigns/adversarial-v1-run2/receipt.json",
+    "controller_container_id": "b8e15254370b3105ddfda67ce70ab0ca0d0aaf337e35b88ef26fd491d5f8ab14",
+    "passed": false,
+    "accepted_historical_failure": true,
+    "historical_failure_kind": "cap_gap",
+    "unobserved_after_queued_jobs": [],
+    "failed_scenarios": [
+      "output-cap"
+    ],
+    "scenarios": 7,
+    "jobs": 54,
+    "load_latency": {
+      "observations": 32,
+      "p50_ms": 14899.237969191745,
+      "p95_ms": 27369.967530015856
+    },
+    "state_peak_bytes": 12852575
+  },
+  "historical_adversarial_v2": {
+    "receipt": "campaigns/adversarial-v2/receipt.json",
+    "controller_container_id": "15f5736b7a48632135861298aaf11d5e5e5dc1ac34fcfa03301d38a6246477ed",
+    "passed": false,
+    "accepted_historical_failure": true,
+    "historical_failure_kind": "controller_gap",
+    "unobserved_after_queued_jobs": [
+      "controller_kill-1-queued-0",
+      "controller_kill-1-queued-1"
+    ],
+    "failed_scenarios": [
+      "controller_kill-1"
+    ],
+    "scenarios": 16,
+    "jobs": 80,
+    "load_latency": {
+      "observations": 32,
+      "p50_ms": 15094.682188006118,
+      "p95_ms": 27549.18750282377
+    },
+    "state_peak_bytes": 14998564
+  },
+  "historical_failed_executed_campaigns": 2,
+  "qualification_v3": {
+    "identity": {
+      "controller_container_id": "3c477303c267e42891f108f37e37cfb6658955d3b84c536ec99775b9dc37d6e5",
+      "postgres_container_id": "63735da0013f0bc0cdb664bb45c4540b989c28cef12dbc13b58a3c2aa2b2125b",
+      "source_commit": "d4a9bc76e20e60313fb0dc8e61553f697d6da19d"
+    },
+    "tool_sha256": "f8aec895ca34fb97e9694472a336bd739e77ed505cee9707167f23ca944e5791",
+    "receipt": "campaigns/qualification/receipt.json",
+    "measurements": {
+      "loops": 30,
+      "loop_p50_ms": 27804.395254934207,
+      "loop_p95_ms": 28582.86925801076,
+      "diagnostic_p50_ms": 13141.633521998301,
+      "diagnostic_p95_ms": 13596.465207869187
+    },
+    "per_kind_terminal_latency": {
+      "failed": {
+        "observations": 30,
+        "p50_ms": 13488.716755993664,
+        "p95_ms": 13914.315859088674
+      },
+      "corrected": {
+        "observations": 30,
+        "p50_ms": 13234.670248115435,
+        "p95_ms": 13878.220882965252
+      }
+    },
+    "loop_latency": {
+      "observations": 30,
+      "p50_ms": 27804.395254934207,
+      "p95_ms": 28582.86925801076
+    },
+    "diagnostic_latency": {
+      "observations": 30,
+      "p50_ms": 13141.633521998301,
+      "p95_ms": 13596.465207869187
+    },
+    "retention": {
+      "phases": 6,
+      "sweeps": 20,
+      "maintenance_elapsed_ms": 448047,
+      "physical_bytes_reclaimed": 389043766,
+      "selected_logical_bytes": 394729947,
+      "selected_builds": 225,
+      "expired_builds": 225
+    },
+    "resources": {
+      "samples": 252,
+      "state_content_peak_bytes": 81278026,
+      "host_free_min_bytes": 355353694208,
+      "cgroups": {
+        "controller": {
+          "memory.current": 597819392,
+          "memory.peak": 690319360,
+          "pids.current": 118
+        },
+        "postgres": {
+          "memory.current": 145383424,
+          "memory.peak": 148480000,
+          "pids.current": 10
+        }
+      },
+      "memory_peak_scope": "kernel cgroup lifetime high-water mark; memory.current peak is sampled during this campaign"
+    }
+  },
+  "adversarial_v3": {
+    "receipt": "campaigns/adversarial-v3/receipt.json",
+    "controller_container_id": "3c477303c267e42891f108f37e37cfb6658955d3b84c536ec99775b9dc37d6e5",
+    "passed": true,
+    "accepted_historical_failure": false,
+    "historical_failure_kind": null,
+    "unobserved_after_queued_jobs": [],
+    "failed_scenarios": [],
+    "scenarios": 21,
+    "jobs": 95,
+    "load_latency": {
+      "observations": 32,
+      "p50_ms": 16364.357375074178,
+      "p95_ms": 28577.21772789955
+    },
+    "state_peak_bytes": 17156491
+  },
+  "recovery_v3": {
+    "receipt": "backups/fogell_luigi_restore_20260923/receipt.json",
+    "passed": true,
+    "recovery_seconds": 40.180567029863596,
+    "original_service_downtime_seconds": 58.69042314612307,
+    "lost_backed_up_rows": 0,
+    "lost_backed_up_files": 0,
+    "stale_authority_rejected": true,
+    "offline_reverified": "retained baseline/control source, JUnit and SDK artifacts plus receipt identity links",
+    "adapter_attested_only": "complete database/state equality and original service readiness; private backup payloads excluded from export"
+  },
+  "version_identities": [
+    {
+      "controller_container_id": "b8e15254370b3105ddfda67ce70ab0ca0d0aaf337e35b88ef26fd491d5f8ab14",
+      "postgres_container_id": "63735da0013f0bc0cdb664bb45c4540b989c28cef12dbc13b58a3c2aa2b2125b",
+      "source_commit": "47424dedd94fdeab39e70939cc396b488d29ae30"
+    },
+    {
+      "controller_container_id": "15f5736b7a48632135861298aaf11d5e5e5dc1ac34fcfa03301d38a6246477ed",
+      "postgres_container_id": "63735da0013f0bc0cdb664bb45c4540b989c28cef12dbc13b58a3c2aa2b2125b",
+      "source_commit": "31d121118ebe1888d6acc556d4ddc6e51e36e20b"
+    },
+    {
+      "controller_container_id": "3c477303c267e42891f108f37e37cfb6658955d3b84c536ec99775b9dc37d6e5",
+      "postgres_container_id": "63735da0013f0bc0cdb664bb45c4540b989c28cef12dbc13b58a3c2aa2b2125b",
+      "source_commit": "d4a9bc76e20e60313fb0dc8e61553f697d6da19d"
+    }
+  ],
+  "upgrades": [
+    {
+      "receipt": "campaigns/upgrade-c4babde099884576adcab968b0599119.json",
+      "passed": true
+    },
+    {
+      "receipt": "campaigns/upgrade-2b1b744384584ac9924bc0c3fffdc9d2.json",
+      "passed": true
+    }
+  ],
+  "handoff": {
+    "receipt": "campaigns/handoff.json",
+    "observation": {
+      "source_commit": "d4a9bc76e20e60313fb0dc8e61553f697d6da19d",
+      "controller_container_id": "3c477303c267e42891f108f37e37cfb6658955d3b84c536ec99775b9dc37d6e5",
+      "postgres_container_id": "63735da0013f0bc0cdb664bb45c4540b989c28cef12dbc13b58a3c2aa2b2125b",
+      "passed": true,
+      "phase": "post_qualification",
+      "qualification_receipt_sha256": "bda67d4da50cc9de3360dbfe516bcc7a55ef267b29b60d987c4831a6a0519927",
+      "harness_sha256": "ff35dbeb1c425b7ce764e47652273d6c5d605aae5bb682213313f0ea61366b1f",
+      "services": {
+        "controller": {
+          "active": true,
+          "enabled": true
+        },
+        "postgres": {
+          "active": true,
+          "enabled": true
+        }
+      },
+      "effective_cgroups": {
+        "controller": {
+          "memory.max": "8589934592",
+          "pids.max": "512",
+          "cpu.max": "800000 100000",
+          "memory.swap.max": "0"
+        },
+        "postgres": {
+          "memory.max": "2147483648",
+          "pids.max": "256",
+          "cpu.max": "200000 100000",
+          "memory.swap.max": "0"
+        }
+      },
+      "release_manifest_sha256": "4d3037eaa8eaf9e5780261bd9f4e84319831b8d32bc0cb13570e5b1907677f34",
+      "ready_status": 200,
+      "protected": [
+        {
+          "id": "5388364b3d6b2acbb26eeabf288404516e931a44e38eca00aeadcf451489a874",
+          "started_at": "2026-09-01T13:47:54.047342918Z",
+          "running": true
+        },
+        {
+          "id": "b3c3d866d9d1338fca3ad82c60873dca186ca4e9015a266d214ec5f21f5ead70",
+          "started_at": "2026-09-01T13:47:53.856308978Z",
+          "running": true
+        },
+        {
+          "id": "3d18d8520a102a8b53875ee0472c71a0597d68ef9194ac9680c589dd9add2ef8",
+          "started_at": "2026-09-01T13:47:54.250761781Z",
+          "running": true
+        },
+        {
+          "id": "f828e5fbbd9562775d362418918aa2459c3b4b909b9a46c994cd9099c5aded22",
+          "started_at": "2026-09-06T14:56:59.500521325Z",
+          "running": true
+        },
+        {
+          "id": "38cf17f58768057b49f390a816a9927b9d18b4cb83e2a1058d27cc05c7a34ce8",
+          "started_at": "2026-09-01T13:47:54.437040657Z",
+          "running": true
+        }
+      ],
+      "state_content_bytes": 12841919,
+      "state_entries": 1549,
+      "host_free_bytes": 355422228480,
+      "host_free_inodes": 32404394,
+      "database_bytes": 58661911,
+      "postgres_volume_allocated_bytes": 280973312,
+      "user_linger_enabled": true,
+      "host_reboot_tested": false,
+      "recorded_at_utc": "2026-09-23T17:27:18.065019+00:00"
+    },
+    "ordering_evidence": "post_qualification phase plus SHA-256 of verified completed qualification receipt; no file-mtime inference"
+  },
+  "receipt_and_observation_sha256": {
+    "deployment.json": "7670afed4ef4ab5523e32b70474ed476bbdf80473c3e9e68f784bdb9eaf3e65b",
+    "protected-before.json": "8b03bf9cc26416970c0733ade899ad5749d0dbc21803758ded0e823a90bc894d",
+    "campaigns/pilot/receipt.json": "ad0151a8c0eabebca2ed54f9e146c0b85fa268ca6bdf789de06913f6f02500a5",
+    "campaigns/pilot-supervisor.json": "4c70c8ad7a09546e70f47acc6f5c0d14c65acdbc8909cb6252fe8c9c03049f54",
+    "campaigns/pilot-resources.ndjson": "1e9cf227d55dc2973e0930388b063c84b8fc9ac73424c1d0b1d84c855d297322",
+    "campaigns/qualification/receipt.json": "bda67d4da50cc9de3360dbfe516bcc7a55ef267b29b60d987c4831a6a0519927",
+    "campaigns/qualification-supervisor.json": "12a6bb6c77f5a79634b6b5572126598a9fe69f5f96c1d9bb9d5af15723c47ea0",
+    "campaigns/qualification-resources.ndjson": "1aecf9830a9b927407e1f50a87a6c5c80910af6e3f8f09fbd5fcc4ef16537279",
+    "campaigns/upgrade-2b1b744384584ac9924bc0c3fffdc9d2.json": "7b411734919c349fbc96d90adc25907e4cfb7ad265abaa26efeae888ebc7c3d0",
+    "campaigns/upgrade-c4babde099884576adcab968b0599119.json": "7d51c213d1459965e554c02eebe152a041d6f64c6095ad75d8bbafcea6711823",
+    "campaigns/adversarial-v1/receipt.json": "25eaa34d2c3d83b8638a0851e397cc934e42e99cf31b87609f7e559b7aa8f637",
+    "campaigns/adversarial-v1-run2/receipt.json": "49bcd0bbb10431525d96c620538130e88e7627a5fbd13d6a9ef3607355fe4e88",
+    "campaigns/adversarial-v2/receipt.json": "2cbf955afacae2c49388798c46765eb023d08530b5825e53a0076f50d9360c36",
+    "campaigns/adversarial-v3/receipt.json": "cf2594691220959289f44702b18fdcba65bf626da9c871bbfbf7bcea24ad7865",
+    "campaigns/recovery-fogell_luigi_restore_20260923/control/receipt.json": "b23aa6d081f405d059b36d07dabec86d976ece0e7c9833d64e2bbc8949089546",
+    "campaigns/smoke/receipt.json": "55bff096d82f4a653fd0db63d1a46bd682b673bba8002adc15f09683ea73a4cc",
+    "campaigns/adversarial-v1/http.ndjson": "9783cf90623fb3967ddd3404d781bc8c60a3dbab4d76d0cc02bd41a4f346c36b",
+    "campaigns/adversarial-v1-run2/http.ndjson": "da5f904ed0ab9eace955b1c4efe015520e86b270148ce1c479d62145d6eb7dc4",
+    "campaigns/adversarial-v2/http.ndjson": "0ad02b12c02e011e6ae3376cfa44a34a93effe52fcacb68eab8fb03c008463f0",
+    "campaigns/adversarial-v3/http.ndjson": "542b8abf5daefe0c7e328e5e53f5f7f16517354b370fae60503656b42d83b739",
+    "backups/fogell_luigi_restore_20260923/receipt.json": "b289a0ea29870ee550da29090f3c79d3fb4729482b6d9c4ef00a6b5517150527",
+    "backups/fogell_luigi_restore_20260923/stale-authority.json": "ab35886edec727ac3c9a2937bde01e08615bb2b8f4bcd10f994343eb32eb7b53",
+    "backups/fogell_luigi_restore_20260923/pair-manifest.json": "efad45629fe70d5bc7815d844351e89a81d0caf243534ca10638869f1cc1b858",
+    "backups/fogell_luigi_restore_20260923/workload.json": "d9f5b53caa3eb625652fc03aaccdd4e6e8fec1c817c9942bcbbf373eee2686a6",
+    "campaigns/handoff.json": "f2ea1371b95196ae0bef213f3ac7790587d3c35668f0b50c002f620213196073"
+  },
+  "scope": "separate versioned conditions; no combined latency distribution or production SLA claim",
+  "local_validation": {
+    "sha256": "8d92a970442c1ebcd2ac751b23118875e5607b6029b75a85c3c8acb653f56d8c",
+    "receipt": {
+      "passed": true,
+      "exit_code": 0,
+      "source_unchanged": true,
+      "source_files": 179,
+      "completed_at_utc": "2026-09-23T16:56:19.455673+00:00",
+      "command": "./scripts/build-and-test.sh",
+      "lanes": "all",
+      "log_sha256": "2cb87f35f803a1ca426e8499b66c36f52339e79db0ac449118f554d5cb60516f",
+      "source_commit": "d4a9bc76e20e60313fb0dc8e61553f697d6da19d",
+      "final_line": "OK",
+      "source_manifest_sha256": "9a611a7e4796da2e5d1c20866ed4b4eca6ed34d0859262997bc38aad2ecf6642",
+      "test_projects": [
+        {
+          "project": "tests/Fogell.Client.Tests/Fogell.Client.Tests.fsproj",
+          "run": 27,
+          "passed": 27,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj",
+          "run": 116,
+          "passed": 116,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj",
+          "run": 446,
+          "passed": 446,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj",
+          "run": 41,
+          "passed": 41,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj",
+          "run": 204,
+          "passed": 204,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj",
+          "run": 243,
+          "passed": 243,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Journal.Tests/Fogell.Journal.Tests.fsproj",
+          "run": 31,
+          "passed": 31,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj",
+          "run": 143,
+          "passed": 143,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Retention.Tests/Fogell.Retention.Tests.fsproj",
+          "run": 23,
+          "passed": 23,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj",
+          "run": 113,
+          "passed": 113,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        }
+      ],
+      "test_total": 1387
+    },
+    "source_commit": "d4a9bc76e20e60313fb0dc8e61553f697d6da19d",
+    "scope": "provided passing local gate receipt explicitly bound to qualified source commit"
+  }
+}

@@ -20,3 +20,4 @@ scripts/bin/
 
 # Python proof harness imports generate local bytecode, not retained evidence.
 scripts/__pycache__/
+scripts/luigi/__pycache__/

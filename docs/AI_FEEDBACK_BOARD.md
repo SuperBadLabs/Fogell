@@ -7,6 +7,13 @@ criteria. The [complete gate and pilot evidence](../evidence/20260922-ai-e2e/REA
 include 30 correction loops, bounded retention, paired recovery and 1,385 passing
 tests. This board does not claim publication or unattended production readiness.
 
+The requested Luigi deployment and bounded adversarial campaign completed
+2026-09-23 in [FG-270](tickets/FG-270.md). The [measured report](../evidence/20260923-luigi/README.md)
+records 100 baseline loops, 30 final-release qualification loops, all 21 fault
+scenarios and a 40.18-second paired restore. The persistent service is healthy;
+the final release passed 1,387 tests and the full gate. Historical failures are
+retained separately from the final passing qualification.
+
 Fogell is CI for human and AI collaborators. Its primary product outcome is a
 short, trustworthy path from a change to evidence that enables the next change.
 Jenkins migration remains a secondary, explicitly scoped capability.
@@ -23,6 +30,7 @@ own product requirements, architecture, and release boundaries.
 | M1 — Observe and act | A trusted local agent submits a pipeline, follows output, retrieves a bounded structured result, cancels, and verifies a corrected submission. | Real controller failure/fix campaign plus client and API negative controls. No claim of source revision verification or parsed failure diagnosis. |
 | M2 — Explain and reproduce | Each result identifies immutable source and structured failed steps/tests; another client can reproduce the same inputs. | Explicit content identity and dirty-tree controls; typed diagnostics with source locations where known; reproducibility campaign. |
 | M3 — Sustain the loop | Daily self-hosting stays within storage policy and survives declared failures. | Retention and paired recovery proofs, sustained self-hosted pilot, measured latency distributions. |
+| M4 — Operate on Luigi | A persistent owned service completes sustained feedback and declared fault tests without restarting existing services. | 100 baseline loops, 30 final-release loops, all 21 adversarial controls, paired restore and unchanged protected-service identities; see FG-270. |
 
 An internal M1 experiment comes before broad deployment. Existing production
 safety gates remain mandatory for a release. Preserve the current trusted Linux,
@@ -44,6 +52,7 @@ validation evidence; this table owns ordering, dependency, and assignment.
 | 3 | [FG-267](tickets/FG-267.md) | Immutable source identity and reproduction | M1 findings | Source/client implementation subagent |
 | 3 | [FG-268](tickets/FG-268.md) | Bounded historical retention | Storage ownership design | Retention implementation subagent |
 | 4 | [FG-269](tickets/FG-269.md) | Paired recovery and sustained self-hosted pilot | FG-266–268 | Primary agent / integration and release evidence |
+| 5 | [FG-270](tickets/FG-270.md) | Persistent Luigi deployment and bounded adversarial pilot | FG-269 | Primary deployment agent / proof driver / independent review |
 
 ## Execution protocol
 
@@ -69,6 +78,7 @@ the controller, or a remote agent protocol merely to label this AI CI.
 - [Retention ownership and recovery](runbooks/retention.md)
 - [Self-hosted pilot and paired recovery profile](runbooks/self-hosted-pilot.md)
 - [End-to-end campaign and recovery evidence](../evidence/20260922-ai-e2e/README.md)
+- [Luigi deployment and adversarial campaign](runbooks/luigi-campaign.md)
 
 The ticket files above remain authoritative for completion status. Retained
 campaign receipts identify the measured working tree and explicitly separate

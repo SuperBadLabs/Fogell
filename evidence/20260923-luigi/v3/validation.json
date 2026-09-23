@@ -1,0 +1,88 @@
+{
+  "passed": false,
+  "exit_code": 1,
+  "source_unchanged": true,
+  "source_files": 179,
+  "completed_at_utc": "2026-09-23T16:35:30.224596+00:00",
+  "command": "./scripts/build-and-test.sh",
+  "lanes": "all",
+  "log_sha256": "17636d94584a0fde12f1a19fb5044b429794d31fca196c42de6cf442fc833c3b",
+  "source_commit": "058126d3779a6897fde5edf718b958673f9ee926",
+  "final_line": "TESTS FAILED",
+  "source_manifest_sha256": "3339b4ff0c2ed515193ddf29c9fe2873a3b97236aba5088a5ea38f518e4de4e3",
+  "test_projects": [
+    {
+      "project": "tests/Fogell.Client.Tests/Fogell.Client.Tests.fsproj",
+      "run": 27,
+      "passed": 27,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    },
+    {
+      "project": "tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj",
+      "run": 116,
+      "passed": 116,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    },
+    {
+      "project": "tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj",
+      "run": 446,
+      "passed": 446,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    },
+    {
+      "project": "tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj",
+      "run": 41,
+      "passed": 41,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    },
+    {
+      "project": "tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj",
+      "run": 204,
+      "passed": 204,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    },
+    {
+      "project": "tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj",
+      "run": 243,
+      "passed": 243,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    },
+    {
+      "project": "tests/Fogell.Journal.Tests/Fogell.Journal.Tests.fsproj",
+      "run": 31,
+      "passed": 31,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    },
+    {
+      "project": "tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj",
+      "run": 143,
+      "passed": 143,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    },
+    {
+      "project": "tests/Fogell.Retention.Tests/Fogell.Retention.Tests.fsproj",
+      "run": 23,
+      "passed": 23,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    }
+  ],
+  "test_total": 1274
+}
