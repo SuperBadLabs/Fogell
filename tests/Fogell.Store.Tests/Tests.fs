@@ -5658,13 +5658,16 @@ let logs =
               let org, project = freshProject ()
               let admitted, fence = runningAttempt org project "log-batch-restore" "batch-owner" 60
               store.ActivateRestore() |> ignore
+              let restored = expectReconciliationDiagnostics org project admitted.BuildId "restore_epoch_advanced" [ admitted.AttemptId ]
+              Expect.equal restored.Chunks.Length 1 "restore publishes its own typed reason"
 
               Expect.isFalse
                   (store.AppendLogBatchFenced(
                       org, admitted.BuildId, admitted.AttemptId, fence, "batch-owner", 0, [| "stale"; "epoch" |]))
                   "pre-restore lease cannot append"
-              Expect.equal (readLog org project admitted.BuildId 0) [] "restore refusal is atomic"
-              Expect.equal (nextLogCursor org admitted.BuildId) 0 "restore refusal consumes no cursor"
+              let after = store.ReadFeedback(org, project, admitted.BuildId, 0, 100) |> Option.get
+              Expect.equal after.Chunks restored.Chunks "refused stale batch leaves only the restore diagnostic"
+              Expect.equal (nextLogCursor org admitted.BuildId) 1 "restore reason consumes one cursor; refused batch consumes none"
           }
 
           test "concurrent identical fenced batches have one winner and no cursor burn" {
