@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "desktop_width": 1440,
+  "poster_height": 2247,
+  "mobile_width": 390,
+  "qualification_points": 30,
+  "baseline_points": 100,
+  "fault_checks": 12,
+  "percentile_switch": true,
+  "horizontal_overflow": false,
+  "browser_exceptions": []
+}
