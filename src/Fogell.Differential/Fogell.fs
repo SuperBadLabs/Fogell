@@ -1941,7 +1941,7 @@ module FogellSide =
     /// credentials, workspace contents or arbitrarily large user input. Failure
     /// to preserve this diagnostic remains a publication failure, so the host
     /// cannot write a terminal outcome over missing evidence.
-    let internal withPersistedFailureDiagnostic (publish: string -> unit) run =
+    let internal withPersistedFailureDiagnostic (publish: string -> unit) (publishDiagnostic: ExecutionDiagnostic -> unit) run =
         try
             run ()
         with
@@ -1965,6 +1965,11 @@ module FogellSide =
                     "runner-failure: RUNNER_INTERNAL_ERROR: unexpected runner exception"
 
             try
+                // A fixed engine-owned failure record must survive an exhausted
+                // output budget. Use the bounded emergency publication path,
+                // just like the existing fixed console classification, without
+                // forwarding exception text or inventing a source location.
+                publishDiagnostic (ExecutionDiagnostic.create "infrastructure" "failure" diagnostic)
                 publish diagnostic
             with
             | :? OutputPublicationException -> reraise ()
@@ -1988,7 +1993,7 @@ module FogellSide =
         (hooks: PersistenceHooks)
         (script: string)
         =
-        withPersistedFailureDiagnostic hooks.OnOutput (fun () ->
+        withPersistedFailureDiagnostic hooks.OnOutput hooks.OnDiagnostic (fun () ->
             match preflightPersistedExecution script with
             | Result.Error why -> Result.Error why
             | Result.Ok _ ->

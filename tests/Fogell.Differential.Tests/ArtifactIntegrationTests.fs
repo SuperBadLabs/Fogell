@@ -6,6 +6,7 @@ open System.Security.Cryptography
 open System.Text
 open Expecto
 open Fogell.Differential
+open Fogell.Domain
 open Fogell.Execution
 
 let private pipeline steps =
@@ -104,9 +105,14 @@ let artifactIntegration =
           test "persisted refusal permits a fresh control build" {
               withPolicy limits (fun () -> withRoot (fun root ->
                   let output = ResizeArray<string>()
-                  FogellSide.runPersisted [] root "bad" 1 true (hooks output.Add)
+                  let typed = ResizeArray<ExecutionDiagnostic>()
+                  let persistedHooks = { (hooks output.Add) with OnDiagnostic = typed.Add }
+                  FogellSide.runPersisted [] root "bad" 1 true persistedHooks
                       (pipeline "sh 'printf 123456789 > secret-path.bin'; archiveArtifacts 'secret-path.bin'")
                   |> expectLimit
+                  Expect.equal typed.Count 1 "actual artifact refusal publishes one typed cause"
+                  Expect.equal typed[0].Category "infrastructure" "operator quota refusal is infrastructure"
+                  Expect.stringContains typed[0].Message "ARTIFACT_LIMIT_EXCEEDED" "named artifact limit survives structured publication"
                   Expect.equal output[output.Count - 1]
                       "runner-failure: ARTIFACT_LIMIT_EXCEEDED: artifact publication exceeded its retention limit"
                       "last diagnostic has a constant safe payload"

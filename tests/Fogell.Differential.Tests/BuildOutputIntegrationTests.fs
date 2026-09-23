@@ -6,6 +6,7 @@ open System.Threading
 open System.Threading.Tasks
 open Expecto
 open Fogell.Differential
+open Fogell.Domain
 
 // Each command writes 1024 records of 8192 x characters plus a newline.  The
 // records stay well below ProcessGroup's per-line limit while four invocations
@@ -198,8 +199,9 @@ let buildOutputIntegration =
           test "persisted overflow drains its prefix, publishes its cause, and permits a fresh control build" {
               withRoot "persisted-overflow" (fun root workspace ->
                   let published = ResizeArray<string>()
+                  let typed = ResizeArray<ExecutionDiagnostic>()
                   let hooks =
-                      { OnDiagnostic = ignore
+                      { OnDiagnostic = typed.Add
                         OnOutput = published.Add
                         IsRestartedRun = false
                         ShouldExecute = fun _ _ -> true
@@ -219,6 +221,9 @@ let buildOutputIntegration =
                       pipeline (String.concat "; " [ sh outputChunk; sh outputChunk; sh outputChunk; sh outputChunk; "sh 'touch forbidden.txt'" ])
                   FogellSide.runPersisted [] root "job" 1 true hooks source
                   |> expectWholeBuildLimit "persisted output overflow"
+                  Expect.equal typed.Count 1 "exhausted shared budget still preserves its typed cause"
+                  Expect.equal typed[0].Category "infrastructure" "operator quota refusal is infrastructure"
+                  Expect.stringContains typed[0].Message "BUILD_OUTPUT_LIMIT_EXCEEDED" "typed reason survives the exhausted console budget"
                   Expect.isFalse (File.Exists(Path.Combine(workspace, "forbidden.txt"))) "no effect follows the overflow"
                   let completeRows = published |> Seq.filter (fun line -> line.Length = 8192 && line[0] = 'x') |> Seq.length
                   Expect.isGreaterThanOrEqual completeRows 3072 "all complete rows from the first three steps drain"

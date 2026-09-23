@@ -30,8 +30,17 @@ let persistedFailureDiagnostics =
 
               for error, code in cases do
                   let published = ResizeArray<string>()
+                  let typed = ResizeArray<ExecutionDiagnostic>()
                   let result: Result<unit, string> =
-                      FogellSide.withPersistedFailureDiagnostic published.Add (fun () -> raise error)
+                      FogellSide.withPersistedFailureDiagnostic published.Add typed.Add (fun () -> raise error)
+                  Expect.equal typed.Count 1 "one typed cause is published"
+                  Expect.equal typed[0].Category "infrastructure" "host refusal is distinct from workload failure"
+                  Expect.equal typed[0].ResultCode "failure" "failure cannot become success"
+                  Expect.stringContains typed[0].Message code "typed reason retains its exact engine classification"
+                  Expect.isNull typed[0].Stage "unknown failing location remains unknown"
+                  let encoded = ExecutionDiagnostic.serialize typed[0]
+                  Expect.isLessThan encoded.Length 1024 "emergency typed record has a fixed bound"
+                  Expect.isFalse (encoded.Contains "credential-canary") "typed evidence never includes exception payload"
                   Expect.isError result "an infrastructure exception cannot report success"
                   Expect.equal published.Count 1 "one classified diagnostic is published"
                   Expect.stringContains published[0] code "the useful cause survives"
@@ -46,17 +55,30 @@ let persistedFailureDiagnostics =
                   raise (IO.IOException "diagnostic disk full")
               Expect.throwsT<OutputPublicationException>
                   (fun () ->
-                      FogellSide.withPersistedFailureDiagnostic publish
+                      FogellSide.withPersistedFailureDiagnostic publish ignore
                           (fun () -> raise (OutOfMemoryException "private payload"))
                       |> ignore)
                   "host must reconcile instead of writing a terminal build failure"
               Expect.equal calls 1 "no recursive attempt to publish a publication error"
           }
+          test "failure to publish the typed cause remains infrastructure uncertainty" {
+              let mutable typedCalls, consoleCalls = 0, 0
+              Expect.throwsT<OutputPublicationException>
+                  (fun () ->
+                      FogellSide.withPersistedFailureDiagnostic
+                          (fun _ -> consoleCalls <- consoleCalls + 1)
+                          (fun _ -> typedCalls <- typedCalls + 1; raise (IO.IOException "typed sink full"))
+                          (fun () -> raise (OutputLimitExceededException()))
+                      |> ignore)
+                  "a missing typed cause cannot be sealed as terminal failure"
+              Expect.equal typedCalls 1 "no recursive publication"
+              Expect.equal consoleCalls 0 "failure does not fall back to an untyped success path"
+          }
           test "existing publication failure is propagated without another write" {
               let failure = OutputPublicationException("event sink failed", IO.IOException())
               let mutable calls = 0
               try
-                  FogellSide.withPersistedFailureDiagnostic (fun _ -> calls <- calls + 1)
+                  FogellSide.withPersistedFailureDiagnostic (fun _ -> calls <- calls + 1) (fun _ -> calls <- calls + 1)
                       (fun () -> raise failure)
                   |> ignore
                   failtest "publication failure was swallowed"
@@ -67,10 +89,10 @@ let persistedFailureDiagnostics =
           test "successful and returned-error paths do not invent exceptions" {
               let published = ResizeArray<string>()
               Expect.equal
-                  (FogellSide.withPersistedFailureDiagnostic published.Add (fun () -> Ok 42))
+                  (FogellSide.withPersistedFailureDiagnostic published.Add (fun _ -> failtest "success emitted failure evidence") (fun () -> Ok 42))
                   (Ok 42) "success result is preserved"
               Expect.equal
-                  (FogellSide.withPersistedFailureDiagnostic published.Add (fun () -> Error "refused"))
+                  (FogellSide.withPersistedFailureDiagnostic published.Add (fun _ -> failtest "returned refusal invented an exception") (fun () -> Error "refused"))
                   (Error "refused": Result<int, string>) "returned refusal is preserved"
               Expect.isEmpty published "only thrown infrastructure failures are classified"
           } ]
