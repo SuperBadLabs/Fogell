@@ -170,6 +170,17 @@ let main argv =
                     "controller event publication failed",
                     ex))
 
+    let emitDiagnostic diagnostic =
+        try
+            eventPath |> Option.iter (fun path ->
+                lock eventGate (fun () ->
+                    let json = ExecutionDiagnostic.serialize diagnostic
+                    let bytes = Encoding.UTF8.GetBytes json
+                    if bytes.Length > 16384 then invalidOp "diagnostic exceeded frame bound"
+                    Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+                    File.AppendAllText(path, "D1:" + Convert.ToBase64String bytes + "\n")))
+        with ex -> raise (OutputPublicationException("controller diagnostic publication failed", ex))
+
     match Array.toList argv with
     | jenkinsfile :: workspaceRoot :: jobName :: journalArg :: rest when List.length rest <= 1 ->
         let approvalsArg = List.tryHead rest
@@ -941,6 +952,30 @@ let main argv =
                 Directory.Delete(realWorkspace, true)
 
             Directory.CreateDirectory workspaceFull |> ignore
+            // FG-267. Source is installed only after the host's fresh workspace
+            // wipe and before journal metadata or any pipeline step. Resume
+            // retains the existing execution workspace and never rematerializes.
+            match Environment.GetEnvironmentVariable "FOGELL_SOURCE_SNAPSHOT_FILE" with
+            | null | "" -> ()
+            | snapshotPath ->
+                let info = FileInfo snapshotPath
+                if info.Length > int64 Fogell.Domain.SourceSnapshot.MaxEnvelopeBytes then
+                    eprintfn "source snapshot exceeds transport limit"
+                    exit 2
+                let bytes = File.ReadAllBytes snapshotPath
+                match Fogell.Domain.SourceSnapshot.decode bytes with
+                | Ok(Some snapshot) ->
+                    if snapshot.PipelineSha256 <> Fogell.Domain.SourceSnapshot.digest (File.ReadAllBytes jenkinsfile) then
+                        eprintfn "source snapshot pipeline identity differs"
+                        exit 2
+                    match Fogell.Domain.SourceSnapshot.materialize snapshot realWorkspace with
+                    | Ok () -> ()
+                    | Error _ ->
+                        eprintfn "source snapshot materialization refused"
+                        exit 2
+                | _ ->
+                    eprintfn "invalid source snapshot transport"
+                    exit 2
             // mirror runWith's fresh path: a new job has no SCM build history
             WalkerGit.resetHistory (Path.Combine(workspaceRoot, "_artifacts")) jobName
 
@@ -1103,7 +1138,8 @@ let main argv =
         let liveRetryStages = System.Collections.Concurrent.ConcurrentDictionary<string, byte>()
 
         let hooks =
-            { OnOutput = emitEvent
+            { OnDiagnostic = emitDiagnostic
+              OnOutput = emitEvent
               IsRestartedRun = resuming
               StageWasCommitted = fun stage -> Set.contains stage plan.CommittedStages
               SkippedStatus =
@@ -1237,6 +1273,7 @@ let main argv =
             // this fixed fallback also covers returned engine refusals. Publish
             // before the terminal journal record so missing evidence cannot be
             // mistaken for an ordinary completed failure.
+            emitDiagnostic (ExecutionDiagnostic.create "infrastructure" "failure" "RUN_FAILED: runner could not complete the build")
             emitEvent "runner-failure: RUN_FAILED: runner could not complete the build"
             journal.Append(BuildFinished BuildStatus.Failure)
             journal.Close()

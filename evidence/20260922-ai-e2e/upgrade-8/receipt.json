@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "started_at_utc": "2026-09-23T05:04:13.620463+00:00",
+  "database": "fogell_fg269_upgrade_9c35d208d4f748b384e21ead034857ef",
+  "container": "a8b47254b1ab14ab4c692c0488a47a5f84bc876eb4d6f1ff494017a45ecf14d4",
+  "latest": "0017",
+  "harness_sha256": "98ef378fabc0fdf8358a1f1e3eb82321a21ae9dcf3d933e9e06970c136aa4f4d",
+  "migrations": {
+    "0001": "f7be1fb3af361a85d49f947e4453a5df00459f3823344c8fae90bf9f66725cb7",
+    "0002": "f6579d7ebba6c20acc8dff9e4760c4f44af8cfeb046cecdc480bb32aeaffe86c",
+    "0003": "1ce854dd3de720521eac6afc7322f2b098b644f07460a959b0df8edcf9f319c6",
+    "0004": "cea314ca6fdbb18dd5fea9d3edb1efff2c9d61acee9bec4f68d4048c2e980096",
+    "0005": "af4f5fadfbccfdbba78b785753386b09f9385e1ac88167d18960b03d9635f920",
+    "0006": "26daeb1153b1a71b945bc897aee2ce1dba9994bc53aa1bdf206e416aa284a7aa",
+    "0007": "22b1049db8b55a99e82b7565ff51a4060be2212d927ec31cddd227b1cfc91590",
+    "0008": "a164a5a46fe18d9712508bb7222016badb9fef4cd51c4516662b591a912bede9",
+    "0009": "ceae309c185b96abe221bbfba8dddb7783de80f8b3c393543253886f89397bf7",
+    "0010": "9e5c3641ba7a4b4f0c62f0fc91c4bbc0d4acebae7987c5bc70048a6a95927ecb",
+    "0011": "16ceebc066113d5fc2c7b223c6332bb48fc57021c9a64e76d940ea9557fc415d",
+    "0012": "3c4b68334ac6f41af8930e18145f3af2313dd6fb38e5077a19fc60c391890db8",
+    "0013": "a6d0181ef8e7ea457b3852c0f7e4e778282ced2949c9cf88a776830007ab6ac1",
+    "0014": "42e128198691d5cfff01f8da31cbaf7852a5373a91515afd47aa9c678d992603",
+    "0015": "56f374038a03342120a6da570cf66a22e531d6962991292c0163f6e7d61b0696",
+    "0016": "94e3bcf71376e14d32f44f420c9c3390398fe7ad791a5d7a17472eeeb5f2a21a",
+    "0017": "1ca57923818fdc82b7f9ee6dc2d6ff3b338a0283f67190576599a6cc7716ccd3"
+  },
+  "migrator_sha256": "8b67a12354908d96c93d0f21a4b34162458e8f8846c24421b5e1b2233a658b96",
+  "store_binary_sha256": "83adc9e88c09e0cd146f6151a12643a1a9bd7cf8eaea975514b2eccafc766570",
+  "passed": true,
+  "cleanup_confirmed": true,
+  "pre_upgrade_archive_sha256": "f290852f838db81a5addcfc53dd30e695e305a0d3f866ea5e16472189cf4734c",
+  "terminated_backend": 3698,
+  "interrupted_exit": 2,
+  "before_hashes": {
+    "schema": "91079f4ba6cbfe16aa09d5b47c44984dc73364e0afddd9fde38d168e95df0147",
+    "data": "2403074ffab82604ca02a615eda8398425bd3dbd3afbb0ee87b09aa161037565",
+    "ledger": "7556aa397eb0413a28e189a8e1322b92dfa3a09e30cc9ac73f1e1c143ee0954d",
+    "sequences": "fdf55fd7df037c3fe417c533d6801ffb09e6a22d90fc9510651bff6878fb9ca6"
+  },
+  "interrupted_hashes": {
+    "schema": "91079f4ba6cbfe16aa09d5b47c44984dc73364e0afddd9fde38d168e95df0147",
+    "data": "2403074ffab82604ca02a615eda8398425bd3dbd3afbb0ee87b09aa161037565",
+    "ledger": "7556aa397eb0413a28e189a8e1322b92dfa3a09e30cc9ac73f1e1c143ee0954d",
+    "sequences": "fdf55fd7df037c3fe417c533d6801ffb09e6a22d90fc9510651bff6878fb9ca6"
+  },
+  "controls": [
+    {
+      "component": "schema",
+      "rejected": true
+    },
+    {
+      "component": "data",
+      "rejected": true
+    },
+    {
+      "component": "ledger",
+      "rejected": true
+    },
+    {
+      "component": "sequences",
+      "rejected": true
+    }
+  ],
+  "retry": {
+    "migrated": 17
+  },
+  "retry_hashes": {
+    "schema": "05a00f2e3b525f8a14a2d078962bd52f1f171d50ac5072ceb054173fdcea3ef3",
+    "data": "2403074ffab82604ca02a615eda8398425bd3dbd3afbb0ee87b09aa161037565",
+    "ledger": "758903f425b190e591a568193237d632855e1201b807ac69fff1a4cde99d9028",
+    "sequences": "fdf55fd7df037c3fe417c533d6801ffb09e6a22d90fc9510651bff6878fb9ca6"
+  },
+  "binary_and_source_stability_confirmed": true
+}

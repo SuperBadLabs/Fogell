@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "passed": true,
+  "restore_target": "fogell_pilot_final_restored",
+  "rto_seconds_target": 120,
+  "rpo_lost_records_target": 0,
+  "requires_controller_control": false,
+  "harness_sha256": "ccb99cdfc7ab541d3786dcb27e3b99d1b7c679c1dafb73cbebc1c17553f98a3a",
+  "proof_input_sha256": {
+    "workload": "0f43639b58d48b68470833c0545a36792dc139c2e771dc487a2c4eaaeac6186a",
+    "authority": "d392a83dfa86f7f3c6d8667ae59f2d07d796532af1158ecf8e87b9a7208beb86",
+    "post_restore_command": "ed4f1a23dbd7d7d17889d71c37b434fb2f8f16ad493cc826edb0ebf3b8aec753"
+  },
+  "controls": [
+    {
+      "control": "altered-database",
+      "rejected": true
+    },
+    {
+      "control": "changed-state-file",
+      "rejected": true
+    },
+    {
+      "control": "missing-state-file",
+      "rejected": true
+    }
+  ],
+  "recovery_start_monotonic": 2616898.239290672,
+  "activation": {
+    "restore_epoch": 1,
+    "schema_version": 1
+  },
+  "stale_authority": {
+    "passed": true,
+    "stale_log_rejected": true,
+    "stale_terminal_rejected": true
+  },
+  "restored_pair_elapsed_seconds": 2.0211591529659927,
+  "controller_control": {
+    "passed": true,
+    "database": "fogell_pilot_final_restored",
+    "previous_artifact_sha256": "1fc48727f0b2452d105080ea60c32c8a5b99e8dc20dc6535705517318e7cc1f6",
+    "control_receipt_sha256": "89026f0ea8f6e9fd6b3b8365fbcc320420cb87331bb74168802c83439736908b",
+    "new_builds": [
+      "1e4cf215-3b34-4906-83b3-2bafbcf4d87c",
+      "c63a150e-fe03-49d4-a106-03a3d0582334"
+    ]
+  },
+  "recovery_elapsed_seconds": 12.480788796208799,
+  "lost_backed_up_rows": 0,
+  "lost_backed_up_files": 0
+}

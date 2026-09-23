@@ -1067,6 +1067,256 @@ let authorization =
               Expect.isFalse (Authorization.authorize cfg (Some($"Bearer {token}x"))) "trailing byte"
           } ]
 
+let private feedbackTests =
+    let app, baseUrl = startServer 2
+    let admit () =
+        let org, project = freshProject ()
+        let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
+        let code, body = send HttpMethod.Post url (Some token) (Some "feedback") (Some pipeline)
+        Expect.equal code 201 "fixture admitted"
+        use doc = JsonDocument.Parse body
+        let build = BuildId(Guid.Parse(doc.RootElement.GetProperty("build_id").GetString()))
+        let attempt = AttemptId(Guid.Parse(doc.RootElement.GetProperty("attempt_id").GetString()))
+        org, project, build, attempt, $"{url}/{build.Value}/feedback"
+    let page url cursor =
+        let code, body = send HttpMethod.Get $"{url}?from={cursor}" (Some token) None None
+        Expect.equal code 200 "feedback served"
+        JsonDocument.Parse body
+    let append org build attempt sequence body =
+        Expect.isTrue (store.AppendLog(org, build, attempt, sequence, body)) "fixture log admitted"
+    let terminal org attempt =
+        let owner = "feedback-test"
+        let fence =
+            match store.OfferAttempt(org, attempt, owner, 60) with
+            | Ok fence -> fence
+            | Error error -> failtestf "offer failed: %s" error
+        Expect.isTrue (store.AcceptAttempt(org, attempt, fence, owner)) "fixture accepted"
+        match store.PublishTerminal(org, attempt, fence, owner, Success) with
+        | Ok () -> ()
+        | Error error -> failtestf "terminal failed: %s" error
+    testList "FG-263 feedback"
+        [ test "live empty, cancellation, terminal backlog and count continuation" {
+              let org, project, build, attempt, url = admit ()
+              use initial = page url 0
+              let root = initial.RootElement
+              Expect.equal (root.GetProperty("schema_version").GetInt32()) 1 "versioned"
+              Expect.equal (root.GetProperty("build_id").GetString()) (string build.Value) "identified"
+              Expect.equal (root.GetProperty("status").GetString()) "queued" "authoritative status"
+              Expect.isFalse (root.GetProperty("is_terminal").GetBoolean()) "empty is not completion"
+              Expect.isFalse (root.GetProperty("has_more").GetBoolean()) "empty snapshot"
+              Expect.equal (root.GetProperty("next_sequence").GetInt32()) 0 "empty cursor retained"
+              for i in 0..2 do append org build attempt i $"line-{i}"
+              terminal org attempt
+              use first = page url 0
+              Expect.isTrue (first.RootElement.GetProperty("is_terminal").GetBoolean()) "terminal"
+              Expect.isTrue (first.RootElement.GetProperty("has_more").GetBoolean()) "terminal still has backlog"
+              Expect.equal (first.RootElement.GetProperty("chunks").GetArrayLength()) 2 "configured count cap"
+              Expect.equal (first.RootElement.GetProperty("next_sequence").GetInt32()) 2 "only represented chunks consumed"
+              use last = page url 2
+              Expect.equal (last.RootElement.GetProperty("chunks").GetArrayLength()) 1 "backlog drained"
+              Expect.isFalse (last.RootElement.GetProperty("has_more").GetBoolean()) "terminal fully drained"
+              use empty = page url 3
+              Expect.equal (empty.RootElement.GetProperty("next_sequence").GetInt32()) 3 "empty tail retained"
+              Expect.equal (empty.RootElement.GetProperty("chunks").GetArrayLength()) 0 "empty terminal tail"
+              let co, cp, cb, _, cu = admit ()
+              store.RequestCancellation(co, cp, cb) |> ignore
+              use cancelled = page cu 0
+              Expect.isTrue (cancelled.RootElement.GetProperty("cancellation_requested").GetBoolean()) "cancellation visible"
+              Expect.isFalse (cancelled.RootElement.GetProperty("is_terminal").GetBoolean()) "request is not outcome"
+          }
+          test "UTF8 byte budget, oversized scalar prefix and explicit truncation" {
+              let org, _, build, attempt, url = admit ()
+              let huge = String.replicate 20000 "😀"
+              append org build attempt 0 huge
+              append org build attempt 1 "tail"
+              use first = page url 0
+              let chunk = first.RootElement.GetProperty("chunks").[0]
+              let body = chunk.GetProperty("body").GetString()
+              Expect.equal (Encoding.UTF8.GetByteCount body) 65536 "byte budget is exact for four-byte scalars"
+              Expect.equal body (String.replicate 16384 "😀") "no split scalar or replacement character"
+              Expect.isTrue (chunk.GetProperty("truncated").GetBoolean()) "chunk truncation explicit"
+              Expect.isTrue (first.RootElement.GetProperty("truncated").GetBoolean()) "page truncation explicit"
+              Expect.isTrue (first.RootElement.GetProperty("has_more").GetBoolean()) "tail remains"
+              Expect.equal (first.RootElement.GetProperty("next_sequence").GetInt32()) 1 "oversize chunk consumed once"
+              use next = page url 1
+              Expect.equal (next.RootElement.GetProperty("chunks").[0].GetProperty("body").GetString()) "tail" "continuation progresses"
+              Expect.isFalse (next.RootElement.GetProperty("truncated").GetBoolean()) "tail is complete"
+              let logsUrl = url.Substring(0, url.Length - "feedback".Length) + "logs"
+              let fullCode, fullBody = send HttpMethod.Get logsUrl (Some token) None None
+              Expect.equal fullCode 200 "full admitted logs still available"
+              use full = JsonDocument.Parse fullBody
+              Expect.equal (full.RootElement.GetProperty("chunks").[0].GetProperty("body").GetString()) huge "feedback never changes stored logs"
+
+              let o, _, b, a, u = admit ()
+              append o b a 0 (String.replicate 40000 "a")
+              append o b a 1 (String.replicate 30000 "b")
+              use limited = page u 0
+              Expect.equal (limited.RootElement.GetProperty("chunks").GetArrayLength()) 1 "byte cap applies before count cap"
+              Expect.isFalse (limited.RootElement.GetProperty("truncated").GetBoolean()) "normal tail deferred, not discarded"
+              Expect.isTrue (limited.RootElement.GetProperty("has_more").GetBoolean()) "deferred chunk advertised"
+              use remainder = page u 1
+              Expect.equal (remainder.RootElement.GetProperty("chunks").[0].GetProperty("body").GetString().Length) 30000 "complete deferred body"
+              let o3, _, b3, a3, u3 = admit ()
+              append o3 b3 a3 0 (String.replicate 22000 "€")
+              use thirds = page u3 0
+              let prefix = thirds.RootElement.GetProperty("chunks").[0].GetProperty("body").GetString()
+              Expect.equal (Encoding.UTF8.GetByteCount prefix) 65535 "unused byte does not split a three-byte scalar"
+              Expect.isFalse (thirds.RootElement.GetProperty("has_more").GetBoolean()) "truncation alone is not continuation"
+              append o3 b3 a3 1 ""
+              append o3 b3 a3 2 "x"
+              use withTail = page u3 0
+              Expect.equal (withTail.RootElement.GetProperty("chunks").GetArrayLength()) 1 "even empty rows defer after truncation"
+              Expect.isTrue (withTail.RootElement.GetProperty("has_more").GetBoolean()) "empty and tiny tail remain visible"
+              use tinyTail = page u3 1
+              Expect.equal (tinyTail.RootElement.GetProperty("chunks").GetArrayLength()) 2 "empty and tiny chunks represented on next page"
+              Expect.equal (tinyTail.RootElement.GetProperty("next_sequence").GetInt32()) 3 "empty body still advances cursor"
+          }
+          test "tenant lineage and named auth, identifier, cursor refusals" {
+              let org, project, build, _, url = admit ()
+              let refused url auth expected code =
+                  let actual, body = send HttpMethod.Get url auth None None
+                  Expect.equal actual expected "HTTP refusal"
+                  use error = JsonDocument.Parse body
+                  Expect.equal (error.RootElement.GetProperty("code").GetString()) code "named refusal"
+                  Expect.isFalse (body.Contains "chunks") "no evidence disclosure"
+              refused url None 401 "unauthorized"
+              refused url (Some "bad") 401 "unauthorized"
+              for cursor in [ "-1"; "abc"; "2147483648"; ""; "0&from=1" ] do
+                  refused $"{url}?from={cursor}" (Some token) 400 "invalid_log_cursor"
+              refused (url.Replace(string project.Value, "bad-project")) (Some token) 400 "malformed_identifier"
+              for original in [ org.Value; project.Value; build.Value ] do
+                  refused (url.Replace(string original, string (Guid.NewGuid()))) (Some token) 404 "not_found"
+              use beyond = page url Int32.MaxValue
+              Expect.equal (beyond.RootElement.GetProperty("next_sequence").GetInt32()) Int32.MaxValue "valid far cursor retained"
+          }
+          test "status and evidence are read from one committed database snapshot" {
+              let org, _, build, attempt, url = admit ()
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use tx = conn.BeginTransaction()
+              use cmd = conn.CreateCommand()
+              cmd.Transaction <- tx
+              cmd.CommandText <-
+                  "SELECT set_config('fogell.organization_id', @org, true);
+                   UPDATE builds SET status = 'success', next_log_sequence = 1 WHERE id = @build;
+                   INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, build_sequence, body)
+                   VALUES (@o, @build, @attempt, 0, 0, 'final-evidence')"
+              cmd.Parameters.AddWithValue("org", string org.Value) |> ignore
+              cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+              cmd.Parameters.AddWithValue("build", build.Value) |> ignore
+              cmd.Parameters.AddWithValue("attempt", attempt.Value) |> ignore
+              cmd.ExecuteNonQuery() |> ignore
+              use before = page url 0
+              Expect.equal (before.RootElement.GetProperty("status").GetString()) "queued" "uncommitted status invisible"
+              Expect.equal (before.RootElement.GetProperty("chunks").GetArrayLength()) 0 "uncommitted evidence invisible"
+              tx.Commit()
+              use after = page url 0
+              Expect.isTrue (after.RootElement.GetProperty("is_terminal").GetBoolean()) "committed status observed"
+              Expect.equal (after.RootElement.GetProperty("chunks").[0].GetProperty("body").GetString()) "final-evidence" "terminal snapshot contains final evidence"
+              use update = conn.CreateCommand()
+              update.CommandText <- "UPDATE builds SET status = @status WHERE id = @build"
+              update.Parameters.AddWithValue("build", build.Value) |> ignore
+              let statusParameter = update.Parameters.AddWithValue("status", "reconciliation_required")
+              for value, isTerminal in
+                  [ "reconciliation_required", false; "not_built", false; "running", false
+                    "unstable", true; "failure", true; "aborted", true; "succeeded", true; "failed", true ] do
+                  statusParameter.Value <- value
+                  update.ExecuteNonQuery() |> ignore
+                  use snapshot = page url 0
+                  Expect.equal (snapshot.RootElement.GetProperty("is_terminal").GetBoolean()) isTerminal $"known status {value}"
+              statusParameter.Value <- "future_status"
+              update.ExecuteNonQuery() |> ignore
+              let code, body = send HttpMethod.Get url (Some token) None None
+              Expect.equal code 503 "unknown authority is refused"
+              Expect.stringContains body "invalid_build_status" "unknown status never becomes success"
+          }
+          test "FG-266 typed diagnostics are fenced, durable and share bounded feedback" {
+              let org, project, build, attempt, url = admit ()
+              let owner = "diagnostic-owner"
+              let fence = match store.OfferAttempt(org, attempt, owner, 60) with Ok f -> f | Error e -> failtest e
+              Expect.isTrue (store.AcceptAttempt(org, attempt, fence, owner)) "accepted"
+              let diagnostic =
+                  { ExecutionDiagnostic.create "test" "failure" "planted assertion" with
+                      TestName = "planted_failure"; TestClass = "Example.Tests"; ReportPath = "reports/results.xml" }
+                  |> ExecutionDiagnostic.serialize
+              let append fence start =
+                  store.AppendLogBatchFenced(org, build, attempt, fence, owner, start, [| "" |], diagnostics = [| Some diagnostic |])
+              Expect.isFalse (append (Fence(fence.Value + 1L)) 0) "stale authority cannot publish diagnostics"
+              Expect.isTrue (append fence 0) "current authority can publish"
+              Expect.isFalse (append fence 0) "replayed publication cannot duplicate diagnostic identity"
+              use before = page url 0
+              let chunk = before.RootElement.GetProperty("chunks").[0]
+              Expect.equal (chunk.GetProperty("diagnostic").GetProperty("test_name").GetString()) "planted_failure" "test is identified without log parsing"
+              Expect.equal (chunk.GetProperty("body").GetString()) "" "typed evidence has no copied raw log body"
+              let identity = chunk.GetProperty("diagnostic_id").GetString()
+              let reopened = Store(connectionString).ReadFeedback(org, project, build, 0, 2) |> Option.get
+              Expect.equal reopened.Chunks.Head.DiagnosticId (Some identity) "reopened store retains identity"
+              Expect.isTrue (store.RequireReconciliation(org, attempt, fence, owner, "terminal_journal_missing")) "infrastructure transition accepted"
+              use after = page url 1
+              let infra = after.RootElement.GetProperty("chunks").[0].GetProperty("diagnostic")
+              Expect.equal (infra.GetProperty("category").GetString()) "infrastructure" "separate machine-readable category"
+              Expect.equal (infra.GetProperty("message").GetString()) "terminal_journal_missing" "stable infrastructure reason"
+              Expect.equal (after.RootElement.GetProperty("status").GetString()) "reconciliation_required" "diagnostic and state are visible together"
+              Expect.isFalse (append fence 2) "terminal/reconciled attempt cannot publish"
+              let o, _, b, a, u = admit ()
+              let f = match store.OfferAttempt(o, a, owner, 60) with Ok value -> value | Error e -> failtest e
+              Expect.isTrue (store.AcceptAttempt(o, a, f, owner)) "second fixture accepted"
+              Expect.isTrue
+                  (store.AppendLogBatchFenced(o, b, a, f, owner, 0, [| String.replicate 66000 "a"; "tail" |], diagnostics = [| Some diagnostic; None |]))
+                  "typed and console bytes admitted atomically"
+              use bounded = page u 0
+              let first = bounded.RootElement.GetProperty("chunks").[0]
+              let contentBytes = Encoding.UTF8.GetByteCount(first.GetProperty("body").GetString())
+              let diagnosticBytes = Encoding.UTF8.GetByteCount(first.GetProperty("diagnostic").GetRawText())
+              Expect.isLessThanOrEqual (contentBytes + diagnosticBytes) 65536 "diagnostic and body share page content budget"
+              Expect.isTrue (first.GetProperty("truncated").GetBoolean()) "log prefix truncation explicit"
+              Expect.isTrue (bounded.RootElement.GetProperty("has_more").GetBoolean()) "tail deferred"
+              Expect.equal (first.GetProperty("diagnostic").GetProperty("test_name").GetString()) "planted_failure" "diagnostic retained with bounded log prefix"
+          }
+          test "FG-268 every retention phase explicitly expires evidence and preserves tenant boundaries" {
+              let org, project, build, attempt, url = admit ()
+              append org build attempt 0 "retained-before-selection"
+              terminal org attempt
+              use before = page url 0
+              Expect.equal (before.RootElement.GetProperty("chunks").GetArrayLength()) 1 "control evidence exists"
+              use conn = new Npgsql.NpgsqlConnection(connectionString)
+              conn.Open()
+              use cmd = conn.CreateCommand()
+              cmd.CommandText <-
+                  "INSERT INTO build_retention(organization_id,build_id,state,restore_epoch,manifest)
+                   SELECT @org,@build,'selected',restore_epoch,'{}'::jsonb FROM controller_metadata WHERE singleton"
+              cmd.Parameters.AddWithValue("org", org.Value) |> ignore
+              cmd.Parameters.AddWithValue("build", build.Value) |> ignore
+              cmd.ExecuteNonQuery() |> ignore
+              let buildUrl = url.Substring(0, url.Length - "/feedback".Length)
+              for phase in [ "selected"; "deleting"; "expired"; "held" ] do
+                  use update = conn.CreateCommand()
+                  update.CommandText <- "UPDATE build_retention SET state=@phase WHERE organization_id=@org AND build_id=@build"
+                  update.Parameters.AddWithValue("phase", phase) |> ignore
+                  update.Parameters.AddWithValue("org", org.Value) |> ignore
+                  update.Parameters.AddWithValue("build", build.Value) |> ignore
+                  update.ExecuteNonQuery() |> ignore
+                  for endpoint in [ url; buildUrl + "/logs"; buildUrl + "/source"; $"{buildUrl}/attempts/{attempt.Value}/artifacts/report.xml" ] do
+                      let code, body = send HttpMethod.Get endpoint (Some token) None None
+                      Expect.equal code 410 $"{phase} withdraws evidence explicitly"
+                      Expect.stringContains body "evidence_expired" "named expiry"
+                      let denied, _ = send HttpMethod.Get endpoint None None None
+                      Expect.equal denied 401 "retention reveals nothing before authorization"
+                      let missing, _ = send HttpMethod.Get (endpoint.Replace(string project.Value, string(Guid.NewGuid()))) (Some token) None None
+                      Expect.equal missing 404 "wrong project does not reveal tombstone"
+                  let statusCode, _ = send HttpMethod.Get buildUrl (Some token) None None
+                  Expect.equal statusCode 200 "status metadata survives payload expiry"
+                  let snapshot = store.ReadFeedback(org, project, build, 0, 10) |> Option.get
+                  Expect.isTrue snapshot.EvidenceExpired "expiry shares the evidence snapshot"
+                  Expect.isEmpty snapshot.Chunks "expired bytes are not transferred"
+                  let mutable migrated = false
+                  let result = store.MigrateLegacyArtifactSnapshot(org, project, build, attempt, fun () -> migrated <- true; Ok())
+                  Expect.equal result (Ok false) "retention prevents legacy filesystem adoption"
+                  Expect.isFalse migrated "withdrawn filesystem is untouched"
+                  Expect.equal (store.ReadSourceDefinitionState(org, project, build)) (Error "evidence_expired") "source download expires before payload deletion"
+          }
+          test "teardown" { app.StopAsync() |> Async.AwaitTask |> Async.RunSynchronously } ]
+
 let endpoints =
     let app, baseUrl = startServer 1000
 
@@ -3840,4 +4090,5 @@ let main argv =
                           tokenFileIntegrity
                           authorization
                           effectDispatch
+                          feedbackTests
                           endpoints ]))

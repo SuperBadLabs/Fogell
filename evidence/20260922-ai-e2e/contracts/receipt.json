@@ -1,0 +1,376 @@
+{
+  "schema_version": 1,
+  "organization": "d061bb14-6c92-429e-9a1f-bf658ed534c2",
+  "project": "750662cc-3077-438d-b4ae-01b7c8071585",
+  "passed": false,
+  "runs": [
+    {
+      "label": "shell",
+      "admission": {
+        "build_id": "f5efeea4-d93f-494a-87d5-835797e1c3a2",
+        "node_id": "2ed26339-402c-4f29-98ae-aa4374bb1800",
+        "attempt_id": "89f3b06c-6d85-49cd-a637-5c293fb2d180",
+        "number": 3,
+        "was_existing": false,
+        "client_elapsed_ms": 46
+      },
+      "watch_exit": 1,
+      "status": "failure",
+      "terminal_or_reconciliation_ms": 506.60967361181974,
+      "pages": [
+        {
+          "observed_ms": 199.99862369149923,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "f5efeea4-d93f-494a-87d5-835797e1c3a2",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 0,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 43
+          }
+        },
+        {
+          "observed_ms": 301.97963071987033,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "f5efeea4-d93f-494a-87d5-835797e1c3a2",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 1,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 0,
+                "body": "step-started: Shell failure#0 sh",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 156
+          }
+        },
+        {
+          "observed_ms": 404.5755066908896,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "f5efeea4-d93f-494a-87d5-835797e1c3a2",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 1,
+            "next_sequence": 9,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 1,
+                "body": "+ printf planted shell failure",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 2,
+                "body": "",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 3,
+                "body": "planted shell failure",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 4,
+                "body": "+ exit 7",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 5,
+                "body": "",
+                "truncated": false,
+                "diagnostic": {
+                  "step": "sh",
+                  "stage": "Shell failure",
+                  "output": "+ printf planted shell failure\n\nplanted shell failure\n+ exit 7\n",
+                  "result": "failure",
+                  "message": "script returned exit code 7",
+                  "category": "workload_step",
+                  "exit_code": 7,
+                  "test_name": null,
+                  "truncated": false,
+                  "test_class": null,
+                  "report_path": null,
+                  "source_line": 6,
+                  "source_path": "Jenkinsfile",
+                  "artifact_refs": [],
+                  "source_column": 9,
+                  "schema_version": 1
+                },
+                "diagnostic_id": "89f3b06c-6d85-49cd-a637-5c293fb2d180:5"
+              },
+              {
+                "sequence": 6,
+                "body": "ERROR: script returned exit code 7",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 7,
+                "body": "step-finished: Shell failure#0 failure",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 8,
+                "body": "stage-committed: Shell failure",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 258
+          }
+        },
+        {
+          "observed_ms": 506.60967361181974,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "f5efeea4-d93f-494a-87d5-835797e1c3a2",
+            "status": "failure",
+            "cancellation_requested": false,
+            "is_terminal": true,
+            "from_sequence": 9,
+            "next_sequence": 9,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 361
+          }
+        }
+      ],
+      "first_actionable_diagnostic_ms": 404.5755066908896,
+      "diagnostics": [
+        {
+          "observed_ms": 404.5755066908896,
+          "diagnostic_id": "89f3b06c-6d85-49cd-a637-5c293fb2d180:5",
+          "diagnostic": {
+            "step": "sh",
+            "stage": "Shell failure",
+            "output": "+ printf planted shell failure\n\nplanted shell failure\n+ exit 7\n",
+            "result": "failure",
+            "message": "script returned exit code 7",
+            "category": "workload_step",
+            "exit_code": 7,
+            "test_name": null,
+            "truncated": false,
+            "test_class": null,
+            "report_path": null,
+            "source_line": 6,
+            "source_path": "Jenkinsfile",
+            "artifact_refs": [],
+            "source_column": 9,
+            "schema_version": 1
+          }
+        }
+      ]
+    },
+    {
+      "label": "junit",
+      "admission": {
+        "build_id": "f347e934-094d-4947-91dd-99b5249e2233",
+        "node_id": "aaeb751e-4c17-4fec-a39c-ab4b97bbb8e7",
+        "attempt_id": "c02a3e2b-013d-4c32-b308-46f7d932ab0e",
+        "number": 4,
+        "was_existing": false,
+        "client_elapsed_ms": 41
+      },
+      "watch_exit": 1,
+      "status": "unstable",
+      "terminal_or_reconciliation_ms": 398.32923794165254,
+      "pages": [
+        {
+          "observed_ms": 194.3762842565775,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "f347e934-094d-4947-91dd-99b5249e2233",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 0,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 43
+          }
+        },
+        {
+          "observed_ms": 296.63246497511864,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "f347e934-094d-4947-91dd-99b5249e2233",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 1,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 0,
+                "body": "step-started: Test failure#0 sh",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 157
+          }
+        },
+        {
+          "observed_ms": 398.32923794165254,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "f347e934-094d-4947-91dd-99b5249e2233",
+            "status": "unstable",
+            "cancellation_requested": false,
+            "is_terminal": true,
+            "from_sequence": 1,
+            "next_sequence": 8,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 1,
+                "body": "+ printf <testsuite name=Example><testcase name=planted_failure classname=Example.Tests file=tests/example.fs line=23><failure message=expected 2 got 1>assertion failed</failure></testcase></testsuite>",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 2,
+                "body": "step-finished: Test failure#0 success",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 3,
+                "body": "step-started: Test failure#1 junit",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 4,
+                "body": "Recording test results",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 5,
+                "body": "",
+                "truncated": false,
+                "diagnostic": {
+                  "step": "junit",
+                  "stage": "Test failure",
+                  "output": "",
+                  "result": "unstable",
+                  "message": "1 of 1 test(s) failed",
+                  "category": "workload_step",
+                  "exit_code": null,
+                  "test_name": null,
+                  "truncated": false,
+                  "test_class": null,
+                  "report_path": null,
+                  "source_line": 7,
+                  "source_path": "Jenkinsfile",
+                  "artifact_refs": [],
+                  "source_column": 9,
+                  "schema_version": 1
+                },
+                "diagnostic_id": "c02a3e2b-013d-4c32-b308-46f7d932ab0e:5"
+              },
+              {
+                "sequence": 6,
+                "body": "step-finished: Test failure#1 unstable",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 7,
+                "body": "stage-committed: Test failure",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 258
+          }
+        }
+      ],
+      "first_actionable_diagnostic_ms": 398.32923794165254,
+      "diagnostics": [
+        {
+          "observed_ms": 398.32923794165254,
+          "diagnostic_id": "c02a3e2b-013d-4c32-b308-46f7d932ab0e:5",
+          "diagnostic": {
+            "step": "junit",
+            "stage": "Test failure",
+            "output": "",
+            "result": "unstable",
+            "message": "1 of 1 test(s) failed",
+            "category": "workload_step",
+            "exit_code": null,
+            "test_name": null,
+            "truncated": false,
+            "test_class": null,
+            "report_path": null,
+            "source_line": 7,
+            "source_path": "Jenkinsfile",
+            "artifact_refs": [],
+            "source_column": 9,
+            "schema_version": 1
+          }
+        }
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "name": "shell_exit7_typed_diagnostic",
+      "passed": true
+    }
+  ],
+  "client_sha256": "a8d25663227997d5221552613e456a5de5594a30304c74dac9b0e462ba8416ad",
+  "harness_sha256": "7c5ad85609ab015170e5f0b6850ec8e75a1619e1df6a36d384a99a8dcbd10d75",
+  "timing_scope": "monotonic client-process observations from admission start; typed diagnostics only",
+  "error": "junit_test_identity_and_source"
+}

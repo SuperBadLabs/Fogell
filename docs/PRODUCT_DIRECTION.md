@@ -1,7 +1,11 @@
 # Product direction and release gates
 
-Fogell's goal is reliable, self-hosted CI with a practical Jenkins migration
-path. [ADR 0010](adr/0010-production-first-ci.md) is the binding scope decision.
+Fogell's goal is reliable, self-hosted CI for a tight human and AI development
+feedback loop. A practical Jenkins migration path is secondary.
+[ADR 0010](adr/0010-production-first-ci.md) governs the compatibility boundary.
+The owner's 2026-09-22 direction is developed in the
+[product and architecture boards](architecture/AI_FEEDBACK_LOOP.md), with
+implementation tracked on the [AI feedback ticket board](AI_FEEDBACK_BOARD.md).
 This is a delivery plan, not a production certification.
 
 ## Initial user and deployment
@@ -40,6 +44,13 @@ Missing terminal execution evidence still requires reconciliation.
 
 ## Release gates
 
+The AI feedback initiative brings a bounded internal failure/fix experiment
+forward alongside production hardening. This changes experiment sequencing:
+we learn from a real agent-facing workflow before the sustained pilot. It does
+not waive retention, operator recovery, trust boundaries, or the release gates
+below. The AI board owns experiment scope and measurements; this table owns
+production release criteria.
+
 These are ordered delivery batches. Each is open until its stated evidence is
 produced; this table introduces no DONE ticket and changes no historical board
 accounting. Security or correctness defects in the supported path take priority
@@ -70,7 +81,9 @@ separate release gate.
 
 1. Fix a security, false-success, data-loss, or availability defect affecting the
    supported path according to its measured severity.
-2. Complete the release gates above, starting with storage safety.
+2. Deliver the bounded internal feedback milestone on the
+   [AI feedback board](AI_FEEDBACK_BOARD.md) alongside the release gates above.
+   Sustained unattended use still requires retention and recovery evidence.
 3. Add a capability only when a named user workflow needs it. State who needs
    it, its Fogell contract, migration impact, failure modes, operating cost,
    implementation scope, and acceptance measurement before implementing it.

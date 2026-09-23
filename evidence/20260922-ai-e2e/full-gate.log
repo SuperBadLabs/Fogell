@@ -1,0 +1,1298 @@
+=== sdk ===
+10.0.301
+=== dependency-lock inventory ===
+=== network-enabled locked restore into an empty isolated package cache ===
+isolated package cache populated; vulnerability freshness is not asserted by this proof
+project locks present: 31/31
+mutation rejected: non-first project disabled RestoreLockedMode
+mutation rejected: non-first project disabled RestorePackagesWithLockFile
+mutation rejected: repo-wide project omitted from Fogell.slnx
+control passed: ignored nested worktree is outside repository inventory; operator-global ignores cannot hide projects or locks
+mutation rejected: embedded repository cannot hide projects from the outer inventory
+mutation rejected: missing lock (inventory)
+mutation rejected: package-reference-drift (NU1004)
+mutation rejected: content-hash-tamper (NU1403)
+mutation rejected: dependency-edge tamper (regeneration mismatch)
+=== source-cleared locked restore using the populated isolated cache ===
+source-cleared locked restore passed; this is not an OS-level no-egress proof
+=== no-restore build (warnings are errors for FS0025/FS0026) ===
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:18.98
+dependency-lock proof passed
+=== tests ===
+PROJECT TEST INVENTORY PROOF PASS: nested/mismatched projects identified; ambient Git selectors contained; inventory and summaries fail closed; summary boundary holds under named UTF-8 and C locales
+tests/Fogell.Client.Tests/Fogell.Client.Tests.fsproj: EXPECTO! 27 tests run in 00:00:01.0575193 for client – 27 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj: EXPECTO! 116 tests run in 00:00:16.6887765 for Fogell.Controller.Api – 116 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj: EXPECTO! 445 tests run in 00:00:07.9615027 for Fogell.Differential – 445 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj: EXPECTO! 41 tests run in 00:00:00.0769410 for Fogell.Domain – 41 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj: EXPECTO! 204 tests run in 00:00:34.0502064 for Fogell.Execution – 204 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj: EXPECTO! 243 tests run in 00:00:00.2134584 for Fogell.Groovy – 243 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Journal.Tests/Fogell.Journal.Tests.fsproj: EXPECTO! 31 tests run in 00:00:00.2714968 for Fogell.Journal – 31 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj: EXPECTO! 143 tests run in 00:00:00.3802355 for Fogell.Pipeline.Parser – 143 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Retention.Tests/Fogell.Retention.Tests.fsproj: EXPECTO! 23 tests run in 00:00:00.8316280 for retention – 23 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj: EXPECTO! 112 tests run in 00:00:20.4896739 for Fogell.Store – 112 passed, 0 ignored, 0 failed, 0 errored. Success!
+{"checker_self_test": true, "real_controller_proof": false, "controls": [{"control": "false_success", "rejected": true, "reason": "failed has unexpected terminal status"}, {"control": "missing_output", "rejected": true, "reason": "expected execution output absent"}, {"control": "undrained_terminal", "rejected": true, "reason": "terminal evidence was not drained"}, {"control": "wrong_watch_exit", "rejected": true, "reason": "watch exit differs"}, {"control": "reused_submission_key", "rejected": true, "reason": "reused submission key"}, {"control": "wrong_build_identity", "rejected": true, "reason": "feedback build identity differs"}, {"control": "cursor_gap", "rejected": true, "reason": "feedback cursor gap or replay"}, {"control": "nonfinite_timing", "rejected": true, "reason": "non-monotonic observation"}, {"control": "regressed_timing", "rejected": true, "reason": "non-monotonic observation"}, {"control": "missing_progressive_feedback", "rejected": true, "reason": "nonempty progressive feedback was not observed before terminal"}], "process_guards": [{"control": "process_deadline", "repetition": 1, "rejected": true}, {"control": "aggregate_output", "repetition": 1, "rejected": true}, {"control": "process_deadline", "repetition": 2, "rejected": true}, {"control": "aggregate_output", "repetition": 2, "rejected": true}, {"control": "process_deadline", "repetition": 3, "rejected": true}, {"control": "aggregate_output", "repetition": 3, "rejected": true}]}
+{"passed": true, "synthetic_checker_controls": true, "real_controller_proof": false, "controls": [{"control": "false_failure_success", "rejected": true}, {"control": "false_successful_exit", "rejected": true}, {"control": "unverified_source", "rejected": true}, {"control": "wrong_snapshot", "rejected": true}, {"control": "wrong_manifest", "rejected": true}, {"control": "wrong_pipeline", "rejected": true}, {"control": "wrong_observed_tool", "rejected": true}, {"control": "unbound_tool", "rejected": true}, {"control": "wrong_build", "rejected": true}, {"control": "unlinked_correction", "rejected": true}, {"control": "reused_key", "rejected": true}, {"control": "reused_admission", "rejected": true}, {"control": "missing_diagnostic", "rejected": true}, {"control": "successful_diagnostic", "rejected": true}, {"control": "nonfinite_observation", "rejected": true}, {"control": "regressed_observation", "rejected": true}, {"control": "cursor_gap", "rejected": true}, {"control": "undrained_terminal", "rejected": true}, {"control": "truncated_evidence", "rejected": true}, {"control": "missing_iterations", "rejected": true}, {"control": "censored_hidden", "rejected": true}, {"control": "nonfinite_latency", "rejected": true}, {"control": "impossible_latency", "rejected": true}, {"control": "latency_target_exceeded", "rejected": true}, {"control": "retention_missing", "rejected": true}, {"control": "retention_no_capacity_recovered", "rejected": true}, {"control": "retention_still_pending", "rejected": true}, {"control": "wrong_test_count", "rejected": true}, {"control": "wrong_failure_count", "rejected": true}, {"control": "wrong_artifact_sdk_hash", "rejected": true}, {"control": "wrong_declared_source", "rejected": true}, {"control": "altered-domain.xml", "rejected": true}, {"control": "altered-sdk.txt", "rejected": true}, {"control": "altered-source.json", "rejected": true}, {"control": "altered-snapshot.ndjson", "rejected": true}]}
+{"passed": true, "synthetic_checker_controls": true, "real_recovery_proof": false, "controls": ["multiline-cell", "row-order", "duplicate-row", "escaped-newline", "numeric-precision", "quoted-identifiers", "sequence-state"]}
+seal verification: 2 receipt(s) recomputed from their own content, all match
+FG-228 EVIDENCE PASS: 2 probe digests bound; 2 receipt seals recomputed
+=== effect-checkpoint ledger proof (FG-026, blocking) ===
+  rejected planted skip output
+  rejected planted csi-decorated-skip output
+  rejected planted missing-marker output
+  rejected planted wrong-count output
+  rejected planted failed-summary-with-zero-exit output
+  rejected planted decorated-marker output
+  rejected planted decorated-summary output
+  rejected planted duplicate-summary output
+  rejected planted nonzero-exit output
+[00:37:36 INF] EXPECTO? Running tests... <Expecto>
+[0mFG026_LIVE_PG=1 FG026_SCHEMA=0003/0005/0007 FG026_CONCURRENCY=16
+[0m[00:37:37 INF] EXPECTO! 10 tests run in 00:00:00.9637912 for Fogell.Store.FG-026 effect checkpoint ledger – 10 passed, 0 ignored, 0 failed, 0 errored. Success! <Expecto>
+[0mFG-026 EFFECT-LEDGER PROOF: parser rejects every planted false-green shape; live PostgreSQL schema 0003/0005/0007 and the exact ten-test ledger slice pass
+=== grouped step-finish force proof (FG-207, blocking) ===
+[37m[[37m00:37:40 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0m[1000D[?25h[37m[[37m00:37:41 [37mINF[37m] [37mEXPECTO! [36m8[37m tests run in [32m00:00:00.0761167[37m for [36mFogell.Journal.FG-207 grouped step completion durability[37m – [36m8[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0mFG-207 optional strace proof: one journal force
+FG-207 grouped step-finish force proof passed
+=== descriptor-bound API token-file mutation proof (FG-251, blocking) ===
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+  Determining projects to restore...
+  Restored /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Domain/Fogell.Domain.fsproj (in 134 ms).
+  Restored /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Store/Fogell.Store.fsproj (in 134 ms).
+  Restored /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Ir/Fogell.Ir.fsproj (in 134 ms).
+  Restored /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Groovy/Fogell.Groovy.fsproj (in 134 ms).
+  Restored /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Journal/Fogell.Journal.fsproj (in 134 ms).
+  Restored /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Execution/Fogell.Execution.fsproj (in 134 ms).
+  Restored /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Admission/Fogell.Admission.fsproj (in 134 ms).
+  Restored /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj (in 134 ms).
+  Restored /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj (in 134 ms).
+  Restored /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj (in 134 ms).
+  Restored /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Differential/Fogell.Differential.fsproj (in 134 ms).
+  Restored /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj (in 134 ms).
+  Restored /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj (in 134 ms).
+  Restored /tmp/fogell-fg251-mutant.X9JFa6/tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj (in 134 ms).
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+  Fogell.Domain -> /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Domain/bin/Release/net10.0/Fogell.Domain.dll
+  Fogell.Store -> /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Store/bin/Release/net10.0/Fogell.Store.dll
+  Fogell.Ir -> /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Ir/bin/Release/net10.0/Fogell.Ir.dll
+  Fogell.Admission -> /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Admission/bin/Release/net10.0/Fogell.Admission.dll
+  Fogell.Groovy -> /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Groovy/bin/Release/net10.0/Fogell.Groovy.dll
+  Fogell.Groovy.Parser -> /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Groovy.Parser/bin/Release/net10.0/Fogell.Groovy.Parser.dll
+  Fogell.Pipeline.Parser -> /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Pipeline.Parser/bin/Release/net10.0/Fogell.Pipeline.Parser.dll
+  Fogell.Execution -> /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Execution/bin/Release/net10.0/Fogell.Execution.dll
+  Fogell.Groovy.Interpreter -> /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Groovy.Interpreter/bin/Release/net10.0/Fogell.Groovy.Interpreter.dll
+  Fogell.Differential -> /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Differential/bin/Release/net10.0/Fogell.Differential.dll
+  Fogell.Controller.Api -> /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Controller.Api/bin/Release/net10.0/Fogell.Controller.Api.dll
+  Fogell.Journal -> /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Journal/bin/Release/net10.0/Fogell.Journal.dll
+  Fogell.Controller.Host -> /tmp/fogell-fg251-mutant.X9JFa6/src/Fogell.Controller.Host/bin/Release/net10.0/Fogell.Controller.Host.dll
+  Fogell.Controller.Api.Tests -> /tmp/fogell-fg251-mutant.X9JFa6/tests/Fogell.Controller.Api.Tests/bin/Release/net10.0/Fogell.Controller.Api.Tests.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:20.66
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+FG-251 PROOF PASS: baseline passed; architecture, statx mask/uid, loader/path reopen, blocking/inheritable descriptor, mode, decode, and growth mutants compiled and were killed
+=== multiline credential progressive-output proof (FG-235, blocking) ===
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+  Determining projects to restore...
+  Restored /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Ir/Fogell.Ir.fsproj (in 125 ms).
+  Restored /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Admission/Fogell.Admission.fsproj (in 124 ms).
+  Restored /tmp/fogell-fg235-mutant.1U5TlG/tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj (in 125 ms).
+  Restored /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Domain/Fogell.Domain.fsproj (in 125 ms).
+  Restored /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Execution/Fogell.Execution.fsproj (in 125 ms).
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+  Determining projects to restore...
+  Restored /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj (in 139 ms).
+  Restored /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj (in 139 ms).
+  Restored /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Store/Fogell.Store.fsproj (in 139 ms).
+  Restored /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Journal/Fogell.Journal.fsproj (in 139 ms).
+  Restored /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Groovy/Fogell.Groovy.fsproj (in 139 ms).
+  Restored /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj (in 139 ms).
+  Restored /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Differential/Fogell.Differential.fsproj (in 139 ms).
+  Restored /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj (in 139 ms).
+  Restored /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj (in 139 ms).
+  Restored /tmp/fogell-fg235-mutant.1U5TlG/tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj (in 139 ms).
+  4 of 14 projects are up-to-date for restore.
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+  Fogell.Domain -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Domain/bin/Release/net10.0/Fogell.Domain.dll
+  Fogell.Ir -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Ir/bin/Release/net10.0/Fogell.Ir.dll
+  Fogell.Admission -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Admission/bin/Release/net10.0/Fogell.Admission.dll
+  Fogell.Execution -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Execution/bin/Release/net10.0/Fogell.Execution.dll
+  Fogell.Execution.Tests -> /tmp/fogell-fg235-mutant.1U5TlG/tests/Fogell.Execution.Tests/bin/Release/net10.0/Fogell.Execution.Tests.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:08.19
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+  Fogell.Domain -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Domain/bin/Release/net10.0/Fogell.Domain.dll
+  Fogell.Ir -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Ir/bin/Release/net10.0/Fogell.Ir.dll
+  Fogell.Admission -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Admission/bin/Release/net10.0/Fogell.Admission.dll
+  Fogell.Groovy -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Groovy/bin/Release/net10.0/Fogell.Groovy.dll
+  Fogell.Groovy.Parser -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Groovy.Parser/bin/Release/net10.0/Fogell.Groovy.Parser.dll
+  Fogell.Pipeline.Parser -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Pipeline.Parser/bin/Release/net10.0/Fogell.Pipeline.Parser.dll
+  Fogell.Execution -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Execution/bin/Release/net10.0/Fogell.Execution.dll
+  Fogell.Groovy.Interpreter -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Groovy.Interpreter/bin/Release/net10.0/Fogell.Groovy.Interpreter.dll
+  Fogell.Differential -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Differential/bin/Release/net10.0/Fogell.Differential.dll
+  Fogell.Store -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Store/bin/Release/net10.0/Fogell.Store.dll
+  Fogell.Controller.Api -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Controller.Api/bin/Release/net10.0/Fogell.Controller.Api.dll
+  Fogell.Journal -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Journal/bin/Release/net10.0/Fogell.Journal.dll
+  Fogell.Controller.Host -> /tmp/fogell-fg235-mutant.1U5TlG/src/Fogell.Controller.Host/bin/Release/net10.0/Fogell.Controller.Host.dll
+  Fogell.Differential.Tests -> /tmp/fogell-fg235-mutant.1U5TlG/tests/Fogell.Differential.Tests/bin/Release/net10.0/Fogell.Differential.Tests.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:18.51
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+FG-235 PROOF PASS: baseline passed; central-refusal and runtime-preflight mutants compiled and were killed
+=== separator-transparent raw-stream masking proof (FG-236, blocking) ===
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+  Determining projects to restore...
+  Restored /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Admission/Fogell.Admission.fsproj (in 128 ms).
+  Restored /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Domain/Fogell.Domain.fsproj (in 128 ms).
+  Restored /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Ir/Fogell.Ir.fsproj (in 128 ms).
+  Restored /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Execution/Fogell.Execution.fsproj (in 128 ms).
+  Restored /tmp/fogell-fg236-mutant.emZiz1/tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj (in 128 ms).
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+  Determining projects to restore...
+  Restored /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Journal/Fogell.Journal.fsproj (in 142 ms).
+  Restored /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Store/Fogell.Store.fsproj (in 142 ms).
+  Restored /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Groovy/Fogell.Groovy.fsproj (in 142 ms).
+  Restored /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj (in 142 ms).
+  Restored /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj (in 142 ms).
+  Restored /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj (in 142 ms).
+  Restored /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Differential/Fogell.Differential.fsproj (in 142 ms).
+  Restored /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj (in 142 ms).
+  Restored /tmp/fogell-fg236-mutant.emZiz1/tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj (in 142 ms).
+  Restored /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj (in 142 ms).
+  4 of 14 projects are up-to-date for restore.
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+  Fogell.Domain -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Domain/bin/Release/net10.0/Fogell.Domain.dll
+  Fogell.Ir -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Ir/bin/Release/net10.0/Fogell.Ir.dll
+  Fogell.Admission -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Admission/bin/Release/net10.0/Fogell.Admission.dll
+  Fogell.Execution -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Execution/bin/Release/net10.0/Fogell.Execution.dll
+  Fogell.Execution.Tests -> /tmp/fogell-fg236-mutant.emZiz1/tests/Fogell.Execution.Tests/bin/Release/net10.0/Fogell.Execution.Tests.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:08.31
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+  Fogell.Domain -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Domain/bin/Release/net10.0/Fogell.Domain.dll
+  Fogell.Ir -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Ir/bin/Release/net10.0/Fogell.Ir.dll
+  Fogell.Admission -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Admission/bin/Release/net10.0/Fogell.Admission.dll
+  Fogell.Groovy -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Groovy/bin/Release/net10.0/Fogell.Groovy.dll
+  Fogell.Groovy.Parser -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Groovy.Parser/bin/Release/net10.0/Fogell.Groovy.Parser.dll
+  Fogell.Pipeline.Parser -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Pipeline.Parser/bin/Release/net10.0/Fogell.Pipeline.Parser.dll
+  Fogell.Execution -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Execution/bin/Release/net10.0/Fogell.Execution.dll
+  Fogell.Groovy.Interpreter -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Groovy.Interpreter/bin/Release/net10.0/Fogell.Groovy.Interpreter.dll
+  Fogell.Differential -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Differential/bin/Release/net10.0/Fogell.Differential.dll
+  Fogell.Store -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Store/bin/Release/net10.0/Fogell.Store.dll
+  Fogell.Controller.Api -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Controller.Api/bin/Release/net10.0/Fogell.Controller.Api.dll
+  Fogell.Journal -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Journal/bin/Release/net10.0/Fogell.Journal.dll
+  Fogell.Controller.Host -> /tmp/fogell-fg236-mutant.emZiz1/src/Fogell.Controller.Host/bin/Release/net10.0/Fogell.Controller.Host.dll
+  Fogell.Differential.Tests -> /tmp/fogell-fg236-mutant.emZiz1/tests/Fogell.Differential.Tests/bin/Release/net10.0/Fogell.Differential.Tests.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:18.26
+[37m[[37m00:40:34 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0m[1000D[?25h[37m[[37m00:40:38 [37mINF[37m] [37mEXPECTO! [36m21[37m tests run in [32m00:00:04.3818630[37m for [36mFogell.Execution.FG-071 masking is ON the output path, not merely available[37m – [36m21[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0m[37m[[37m00:40:39 [37mINF[37m] [37mEXPECTO? Running tests...[37m [37m<[37mExpecto[37m>[37m
+[0m[1000D[?25h[37m[[37m00:40:41 [37mINF[37m] [37mEXPECTO! [36m21[37m tests run in [32m00:00:02.6200975[37m for [36mFogell.Differential[37m – [36m21[37m passed, [36m0[37m ignored, [36m0[37m failed, [36m0[37m errored. [36mSuccess![37m [37m<[37mExpecto[37m>[37m
+[0mbash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+FG-236 PROOF PASS: baseline passed; EOF-suffix, grammar, progressive, wiring, control-frame, reader-enforcement, inactive-callback, executor-stream-provenance, executor-buffer-provenance, capture-cutoff, generated-warning, missing-warning-sink, buffered-warning, generated-termination, direct-generated-callback, buffered-race, synchronization, live-policy, publication-race, timestamp-prefix, timestamp-registered-prefix, timestamp-boundary, timestamp-boundary-provenance, terminal-timestamp-boundary, terminal-timestamp-registered-prefix, open-stream-barrier, pending-publication, pending-leak-screen, transformed-token-provenance, committed-history, completed-history, committed-prefix-projection, non-expanding-binding, stream-continuity, stream-identity, publication-EOF, failed-reader-drain, admission-factory, raw-pipe-identity, raw-token-inference, token-provenance-loss, adjacent-token, token-source, and idempotence mutants compiled and were killed
+=== stash symlink containment mutation proof (FG-228, blocking) ===
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+  Determining projects to restore...
+  Restored /tmp/fogell-fg228-mutant.Y38gqk/tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj (in 126 ms).
+  Restored /tmp/fogell-fg228-mutant.Y38gqk/src/Fogell.Ir/Fogell.Ir.fsproj (in 126 ms).
+  Restored /tmp/fogell-fg228-mutant.Y38gqk/src/Fogell.Execution/Fogell.Execution.fsproj (in 126 ms).
+  Restored /tmp/fogell-fg228-mutant.Y38gqk/src/Fogell.Admission/Fogell.Admission.fsproj (in 126 ms).
+  Restored /tmp/fogell-fg228-mutant.Y38gqk/src/Fogell.Domain/Fogell.Domain.fsproj (in 126 ms).
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+  Fogell.Domain -> /tmp/fogell-fg228-mutant.Y38gqk/src/Fogell.Domain/bin/Release/net10.0/Fogell.Domain.dll
+  Fogell.Ir -> /tmp/fogell-fg228-mutant.Y38gqk/src/Fogell.Ir/bin/Release/net10.0/Fogell.Ir.dll
+  Fogell.Admission -> /tmp/fogell-fg228-mutant.Y38gqk/src/Fogell.Admission/bin/Release/net10.0/Fogell.Admission.dll
+  Fogell.Execution -> /tmp/fogell-fg228-mutant.Y38gqk/src/Fogell.Execution/bin/Release/net10.0/Fogell.Execution.dll
+  Fogell.Execution.Tests -> /tmp/fogell-fg228-mutant.Y38gqk/tests/Fogell.Execution.Tests/bin/Release/net10.0/Fogell.Execution.Tests.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:08.20
+bash: cannot set terminal process group (3912567): Inappropriate ioctl for device
+bash: no job control in this shell
+  Fogell.Domain -> /tmp/fogell-fg228-mutant.Y38gqk/src/Fogell.Domain/bin/Release/net10.0/Fogell.Domain.dll
+  Fogell.Ir -> /tmp/fogell-fg228-mutant.Y38gqk/src/Fogell.Ir/bin/Release/net10.0/Fogell.Ir.dll
+  Fogell.Admission -> /tmp/fogell-fg228-mutant.Y38gqk/src/Fogell.Admission/bin/Release/net10.0/Fogell.Admission.dll
+  Fogell.Execution -> /tmp/fogell-fg228-mutant.Y38gqk/src/Fogell.Execution/bin/Release/net10.0/Fogell.Execution.dll
+  Fogell.Execution.Tests -> /tmp/fogell-fg228-mutant.Y38gqk/tests/Fogell.Execution.Tests/bin/Release/net10.0/Fogell.Execution.Tests.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:05.13
+FG-228 PROOF PASS: baseline passed; linked-directory/openat/path-follow mutant compiled and was killed
+  killed: service-container
+  killed: fixed-port
+  killed: missing-job-runtime
+  killed: missing-cleanup-guard
+  killed: local-fixed-port
+  killed: controller-fixed-port
+  killed: inotify-fixed-port
+  killed: local-readback
+  killed: controller-consumer
+  killed: inotify-consumer
+  killed: mutants-service-container
+  killed: mutants-unguarded-stop
+  killed: mutants-missing-runtime
+  killed: deleted-lifecycle
+FG-233 PROOF PASS: across every workflow under .github/workflows, Podman is explicit, Actions services are absent, five jobs own guarded disposable PostgreSQL lifecycles, and hosted plus local host ports are runtime-allocated
+built 9 audit tools into scripts/bin/: audit-board-numbers audit-claims audit-gate-lanes audit-stale-refs count-options generate-scorecard probe-input review-rounds sync-scm-cases
+=== fflat active-version selection ===
+  passed  active shim version selected with a planted stale version beside it
+=== fflat failure diagnostics remain actionable ===
+  passed  unmatched launcher failure retained its bounded raw diagnostic
+=== probe-input setup refusals ===
+  refused unreachable crumb endpoint
+  refused missing-crumb — response is missing crumbRequestField or crumb
+  refused invalid-crumb-field — response is missing crumbRequestField or crumb
+  refused initial-delete-500 — FAIL: delete prior probe job: HTTP 500
+  refused create-403 — FAIL: create probe job: HTTP 403
+  refused build-500 — FAIL: start probe build: HTTP 500
+  refused input-action-500 — FAIL: proceedEmpty pending input: HTTP 500
+  refused final-delete-500 — FAIL: delete completed probe job: HTTP 500
+  refused restart-noop — FAIL: controller identity did not change; RESTART_CMD did not prove a restart
+=== restart polling retains the five-second request bound ===
+  passed  slow restart poll retried inside 15 s (3 requests including identity setup)
+FG-226 AUDIT-TOOL PROOF: active fflat selection, bounded raw launcher diagnostics, nine fail-closed Jenkins POST/setup/restart arms, and the five-second restart-poll bound pass
+=== fsx prelude: java semantics pinned ===
+  passed  prelude reproduces every pinned java semantic
+  passed  exhaustive differential: 65536/65536 code units match java
+  killed  nbsp whitespace — blank-nbsp: false -> true
+  killed  shorthand class rewrite — s-nbsp: false -> true
+  killed  trim by String.trim — trim-em: 120 -> 8195,120
+  killed  nel exclusion — blank-nel: false -> true
+  killed  vertical tab in \s — s-vtab: true -> false
+  killed  trailing empty drop — splitlines: a,b -> a,b,,
+  killed  relative program path against cwd — prog-relative-dir: RESOLVED-AGAINST-DIR -> RESOLVED-AGAINST-CWD
+FSX-PRELUDE PROOF: java string and regex semantics reproduced, the exhaustive 65536-code-unit differential matches, and seven planted divergences killed
+=== gate lane partition audit (blocking) ===
+=== gate lanes: the script lists its lanes ===
+  lanes: build audits prelude stale-refs lanes mutants
+=== gate lanes: an unknown lane is refused before anything runs ===
+  refused (exit 2), nothing ran
+=== gate lanes: the partition checker fails on planted defects ===
+  killed: outside-lane
+  killed: unlisted-lane
+  killed: unused-lane
+  killed: unclosed-if
+  killed: if-line-invocation
+  killed: elif-line-invocation
+  killed: fi-line-invocation
+  killed: prefixed-invocation
+  killed: else-arm
+=== gate lanes: the real script partitions cleanly ===
+GATE-LANE AUDIT PASS: 6 lanes; every invocation this audit recognises sits inside one lane block, no lane block has an else arm, every lane owns a block, unknown lanes are refused, 9 checker mutants killed
+=== claim audit + its citation proof (FG-104/FG-174, blocking) ===
+=== citations that must be REJECTED ===
+  ok      rejects: colon form naming a receipt that does not exist
+  ok      rejects: backticked citation naming a receipt that does not exist
+  ok      rejects: citation split across two comment lines
+  ok      rejects: one bad name in a list of good ones
+  ok      rejects: a real receipt name with a typo'd build suffix
+  ok      rejects: a compact citation whose SECOND build does not exist
+  ok      rejects: colon form, second name after 'and' does not exist
+  ok      rejects: a glob matching nothing
+
+=== spellings that must be ACCEPTED ===
+  ok      accepts: plain backticked citation of a receipt that exists
+  ok      accepts: colon form
+  ok      accepts: multi-build case cited by its base name
+  ok      accepts: multi-build case cited as b1/.b2
+  ok      accepts: a family cited by glob
+  ok      accepts: the file spelling
+  ok      accepts: prose that merely contains the word receipt
+  ok      accepts: a missing name that appears in a STRING, not a comment
+
+CLAIM-CITATION PROOF: every planted dangling citation is rejected, and every real spelling — backticked, colon, multi-build, glob, file — is accepted
+OK
+MEASURED claims: 96 source files scanned, 327 receipts + 33 lane scenarios + 23 proof cases citable
+every MEASURED claim resolves: cited by a receipt, or admitted UNPROVEN (27)
+every receipt CITATION resolves to a receipt, lane scenario or proof case that exists
+=== effect dispatch audit + its planted-violation proof (FG-026b, blocking) ===
+=== violations the audit must REJECT ===
+  ok      rejects: a direct ledger call in the worker bypasses EffectDispatch
+  ok      rejects: a second AdvanceEffect call inside EffectDispatch is a second path
+  ok      rejects: a second ledger path through a differently named Store binding inside EffectDispatch
+  ok      rejects: a second trigger call in the worker through another binding
+  ok      rejects: a reconciliation trigger outside its bound sites
+  ok      rejects: the worker calling the surface-free marking primitive instead of the trigger
+  ok      rejects: a producer case declared but not registered or routed
+  ok      rejects: a producer case registered in all but not routed by EffectDispatch
+  ok      rejects: a producer name literal spelled outside the registry
+  ok      rejects: an unlisted HttpClient in the host
+  ok      rejects: a second file write of an already-allowed kind in the worker
+  ok      rejects: an unlisted directory move in the host
+  ok      rejects: a producer driven through its Invoke closure with no ledger row
+  ok      rejects: a producer driven through a spaced Invoke call on a record pattern
+  ok      rejects: a record built with spaced Invoke = outside dispatch
+  ok      rejects: an EffectInvocation assembled outside dispatch
+  ok      rejects: a manual reconciliation call inside the trigger test fence
+  ok      rejects: the fence removed from the trigger test
+  ok      rejects: the fenced test no longer running the production scan
+=== the clean tree the audit must ACCEPT ===
+  ok      accepts: an unmodified copy of the audited files
+  ok      accepts: a comment naming Process.Start and PrepareEffect
+EFFECT-DISPATCH AUDIT PROOF: 19 planted violations rejected by name, 2 clean copies accepted
+FG-026b DISPATCH AUDIT: ledger called only from EffectDispatch; triggers bound to the worker scan and startup; 1 registered producer(s) each routed and uniquely named; effect-bearing calls are the pinned allow-list; the trigger test makes no manual Store call; invocation closures are reached only through dispatch
+=== stale-reference audit + its own proof (FG-104b, blocking) ===
+=== planted fixtures, one per binding form ===
+  let name                           reported (exit 1) — OK
+  let private name                   reported (exit 1) — OK
+  let mutable name                   reported (exit 1) — OK
+  let rec name                       reported (exit 1) — OK
+  let inline name                    reported (exit 1) — OK
+  let private mutable name           reported (exit 1) — OK
+  type name                          reported (exit 1) — OK
+  member _.name                      reported (exit 1) — OK
+  member this.name                   reported (exit 1) — OK
+  member val name                    reported (exit 1) — OK
+  static member name                 reported (exit 1) — OK
+  override this.name                 reported (exit 1) — OK
+  abstract member name               reported (exit 1) — OK
+  default this.name                  reported (exit 1) — OK
+  let name' (apostrophe)             reported (exit 1) — OK
+  let name'' (two)                   reported (exit 1) — OK
+  and Name (recursive type)          reported (exit 1) — OK
+  and name (recursive fn)            reported (exit 1) — OK
+  and private name                   reported (exit 1) — OK
+  let! (computation expr)            reported (exit 1) — OK
+  use binding                        reported (exit 1) — OK
+  use! binding                       reported (exit 1) — OK
+  comment repeats the keyword        reported (exit 1) — OK
+  record field on the brace line     reported (exit 1) — OK
+  nested (* block comment *)         reported (exit 1) — OK
+  string that looks like a def       reported (exit 1) — OK
+  deleting a comment is not a deletion silent (exit 0) — OK
+  field named inside a block comment reported (exit 1) — OK
+  field moved onto the brace line    silent (exit 0) — OK
+  keyword prose is not an identifier not reported — OK
+  inert (* does not mask a real def  silent (exit 0) — OK
+  attributed record field            reported (exit 1) — OK
+  mutable record field               reported (exit 1) — OK
+  non-F# deletion (out of scope)     not extracted (exit 0) — OK
+  multi-line string with (*          silent (exit 0) — OK
+  char literal holding a quote       reported (exit 1) — OK
+  destructuring let (all three)      reported (exit 1) — OK
+=== the checker's own failure modes ===
+  unresolvable base                  refused (exit 2) — OK
+  clean tree                         silent (exit 0) — OK
+  search tool errors                 refused (exit 2) — OK
+  short identifier (by design)       not tracked (exit 0) — OK
+  lowercase field (by design)        not tracked (exit 0) — OK
+  typed destructuring (by design)    not tracked (exit 0) — OK
+  constructor skipped, binder kept   reported (exit 1) — OK
+  nested pattern (by design)         not tracked (exit 0) — OK
+  destructured binding survives      silent (exit 0) — OK
+  destructured name ending in '      reported (exit 1) — OK
+  literal in a pattern (by design)   not tracked (exit 0) — OK
+=== FG-117 false-positive tranche ===
+  literal patterns only              silent with exact diagnostic (exit 0) — OK
+  literal neighbor binder            reported exact binder (exit 1) — OK
+  definition paren forms             silent with exact diagnostic (exit 0) — OK
+  definition neighbor tuple          reported exact binder (exit 1) — OK
+  numeric tuple literal only         silent with exact diagnostic (exit 0) — OK
+  numeric tuple neighbor binder      reported exact binder (exit 1) — OK
+  underscore suffix not invented     silent with exact diagnostic (exit 0) — OK
+  underscore binder retained         reported exact binder (exit 1) — OK
+  multi-underscore suffix not invented silent with exact diagnostic (exit 0) — OK
+  multi-underscore binder retained   reported exact binder (exit 1) — OK
+  uppercase underscore suffix not invented silent with exact diagnostic (exit 0) — OK
+  uppercase underscore binder retained reported exact binder (exit 1) — OK
+  digit underscore suffix not invented silent with exact diagnostic (exit 0) — OK
+  digit underscore binder retained   reported exact binder (exit 1) — OK
+  underscore uppercase and digit binders reported exact binder (exit 1) — OK
+  underscore boundary suffixes       silent with exact diagnostic (exit 0) — OK
+  underscore boundary binders        reported exact binder (exit 1) — OK
+  double-underscore length floor     reported exact binder (exit 1) — OK
+  underscore below length floor      silent with exact diagnostic (exit 0) — OK
+  removed block-comment text         silent with exact diagnostic (exit 0) — OK
+  block-comment neighbor code        reported exact binder (exit 1) — OK
+  ordinary string continuation       silent with exact diagnostic (exit 0) — OK
+  ordinary string neighbor           reported exact binder (exit 1) — OK
+  verbatim string continuation       silent with exact diagnostic (exit 0) — OK
+  verbatim string neighbor           reported exact binder (exit 1) — OK
+  triple string continuation         silent with exact diagnostic (exit 0) — OK
+  triple string neighbor             reported exact binder (exit 1) — OK
+  nested removed comment             silent with exact diagnostic (exit 0) — OK
+  nested comment neighbor            reported exact binder (exit 1) — OK
+  char literal adjacency             reported exact binder (exit 1) — OK
+  code after comment close           reported exact binder (exit 1) — OK
+  constructor fragment               silent with exact diagnostic (exit 0) — OK
+  constructor neighbor binder        reported exact binder (exit 1) — OK
+=== FG-117 direct mutation kills ===
+  literal allowlist mutation         changed bytes; false positive exposed — KILLED
+  definition-form filter mutation    changed bytes; false positive exposed — KILLED
+  numeric tuple discrimination mutation changed bytes; missing binder exposed — KILLED
+  underscore preservation mutation   changed bytes; false positive exposed — KILLED
+  multi-underscore binder mutation   changed bytes; missing binder exposed — KILLED
+  underscore uppercase/digit domain mutation changed bytes; both missing binders exposed — KILLED
+  underscore complete-token length floor mutation changed bytes; false positive exposed — KILLED
+  underscore suffix-floor regression mutation changed bytes; missing binder exposed — KILLED
+  base lexical projection mutation   changed bytes; false positive exposed — KILLED
+  constructor left boundary mutation changed bytes; false positive exposed — KILLED
+STALE-REF PROOF: supported forms report, pinned boundaries stay silent, and FG-117 false positives are excluded (10 direct mutations killed)
+=== stage options: a dropped timeout is a build past its bound ===
+  control stage-opts-ok: completed: aborted
+  refused stage-opts-bad
+=== top-level options: same section, other fallback ===
+  control top-opts-ok: completed: aborted
+  refused top-opts-bad
+=== environment, both levels: a dropped var runs the shell without it ===
+  control top-env-ok: FOO reached the shell
+  refused top-env-bad
+  control stage-env-ok: FOO reached the shell
+  refused stage-env-bad
+=== stage-level input DIRECTIVE: an unsupported human gate must stop the build ===
+  refused stage-input-directive
+=== stage steps: the original silent fallback (FG-143) ===
+  control stage-steps-ok: completed: success
+  refused stage-steps-bad
+=== break/continue outside a loop: Jenkins refuses at compile time, before any stage ===
+  control break-in-loop-ok: completed: success
+  refused break-outside-loop, and no stage ran
+  refused continue-outside-loop, and no stage ran
+  control when-valid-ok: completed: success
+  refused when-malformed-expression, and no stage ran
+  refused when-duplicate-equals, and no stage ran
+  refused when-duplicate-tag, and no stage ran
+  refused when-duplicate-change-request, and no stage ran
+  refused when-duplicate-nested, and no stage ran
+  refused when-duplicate-parenthesised-opaque, and no stage ran
+  refused when-invalid-changeset-glob, and no stage ran
+  refused when-invalid-directive-value, and no stage ran
+  control when-valid-unmodelled-filter: admitted, filtered, and continued
+  control when-valid-unmodelled-equals: admitted and failed closed without running the gated stage
+SECTION-REFUSAL PROOF: acted-on sections and every measured compile-invalid when route refuse BEFORE any stage runs, while valid controls still run
+=== sandbox-denial proof (FG-072, blocking) ===
+=== FG-072 live sandbox denial matrix (31 vectors / 30 names) ===
+  denied file as new File
+  denied file-input as new FileInputStream
+  denied file-output as new FileOutputStream
+  denied random-access as new RandomAccessFile
+  denied process-builder as new ProcessBuilder
+  denied runtime as Runtime
+  denied system as System
+  denied class as Class
+  denied class-loader as ClassLoader
+  denied groovy-shell as new GroovyShell
+  denied groovy-loader as new GroovyClassLoader
+  denied eval as Eval
+  denied evaluate as evaluate
+  denied url as new URL
+  denied url-connection as URLConnection
+  denied socket as new Socket
+  denied server-socket as new ServerSocket
+  denied http-url-connection as HttpURLConnection
+  denied thread as new Thread
+  denied unsafe as Unsafe
+  denied method-handles as MethodHandles
+  denied get-class as getClass
+  denied safe-null-get-class as getClass
+  denied for-name as forName
+  denied new-instance as newInstance
+  denied declared-method as getDeclaredMethod
+  denied declared-field as getDeclaredField
+  denied set-accessible as setAccessible
+  denied invoke as invoke
+  denied execute as execute
+  denied exec as exec
+=== FG-072 generic deny-by-default fallbacks (2 vectors) ===
+  denied unknown-free as fg072UnknownCapability
+  denied unknown-member as fg072UnknownMember
+=== sanctioned-call control ===
+  allowed control: registered steps + script function + trim builtin
+=== checker self-proof ===
+  checker rejects planted timeout-status state
+  checker rejects planted signal-status state
+  checker rejects planted non-failure-terminal state
+  checker rejects planted extra-terminal state
+  checker rejects planted generic-failure state
+  checker rejects planted unnamed state
+  checker rejects planted reason-free-crosswire state
+  checker rejects planted reason-member-crosswire state
+  checker rejects planted split-record state
+  checker rejects planted no-boundary-reason state
+  checker rejects planted no-halt state
+FG-072 sandbox denial proof: PASS
+=== controller/build environment isolation proof (FG-222, blocking) ===
+  live shell/GString/build-Git boundary: PASS
+  checker rejected planted ordinary-status state
+  checker rejected planted timeout-status state
+  checker rejected planted signal-status state
+  checker rejected planted simple-gstring state
+  checker rejected planted complex-gstring state
+  checker rejected planted shell-env state
+  checker rejected planted build-git-env state
+  checker rejected planted shell-controller-tmpdir state
+  checker rejected planted build-git-controller-tmpdir state
+  checker rejected planted shell-wrong-tmpdir state
+  checker rejected planted build-git-wrong-tmpdir state
+  checker rejected planted build-git-missing-tmpdir state
+  checker rejected planted shell-missing-tmpdir state
+  checker rejected planted controller-home state
+  checker rejected planted declared-env state
+  checker rejected planted credential-binding state
+  checker rejected planted credential-mask state
+FG-222 controller environment proof: PASS
+=== fail-closed evidence sealer proof (FG-223, blocking) ===
+planted permissive sealer: rejected by proof oracle
+Preparing worktree (detached HEAD 00e94d7)
+Preparing worktree (detached HEAD a5d9a80)
+Preparing worktree (detached HEAD 7f2979f)
+Preparing worktree (detached HEAD bdd53f9)
+FG-223 evidence sealer proof: PASS (permissive control rejected; prerequisite, snapshot-mutation, empty/test-inventory, input-boundary, late-untracked, post-checkout-hook, active/conditional-filter, raw-transform, external/Git-admin-symlink, tracked, staging-state, HEAD and atomic-move failures publish no manifest; caller Git repository/index overrides, configured core.worktree, and forced Git color cannot redirect or corrupt machine-parsed snapshot operations; binary full-index identity follows the fixture object format; an unused configured filter remains inert; every tracked tests/**/*.fsproj runs; dirty text, binary bytes, unstaged/staged deletions, staged additions, and confined broken/trailing-dot symlinks reach/reconstruct from one hook-free raw-identity-audited isolated source; checkout ABA cannot contaminate it; empty and populated destinations are preserved; one concurrent publisher wins; success verifies)
+=== step-ceiling evidence-boundary proof (FG-037, blocking) ===
+=== FG-037 semantic checker mutation proof ===
+  accepted the unmodified retained evidence
+  rejected an unlisted evidence file
+  rejected a substituted payload and self-consistent manifest
+hint: Support for <GIT_DIR>/info/grafts is deprecated
+hint: and will be removed in a future Git version.
+hint: 
+hint: Please use "git replace --convert-graft-file"
+hint: to convert the grafts into replace refs.
+hint: 
+hint: Turn this message off by running
+hint: "git config advice.graftFileDeprecated false"
+/home/srikanth/projects/fogell/evidence/20260827T185436Z-fg037-step-ceiling/source/fg037-measured-source.bundle is okay
+  reconstructed the signed measured source commit from the retained bundle
+hint: Support for <GIT_DIR>/info/grafts is deprecated
+hint: and will be removed in a future Git version.
+hint: 
+hint: Please use "git replace --convert-graft-file"
+hint: to convert the grafts into replace refs.
+hint: 
+hint: Turn this message off by running
+hint: "git config advice.graftFileDeprecated false"
+/home/srikanth/projects/fogell/evidence/20260827T185436Z-fg037-step-ceiling/source/fg037-measured-source.bundle is okay
+  verified the pinned signer without custodian Git configuration
+  rejected a truncated source bundle
+  rejected a missing measured commit identity
+  rejected an empty bundle despite a hostile ambient object alternate
+  accepted one pinned endpoint/container identity
+  rejected a same-core stale endpoint session
+  rejected a wrong endpoint core
+  rejected a controller session change across the live run
+  rejected a shared-collector Base64 encoder failure
+  contained hostile remote-inspect host/container overrides
+  contained hostile overrides across nested workspace/wipe/env/git commands
+  cleared ambient Bash, PATH, CWD/SDK, MSBuild policy, and same-UID namespace inputs
+  rejected a substituted Jenkins core
+  rejected a 251-step Jenkins success substitution
+  rejected a skipped final Fogell marker
+  rejected a missing exact 400/255 compiler diagnostic
+  rejected an unrelated 251-step infrastructure failure
+  rejected a 250-object substitution in the 251-step causal signature
+  rejected a 251-step console claiming Pipeline execution began
+  rejected a missing 251-step CPS parse frame
+  rejected a promoted intentional divergence
+  rejected a weakened one-difference verdict
+  rejected a forged suffix on the exact control verdict
+  rejected fixture drift even before its digest is updated
+  rejected an extra receipt outside the exact three-file inventory
+  rejected a missing boundary receipt
+  refused a forged immutable-runner handoff without deleting its target
+  refused a tracked project-output symlink without writing its target
+  refused a dirty shared workspace collector despite hostile Git repository selectors
+  refused a dirty source-bundle checker before evidence creation
+  refused a hidden build-policy input under hostile Git pathspec mode
+  refused physical engine drift despite hostile core.worktree
+  refused physical engine drift hidden by a repository-local clean filter
+FG-037 proof PASS (14 semantic + 3 controller-identity + 11 collector/configuration + 2 manifest + 3 source-bundle rejection arms)
+hint: Support for <GIT_DIR>/info/grafts is deprecated
+hint: and will be removed in a future Git version.
+hint: 
+hint: Please use "git replace --convert-graft-file"
+hint: to convert the grafts into replace refs.
+hint: 
+hint: Turn this message off by running
+hint: "git config advice.graftFileDeprecated false"
+/home/srikanth/projects/fogell/evidence/20260827T185436Z-fg037-step-ceiling/source/fg037-measured-source.bundle is okay
+FG-037 source bundle PASS: signed measured commit 65674f9a4af80e358f645ad3409765a8738c68b4 reconstructs as tree 7e09d220260b9117890cf4275fc240d989101f7c
+FG-037 manifest verification PASS: 16 payload file(s), exact inventory and hashes match
+seal verification: 3 receipt(s) recomputed from their own content, all match
+board accounting consistent: rows=254 DONE=186 open=68 open-P0..P3=1/23/37/7; compatibility ledger: tier1=16 tier3=28 admitted=184
+=== board-number audit: proven against known-bad states ===
+  passed compliant board
+  rejected board drift (tier3 off by one)
+  rejected live tier2= claim
+  rejected admitted drift alone
+  rejected tier1 drift alone
+  rejected ledger drift under fixed board
+  passed quoted retraction (exempt)
+  rejected canonical row added without accounting update
+  rejected legal status drift
+  rejected legal priority drift
+  rejected illegal status vocabulary
+  rejected illegal priority vocabulary
+  rejected duplicate canonical id with unchanged totals
+  rejected malformed canonical row
+  rejected derived summary drift
+  rejected missing derived summary
+  rejected duplicate derived summary
+  rejected missing expected Wave heading
+  rejected duplicate Wave heading
+  rejected unexpected Wave heading
+  rejected expected Wave with no canonical rows
+  rejected redirect status disagrees with target
+  rejected redirect target missing
+BOARD-NUMBER PROOF: compatibility, Wave topology, redirect and canonical accounting audits fail every planted drift and pass the compliant and quoted-retraction cases
+=== scorecard receipt-mapping proof (FG-166, blocking) ===
+SCORECARD RECEIPT-MAPPING PROOF: one terminal Jenkinsfile suffix, literal .b1, independent and repeated multi-build warnings, fresh singleton controls, exact sorting, pre-map collision refusal, and scorer stdout diagnostics all hold
+=== queue-row audit: proven against planted overclaims ===
+  passed committed board
+  rejected planted cause/fix claim
+  rejected planted scope claim
+  rejected planted positional claim
+  passed quoted retraction with bare apostrophe (exempt)
+  rejected queue tables missing (refuses vacuous pass)
+  rejected tell hidden behind an escaped pipe
+  passed adjacent quoted spans do not merge into a tell
+  rejected a track heading with no table beneath it
+QUEUE-ROW PROOF: the audit fails every planted shape, passes the committed board and the quoted retraction, and refuses a board it cannot parse
+queue-row audit: 46 rows scanned in EXECUTION_BOARD.md
+no tells matched. FLOOR, NOT PROOF: this deny-list catches known spellings;
+a cause named in words it does not know passes silently.
+=== review coverage: recorded known-bad heads ===
+  PR #58 rejects Copilot's earlier-head review     rc=1 — OK
+  PR #59 rejects both earlier-head reviews         rc=1 — OK
+  PR #60 separates earlier from absent             rc=1 — OK
+=== review coverage: positive and identity arms ===
+  formal Copilot + bot-authored clean Codex pass   rc=0 — OK
+  human copy of a Codex result cannot cover Codex  rc=1 — OK
+  Codex clean result on an older head is stale     rc=1 — OK
+  impossible reviewer is absent, never approval    rc=1 — OK
+  empty required-reviewer set passes explicitly    rc=0 — OK
+  exact reviews on pagination page two count       rc=0 — OK
+=== review coverage: refusal arms ===
+  head moving during the check refuses a verdict   rc=2 — OK
+  closed-unmerged PR refuses a verdict             rc=2 — OK
+  malformed GitHub JSON fails closed               rc=2 — OK
+  GitHub transport failure fails closed            rc=2 — OK
+  non-string PR title fails closed                 rc=2 — OK
+  malformed Codex clean timestamp fails closed     rc=2 — OK
+=== review coverage: JSON and historical audit compatibility ===
+  single-PR JSON reports a covered full head       rc=0 — OK
+  historical audit accepts strict clean Codex evidence and casing rc=0 — OK
+  historical audit refuses a malformed merged PR   rc=2 — OK
+  historical audit refuses a malformed review      rc=2 — OK
+  historical audit refuses malformed unrelated submitted review rc=2 — OK
+  historical audit refuses malformed Codex clean timestamp rc=2 — OK
+  unexpected internal exception fails closed without traceback rc=2 — OK
+REVIEW-COVERAGE PROOF: known-bad heads reject for the named reason; exact formal and Codex-clean evidence pass in both modes; identity, casing, malformed titles/timestamps/historical shapes, pagination, race, lifecycle, transport, unexpected failure, JSON and audit arms hold
+=== release-provenance gate proof (FG-093, blocking) ===
+=== FG-093 positive control ===
+  accepted the exact clean tuple; downstream marker ran
+  rejected non-executable repository checker before fixture setup
+  rejected symlink repository checker before fixture setup
+  accepted downstream argv literally; no shell expansion occurred
+  exported five exact bindings to immutable artifact bytes and removed inherited Git state downstream
+  bound downstream consumption to immutable verified bytes across an artifact path swap
+=== FG-093 four tuple mismatches ===
+  rejected commit mismatch before downstream execution
+  rejected tree mismatch before downstream execution
+  rejected artifact digest mismatch before downstream execution
+  rejected corpus-manifest digest mismatch before downstream execution
+=== FG-093 strict manifest grammar ===
+  rejected unknown schema version before downstream execution
+  rejected boolean is not integer schema version before downstream execution
+  rejected short commit before downstream execution
+  rejected mixed-case commit guessed as lowercase before downstream execution
+  rejected short artifact digest before downstream execution
+  rejected mixed-case digest guessed as lowercase before downstream execution
+  rejected malformed JSON before downstream execution
+  rejected duplicate key before downstream execution
+  rejected missing key before downstream execution
+  rejected unknown key before downstream execution
+  rejected non-string value before downstream execution
+=== FG-093 checkout and file boundaries ===
+  rejected manifest inside checkout before downstream execution
+  rejected tracked artifact inside checkout before downstream execution
+  rejected tracked dirt before downstream execution
+  rejected clean-filter hidden raw tracked-byte mismatch before downstream execution
+  rejected untracked dirt before downstream execution
+  rejected .git/info/exclude hidden physical untracked file before downstream execution
+  rejected assume-unchanged masked tracked dirt before downstream execution
+  rejected skip-worktree masked tracked dirt before downstream execution
+  rejected core.fileMode=false masked executable-bit dirt before downstream execution
+  rejected core.ignoreCase case-collision dirt before downstream execution
+  rejected submodule dirt before downstream execution
+  rejected nested submodule assume-unchanged dirt before downstream execution
+  rejected plain directory at gitlink path before downstream execution
+  rejected initialized submodule at wrong HEAD before downstream execution
+  rejected nested submodule skip-worktree dirt before downstream execution
+=== FG-093 inherited Git-environment attacks ===
+  rejected GIT_CONFIG_COUNT core.ignoreCase collision; inherited Git environment could not hide dirt
+  rejected GIT_CONFIG_COUNT core.fileMode masking; inherited Git environment could not hide dirt
+  rejected GIT_INDEX_FILE alternate index; inherited Git environment could not hide dirt
+  ignored inherited GIT_DIR/GIT_WORK_TREE; exact repository still executed
+  rejected Git replacement-object attack before downstream execution
+  rejected symlink artifact before downstream execution
+=== FG-093 comparison-removal mutations ===
+  killed commit comparison-removal mutation: its known-bad arm became executable
+  killed tree comparison-removal mutation: its known-bad arm became executable
+  killed artifact_sha256 comparison-removal mutation: its known-bad arm became executable
+  killed corpus_manifest_sha256 comparison-removal mutation: its known-bad arm became executable
+  killed artifact-boundary mutation: tracked in-checkout artifact became executable
+=== FG-093 downstream environment-binding mutations ===
+  killed FOGELL_VERIFIED_COMMIT mutation: exact downstream binding assertion detected it
+  killed FOGELL_VERIFIED_TREE mutation: exact downstream binding assertion detected it
+  killed FOGELL_VERIFIED_ARTIFACT mutation: exact downstream binding assertion detected it
+  killed FOGELL_VERIFIED_ARTIFACT_SHA256 mutation: exact downstream binding assertion detected it
+  killed FOGELL_VERIFIED_CORPUS_MANIFEST_SHA256 mutation: exact downstream binding assertion detected it
+  killed downstream Git-environment scrub mutation: hostile values reached the probe
+=== FG-093 Git-cleanliness guard mutations ===
+  killed assume-unchanged cleanliness mutation: its masked bad arm became executable
+  killed skip-worktree cleanliness mutation: its masked bad arm became executable
+  killed filemode-config cleanliness mutation: its masked bad arm became executable
+  killed recursive-submodule cleanliness mutation: its masked bad arm became executable
+  killed ignorecase-override cleanliness mutation: its masked bad arm became executable
+  killed physical-untracked cleanliness mutation: its masked bad arm became executable
+  killed raw-tracked-identity cleanliness mutation: its masked bad arm became executable
+  killed required-gitlink mutation: evil plain-directory bytes became executable
+  killed inherited-Git-environment scrub mutation: ambient Git state changed the judgment
+=== FG-093 replacement-object and artifact-handoff mutations ===
+  killed replacement-object guard mutation: malicious clean bytes became executable
+  killed artifact descriptor-handoff mutation: downstream modified mutable source bytes
+  killed artifact-seal mutation: downstream modified the unsealed snapshot
+FG-093 provenance proof PASSED
+=== compatibility-regression gate proof (FG-094, blocking) ===
+=== FG-094 positive set controls ===
+  passed exact baseline
+  passed out-of-order unique corpus manifest
+  passed hostile inherited Git environment is ignored
+  passed accepted-set gain
+  passed admitted to tier-1 promotion
+  passed vinsguru compiled-but-not-reached accepted loss
+=== FG-094 forbidden set regressions ===
+  rejected reached-agent accepted loss
+  rejected same-count accepted swap
+  rejected oracle-not-ready tier-1 loss
+  rejected same-count tier-1 swap
+=== FG-094 schema, binding, and environment refusals ===
+  rejected missing current ledger row
+  rejected duplicate current ledger row
+  rejected boolean schema version
+  rejected wrong baseline tree
+  rejected wrong oracle digest
+  rejected baseline inside checkout
+  rejected symlink baseline
+  rejected oversized baseline
+  rejected duplicate baseline key
+  rejected extra baseline key
+  rejected non-ancestor baseline commit
+  rejected wrong historical ledger digest
+  rejected wrong corpus manifest digest
+  rejected LF-only oracle
+  rejected wrong oracle header
+  rejected nonexact oracle boolean
+  rejected reached without compiled oracle row
+  rejected current ledger extra column
+  rejected corpus manifest malformed row
+  rejected duplicate corpus manifest filename
+  rejected missing corpus-host baseline/oracle configuration
+  rejected partial corpus-host configuration
+  reported explicit no-corpus skip
+  rejected scorecard failure precedes malformed baseline comparison
+  rejected oversized scorecard diagnostic after a bounded snippet
+  rejected stale audit binary precedes scorecard execution
+  rejected missing native scorecard generator
+=== FG-094 direct checker mutations ===
+  passed counts-only mutant exposes same-count accepted swap
+  rejected compiled-vs-reached mutant on vinsguru control
+  passed tier1-set omission mutant exposes oracle-not-ready tier1 loss
+  passed missing-row default mutant exposes absent oracle row
+  rejected replacement-sanitization mutant
+  rejected malformed filename suffix
+  passed suffix-permissiveness mutant exposes malformed shared filename
+  rejected historical ledger extra column
+  passed schema-permissiveness mutant exposes extra ledger column
+FG-094 compatibility regression proof PASSED
+=== corpus runtime pin: exact tuple accepted ===
+=== corpus runtime pin: exact command absence accepted ===
+  refused leading-hyphen command
+  refused local shadowed synthetic command
+  refused Jenkins shadowed synthetic command
+  refused unavailable remote absence identity
+  refused local command shadow/path drift
+  refused local tool-byte drift
+  refused Jenkins command shadow/path drift
+  refused Jenkins tool-byte drift
+  refused container image replacement
+  refused image digest replacement
+  refused independent Jenkins endpoint host
+  refused independent Jenkins endpoint port
+  refused proxied Jenkins endpoint path
+  refused container port-binding drift
+  refused unavailable remote identity
+  refused missing/invalid resolution expectation
+  refused absent row with local path
+  refused absent row with Jenkins path
+  refused absent row with tool digest
+  refused malformed tool digest
+  refused malformed container port
+  refused malformed host binding
+  refused malformed Jenkins node
+  refused malformed Jenkins plugin count
+  refused malformed Jenkins plugin digest
+  refused Jenkins plugin-count drift
+  refused Jenkins plugin-inventory drift
+  refused duplicate pin id
+  refused missing pin id
+  refused unverified source commit resolution mutant
+  refused missing source commit OID validation mutant
+  refused non-resolved CLI archive mutant
+  refused missing source commit evidence mutant
+  refused policy use before HEAD archive mutant
+  refused missing executing-runner HEAD equality mutant
+  refused working-tree no-egress control mutant
+  refused working-tree runtime-pin checker mutant
+  refused working-tree workspace helper mutant
+  refused working-tree corpus verifier mutant
+  refused working-tree executed-surface allowlist mutant
+  refused working-tree runtime-pin policy mutant
+  refused unlocked CLI restore mutant
+  refused shared CLI output mutant
+  refused missing CLI capability handshake mutant
+  refused missing resolution-expectation parsing mutant
+  refused missing Fogell tool-path parsing mutant
+  refused missing resolution-expectation assignment mutant
+  refused missing resolution-expectation export mutant
+  refused missing Fogell tool-path assignment mutant
+  refused missing Fogell tool-path export mutant
+  refused missing ambient Fogell tool-path clearing mutant
+  refused missing local pre-listener access fence mutant
+  refused missing remote pre-listener access fence mutant
+  refused mutable oracle image pull mutant
+  refused abbreviated oracle identity mutant
+  refused non-exact anonymous Jenkins home mutant
+  refused name-based collector identity mutant
+  refused missing plugin-closure comparison mutant
+  refused missing empty-state attestation mutant
+  refused missing cleanup ownership label mutant
+  refused missing anonymous-volume cleanup proof mutant
+  refused missing remote access heartbeat mutant
+  refused missing local access heartbeat mutant
+  refused glob-expanding tunneled queue check mutant
+  refused missing access token validator mutant
+  refused missing authenticated uid validator mutant
+  refused weakened remote exact-rule count mutant
+  refused weakened local exact-rule count mutant
+  refused remote owner rule without uid mutant
+  refused local owner rule without uid mutant
+  refused missing remote apply verification mutant
+  refused missing local apply verification mutant
+  refused missing remote removal ownership check mutant
+  refused missing local removal ownership check mutant
+  refused constant target nonce mutant
+  refused missing target-source environment validation mutant
+  refused missing opaque-section refusal mutant
+  refused unicode pre-lex escape accepted mutant
+  refused missing closed-command binding mutant
+  refused extra first-shell option accepted mutant
+  refused effectful scripted echo accepted mutant
+  refused missing Declarative withEnv refusal mutant
+  refused missing pre-stage effectful-call refusal mutant
+  refused missing nested-stage environment traversal mutant
+  refused missing pipeline-agent refusal mutant
+  refused missing stage-agent refusal mutant
+  refused missing pipeline-directive refusal mutant
+  refused missing stage-option refusal mutant
+  refused missing opaque-stage refusal mutant
+  refused missing pure-helper preflight mutant
+  refused non-governed preamble accepted mutant
+  refused non-governed pipeline environment accepted mutant
+  refused reachable later-stage expression accepted mutant
+  refused executable later-stage GString accepted mutant
+  refused missing post refusal mutant
+  refused missing target PATH check mutant
+  refused missing target build-token check mutant
+  refused missing target command-resolution check mutant
+  refused missing target absent-command check mutant
+  refused missing target marker validation mutant
+  refused Jenkins path reused for Fogell mutant
+  refused missing queue Location mutant
+  refused loose queue Location parser mutant
+  refused wrong queue poll ownership mutant
+  refused missing owned build-number check mutant
+  refused missing queueId-token ownership validation mutant
+  refused weakened exact ownership token mutant
+  refused non-exact Replay definition mutant
+  refused missing guarded Fogell inline runner mutant
+  refused bypassed per-build Fogell guard mutant
+  refused bypassed effective-environment shell guard mutant
+  refused recomputed shell environment mutant
+  refused comparable runtime-guard failure mutant
+  refused parallel runtime-guard absorption mutant
+  refused unranked parallel runtime-guard mutant
+  refused bypassed shared engine preflight mutant
+=== corpus runtime pin: private HEAD controls/CLI, disposable oracle, access fences, owned queue, Replay, and target guards mutation-proven ===
+CORPUS RUNTIME PIN: ALL ASSERTIONS PASSED
+seal verification: 327 receipt(s) recomputed from their own content, all match
+=== seal verification: proven against known-bad receipts ===
+  accepted the committed receipts, unmodified
+  rejected a FLIPPED VERDICT line
+  rejected an edited OUTPUT line
+  rejected a DELETED output line
+  rejected an edited RESULT
+  rejected an edited WORKSPACE HASH
+  rejected an edited CASE DIGEST
+  rejected an edited JENKINS CORE
+  rejected a REORDERED output block in a SEQUENCE receipt
+  accepted a REORDERED output block in a MULTISET receipt (declared unsealed)
+  rejected an edited output line in a MULTISET receipt
+  rejected an edited COMPARISON NOTE
+  rejected a receipt with no sealed-output field
+  rejected a truncated receipt
+  rejected an ADDED RECOVERED block with no recovered-seal line (FG-128)
+  accepted a RECOVERED block bound by its recovered-seal line (FG-128)
+  rejected an EDITED entry inside a bound RECOVERED block
+  rejected a bound RECOVERED block whose recovered-seal line was DELETED
+  rejected a recovered-seal line with NO RECOVERED block
+  rejected a SECOND RECOVERED block appended after a bound one
+  rejected a bound RECOVERED block TRANSPLANTED from another receipt
+  rejected a THREE-SPACE line inserted inside a bound RECOVERED block (FG-234)
+  rejected a TWO-SPACE line inserted inside a bound RECOVERED block (FG-234)
+  rejected a bound RECOVERED block MOVED away from the VERDICT line (FG-234)
+  rejected a FLIPPED sealed-output mode
+  rejected a BLANK OUTPUT LINE added to a zero-output side
+  rejected a DOCTORED output line count
+  rejected a DUPLICATED result field inside a side block
+  rejected a DUPLICATED workspace-hash inside a side block
+  rejected a SECOND conflicting timestamps() line
+  rejected a valid receipt COPIED onto another case name
+  rejected a side claiming '(did not run)' beside real evidence
+  rejected an UNRECOGNISED line inside a sealed section
+  rejected arbitrary text behind a recognised coverage word
+  rejected a FABRICATED empty notes section
+  rejected a FORGED unknown section
+  rejected a '(did not run)' side carrying workspace evidence
+  rejected an INDENTED forged line in the header
+  accepted the committed receipts, still, after the header rule
+  rejected an OVERSIZED output count
+  rejected an ALTERED timestamps() explanatory suffix
+  rejected a FORGED SECOND VERDICT line
+  rejected a DUPLICATED jenkins-core field
+  rejected a receipt with NO verdict line
+  rejected an empty receipt directory
+SEAL VERIFICATION PROOF: every arm above is rejected, the declared-unsealed regions are accepted, and an empty directory refuses (this is NOT a claim that every possible tamper is caught — see the header and FG-169)
+FG-094 COMPATIBILITY REGRESSION GATE PASSED: files=228 baseline_accepted=200 current_accepted=200 baseline_tier1=1 current_tier1=16 allowed_oracle_not_ready_losses=0 gains=0
+stale-reference audit: 8 identifier(s) removed vs origin/main, 0 fully gone
+no surviving comment names a deleted identifier
+=== restart lane (FG-112, blocking) ===
+=== returned runner failure has a fixed stderr diagnostic ===
+fixed stderr diagnostic and durable failure preserved
+=== FG-253: unsupported agent refuses before torn-journal repair ===
+unsupported agent named, torn journal byte-identical, workspace and user effects untouched
+non-newline terminal fragment is not trusted and remains byte-identical on refusal
+newline-terminated terminal before a torn tail remains a byte-identical no-op without the Jenkinsfile
+=== attempt 1: SIGKILL mid-step ===
+killed host mid-step (verified dead); journal now:
+  | build-identity	989d26b4bc474affa461f63b9f864ff0
+  | script-digest	967e503b6b5bee6bc8ee112bf14067359875216c5bc24d7c5bfc37062f54e5a5
+  | workspace-identity	34:/tmp/fogell-restart-lane.tg1Hl3/ws|34:/tmp/fogell-restart-lane.tg1Hl3/ws|47:/tmp/fogell-restart-lane.tg1Hl3/ws/restart-lane|45:/tmp/fogell-restart-lane.tg1Hl3/ws/_artifacts	restart-lane
+  | step-started	Build	0	sh
+  | step-finished	Build	0	success
+  | step-started	Build	1	sh
+=== attempt 2: resume must REFUSE (interrupted step, exit 3) ===
+refused, step named: needs-reconciliation: Build#1 — a started step has no recorded outcome; refusing to guess
+=== attempt 2b: a CHANGED definition must refuse (exit 4) ===
+refused the drifted definition; original restored
+=== operator reconciliation: the marker shows the effect landed ===
+appended step-finished for Build#1 (evidence: marker line 'two' exists)
+=== attempt 3: clean resume — durable steps skip, the rest run ===
+=== isRestartedRun: the Recovery stage ran on the RESUMED attempt only ===
+=== integrity: each effect exactly once ===
+        1 one
+        1 recovered
+        1 three
+        1 two
+=== attempt 4: terminal journal is a no-op ===
+terminal no-op still does not require the Jenkinsfile
+=== FG-171: a SIGKILL between two script{} children — the BLOCK is the unit ===
+refused by name; s1/s2 exactly-once — the claimed double-run does NOT happen
+reconciled resume: block skipped WHOLE (s3 deliberately absent — the stated limit), every effect exactly once
+=== FG-135: a SIGKILL mid-attempt of a RETRIED stage — attempts have identity ===
+refused on the LIVE attempt's step — the superseded failure no longer reads as finished
+reconciled resume CONTINUED the loop: attempt 3 ran once, build success, every attempt's step exactly once
+=== FG-135: input inside a journaled retried stage stays REFUSED ===
+refused before any step — a prior attempt's approval can never be replayed
+=== FG-135: NESTED stages under a journaled retry stay REFUSED (leaf-only) ===
+refused before any step — nested records cannot masquerade as the live attempt's
+=== FG-206: an ABSORBED failure's reason does not explain a later refusal ===
+an absorbed reason cannot explain a later refusal, and an uncaught one still explains itself
+post-halt warning and constructor calls stay silent, effectless, and cannot replace the original reason
+=== FG-177: named retry count promotes and controls the attempt budget ===
+named count promoted to one integer positional and governed exactly two attempts
+=== FG-177: non-integer named retry count refuses before body effects ===
+non-integer named count refused with a stable reason before body, retry, or successor effects
+=== FG-177: a hosted child halt returns to retry ownership ===
+attempt 1 halted inside nested wrappers, attempt 2 recovered, and terminal replay duplicated nothing
+=== FG-177: exhausted retry runs finally cleanup once per attempt ===
+two attempts, two cleanup effects, original final failure, and terminal replay duplicated nothing
+=== FG-177: every retry attempt halting propagates final failure ===
+two halted attempts, one Retrying boundary, final failure, no continuation
+=== FG-177: retry keeps the final attempt's original refusal reason ===
+each attempt kept its halt boundary; the final durable reason stayed the original refusal
+=== FG-177: a status-only cleanup halt owns durability and terminal replay ===
+fresh cleanup status replaced the inherited halt once; terminal replay duplicated no reason or effect
+=== FG-177: binding failures preserve their measured exception class ===
+junit and dir bind failures are caught by their measured NullPointerException class
+=== FG-177: a successful JUnit step replays its durable stage warning ===
+durable warning preceded successful finish; resume selected stage unstable while build and pipeline stayed successful
+=== FG-220: resumed JUnit skipOldReports fails closed without the original cutoff ===
+=== FG-220: resumed omitted and explicit-false JUnit still parse old reports ===
+resumed true refused before scan; resumed explicit false and default parsed the old report
+RESTART LANE: ALL ASSERTIONS PASSED
+=== inbox-watcher proof (FG-046e, blocking) ===
+=== does it see a breach the sampler could not? ===
+  overlapping publish (the breach)       exit 1 — OK
+  overlap published by atomic rename     exit 1 — OK
+  withdraw-then-publish (compliant)      exit 0 — OK
+  two published when two expected        exit 0 — OK
+  only one published, two expected       exit 1 — OK
+  same prompt twice, two expected        exit 1 — OK
+=== the watcher's own failure modes ===
+  watcher saw nothing at all             refused (exit 3) — OK
+  runtime dropped events                 refused (exit 3) — OK
+APPROVAL-WATCH PROOF: it catches the breach and the miscount, clears the compliant case, and refuses both blind spots
+=== approval lane (FG-046b, blocking) ===
+=== A1: SIGKILL while the prompt is UNANSWERED ===
+prompt published as fafc62807b08e3f380bc978117a2219dc84ca22483dea3188430ad3c31e17d6a:
+  | stage	Gate
+  | step	1
+  | prompt#	1
+  | prompt	Deploy?
+=== A2: an UNANSWERED interrupted input must still refuse (exit 3) ===
+refused: needs-reconciliation: Gate#1 — a started step has no recorded outcome; refusing to guess
+=== A3: the human answers; the resumed attempt proceeds SILENTLY ===
+answered, proceeded silently, journal:
+  | build-identity	83ce0a95d70e4750a20939906798adbd
+  | script-digest	2cbb9f5aeb86996fbc930664f8298a75c9b122213a62a51aa7394fa9a0ccf9d4
+  | workspace-identity	37:/tmp/fogell-approval-lane.f74B02/a/ws|37:/tmp/fogell-approval-lane.f74B02/a/ws|42:/tmp/fogell-approval-lane.f74B02/a/ws/gate|48:/tmp/fogell-approval-lane.f74B02/a/ws/_artifacts	gate
+  | step-started	Gate	0	sh
+  | step-finished	Gate	0	success
+  | step-started	Gate	1	input
+  | input-decision	Gate	1	1	approved	alice
+  | step-started	Gate	1	input
+  | step-finished	Gate	1	success
+  | step-started	Gate	2	sh
+  | step-finished	Gate	2	success
+  | stage-committed	Gate
+  | build-finished	success
+=== B: the answer lives in the JOURNAL — inbox deleted, no second ask ===
+resumed with no inbox at all; the prompt was answered from the journal
+=== C: reject — the build is ABORTED and the next step never runs ===
+rejected, aborted, nothing after the prompt ran
+=== D: an answer is consumed — a second build must ask again ===
+build 2 asked again and waited; the first build's answer did not carry over
+=== E: no inbox means no approver — fail closed, do not hang ===
+failed closed at the prompt with the reason on the durable record (FG-114)
+=== F: neither a fragment nor an ambiguous two-line answer counts ===
+waited through the fragment AND the ambiguous pair, then took the completed answer with its submitter intact
+=== G: the same journal through a symlink alias finds the same answer ===
+same journal, same recorded identity, same action id; nobody was asked twice
+=== G2: a terminal journal sweeps a marker its build left behind ===
+swept on the already-terminal path
+=== I: a HARD LINK to the journal is the same build ===
+same inode, same identity, same action id; nobody was asked twice
+=== H: two prompts under one wrapper are two gates ===
+two prompts, two ids, two answers; journal:
+  | input-prompt-cancellable	Gate	0	1
+  | input-answer-provisional	Gate	0	1	approved	heidi
+  | input-prompt-cancellable	Gate	0	2
+  | input-answer-provisional	Gate	0	2	rejected	heidi
+=== J: an unwritable inbox fails the build, it does not ship unapproved ===
+failed closed, inbox named, exit 1
+=== K: a marker from a DEAD attempt is swept when the build finishes ===
+swept a marker this process never published
+=== L: retry does not re-ask a human who said no ===
+asked once, declined once, aborted
+=== M: a rejection escapes NESTED retries ===
+declined once at depth two, aborted, never re-asked
+=== N: a timed-out prompt is withdrawn before the retry publishes ===
+approval-watch: 2 distinct prompt(s), peak 1 live prompt(s)
+never more than one live prompt (by event order); both attempts asked, neither lingered
+=== O: a submitter-restricted gate is refused, not approved by anyone ===
+both options failed closed with their own reasons on the durable record (FG-114)
+=== P: a VOIDED answer is not replayed by a resumed attempt ===
+same state, one void record apart: honoured without it, refused with it
+=== Q: a PROVISIONAL answer is not actionable on resume ===
+provisional only, never actionable; the crash state refuses
+=== QL: an answer returned after cancellation is provisionally recorded and VOIDED ===
+late poll wrote provisional + audit-truth void; bounded replay refused (void is not claimed as the sole barrier)
+=== QF: failFast capability makes an answer provisional before a sibling faults ===
+ordinary parallel wrote one actionable decision; failFast capability wrote only one provisional answer
+=== R: an OFFLINE answer to a bounded gate is not adopted ===
+bounded gate, offline answer: refused for reconciliation, nothing actionable recorded
+=== S: a FAULTING branch interrupts its failFast siblings ===
+fault signalled from the branch itself; the sibling stopped before its next effect
+=== T: a secret in the prompt is masked BEFORE it reaches the inbox ===
+masked (as ****) on the console, on disk and in the journal; build succeeded
+=== U: cleanup keeps an answer the journal never recorded ===
+marker swept, unrecorded answer preserved, RE-PLANTED durable answer consumed
+=== V: adoption will not take a decision file that is still changing ===
+refused while changing, adopted once settled
+=== W: a gate argument that is a NUMERIC DIVISION still gates ===
+an expression-argument gate published its prompt and waited
+=== X: a gate whose message is a CONCATENATION still gates ===
+a concatenated-message gate published its prompt and waited
+=== Y: a POSITIONAL concatenated gate message still gates ===
+a positional concatenated gate published its prompt and waited
+=== Z: a gate argument the grammar cannot parse is REFUSED, not skipped ===
+an unparseable gate argument was refused, not silently skipped
+=== Z2: a PARENTHESISED slashy gate message publishes its EVALUATED words ===
+a parenthesised slashy gate published its evaluated words and waited
+=== Z3: a MIXED positional slashy gate with an ACTIVE '{' publishes its words ===
+a mixed positional slashy gate published its evaluated words and waited
+=== Z4: a VALID triple-quoted gate publishes its MESSAGE and waits ===
+a valid triple-quoted gate published its message and waited
+=== Z5: a gate whose message is a NESTED CALL must not publish its SOURCE ===
+a nested-call gate failed closed instead of publishing its source text
+a script-block input was refused by name in the journal and nothing published
+APPROVAL LANE: ALL ASSERTIONS PASSED
+OK

@@ -31,6 +31,26 @@ type LogResponse =
       [<JsonPropertyName "next_sequence">] NextSequence: int
       [<JsonPropertyName "chunks">] Chunks: LogChunk list }
 
+type FeedbackLogChunk =
+    { [<JsonPropertyName "sequence">] Sequence: int
+      [<JsonPropertyName "body">] Body: string
+      [<JsonPropertyName "truncated">] Truncated: bool
+      [<JsonPropertyName "diagnostic">] Diagnostic: System.Text.Json.JsonElement option
+      [<JsonPropertyName "diagnostic_id">] DiagnosticId: string option }
+
+type FeedbackResponse =
+    { [<JsonPropertyName "schema_version">] SchemaVersion: int
+      [<JsonPropertyName "source_identity">] SourceIdentity: System.Text.Json.JsonElement option
+      [<JsonPropertyName "build_id">] BuildId: string
+      [<JsonPropertyName "status">] Status: string
+      [<JsonPropertyName "cancellation_requested">] CancellationRequested: bool
+      [<JsonPropertyName "is_terminal">] IsTerminal: bool
+      [<JsonPropertyName "from_sequence">] FromSequence: int
+      [<JsonPropertyName "next_sequence">] NextSequence: int
+      [<JsonPropertyName "has_more">] HasMore: bool
+      [<JsonPropertyName "truncated">] Truncated: bool
+      [<JsonPropertyName "chunks">] Chunks: FeedbackLogChunk list }
+
 type ExplainResponse =
     { [<JsonPropertyName "trust_pool">] TrustPool: string
       [<JsonPropertyName "capabilities">] Capabilities: string list

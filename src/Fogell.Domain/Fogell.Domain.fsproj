@@ -4,7 +4,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Ids.fs" />
+    <Compile Include="SourceSnapshot.fs" />
     <Compile Include="Status.fs" />
+    <Compile Include="Diagnostic.fs" />
     <Compile Include="Model.fs" />
     <Compile Include="RetryDecision.fs" />
     <Compile Include="LinuxOpenFlags.fs" />

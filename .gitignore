@@ -17,3 +17,6 @@ evidence/**/workspace/
 
 # FG-226: audit tools are compiled at gate time, never committed (see scripts/build-audits.sh)
 scripts/bin/
+
+# Python proof harness imports generate local bytecode, not retained evidence.
+scripts/__pycache__/

@@ -12,10 +12,10 @@ maintenance identity. Grant only the runtime surface:
 ```sql
 GRANT USAGE ON SCHEMA public TO fogell_runtime;
 GRANT SELECT, UPDATE(singleton) ON controller_metadata TO fogell_runtime;
-GRANT SELECT ON organization_work_roots TO fogell_runtime;
+GRANT SELECT ON organization_work_roots, build_retention TO fogell_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON
   organizations, projects, builds, nodes, attempts, events, outbox, log_chunks,
-  effect_checkpoints, retry_decisions, build_definitions
+  effect_checkpoints, retry_decisions, build_definitions, source_verifications
 TO fogell_runtime;
 GRANT USAGE, SELECT ON
   events_id_seq, outbox_id_seq, log_chunks_id_seq,

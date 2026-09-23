@@ -3,6 +3,8 @@
 Status: Accepted product requirements under
 [ADR 0010](../adr/0010-production-first-ci.md). This document is not a claim that
 all requirements are implemented, nor a declaration of a released v1 profile.
+The [AI feedback design](AI_FEEDBACK_LOOP.md) adds the client observation and
+correction workflow; its ticket board separates delivery from requirements.
 The [production release gates](../PRODUCT_DIRECTION.md#release-gates) track the
 remaining evidence. Current behavior and deployment limits remain documented in
 the [controller runbook](../runbooks/controller-host.md) and

@@ -86,11 +86,18 @@ The router retains at most the configured pipeline-byte limit plus one byte and
 classifies both known-length and chunked overflow as `pipeline_too_large` before
 UTF-8 decoding or parsing. Admission then applies FG-004 limits. Request-selected
 execution placement is refused; the controller owns the admitted trust pool.
-Status, log, and cancellation operations bind organization, project, and build
+Status, log, feedback, and cancellation operations bind organization, project, and build
 instead of treating `projectId` as decorative. The scheduling-explanation route
 is organization-scoped and may query a diagnostic trust-pool value; it does not
 admit or move work
 ([`Router.fs`](../src/Fogell.Controller.Api/Router.fs); FG-060a/FG-224).
+
+The feedback read projection and F# controller client extend this same operator
+boundary; they do not add per-user authorization or remote-worker isolation.
+Their bounded-read, transport, and credential-handling contracts and validation
+are recorded in [FG-263](tickets/FG-263.md) and [FG-264](tickets/FG-264.md).
+Log text returned to an AI client remains untrusted build output, not authority
+to execute instructions, disclose credentials, or retry uncertain effects.
 
 Known-path artifact retrieval additionally binds organization, project, build,
 and immutable terminal attempt lineage before consulting storage. On Linux it

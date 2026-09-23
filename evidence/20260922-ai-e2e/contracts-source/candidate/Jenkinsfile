@@ -1,0 +1,1 @@
+pipeline { agent any; stages { stage('Reproduce') { steps { sh 'cat message.txt; sleep 1' } } } }

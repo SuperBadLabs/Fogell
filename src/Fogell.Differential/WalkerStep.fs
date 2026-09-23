@@ -282,7 +282,8 @@ module WalkerStep =
                         beforeShellLaunch |> Option.iter (fun verify -> verify cwd environment)
 
                     Executor.runStep
-                        { Name = step.Name
+                        { OnDiagnostic = Some(fun diagnostic -> runCtx.EmitDiagnostic { diagnostic with Stage = stage.Name; Step = step.Name })
+                          Name = step.Name
                           Script = script
                           Workspace = cwd
                           WorkspaceRoot = Some workspace
@@ -346,6 +347,22 @@ module WalkerStep =
                           Named = renderedNamed
                           Artifacts = Some(ArtifactStore.underWithLimits artifactRoot runCtx.ArtifactLimits)
                           BuildKey = artifactBuildKey }
+
+        // Typed evidence uses the executor result, never a parse of console text.
+        let locate (diagnostic: ExecutionDiagnostic) =
+            { diagnostic with Stage = stage.Name; Step = step.Name }
+        if result.Status <> BuildStatus.Success && result.Status <> BuildStatus.NotBuilt && result.Diagnostics.IsEmpty then
+            let category = if result.EngineNote.IsSome then "infrastructure" else "workload_step"
+            let diagnostic =
+                { ExecutionDiagnostic.create category (BuildStatus.toWireString result.Status)
+                    (result.Diagnostic |> Option.defaultValue "step did not succeed") with
+                    RelevantOutput = result.Stdout + result.Stderr
+                    ExitCode = result.ExitCode |> Option.map System.Nullable |> Option.defaultValue (System.Nullable())
+                    // Hosted Groovy positions are not pipeline absolute positions.
+                    SourcePath = if ctx.HostedArgs.IsNone then "Jenkinsfile" else null
+                    SourceLine = if ctx.HostedArgs.IsNone then System.Nullable step.Position.Line else System.Nullable()
+                    SourceColumn = if ctx.HostedArgs.IsNone then System.Nullable step.Position.Column else System.Nullable() }
+            runCtx.EmitDiagnostic(locate diagnostic)
 
         // Jenkins' JUnit step has two outcome channels: the build result and a
         // WarningAction attached to the current Pipeline node. Stage post observes

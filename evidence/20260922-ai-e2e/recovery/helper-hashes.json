@@ -1,0 +1,17 @@
+{
+  "lab.json": "34f5ca98fa9f4c109e52e673fa36d0d67057638a907633a619927d0b123b760b",
+  "lab.py": "d9aa4a1796a1596a14d680427275cbfda85642d3af4490356d7957136252ebdb",
+  "pair-manifest.json": "ec0be4cc60c42bf2ba89358e545c8f6313f01579b084a199d01b28770720f619",
+  "post-restore-command.json": "ed4f1a23dbd7d7d17889d71c37b434fb2f8f16ad493cc826edb0ebf3b8aec753",
+  "post-restore.py": "68ebe0b20310ef85245dde8027351f4b10e07789faadb3cc9d87a5a7bf8e11ca",
+  "quiesce-cleanup.json": "3c195522a8e7832a095fd0d11b78521d17222ff94d2e6fa6cc28524053d42cc0",
+  "receipt.json": "3bb628bb2c41ea3bacd5fedb21ec839ffc7e64d9cf1322a6f43708957c95641f",
+  "recovery-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "recovery-control.stdout": "f1daba1694fb4a0ede09a461800e153c23e106aa65947f90eacd529f010feeac",
+  "restored-deployment.json": "4cf1a5474bb5d7a8da53fac4d9f157f7dcd0ad6a92ca2e8737946bd8428a3454",
+  "retention-command.json": "cc40f8381834f6bdbbdcbd9d12d826fdd931123577bd14bd0de1c19063316f7c",
+  "run-final-recovery.py": "96231f08043a3741c1354dcdf823b9df8c660e3592df72866ffeb080749d3436",
+  "smoke-command.json": "5c4db6cfaecd96c833486a3467d29c6a4cbae168fb2cc0d3025facf3cb7d849e",
+  "stale-authority.json": "d392a83dfa86f7f3c6d8667ae59f2d07d796532af1158ecf8e87b9a7208beb86",
+  "workload-proof.json": "0f43639b58d48b68470833c0545a36792dc139c2e771dc487a2c4eaaeac6186a"
+}

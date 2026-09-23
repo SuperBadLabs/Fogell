@@ -1,0 +1,3900 @@
+{
+  "schema_version": 1,
+  "source_database": "fogell_pilot",
+  "database_archive_sha256": "54c6acfc04ecdfb7a82efd3edf426c3500cf95d2ce12f3d932d39043f2d9cbbf",
+  "state_inventory": {
+    "containment": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "containment/2ea1ad3be33b423ea1277f041f102c8d": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "containment/8705477c37ea438d806a8e763086b6f8": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "definitions": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/093a278aa37f414a968e4a999e81b6ad": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/093a278aa37f414a968e4a999e81b6ad/Jenkinsfile": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+      "size": 131
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/093a278aa37f414a968e4a999e81b6ad/Jenkinsfile.snapshot.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "418456d9b446a1a314062df09dd72c2ad9f61f5914a45b85ab52a5dd1dc59057",
+      "size": 821
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/2ba046166e174184942c8c36e5636c96": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/2ba046166e174184942c8c36e5636c96/Jenkinsfile": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "db8476b2e505e28e960d0a5b23f45087e9be6eee51e02cfb6e57509fc0558e30",
+      "size": 155
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/7a3b9d574c6a4a22bb6b0ef595093c36": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/7a3b9d574c6a4a22bb6b0ef595093c36/Jenkinsfile": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "7cd3e6528d9e823afa756c565b9b33c35e239eb15195661a9d16c164a19bf93a",
+      "size": 184
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/89ee1286c4514d8ca4b034ab9ecc8e4a": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/89ee1286c4514d8ca4b034ab9ecc8e4a/Jenkinsfile": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+      "size": 131
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/89ee1286c4514d8ca4b034ab9ecc8e4a/Jenkinsfile.snapshot.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "a1b8c9030511d6703529f41e1f284907832d564f8f2381a9250047afc925c7d8",
+      "size": 759
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/9d8214f376e04b049c9b093126a37914": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/9d8214f376e04b049c9b093126a37914/Jenkinsfile": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+      "size": 131
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/9d8214f376e04b049c9b093126a37914/Jenkinsfile.snapshot.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "0e8899f122a7174958e2b7ae978f701ee3ef5584b55f86ab08d07c60cbc78d1c",
+      "size": 821
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/bf120cf088b342a49df2306b4d41d7c1": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/bf120cf088b342a49df2306b4d41d7c1/Jenkinsfile": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "b436a9c3e9f7705e8dc08b7fc6fed3fb1f37a9f38b4a70ed73c6f4ba3109c172",
+      "size": 184
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/f8cfb2f4894841f9be386d33de4ed8d8": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/f8cfb2f4894841f9be386d33de4ed8d8/Jenkinsfile": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "ed5925235dbf97155e1290c6fee1baa07e278ccdac44746ebc157aa61a12f6b6",
+      "size": 382
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/fe17b844625543dc853f5887f53effc1": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/fe17b844625543dc853f5887f53effc1/Jenkinsfile": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+      "size": 131
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/fe17b844625543dc853f5887f53effc1/Jenkinsfile.snapshot.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "418456d9b446a1a314062df09dd72c2ad9f61f5914a45b85ab52a5dd1dc59057",
+      "size": 821
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/ffd3de0a037f411299de69909546e747": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "definitions/2ea1ad3be33b423ea1277f041f102c8d/ffd3de0a037f411299de69909546e747/Jenkinsfile": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "bbbcf6fb31a28417c62454fd5377b553e261688ead4dc99b9436567e6af12b0f",
+      "size": 116
+    },
+    "definitions/8705477c37ea438d806a8e763086b6f8": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "definitions/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "definitions/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/Jenkinsfile": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "a92b4752b639ce5404bfcc6a03fda3a477e3e92010e9ececdf77f44a3ab753e4",
+      "size": 327
+    },
+    "definitions/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/Jenkinsfile.snapshot.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "d0eb092e12ee3140138b3c5b5bbf6714cd827a0f16cd4eeb986045ce0803c9c0",
+      "size": 86829
+    },
+    "definitions/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "definitions/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/Jenkinsfile": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "a92b4752b639ce5404bfcc6a03fda3a477e3e92010e9ececdf77f44a3ab753e4",
+      "size": 327
+    },
+    "definitions/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/Jenkinsfile.snapshot.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "a7bc7a7c534975374b0528c383045c2d05fdff3afc94b92fc9c8c426af4e5dcd",
+      "size": 86817
+    },
+    "events": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "events/2ea1ad3be33b423ea1277f041f102c8d": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "events/2ea1ad3be33b423ea1277f041f102c8d/e4751332fcc3496e9f4b42be188dad73-1.events": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "6726510382beb0d102150c361690c77bb0bace69ad08d7241153d2696f7de309",
+      "size": 58
+    },
+    "events/8705477c37ea438d806a8e763086b6f8": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "journals": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "journals/2ea1ad3be33b423ea1277f041f102c8d": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "journals/2ea1ad3be33b423ea1277f041f102c8d/attempts": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "journals/2ea1ad3be33b423ea1277f041f102c8d/attempts/1be53a3c0794471fbfb28b5de4d6eb30.journal": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "efdee293af99912d8bcc6b8b1418fe9f8b11ff97df4cd099d4150f8446f93f45",
+      "size": 671
+    },
+    "journals/2ea1ad3be33b423ea1277f041f102c8d/attempts/4f8dc711246f42f590bc4937979408b9.journal": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "14bcc72f98c952d83846ba332c143e9f7b19dcc2f145cf336d569e3ccd3461e2",
+      "size": 739
+    },
+    "journals/2ea1ad3be33b423ea1277f041f102c8d/attempts/7f6d2929985046a5a7e4442d7c841b81.journal": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "8a2d380e4b66a7aa22511ed0beeed08da35511f268a54dc0b7c797807b641f41",
+      "size": 751
+    },
+    "journals/2ea1ad3be33b423ea1277f041f102c8d/attempts/949e46a436644ae28940ed173e104f9a.journal": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "a7cec2576120c25451ec0f17b05daa47937c5cc3ad12df64007c4e9453269dde",
+      "size": 671
+    },
+    "journals/2ea1ad3be33b423ea1277f041f102c8d/attempts/9f9731bf1c4a45629aefc47637c41e5a.journal": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "05da26d03e6c4a89a5bf75dc3da2bfbca171e1839773879e5f09d586bdb830d2",
+      "size": 796
+    },
+    "journals/2ea1ad3be33b423ea1277f041f102c8d/attempts/a9671f95fa8e42a38d49ae8ee1916d02.journal": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "f0f7fa2eeec6977449a03bf4e279314b4aabdd3567e6c0181de6578bcb3869c7",
+      "size": 671
+    },
+    "journals/2ea1ad3be33b423ea1277f041f102c8d/attempts/e4751332fcc3496e9f4b42be188dad73.journal": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "d32be43043be03adeed9ba17427a89a24040551145562018f4d866d634232fad",
+      "size": 589
+    },
+    "journals/2ea1ad3be33b423ea1277f041f102c8d/attempts/f15f5275b660401d9954579a5bddc49d.journal": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "c09c84d1743ee7355018b7b5e48c474dbb02f06fa319c7a137474beef8b61183",
+      "size": 692
+    },
+    "journals/8705477c37ea438d806a8e763086b6f8": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "journals/8705477c37ea438d806a8e763086b6f8/attempts": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "journals/8705477c37ea438d806a8e763086b6f8/attempts/b04dea5603db4dfca72e98d102b33f9d.journal": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "ab93bef0e51d6af2800bb08014dad77073404dcb80882b2b497af1bdeba6576d",
+      "size": 1109
+    },
+    "journals/8705477c37ea438d806a8e763086b6f8/attempts/dca61313d8eb4f938b3de6b2deb515f9.journal": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "d1488ae984d776ee737292ab0492cf9081ab525525985248f76396940f7ca87c",
+      "size": 1048
+    },
+    "neutral-home": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/093a278aa37f414a968e4a999e81b6ad": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/093a278aa37f414a968e4a999e81b6ad/message.txt": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "4c756a92e6370090684e4e17a6765ed73c919375f986ba8cfe75bc4a48e5c469",
+      "size": 28
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/093a278aa37f414a968e4a999e81b6ad@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/2ba046166e174184942c8c36e5636c96": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/2ba046166e174184942c8c36e5636c96@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/7a3b9d574c6a4a22bb6b0ef595093c36": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/7a3b9d574c6a4a22bb6b0ef595093c36@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/89ee1286c4514d8ca4b034ab9ecc8e4a": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/89ee1286c4514d8ca4b034ab9ecc8e4a/message.txt": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "4c756a92e6370090684e4e17a6765ed73c919375f986ba8cfe75bc4a48e5c469",
+      "size": 28
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/89ee1286c4514d8ca4b034ab9ecc8e4a@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home/2a2638e72ea4d5715e8165631a961e61326bb9ece8e04e067b1ea7fae011ca65": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home/2a2638e72ea4d5715e8165631a961e61326bb9ece8e04e067b1ea7fae011ca65/tmp": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home/44d6d473db3d23da4399af584c7cda0d4b059d2202a2f454235b99f9e712081c": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home/44d6d473db3d23da4399af584c7cda0d4b059d2202a2f454235b99f9e712081c/tmp": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home/491dfb30390b62d3cdf2e8c6c9fced3d25996c3d60b03f8bf8df48fc6317e45b": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home/491dfb30390b62d3cdf2e8c6c9fced3d25996c3d60b03f8bf8df48fc6317e45b/tmp": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home/5fd52d3360a115d25f6065d6271221f981c10b1201c5354ccbd8e930647076e4": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home/5fd52d3360a115d25f6065d6271221f981c10b1201c5354ccbd8e930647076e4/tmp": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home/9832b3da0197c641eacb4ccd4c4c22ca6c9831d638cd41ceaefa25c8c4883e76": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home/9832b3da0197c641eacb4ccd4c4c22ca6c9831d638cd41ceaefa25c8c4883e76/tmp": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home/ae1f0ca0473bb8b4aaaef55b50f3dafaa724af12bd781fcb0d28f0e3cd2c09cd": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home/ae1f0ca0473bb8b4aaaef55b50f3dafaa724af12bd781fcb0d28f0e3cd2c09cd/tmp": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home/b5a94a661d8a797505b2af81273be1cf2cfcfa7a315b2b6037b99361fea61da5": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home/b5a94a661d8a797505b2af81273be1cf2cfcfa7a315b2b6037b99361fea61da5/tmp": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home/ccecb1b51779dcd0a0cba52c43585c5f02441b055238ac168c12a0b4b0e64930": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_agent_home/ccecb1b51779dcd0a0cba52c43585c5f02441b055238ac168c12a0b4b0e64930/tmp": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_artifact-snapshots": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_artifact-snapshots/1be53a3c0794471fbfb28b5de4d6eb30": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_artifact-snapshots/4f8dc711246f42f590bc4937979408b9": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_artifact-snapshots/7f6d2929985046a5a7e4442d7c841b81": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_artifact-snapshots/949e46a436644ae28940ed173e104f9a": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_artifact-snapshots/9f9731bf1c4a45629aefc47637c41e5a": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_artifact-snapshots/a9671f95fa8e42a38d49ae8ee1916d02": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/_artifact-snapshots/f15f5275b660401d9954579a5bddc49d": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/bf120cf088b342a49df2306b4d41d7c1": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/bf120cf088b342a49df2306b4d41d7c1@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/f8cfb2f4894841f9be386d33de4ed8d8": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/f8cfb2f4894841f9be386d33de4ed8d8/results.xml": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "308eac3dd2bf941d6d3ee73307057156f47e2358273c9b0336b220e73ddcaa1f",
+      "size": 204
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/f8cfb2f4894841f9be386d33de4ed8d8@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/fe17b844625543dc853f5887f53effc1": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/fe17b844625543dc853f5887f53effc1/message.txt": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "4c756a92e6370090684e4e17a6765ed73c919375f986ba8cfe75bc4a48e5c469",
+      "size": 28
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/fe17b844625543dc853f5887f53effc1@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/ffd3de0a037f411299de69909546e747": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/ffd3de0a037f411299de69909546e747@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/ffd3de0a037f411299de69909546e747@tmp/durable-4d4421c1": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/ffd3de0a037f411299de69909546e747@tmp/durable-4d4421c1/script.sh": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "637cbdb3daf0341b069901e72cca1a318646a4bf08b67ab1823db46fca9c1aef",
+      "size": 8
+    },
+    "workspaces/2ea1ad3be33b423ea1277f041f102c8d/ffd3de0a037f411299de69909546e747@tmp/durable-4d4421c1/script.sh.copy": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "637cbdb3daf0341b069901e72cca1a318646a4bf08b67ab1823db46fca9c1aef",
+      "size": 8
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/004514fa5d36464da09fb22608fc541b@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/01e7820f933f406b9fb29d90d80bc822@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/0629cfe95c554c899c80469ed2347b00@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/112d96f4b89047deb51afc99f8042564@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/1360893caad5479588c6396bdcc52954@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/15821d667d8d4e9995bf3890dd125331@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/1939b6795fff4071b55f45228c35bbd8@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/1fa82c71bb7d4d2fb2a5bb983d04e37c@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/26c37b8cea114e57bd383f9349de7f06@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/27b017f854064db89a411e40cd9917ab@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/2b33368d067d43d98b51a0a012d8b1c3@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/2e2073aedb6141ec863e2738f6f6d486@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/31867e753ac448d3a0869511088171f6@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/3247ed4a26074991a2fa2278bde536f3@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/359d725f542b4679b5057999cd5f9be1@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/38bec79d50bd4dfbb4750781ee56af9b@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/4090083fa76f4bd3919c56223fc8829b@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/44bd9367b2a84279a204be2e23658f41@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/5017c2cce75747c488fbbc6a6ccfd98e@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/5357b10bbcec4b6c95484842e5df9428@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/54aa4d9ef92e4a85a3156176c929e19c@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/55cd3a0c2e8642cdb4cb23c999c397d4@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/56512432f99d41d587d540fd95e30599@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/59d0db8e15b24cdab92d205a8ea4f4a6@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/5d88956f25a04f349c6937ed23215f09@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/5fbdc09cbb6e4c4e9d0e8410b7207cd7@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/60494dfaea16422baa43cb98d057986e@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/73175e1fc6144fe3a66381c93dbe5895@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/75fc3f43f69648c7b9367ad291f7ea04@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/7b7bee1ffa00459781076d1b590469f4@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/806b4848ddb347689b3caf182910dd31@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/82f05f77dac047c3a3fa38844861c4c4@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/8ed3cdd0aba74bdfa31fdae8c3343492@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/95d246673e2344b892ed007ab88fd8f6@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/960f0b55a15f47d8bedc2bbf347e4cab@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/9a622d6a1ddc410db8da23afe311b42a@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/9d4dbcddb8d744d993d2f3690a2e3806@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/9e8e21626e904c20ae98b916ddc07692@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/.dotnet": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/.dotnet/corefx": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/.dotnet/corefx/cryptography": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/.dotnet/corefx/cryptography/x509stores": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/.dotnet/corefx/cryptography/x509stores/my": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/.dotnet/corefx/cryptography/x509stores/my/2D82C449633E116BB761808A2F4BE8E15A8F77B7.pfx": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "16fe4ae3ce45a8afef43e0a685b53f2c12aab745ec606b55a3af0c4e92a11afd",
+      "size": 2723
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/.local": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/.local/share": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/.local/share/NuGet": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/.local/share/NuGet/Migrations": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/.local/share/NuGet/Migrations/1": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/fg269-cache": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/fg269-cache/payload.bin": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "de2f256064a0af797747c2b97505dc0b9f3df0de4f489eac731c23ae9ca9cc31",
+      "size": 65536
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/tmp": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/tmp/Jkthwh": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/tmp/NuGetScratchsrikanth": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/tmp/NuGetScratchsrikanth/lock": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/tmp/NuGetScratchsrikanth/lock/1f1fdbe90e1605a30ddf42163cbd8a4d1b31ae9e": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/tmp/NuGetScratchsrikanth/lock/53d16490b73d8ce8c8e5013f5d39b5e747bd9ba4": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/tmp/NuGetScratchsrikanth/lock/713bff48be0f31085f879f8a965b8f4ebbcfdcdc": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/tmp/NuGetScratchsrikanth/lock/732f91be4e4faf9d27be0eaff628d053d9b74647": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/tmp/NuGetScratchsrikanth/lock/9741d3e40c5c0effddad746b9c9b288acbc22677": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/tmp/NuGetScratchsrikanth/lock/fb1912d6950c704d88ed3610d7e130fef79a2aa7": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/4bb66190c15568c18ff76a31a0663a76571b9cb43d3ee0f22088a43e8960d36d/tmp/vuT7Q9": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/.dotnet": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/.dotnet/corefx": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/.dotnet/corefx/cryptography": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/.dotnet/corefx/cryptography/x509stores": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/.dotnet/corefx/cryptography/x509stores/my": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/.dotnet/corefx/cryptography/x509stores/my/8E01B210B9CBF18A57E6ED9760B7857D460F8587.pfx": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "d359b1a802a227c5553aaf4e2eed8c1808e548101c8e76940756d5e73a8321db",
+      "size": 2723
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/.local": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/.local/share": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/.local/share/NuGet": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/.local/share/NuGet/Migrations": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/.local/share/NuGet/Migrations/1": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/fg269-cache": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/fg269-cache/payload.bin": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "de2f256064a0af797747c2b97505dc0b9f3df0de4f489eac731c23ae9ca9cc31",
+      "size": 65536
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/tmp": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/tmp/NuGetScratchsrikanth": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/tmp/NuGetScratchsrikanth/lock": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/tmp/NuGetScratchsrikanth/lock/3b1a9121953c877800c3b2a8687a111dad665a13": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/tmp/NuGetScratchsrikanth/lock/61be1ffe1f83b34444a57983756856a743ad15d2": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/tmp/NuGetScratchsrikanth/lock/bd25a74268157f8bce7158736da5b20773a41606": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/tmp/NuGetScratchsrikanth/lock/e1b873fe20147c42227df0ece092f5fed7a8a674": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/tmp/NuGetScratchsrikanth/lock/e1db177934c92242c84742e9299879bea6d3e8e8": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/tmp/NuGetScratchsrikanth/lock/fcfd870ff1057b1800e87d0212a81dba2e8ec5ab": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/tmp/dFbvUF": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_agent_home/b133baa9f35a4d4ed924d763583307e872d2cdf372fbc9d99798a11a87987d9c/tmp/nk8eJh": {
+      "mode": 448,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifact-snapshots": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifact-snapshots/b04dea5603db4dfca72e98d102b33f9d": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifact-snapshots/b04dea5603db4dfca72e98d102b33f9d/reports": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifact-snapshots/b04dea5603db4dfca72e98d102b33f9d/reports/domain.xml": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "785d353de1564bfc8eadaca92a7ea0097e09b2e6a8ed56e1d7dbbc0c57395f82",
+      "size": 6616
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifact-snapshots/b04dea5603db4dfca72e98d102b33f9d/reports/sdk.txt": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "202ea52fa65123109563284e542d3944c792f04956f52b582043789d90988778",
+      "size": 9
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifact-snapshots/b04dea5603db4dfca72e98d102b33f9d/reports/test-exit.txt": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+      "size": 2
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifact-snapshots/b04dea5603db4dfca72e98d102b33f9d/reports/tests.txt": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "aeac08ef191a45fc80fdf450122689eb1cd7a3862b5f4f010857151bc9ef0988",
+      "size": 5450
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifact-snapshots/dca61313d8eb4f938b3de6b2deb515f9": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifact-snapshots/dca61313d8eb4f938b3de6b2deb515f9/reports": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifact-snapshots/dca61313d8eb4f938b3de6b2deb515f9/reports/domain.xml": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "058f63aabd793a50aa287e4c31b5a40b07ce381a648053172b364056900017ee",
+      "size": 5683
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifact-snapshots/dca61313d8eb4f938b3de6b2deb515f9/reports/sdk.txt": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "202ea52fa65123109563284e542d3944c792f04956f52b582043789d90988778",
+      "size": 9
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifact-snapshots/dca61313d8eb4f938b3de6b2deb515f9/reports/test-exit.txt": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "size": 2
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifact-snapshots/dca61313d8eb4f938b3de6b2deb515f9/reports/tests.txt": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "901e23646e0d49b24eaf5bef2d6fe48b74143e392c9cd688ea09adde1ab5e1c3",
+      "size": 4430
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/050802b4ddb1209c5738f121ec6bda815c31324f67ab344921291fdc521263c1.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/0561910e5ddde6b2d71d6971adb09814c33b3c3f3bfd7c794d1d9a3548b52b32.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/05cba0dbf553eb1fc017911141df69d46b74923c73fa115efb687c644878a1d0.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/0fd0f7962f5e9002647609f80582abb27b1b9dbd18cf1ca375aab9ea0ed4308e.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/165bb1fc5d5fea67fe2d35ace0d8bfa30dd0bd6e5d695f26cd486059d7b27072.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/284f3b9d3ff219247a21e9da677cfa640d1d9590cff7bbe2933547ea93eab3c2.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/28d5523a329556ae3fe5f00a835078fef71a01e0983b5c873f3787113f0288dc.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/2a883bf4b1c527caee17deaf13f3a499b911d9df41bf79f8d51dd8dd30b74ad2.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/2f946267906b57f4d6dca59210b8d68a451ff2a95a1e1ab523e8b198246203a0.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/3495693c2136fca055bc3a17c7758f61cfd30133175e15612d6db68acd82bc59.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/3970d2113b03ab27e7811fe3236a376af10dddb2b58f056c93a8af689d5b9888.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/4ad275510870bda6e00dc650d8a3017335c112cfce1575d429a1b23e00f0f4be.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/4c0f9bcd15b83ff0b977e96214251ce722c54e39519446fc5370dfa7c80ca33b.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/4e1989eb4727bb7b35add53309436a74b1966f3223b92daa4856373463400c63.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/5049585f3a3944e3bba0db19e59e89e5e926a6bfa5a0aa0c2056a17719ec4915.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/511d35e8cc38505ebf67be44d9e7fcd07a70b3a5f00c2fc0f1b9810fc9347706.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/52ce90c44eee936462604143fb185bd0d3eb913eb163c7b545e5a305000cf368.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/59e6949ae1ec4e26d6c72ae92cdb63c7bb5151c52561cb9ffc23f5456d1eb244.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/5ff3a255de7dce2eefbc6d1856a423ecc2d39d10e74a05adfab3a21d119b3783.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/619741781f16f70fde5ce45b68e82bc46429ffdde2d908b289fcb17d450faa4a.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/63c1576e643bbad8570071cacd663cd9a4759755295e2d26b02541541b07c537.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/6b6c9f78e93534dd9d90bc881b54caf3fb2221bddab66b51f821db75f8c479c3.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/6d839d1273cdbf7b11d124605513ad7e3ae8f030a9b3cc8ec469bc479eb2ac26.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/7471850a0d05ba035cd77f33a39f09bc80e889983d4ab5b40d573e75a80836e6.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/77349e4384def76d24ed708145d4a8e297c2eaf4600950ec19b2ef348a757513.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/784f9181b3d8af73aea784a33d78d94017c25e2cfffb41bb06f5a45c9a955591.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/7d2adc13eb1dded76c8031da9abdd789e487c477b0a1e958d12ac530817242f3.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/812e687e10ac3268be1df1ea20ba5c366560385b9e65249f54deb05ef5d70925.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/867c56cd8847e6dd3754dc8c492b80fb270b692a02d89b35fb406e527c0a054b.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/86dc0848ec1480207f1d5c59fc12faf44fb106c7cce967e7b2811cad046341b0.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/8757dc14a8c65010c886a25e7c4cbb0433ea5b366e64d6229a50e3fffc4d2b0a.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/883e3ee59bdbaeb229c9a976a08b9455aebae17ae1b041290dddf3a6405e4217.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/8a83369a563944f3740c852ab73dbbb74bf9b04c9df2afb33ce798d3eacb46d0.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/8b7ad6823788b1535ba06ab16eee37033ecfead457df072863304ab109107dfa.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/8d7b4c1adbc49aa134623887dc87304d701e55f471297b79004906e86d0de383.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/9fb6f4173a2e5eb36a3b58fa9e4a9d4362a6721b12e272404c823b47bebf17d1.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/a5c9dd2f22cf336e2dad649e95a85590cc352ad3535b3cfe402cf8afe5110685.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/b16e55fb71ad44bf97f05c89445694623b147590fb7a56e450566422aa5be6b1.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/b19b242130b0852dfa8f0537c9723778081a6eb77495fc76ef7cb41ecdde0283.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/b40e68323d0507031cb6d13f55de21cc1d3f6566ad2d070470e96bf7415895b9.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/b824ed2890cc87460a1c01cd532ed63678c02d8246f2b59f0810d66a938710dd.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/b8ce87b352f5e3c7a047e7fa8e9765d0647fbb4c40aa73ac6efc612c23c821b3.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/bbcc0d08c955d56677474a64701d998e73a596854297090296a115b4e55c00c8.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/c20c7a1f947e5fcdefdc72a4999e2c304239b5ad9ed6f891f3bad5b5799d02bb.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/c726a117d0d0742b75a543961dbedcd41f5f54938a3667c832dc3c136233286a.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/c8fa60cf4b30192df65297a8c85fd0be5fc309f4b675f18f89d0eee36cfbd147.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/d23e34ff1f9909bdf8b6ad585b2357daae1c46b3d150537e6710204346a4c6b4.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/d550d46df3b51901e9a444a5aa83a2e435d72fb615cbaaa45e26cb9adcf42646.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/d90a4bb58b4383307e4cd314e94111e52e181f93cdd54abf473d1f488843e8b9.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/db8cef041c7d89b1ac9106e4a1d0267b82d5277e7cc8857342b390a297a6b7f5.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/dc6d0c068ca77785377a8ebd2d97b42a830b03525a363175914be0e3a35a71b3.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/e17760b6eefd5d62d6ceac60b881a0819409b4761e50f00b9f4761ea63f0de24.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/e4179dccc4facdc3da3a0f27b48aa3a5e6a9142c8de78fa0dbcb1fc7da78fba2.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/e7bf53af9515339f76a7a7ec7076a032c08283b0c31e4362c10172e015e31a4b.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/ebec62a70c49154ca410aefd3a7ca4e757aff6377c573c863a02f863be72450e.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/edaa612239e8269cc5f4e82cd4b20a0dc59bdc81af78ce593ab5a25e99269cc7.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/ee986586918b9db1f6c36d604364b2b78b40064198f74b3356a445b2ec060ed5.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/ef344476ee3a2e8c62f1381ac57c4307deb5771024d04b01add999294bdc9d8a.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/f253490065640a9af40f2c214b6f69cb51cda6a879a38700f26f4f41ee5bffc6.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/fda566a1ff83e5450c67dc434c9af65f0b0916955cc8ed23e03502b5c4bcc735.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/fdba63de23f5b822708add8da8c61bacb80ae3fb466b0fe576f012b02f003e50.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-locks/ff257d7a900e31c72f5d1b875550a8f4b87ded9c5f5c183cb2c5b1843928e5a0.lock": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/050802b4ddb1209c5738f121ec6bda815c31324f67ab344921291fdc521263c1": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/0561910e5ddde6b2d71d6971adb09814c33b3c3f3bfd7c794d1d9a3548b52b32": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/05cba0dbf553eb1fc017911141df69d46b74923c73fa115efb687c644878a1d0": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/0fd0f7962f5e9002647609f80582abb27b1b9dbd18cf1ca375aab9ea0ed4308e": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/165bb1fc5d5fea67fe2d35ace0d8bfa30dd0bd6e5d695f26cd486059d7b27072": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/284f3b9d3ff219247a21e9da677cfa640d1d9590cff7bbe2933547ea93eab3c2": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/28d5523a329556ae3fe5f00a835078fef71a01e0983b5c873f3787113f0288dc": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/2a883bf4b1c527caee17deaf13f3a499b911d9df41bf79f8d51dd8dd30b74ad2": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/2f946267906b57f4d6dca59210b8d68a451ff2a95a1e1ab523e8b198246203a0": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/3495693c2136fca055bc3a17c7758f61cfd30133175e15612d6db68acd82bc59": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/3970d2113b03ab27e7811fe3236a376af10dddb2b58f056c93a8af689d5b9888": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/4ad275510870bda6e00dc650d8a3017335c112cfce1575d429a1b23e00f0f4be": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/4c0f9bcd15b83ff0b977e96214251ce722c54e39519446fc5370dfa7c80ca33b": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/4e1989eb4727bb7b35add53309436a74b1966f3223b92daa4856373463400c63": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/5049585f3a3944e3bba0db19e59e89e5e926a6bfa5a0aa0c2056a17719ec4915": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/511d35e8cc38505ebf67be44d9e7fcd07a70b3a5f00c2fc0f1b9810fc9347706": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/52ce90c44eee936462604143fb185bd0d3eb913eb163c7b545e5a305000cf368": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/59e6949ae1ec4e26d6c72ae92cdb63c7bb5151c52561cb9ffc23f5456d1eb244": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/5ff3a255de7dce2eefbc6d1856a423ecc2d39d10e74a05adfab3a21d119b3783": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/619741781f16f70fde5ce45b68e82bc46429ffdde2d908b289fcb17d450faa4a": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/63c1576e643bbad8570071cacd663cd9a4759755295e2d26b02541541b07c537": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/6b6c9f78e93534dd9d90bc881b54caf3fb2221bddab66b51f821db75f8c479c3": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/6d839d1273cdbf7b11d124605513ad7e3ae8f030a9b3cc8ec469bc479eb2ac26": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/7471850a0d05ba035cd77f33a39f09bc80e889983d4ab5b40d573e75a80836e6": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/77349e4384def76d24ed708145d4a8e297c2eaf4600950ec19b2ef348a757513": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/784f9181b3d8af73aea784a33d78d94017c25e2cfffb41bb06f5a45c9a955591": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/7d2adc13eb1dded76c8031da9abdd789e487c477b0a1e958d12ac530817242f3": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/812e687e10ac3268be1df1ea20ba5c366560385b9e65249f54deb05ef5d70925": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/867c56cd8847e6dd3754dc8c492b80fb270b692a02d89b35fb406e527c0a054b": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/86dc0848ec1480207f1d5c59fc12faf44fb106c7cce967e7b2811cad046341b0": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/8757dc14a8c65010c886a25e7c4cbb0433ea5b366e64d6229a50e3fffc4d2b0a": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/883e3ee59bdbaeb229c9a976a08b9455aebae17ae1b041290dddf3a6405e4217": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/8a83369a563944f3740c852ab73dbbb74bf9b04c9df2afb33ce798d3eacb46d0": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/8b7ad6823788b1535ba06ab16eee37033ecfead457df072863304ab109107dfa": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/8d7b4c1adbc49aa134623887dc87304d701e55f471297b79004906e86d0de383": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/9fb6f4173a2e5eb36a3b58fa9e4a9d4362a6721b12e272404c823b47bebf17d1": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/a5c9dd2f22cf336e2dad649e95a85590cc352ad3535b3cfe402cf8afe5110685": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/b16e55fb71ad44bf97f05c89445694623b147590fb7a56e450566422aa5be6b1": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/b19b242130b0852dfa8f0537c9723778081a6eb77495fc76ef7cb41ecdde0283": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/b40e68323d0507031cb6d13f55de21cc1d3f6566ad2d070470e96bf7415895b9": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/b824ed2890cc87460a1c01cd532ed63678c02d8246f2b59f0810d66a938710dd": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/b8ce87b352f5e3c7a047e7fa8e9765d0647fbb4c40aa73ac6efc612c23c821b3": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/bbcc0d08c955d56677474a64701d998e73a596854297090296a115b4e55c00c8": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/c20c7a1f947e5fcdefdc72a4999e2c304239b5ad9ed6f891f3bad5b5799d02bb": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/c726a117d0d0742b75a543961dbedcd41f5f54938a3667c832dc3c136233286a": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/c8fa60cf4b30192df65297a8c85fd0be5fc309f4b675f18f89d0eee36cfbd147": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/d23e34ff1f9909bdf8b6ad585b2357daae1c46b3d150537e6710204346a4c6b4": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/d550d46df3b51901e9a444a5aa83a2e435d72fb615cbaaa45e26cb9adcf42646": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/d90a4bb58b4383307e4cd314e94111e52e181f93cdd54abf473d1f488843e8b9": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/db8cef041c7d89b1ac9106e4a1d0267b82d5277e7cc8857342b390a297a6b7f5": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/dc6d0c068ca77785377a8ebd2d97b42a830b03525a363175914be0e3a35a71b3": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/e17760b6eefd5d62d6ceac60b881a0819409b4761e50f00b9f4761ea63f0de24": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/e4179dccc4facdc3da3a0f27b48aa3a5e6a9142c8de78fa0dbcb1fc7da78fba2": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/e7bf53af9515339f76a7a7ec7076a032c08283b0c31e4362c10172e015e31a4b": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/ebec62a70c49154ca410aefd3a7ca4e757aff6377c573c863a02f863be72450e": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/edaa612239e8269cc5f4e82cd4b20a0dc59bdc81af78ce593ab5a25e99269cc7": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/ee986586918b9db1f6c36d604364b2b78b40064198f74b3356a445b2ec060ed5": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/ef344476ee3a2e8c62f1381ac57c4307deb5771024d04b01add999294bdc9d8a": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/f253490065640a9af40f2c214b6f69cb51cda6a879a38700f26f4f41ee5bffc6": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/fda566a1ff83e5450c67dc434c9af65f0b0916955cc8ed23e03502b5c4bcc735": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/fdba63de23f5b822708add8da8c61bacb80ae3fb466b0fe576f012b02f003e50": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/.fogell-artifact-pending/ff257d7a900e31c72f5d1b875550a8f4b87ded9c5f5c183cb2c5b1843928e5a0": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash/d51d56e22e6d4029ad7430a0b858823f#build-61": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash/d51d56e22e6d4029ad7430a0b858823f#build-61/stashes": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash/d51d56e22e6d4029ad7430a0b858823f#build-61/stashes/pilot-reports-c0129f9b4102": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash/d51d56e22e6d4029ad7430a0b858823f#build-61/stashes/pilot-reports-c0129f9b4102/reports": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash/d51d56e22e6d4029ad7430a0b858823f#build-61/stashes/pilot-reports-c0129f9b4102/reports/domain.xml": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "785d353de1564bfc8eadaca92a7ea0097e09b2e6a8ed56e1d7dbbc0c57395f82",
+      "size": 6616
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash/d51d56e22e6d4029ad7430a0b858823f#build-61/stashes/pilot-reports-c0129f9b4102/reports/sdk.txt": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "202ea52fa65123109563284e542d3944c792f04956f52b582043789d90988778",
+      "size": 9
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash/d51d56e22e6d4029ad7430a0b858823f#build-61/stashes/pilot-reports-c0129f9b4102/reports/test-exit.txt": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+      "size": 2
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash/d51d56e22e6d4029ad7430a0b858823f#build-61/stashes/pilot-reports-c0129f9b4102/reports/tests.txt": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "aeac08ef191a45fc80fdf450122689eb1cd7a3862b5f4f010857151bc9ef0988",
+      "size": 5450
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash/f103308936ac4fff809d870ece1c650b#build-62": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash/f103308936ac4fff809d870ece1c650b#build-62/stashes": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash/f103308936ac4fff809d870ece1c650b#build-62/stashes/pilot-reports-c0129f9b4102": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash/f103308936ac4fff809d870ece1c650b#build-62/stashes/pilot-reports-c0129f9b4102/reports": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash/f103308936ac4fff809d870ece1c650b#build-62/stashes/pilot-reports-c0129f9b4102/reports/domain.xml": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "058f63aabd793a50aa287e4c31b5a40b07ce381a648053172b364056900017ee",
+      "size": 5683
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash/f103308936ac4fff809d870ece1c650b#build-62/stashes/pilot-reports-c0129f9b4102/reports/sdk.txt": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "202ea52fa65123109563284e542d3944c792f04956f52b582043789d90988778",
+      "size": 9
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash/f103308936ac4fff809d870ece1c650b#build-62/stashes/pilot-reports-c0129f9b4102/reports/test-exit.txt": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "size": 2
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/_artifacts/_stash/f103308936ac4fff809d870ece1c650b#build-62/stashes/pilot-reports-c0129f9b4102/reports/tests.txt": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "901e23646e0d49b24eaf5bef2d6fe48b74143e392c9cd688ea09adde1ab5e1c3",
+      "size": 4430
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/a0123fe884ba4918940d17f65a43f203@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/a2dcff460d7c4f149488b7224aaf163f@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/a475470abcb8478d872eda8cad2a4acf@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/a803618ce8244015908c5a8abd8d894d@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/b2e915510f644d33a124df6a625e649c@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/b80b3bbb52504c89a2b869828773277d@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/bcd36a07a06d40c5b7263c59f7a46fdd@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/c2928eb9782f438c898c1ce697ea06a6@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/c56a05d7bd104d458370ad9775e92bc6@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/cde7ff782dbb4643b120c7ca4ff4144a@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/cf89d0f2e3454b53b7911b0ae6251c9b@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d0b77b693baf48b4a01edc785d45129b@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/Directory.Build.props": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "bfb2444ba895cccce452b54f4389a63c3e3d2f5ecb6c9e17e6e0328d787a5471",
+      "size": 1512
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/global.json": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "e67cbfea6a001b75869cb8314b566bfd09e90ec5071c3f3e329faa59f062585d",
+      "size": 75
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/pilot-cache.txt": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "4162525af4ee838ef150c923fa3116c861c7a8d0b56b068d26ad8e0e821045ef",
+      "size": 40
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/pilot-nuget.config": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "9508cae5f76364f56e80eb97cb16493977243cf38e5cca6284e3d74f83b20a2c",
+      "size": 74
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/pilot-tool-home": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/pilot-tool-home/.dotnet": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/pilot-tool-home/.dotnet/10.0.301.aspNetCertificateSentinel": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/pilot-tool-home/.dotnet/10.0.301.dotnetFirstUseSentinel": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/pilot-tool-home/.dotnet/10.0.301.toolpath.sentinel": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/pilot-tool-home/.nuget": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/pilot-tool-home/.nuget/NuGet": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/pilot-tool-home/.nuget/NuGet/NuGet.Config": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "a93e5528f06204b5e5afecd3fb2db8de0d48cc5e2b5f812728a6ad3f0c7bffc2",
+      "size": 205
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/reports": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/reports/domain.xml": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "785d353de1564bfc8eadaca92a7ea0097e09b2e6a8ed56e1d7dbbc0c57395f82",
+      "size": 6616
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/reports/sdk.txt": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "202ea52fa65123109563284e542d3944c792f04956f52b582043789d90988778",
+      "size": 9
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/reports/test-exit.txt": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+      "size": 2
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/reports/tests.txt": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "aeac08ef191a45fc80fdf450122689eb1cd7a3862b5f4f010857151bc9ef0988",
+      "size": 5450
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/scripts": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/scripts/self-hosted-pilot": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/scripts/self-hosted-pilot/Jenkinsfile": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "a92b4752b639ce5404bfcc6a03fda3a477e3e92010e9ececdf77f44a3ab753e4",
+      "size": 327
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/scripts/self-hosted-pilot/build-test.sh": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "5197294d58e5a50b8cb6662b78547c15b4b25659e27d13213a47e16c5dd9dc81",
+      "size": 1446
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/Diagnostic.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "1c011c66039316c3db027f8fcd9d7f217b08f630e6f30ee26c8c2377ab9fcbd4",
+      "size": 3838
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/Fogell.Domain.fsproj": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "266e4081cb1e961024cf98d430bbb35136c53f85433bea5c1c34b0c6ead2d578",
+      "size": 423
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/Ids.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "a29e6cebb4c55644b8c3371e710f1fc6b1e3c53790cd164cfa89ff944b52faaa",
+      "size": 1447
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/LinuxOpenFlags.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "575929e8c2a0530eed611256e82057eb9c984b5ac42fe12e7161177b8d1580c5",
+      "size": 2099
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/Model.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "7ef2234938800c5ee69187e69df112bd2eeb90ddd3cc1d5e2430883054ef81b3",
+      "size": 3501
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/RetryDecision.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "4acb95ffc807cc7cedb5403fb9537b76dfb7a50ce5c83fb9b146b6301465966e",
+      "size": 7191
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/SourceSnapshot.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "063213f19e5c8a75ec6a54404d4ede85725048bb9ef10a5ca4a692aaccc6f49f",
+      "size": 11497
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/Status.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "a83a4532921150f3886b90f32ad35fad23832ff076a2128f6e55ffaa4e68fc0e",
+      "size": 1768
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/bin": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/bin/Release": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/bin/Release/net10.0": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/bin/Release/net10.0/Fogell.Domain.deps.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "a5d8b4dee59a57bfabd002b5b7afd22ff18f6bb50668bba3fda1258b8bc66e60",
+      "size": 2401
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/bin/Release/net10.0/Fogell.Domain.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "117ea35e18fadcadc5629a110067452d3ed7576f7ad906fb75d8096bd2fe2907",
+      "size": 108032
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/bin/Release/net10.0/Fogell.Domain.pdb": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "bf68144023ecd857022bfa2f2f1389c19111f0a060f07e1a1ce7d022239fb45f",
+      "size": 24060
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Fogell.Domain.fsproj.nuget.dgspec.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "2fe1d3bad5cc95bc7fa7bb384bc44c8ca634082e6a9d491d0196d8ee04e66745",
+      "size": 22150
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Fogell.Domain.fsproj.nuget.g.props": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "1c3e61feb69a34c77cebf2123c639ba5badeb9e86d2db005d1f5af198648349d",
+      "size": 1379
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Fogell.Domain.fsproj.nuget.g.targets": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "b14461e0cb1be3f77fcf9fe2fdd62889325ca92523d0f606980ed59eb5c4aa1c",
+      "size": 149
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Release": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Release/net10.0": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Release/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.fs": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "75b88026597c3353d0646ad4902d210cea46fe9ec0d0d97b9e09f6df5ba7c4ef",
+      "size": 190
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Release/net10.0/Fogell.Domain.AssemblyInfo.fs": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "ce1dea2454bc1e5217734fb2dba8a6bb519b5769de9d50e6918b6b0e2e7ed720",
+      "size": 670
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Release/net10.0/Fogell.Domain.AssemblyInfoInputs.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "babe818c44d1f787579ab8cca4a8e229f1067937d2be70255f21b73f08793420",
+      "size": 65
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Release/net10.0/Fogell.Domain.assets.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "95ae50f74c5e78dfc66e66cd081dcac6e18b9e21bb1814fc8c7ed4596b1d23e0",
+      "size": 4421
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Release/net10.0/Fogell.Domain.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "117ea35e18fadcadc5629a110067452d3ed7576f7ad906fb75d8096bd2fe2907",
+      "size": 108032
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Release/net10.0/Fogell.Domain.fsproj.AssemblyReference.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "c1e437afecc0656e49719a7aa95ff0553f59f35b62f4269f06888c809b26c3a1",
+      "size": 437
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Release/net10.0/Fogell.Domain.fsproj.CoreCompileInputs.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "48297468258487e86497e361f82d9bd2bf5f989c2c18e98a69f74fbc74d451d8",
+      "size": 65
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Release/net10.0/Fogell.Domain.fsproj.FileListAbsolute.txt": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "6418d2b03defbbf0590622caa454ec98dc96fc8b06c012ff191a0fc7069f5287",
+      "size": 1974
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Release/net10.0/Fogell.Domain.pdb": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "bf68144023ecd857022bfa2f2f1389c19111f0a060f07e1a1ce7d022239fb45f",
+      "size": 24060
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Release/net10.0/ILLink.Substitutions.xml": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "1d4974c953b4471197c094218ad4505a21943c5b72a09af131ecd5ebe6307095",
+      "size": 999
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Release/net10.0/ref": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Release/net10.0/ref/Fogell.Domain.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "94cec9ba302cc778974abe0c48ad4a782d24e0bb6fea78f7b870b9510ac81e66",
+      "size": 55808
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Release/net10.0/refint": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/Release/net10.0/refint/Fogell.Domain.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "94cec9ba302cc778974abe0c48ad4a782d24e0bb6fea78f7b870b9510ac81e66",
+      "size": 55808
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/project.assets.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "8bfb8904ebf2d5704c76335b7b23e32396cad0aadb531ff177dedc13fda5ba03",
+      "size": 25176
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/obj/project.nuget.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "df16a838c0487d0c860311544a96d50501f3f31a2ac369dd3790284eec9705c9",
+      "size": 652
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/src/Fogell.Domain/packages.lock.json": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "d9354e106a2012d905f214a0bc1db8e08d46eaded7c97520f211c291fac19b13",
+      "size": 306
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "edc3308548e7eed11fb098dbf9fe15c82617b60a9c25d9560fac781c46bac8d4",
+      "size": 559
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/RetryDecisionTests.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "f7cf12000a9ae6d28c56fe8460338bf1e8601b2a854fcadd4815f3175690bfd9",
+      "size": 14049
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/Tests.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "ac71e5ba825d4c8a920e6fafff3bec26ba5f89006af6957dd38b2295bc936cc8",
+      "size": 10048
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/Expecto.FsCheck.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "50f8761469206193aca410c616b63b34a90a6882078cf72d32e04ac962c2af39",
+      "size": 36352
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/Expecto.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "0fae41ec77be0024efecadc62fd69f0e84a8db61208134a3029e1e7ce397720f",
+      "size": 949248
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/FSharp.Core.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "d02fbb41897592806a580ad18ae3ddef4c34d3c62204beb2f0b4f828f44cdf06",
+      "size": 2407760
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.Tests": {
+      "mode": 493,
+      "kind": "file",
+      "sha256": "2d8f372ebe213965c5229e56874d9745ef51472784a435c4cacfc2ebe6cd0581",
+      "size": 78256
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.Tests.deps.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "1ba23ce80461b0ce0d6e6f53cb7d15c5b295c32bdc1c2a6030eac79f6369030a",
+      "size": 5624
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.Tests.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "ff928b7a228362a31810b39c606c41cff2d2d679a31933aaf6bbc665672de624",
+      "size": 51712
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.Tests.pdb": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "a573cfb50378ce1f1c9d71ef5a78d618b47747b9cbf82a07dd096bcd0e986424",
+      "size": 8936
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.Tests.runtimeconfig.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "52eccff0b97c55480c64b3a6d8dcb244f5fd098d0645dba8581d3e2190d4ea4a",
+      "size": 435
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "117ea35e18fadcadc5629a110067452d3ed7576f7ad906fb75d8096bd2fe2907",
+      "size": 108032
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.pdb": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "bf68144023ecd857022bfa2f2f1389c19111f0a060f07e1a1ce7d022239fb45f",
+      "size": 24060
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/FsCheck.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "863dc092c3f4997c9ae6b7eedd2db599b499332dfae22f818c33ef30752f507f",
+      "size": 829440
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/Mono.Cecil.Mdb.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "61637f9940e5e336571cbf945be0f36d6d6050e06288df0f0232d93b26f0bde7",
+      "size": 39424
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/Mono.Cecil.Pdb.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "a5249a04ad8fd7dfd47e4d0a620aed0f7eb6051e1ddec102c541ca3e12f6e2a8",
+      "size": 89600
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/Mono.Cecil.Rocks.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "273292babd45f9f34de5054bd9cdfe1d859a7dbf6f4ad5974fe4ead70698ed5b",
+      "size": 24576
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/Mono.Cecil.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "769a59793d4b8885bbbfbc5aee8f57a0d4e34d275c56c60c03994309b87f67e9",
+      "size": 356864
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/cs": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/cs/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "d8bed9a1a675aef622f05591fd4fcd746bc893c8f6fc5632018c5eb68e5deffd",
+      "size": 34128
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/de": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/de/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "e7c81ac2f2363a32f41006a4d8343e620fb38145e6a38b3764be0b8ab28a4aca",
+      "size": 35152
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/es": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/es/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "c909638a3a6f86702d1636268df18d61c0fbc177be73fd8010368f82b6e44e11",
+      "size": 34128
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/fr": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/fr/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "31290c3202fd14f1a2a35fa699f224766b21044fe317c8e9c000aba555b1d100",
+      "size": 34640
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/it": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/it/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "4f74faa2ef6d9a0988e7176cfcf0d3ebf8e180dc465ab436da48065e0d176e12",
+      "size": 34128
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/ja": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/ja/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "faa56a6b5f142468ee07f50a0e7e5571527d9b8663fc2f3d31c51cd9eeaf9e0d",
+      "size": 36688
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/ko": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/ko/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "e4c7e85864fbc63fb932c39cba27cdf9f465bb5728120997c52f72fd6e1d33dc",
+      "size": 35664
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/pl": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/pl/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "30d631e5857b9c7f112890dbc19db1640fe00649a67d60a60bbfb46ad059ef87",
+      "size": 35152
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/pt-BR": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/pt-BR/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "0f229bc4cd7d1dda68159f99cacdcb9a1d365c63fb90aebc6b297bd9e0ebd2cc",
+      "size": 33616
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/ru": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/ru/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "edcb2e60dca2eb3697e7663229211a94baedb69b0fd92a1b042f9b2aa7719328",
+      "size": 41296
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/tr": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/tr/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "f2921cb3f61423ec3f5c757fa398c31525c2f0a97052044d566ce0f7eb287f9f",
+      "size": 33616
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/zh-Hans": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/zh-Hans/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "df52190cdaceaddbfa2b2813d4b0e955f1683e97d0431e65030517ad692e3031",
+      "size": 32080
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/zh-Hant": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/bin/Release/net10.0/zh-Hant/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "5f1f986c4a175e7b67ff7ba4b5c21c121c670375f2e90e0b4551df72d2655e9b",
+      "size": 31568
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Fogell.Domain.Tests.fsproj.nuget.dgspec.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "2c800a184f294d2b74c72682ba39e4876d80668917790e1be04477ae1a572831",
+      "size": 45016
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Fogell.Domain.Tests.fsproj.nuget.g.props": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "ce98dfe0c370476e075559f59e6cb310c5ef869e1ebc0fa023f637e849060ec1",
+      "size": 1771
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Fogell.Domain.Tests.fsproj.nuget.g.targets": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "b14461e0cb1be3f77fcf9fe2fdd62889325ca92523d0f606980ed59eb5c4aa1c",
+      "size": 149
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.fs": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "75b88026597c3353d0646ad4902d210cea46fe9ec0d0d97b9e09f6df5ba7c4ef",
+      "size": 190
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.D.9ACC5E66.Up2Date": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.AssemblyInfo.fs": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "1fee2dc35aa5f63e708a13162923402b5ea14bc5227846e7c4957f4a68fb48df",
+      "size": 688
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.AssemblyInfoInputs.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "1025412f66bea6a940726df45502f8b10bccf1a3b0c60b54b3721e91ec94545a",
+      "size": 65
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.assets.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "207f7422a3527f419f76af1ce133f7911a76c9552fc0bf702f2724a134091ba0",
+      "size": 8087
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "ff928b7a228362a31810b39c606c41cff2d2d679a31933aaf6bbc665672de624",
+      "size": 51712
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.fsproj.AssemblyReference.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "b79f51af3077a1e365119e1683b922f773d1be6795d70db75e09f048ec7c40c8",
+      "size": 3834
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.fsproj.CoreCompileInputs.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "5a80bfc092c5cbe04054c857e32e3dd8f2bd7ec40ea47c05ecc5f7602db1670c",
+      "size": 65
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.fsproj.FileListAbsolute.txt": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "188b79595d32401715a3831bf06fd15e4f9a6ad4011f7c2ec59e9fbef34d8508",
+      "size": 7136
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.genruntimeconfig.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "13b36ecf4f7ff7e7012bad8785894093cb780ce46c16c49ffbc2707bfe617246",
+      "size": 65
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.pdb": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "a573cfb50378ce1f1c9d71ef5a78d618b47747b9cbf82a07dd096bcd0e986424",
+      "size": 8936
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/ILLink.Substitutions.xml": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "c1608da15ef6afbd922aa1a1435da8e9148edb47c4935c6618b4d18e261649e9",
+      "size": 1065
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/apphost": {
+      "mode": 493,
+      "kind": "file",
+      "sha256": "2d8f372ebe213965c5229e56874d9745ef51472784a435c4cacfc2ebe6cd0581",
+      "size": 78256
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/ref": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/ref/Fogell.Domain.Tests.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "6ab248c62def075bd9cc6de6c9a4694269b6ac3de36316bb1bf97aa6d4e4f171",
+      "size": 13824
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/refint": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/Release/net10.0/refint/Fogell.Domain.Tests.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "6ab248c62def075bd9cc6de6c9a4694269b6ac3de36316bb1bf97aa6d4e4f171",
+      "size": 13824
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/project.assets.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "89b5df049b6ba44cbea0f138fc3de07ca5582d618a48dabf030b7f0bd80327a2",
+      "size": 31585
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/obj/project.nuget.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "50a93cf0738fd054333a0298fb7b2dc69bd90f205aa9248c498612278f5f0f22",
+      "size": 1048
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f/tests/Fogell.Domain.Tests/packages.lock.json": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "ae489cf61e2cf07ecaebe3b13e1e900d3cefa02cf8b2b82024b59390feaa0a6e",
+      "size": 1647
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/d51d56e22e6d4029ad7430a0b858823f@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/da92ea6460db4090a8d8b6ff23c429c7@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/e157389fcfdd4be093b93df02c78dec5@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/ebfdf18074bd41ed899fc008c54eeff2@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/ec69a84658ba471798d6054458fe0d17@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/ee8d98ceaa3d4789ad73254b505d2b00@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/Directory.Build.props": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "bfb2444ba895cccce452b54f4389a63c3e3d2f5ecb6c9e17e6e0328d787a5471",
+      "size": 1512
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/global.json": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "e67cbfea6a001b75869cb8314b566bfd09e90ec5071c3f3e329faa59f062585d",
+      "size": 75
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/pilot-cache.txt": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "4162525af4ee838ef150c923fa3116c861c7a8d0b56b068d26ad8e0e821045ef",
+      "size": 40
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/pilot-nuget.config": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "9508cae5f76364f56e80eb97cb16493977243cf38e5cca6284e3d74f83b20a2c",
+      "size": 74
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/pilot-tool-home": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/pilot-tool-home/.dotnet": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/pilot-tool-home/.dotnet/10.0.301.aspNetCertificateSentinel": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/pilot-tool-home/.dotnet/10.0.301.dotnetFirstUseSentinel": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/pilot-tool-home/.dotnet/10.0.301.toolpath.sentinel": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/pilot-tool-home/.nuget": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/pilot-tool-home/.nuget/NuGet": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/pilot-tool-home/.nuget/NuGet/NuGet.Config": {
+      "mode": 384,
+      "kind": "file",
+      "sha256": "a93e5528f06204b5e5afecd3fb2db8de0d48cc5e2b5f812728a6ad3f0c7bffc2",
+      "size": 205
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/reports": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/reports/domain.xml": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "058f63aabd793a50aa287e4c31b5a40b07ce381a648053172b364056900017ee",
+      "size": 5683
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/reports/sdk.txt": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "202ea52fa65123109563284e542d3944c792f04956f52b582043789d90988778",
+      "size": 9
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/reports/test-exit.txt": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "size": 2
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/reports/tests.txt": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "901e23646e0d49b24eaf5bef2d6fe48b74143e392c9cd688ea09adde1ab5e1c3",
+      "size": 4430
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/scripts": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/scripts/self-hosted-pilot": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/scripts/self-hosted-pilot/Jenkinsfile": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "a92b4752b639ce5404bfcc6a03fda3a477e3e92010e9ececdf77f44a3ab753e4",
+      "size": 327
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/scripts/self-hosted-pilot/build-test.sh": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "5197294d58e5a50b8cb6662b78547c15b4b25659e27d13213a47e16c5dd9dc81",
+      "size": 1446
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/Diagnostic.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "1c011c66039316c3db027f8fcd9d7f217b08f630e6f30ee26c8c2377ab9fcbd4",
+      "size": 3838
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/Fogell.Domain.fsproj": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "266e4081cb1e961024cf98d430bbb35136c53f85433bea5c1c34b0c6ead2d578",
+      "size": 423
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/Ids.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "a29e6cebb4c55644b8c3371e710f1fc6b1e3c53790cd164cfa89ff944b52faaa",
+      "size": 1447
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/LinuxOpenFlags.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "575929e8c2a0530eed611256e82057eb9c984b5ac42fe12e7161177b8d1580c5",
+      "size": 2099
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/Model.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "7ef2234938800c5ee69187e69df112bd2eeb90ddd3cc1d5e2430883054ef81b3",
+      "size": 3501
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/RetryDecision.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "4acb95ffc807cc7cedb5403fb9537b76dfb7a50ce5c83fb9b146b6301465966e",
+      "size": 7191
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/SourceSnapshot.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "063213f19e5c8a75ec6a54404d4ede85725048bb9ef10a5ca4a692aaccc6f49f",
+      "size": 11497
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/Status.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "a83a4532921150f3886b90f32ad35fad23832ff076a2128f6e55ffaa4e68fc0e",
+      "size": 1768
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/bin": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/bin/Release": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/bin/Release/net10.0": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/bin/Release/net10.0/Fogell.Domain.deps.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "a5d8b4dee59a57bfabd002b5b7afd22ff18f6bb50668bba3fda1258b8bc66e60",
+      "size": 2401
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/bin/Release/net10.0/Fogell.Domain.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "6b92658368f0f4acec06c80b12fc516d9e7364e6a85f4f0ac770dd947d2c3901",
+      "size": 108032
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/bin/Release/net10.0/Fogell.Domain.pdb": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "75385789d7ab834d3ec473683a8ce503a4c92335f9033e24a0e95978a1dc570e",
+      "size": 24060
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Fogell.Domain.fsproj.nuget.dgspec.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "9b926bce5026fb807ad7d7da6e13a44c929b2c95d07c53475c339e39f0e01391",
+      "size": 22150
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Fogell.Domain.fsproj.nuget.g.props": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "1c3e61feb69a34c77cebf2123c639ba5badeb9e86d2db005d1f5af198648349d",
+      "size": 1379
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Fogell.Domain.fsproj.nuget.g.targets": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "b14461e0cb1be3f77fcf9fe2fdd62889325ca92523d0f606980ed59eb5c4aa1c",
+      "size": 149
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Release": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Release/net10.0": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Release/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.fs": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "75b88026597c3353d0646ad4902d210cea46fe9ec0d0d97b9e09f6df5ba7c4ef",
+      "size": 190
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Release/net10.0/Fogell.Domain.AssemblyInfo.fs": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "ce1dea2454bc1e5217734fb2dba8a6bb519b5769de9d50e6918b6b0e2e7ed720",
+      "size": 670
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Release/net10.0/Fogell.Domain.AssemblyInfoInputs.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "babe818c44d1f787579ab8cca4a8e229f1067937d2be70255f21b73f08793420",
+      "size": 65
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Release/net10.0/Fogell.Domain.assets.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "ecc6eec05bd3c74c4562f4a84e534d64f49d0187e89da34b09b732e463ab33c5",
+      "size": 4421
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Release/net10.0/Fogell.Domain.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "6b92658368f0f4acec06c80b12fc516d9e7364e6a85f4f0ac770dd947d2c3901",
+      "size": 108032
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Release/net10.0/Fogell.Domain.fsproj.AssemblyReference.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "c1e437afecc0656e49719a7aa95ff0553f59f35b62f4269f06888c809b26c3a1",
+      "size": 437
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Release/net10.0/Fogell.Domain.fsproj.CoreCompileInputs.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "48297468258487e86497e361f82d9bd2bf5f989c2c18e98a69f74fbc74d451d8",
+      "size": 65
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Release/net10.0/Fogell.Domain.fsproj.FileListAbsolute.txt": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "324eecfc8c8c41351273ecd95134f950968e57ff63d2ef40efabe9a739819020",
+      "size": 1974
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Release/net10.0/Fogell.Domain.pdb": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "75385789d7ab834d3ec473683a8ce503a4c92335f9033e24a0e95978a1dc570e",
+      "size": 24060
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Release/net10.0/ILLink.Substitutions.xml": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "1d4974c953b4471197c094218ad4505a21943c5b72a09af131ecd5ebe6307095",
+      "size": 999
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Release/net10.0/ref": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Release/net10.0/ref/Fogell.Domain.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "61858e9051aaa2e62d75959329d2347488a0a556b14f3738dea9d2e7421494aa",
+      "size": 55808
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Release/net10.0/refint": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/Release/net10.0/refint/Fogell.Domain.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "61858e9051aaa2e62d75959329d2347488a0a556b14f3738dea9d2e7421494aa",
+      "size": 55808
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/project.assets.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "32836d502788b05708f0aaabde2e9e682b7625ca72426cbe10649ddac8704ad9",
+      "size": 25176
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/obj/project.nuget.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "13a3e41164d0bf416864412eabaee2c87b00eaee32a83a32ab01eda93f8e1db8",
+      "size": 652
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/src/Fogell.Domain/packages.lock.json": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "d9354e106a2012d905f214a0bc1db8e08d46eaded7c97520f211c291fac19b13",
+      "size": 306
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "edc3308548e7eed11fb098dbf9fe15c82617b60a9c25d9560fac781c46bac8d4",
+      "size": 559
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/RetryDecisionTests.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "f7cf12000a9ae6d28c56fe8460338bf1e8601b2a854fcadd4815f3175690bfd9",
+      "size": 14049
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/Tests.fs": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "b42d7e326235fa042518c45fd026190f7d6c4daaf071ecee47a89f48edc1f935",
+      "size": 10041
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/Expecto.FsCheck.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "50f8761469206193aca410c616b63b34a90a6882078cf72d32e04ac962c2af39",
+      "size": 36352
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/Expecto.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "0fae41ec77be0024efecadc62fd69f0e84a8db61208134a3029e1e7ce397720f",
+      "size": 949248
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/FSharp.Core.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "d02fbb41897592806a580ad18ae3ddef4c34d3c62204beb2f0b4f828f44cdf06",
+      "size": 2407760
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.Tests": {
+      "mode": 493,
+      "kind": "file",
+      "sha256": "2d8f372ebe213965c5229e56874d9745ef51472784a435c4cacfc2ebe6cd0581",
+      "size": 78256
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.Tests.deps.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "1ba23ce80461b0ce0d6e6f53cb7d15c5b295c32bdc1c2a6030eac79f6369030a",
+      "size": 5624
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.Tests.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "975f35c4318044673f2acfe264362b52d972186c52ca4ef2d857d4d14e51a787",
+      "size": 51712
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.Tests.pdb": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "034a81d42e8d1172e12f2d928450923f859a8fc063760f3ca59e63684bef18ee",
+      "size": 8936
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.Tests.runtimeconfig.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "52eccff0b97c55480c64b3a6d8dcb244f5fd098d0645dba8581d3e2190d4ea4a",
+      "size": 435
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "6b92658368f0f4acec06c80b12fc516d9e7364e6a85f4f0ac770dd947d2c3901",
+      "size": 108032
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.pdb": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "75385789d7ab834d3ec473683a8ce503a4c92335f9033e24a0e95978a1dc570e",
+      "size": 24060
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/FsCheck.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "863dc092c3f4997c9ae6b7eedd2db599b499332dfae22f818c33ef30752f507f",
+      "size": 829440
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/Mono.Cecil.Mdb.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "61637f9940e5e336571cbf945be0f36d6d6050e06288df0f0232d93b26f0bde7",
+      "size": 39424
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/Mono.Cecil.Pdb.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "a5249a04ad8fd7dfd47e4d0a620aed0f7eb6051e1ddec102c541ca3e12f6e2a8",
+      "size": 89600
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/Mono.Cecil.Rocks.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "273292babd45f9f34de5054bd9cdfe1d859a7dbf6f4ad5974fe4ead70698ed5b",
+      "size": 24576
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/Mono.Cecil.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "769a59793d4b8885bbbfbc5aee8f57a0d4e34d275c56c60c03994309b87f67e9",
+      "size": 356864
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/cs": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/cs/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "d8bed9a1a675aef622f05591fd4fcd746bc893c8f6fc5632018c5eb68e5deffd",
+      "size": 34128
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/de": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/de/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "e7c81ac2f2363a32f41006a4d8343e620fb38145e6a38b3764be0b8ab28a4aca",
+      "size": 35152
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/es": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/es/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "c909638a3a6f86702d1636268df18d61c0fbc177be73fd8010368f82b6e44e11",
+      "size": 34128
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/fr": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/fr/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "31290c3202fd14f1a2a35fa699f224766b21044fe317c8e9c000aba555b1d100",
+      "size": 34640
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/it": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/it/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "4f74faa2ef6d9a0988e7176cfcf0d3ebf8e180dc465ab436da48065e0d176e12",
+      "size": 34128
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/ja": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/ja/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "faa56a6b5f142468ee07f50a0e7e5571527d9b8663fc2f3d31c51cd9eeaf9e0d",
+      "size": 36688
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/ko": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/ko/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "e4c7e85864fbc63fb932c39cba27cdf9f465bb5728120997c52f72fd6e1d33dc",
+      "size": 35664
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/pl": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/pl/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "30d631e5857b9c7f112890dbc19db1640fe00649a67d60a60bbfb46ad059ef87",
+      "size": 35152
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/pt-BR": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/pt-BR/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "0f229bc4cd7d1dda68159f99cacdcb9a1d365c63fb90aebc6b297bd9e0ebd2cc",
+      "size": 33616
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/ru": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/ru/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "edcb2e60dca2eb3697e7663229211a94baedb69b0fd92a1b042f9b2aa7719328",
+      "size": 41296
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/tr": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/tr/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "f2921cb3f61423ec3f5c757fa398c31525c2f0a97052044d566ce0f7eb287f9f",
+      "size": 33616
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/zh-Hans": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/zh-Hans/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "df52190cdaceaddbfa2b2813d4b0e955f1683e97d0431e65030517ad692e3031",
+      "size": 32080
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/zh-Hant": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/bin/Release/net10.0/zh-Hant/FSharp.Core.resources.dll": {
+      "mode": 500,
+      "kind": "file",
+      "sha256": "5f1f986c4a175e7b67ff7ba4b5c21c121c670375f2e90e0b4551df72d2655e9b",
+      "size": 31568
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Fogell.Domain.Tests.fsproj.nuget.dgspec.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "c0fde358e64d5ffe18d43ba763e99ae768784479273c84063510f149422a5038",
+      "size": 45016
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Fogell.Domain.Tests.fsproj.nuget.g.props": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "ce98dfe0c370476e075559f59e6cb310c5ef869e1ebc0fa023f637e849060ec1",
+      "size": 1771
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Fogell.Domain.Tests.fsproj.nuget.g.targets": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "b14461e0cb1be3f77fcf9fe2fdd62889325ca92523d0f606980ed59eb5c4aa1c",
+      "size": 149
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.fs": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "75b88026597c3353d0646ad4902d210cea46fe9ec0d0d97b9e09f6df5ba7c4ef",
+      "size": 190
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.D.9ACC5E66.Up2Date": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.AssemblyInfo.fs": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "1fee2dc35aa5f63e708a13162923402b5ea14bc5227846e7c4957f4a68fb48df",
+      "size": 688
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.AssemblyInfoInputs.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "1025412f66bea6a940726df45502f8b10bccf1a3b0c60b54b3721e91ec94545a",
+      "size": 65
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.assets.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "90329f794c964c96cfedc60dafc5424542c398da621223ac2d51ce3eecaf39d6",
+      "size": 8087
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "975f35c4318044673f2acfe264362b52d972186c52ca4ef2d857d4d14e51a787",
+      "size": 51712
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.fsproj.AssemblyReference.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "ce9c1ad88c5518e7b6b4d8e4ee6921098299d916e0b59b9bba77b47f2216f523",
+      "size": 3834
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.fsproj.CoreCompileInputs.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "69853f11465bd25fe03202bfc64869efb5317ff692f094f8fefafccaf509e6cd",
+      "size": 65
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.fsproj.FileListAbsolute.txt": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "639e8af8aea3b4fb582feba9d0b7a1a58d0ea4415ed18eb946cb15ea26390a13",
+      "size": 7136
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.genruntimeconfig.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "8221915fe51fdd67d264dcfc70152bc3b8967222b0d85694ddd24692ee0252e7",
+      "size": 65
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/Fogell.Domain.Tests.pdb": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "034a81d42e8d1172e12f2d928450923f859a8fc063760f3ca59e63684bef18ee",
+      "size": 8936
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/ILLink.Substitutions.xml": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "c1608da15ef6afbd922aa1a1435da8e9148edb47c4935c6618b4d18e261649e9",
+      "size": 1065
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/apphost": {
+      "mode": 493,
+      "kind": "file",
+      "sha256": "2d8f372ebe213965c5229e56874d9745ef51472784a435c4cacfc2ebe6cd0581",
+      "size": 78256
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/ref": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/ref/Fogell.Domain.Tests.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "2c8ad3862c7dd8227e3ebe72903f0cec6a832d0852b3c2b947513d43d89e24e0",
+      "size": 13824
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/refint": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/Release/net10.0/refint/Fogell.Domain.Tests.dll": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "2c8ad3862c7dd8227e3ebe72903f0cec6a832d0852b3c2b947513d43d89e24e0",
+      "size": 13824
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/project.assets.json": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "783ce2164fe866508f5a0a5c0b0381a28fe33374c8778883d56cb34fe1c92236",
+      "size": 31585
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/obj/project.nuget.cache": {
+      "mode": 436,
+      "kind": "file",
+      "sha256": "360ed361bafc6b027a95f81363854f859a019b546f5c682a1aeb4991a5665613",
+      "size": 1048
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b/tests/Fogell.Domain.Tests/packages.lock.json": {
+      "mode": 420,
+      "kind": "file",
+      "sha256": "ae489cf61e2cf07ecaebe3b13e1e900d3cefa02cf8b2b82024b59390feaa0a6e",
+      "size": 1647
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f103308936ac4fff809d870ece1c650b@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f476dc7eeab04eedb1e793658f17cddc@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f74d55d3b8eb400cbf6da08768bccd15@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/f9c4b962cf894885ac336cd510d0b701@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/fbdbaec8412f4515b703dbaa9798147e@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    },
+    "workspaces/8705477c37ea438d806a8e763086b6f8/fc8b9db4b2b84535b9f6b304d85090cd@tmp": {
+      "mode": 509,
+      "kind": "directory",
+      "sha256": null,
+      "size": 0
+    }
+  },
+  "database_inventory": {
+    "rows_and_sequences_sha256": "97a432621f673e3bdf79b0697c32954f63e3f64743335a8d4228392b1a689fcb",
+    "schema_sha256": "e588940b410117b4bd2af2f650022f54a392c672ba294b0c730436f3e5a66a28",
+    "row_and_sequence_count": 886
+  }
+}

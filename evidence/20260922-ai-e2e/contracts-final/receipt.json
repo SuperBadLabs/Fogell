@@ -1,0 +1,2255 @@
+{
+  "schema_version": 1,
+  "organization": "263e8266-054c-4f1e-952c-6cf999da2f7d",
+  "project": "aa9c44ab-8245-4dcc-9da3-800f64b7071a",
+  "passed": true,
+  "scope": "all contracts",
+  "runs": [
+    {
+      "label": "shell",
+      "admission": {
+        "build_id": "f17ed67a-1cfe-42f0-8644-188495cefe4d",
+        "node_id": "de42feb6-3eaa-471d-a9a1-c970cb22e6e8",
+        "attempt_id": "0e238a54-0264-4cff-8195-e6eab14b0d47",
+        "number": 3,
+        "was_existing": false,
+        "client_elapsed_ms": 40
+      },
+      "watch_exit": 1,
+      "status": "failure",
+      "terminal_or_reconciliation_ms": 400.5923680961132,
+      "pages": [
+        {
+          "observed_ms": 195.20208006724715,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "f17ed67a-1cfe-42f0-8644-188495cefe4d",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 0,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 46
+          }
+        },
+        {
+          "observed_ms": 297.94091917574406,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "f17ed67a-1cfe-42f0-8644-188495cefe4d",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 1,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 0,
+                "body": "step-started: Shell failure#0 sh",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 161
+          }
+        },
+        {
+          "observed_ms": 400.5923680961132,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "f17ed67a-1cfe-42f0-8644-188495cefe4d",
+            "status": "failure",
+            "cancellation_requested": false,
+            "is_terminal": true,
+            "from_sequence": 1,
+            "next_sequence": 9,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 1,
+                "body": "+ printf planted shell failure",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 2,
+                "body": "",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 3,
+                "body": "planted shell failure",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 4,
+                "body": "+ exit 7",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 5,
+                "body": "",
+                "truncated": false,
+                "diagnostic": {
+                  "step": "sh",
+                  "stage": "Shell failure",
+                  "output": "+ printf planted shell failure\n\nplanted shell failure\n+ exit 7\n",
+                  "result": "failure",
+                  "message": "script returned exit code 7",
+                  "category": "workload_step",
+                  "exit_code": 7,
+                  "test_name": null,
+                  "truncated": false,
+                  "test_class": null,
+                  "report_path": null,
+                  "source_line": 6,
+                  "source_path": "Jenkinsfile",
+                  "artifact_refs": [],
+                  "source_column": 9,
+                  "schema_version": 1
+                },
+                "diagnostic_id": "0e238a54-0264-4cff-8195-e6eab14b0d47:5"
+              },
+              {
+                "sequence": 6,
+                "body": "ERROR: script returned exit code 7",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 7,
+                "body": "step-finished: Shell failure#0 failure",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 8,
+                "body": "stage-committed: Shell failure",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 263
+          }
+        }
+      ],
+      "first_actionable_diagnostic_ms": 400.5923680961132,
+      "diagnostics": [
+        {
+          "observed_ms": 400.5923680961132,
+          "diagnostic_id": "0e238a54-0264-4cff-8195-e6eab14b0d47:5",
+          "diagnostic": {
+            "step": "sh",
+            "stage": "Shell failure",
+            "output": "+ printf planted shell failure\n\nplanted shell failure\n+ exit 7\n",
+            "result": "failure",
+            "message": "script returned exit code 7",
+            "category": "workload_step",
+            "exit_code": 7,
+            "test_name": null,
+            "truncated": false,
+            "test_class": null,
+            "report_path": null,
+            "source_line": 6,
+            "source_path": "Jenkinsfile",
+            "artifact_refs": [],
+            "source_column": 9,
+            "schema_version": 1
+          }
+        }
+      ]
+    },
+    {
+      "label": "junit",
+      "admission": {
+        "build_id": "c1bac014-4557-4a2a-90ff-a48606df1bde",
+        "node_id": "7e6a2584-d95b-4719-a7c8-5e733981b93d",
+        "attempt_id": "806acbd0-2b1e-4c17-970e-021287823ddc",
+        "number": 4,
+        "was_existing": false,
+        "client_elapsed_ms": 51
+      },
+      "watch_exit": 1,
+      "status": "unstable",
+      "terminal_or_reconciliation_ms": 507.37893814221025,
+      "pages": [
+        {
+          "observed_ms": 201.27580594271421,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "c1bac014-4557-4a2a-90ff-a48606df1bde",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 0,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 38
+          }
+        },
+        {
+          "observed_ms": 303.71588189154863,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "c1bac014-4557-4a2a-90ff-a48606df1bde",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 0,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 152
+          }
+        },
+        {
+          "observed_ms": 405.805132817477,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "c1bac014-4557-4a2a-90ff-a48606df1bde",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 0,
+                "body": "step-started: Test failure#0 sh",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 1,
+                "body": "+ printf %s <testsuite name=\"Example\"><testcase name=\"planted_failure\" classname=\"Example.Tests\" file=\"tests/example.fs\" line=\"23\"><failure message=\"expected 2 got 1\">assertion failed</failure></testcase></testsuite>",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 2,
+                "body": "step-finished: Test failure#0 success",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 3,
+                "body": "step-started: Test failure#1 junit",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 4,
+                "body": "Recording test results",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 254
+          }
+        },
+        {
+          "observed_ms": 507.37893814221025,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "c1bac014-4557-4a2a-90ff-a48606df1bde",
+            "status": "unstable",
+            "cancellation_requested": false,
+            "is_terminal": true,
+            "from_sequence": 5,
+            "next_sequence": 8,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 5,
+                "body": "",
+                "truncated": false,
+                "diagnostic": {
+                  "step": "junit",
+                  "stage": "Test failure",
+                  "output": null,
+                  "result": "failure",
+                  "message": "expected 2 got 1\nassertion failed",
+                  "category": "test",
+                  "exit_code": null,
+                  "test_name": "planted_failure",
+                  "truncated": false,
+                  "test_class": "Example.Tests",
+                  "report_path": "results.xml",
+                  "source_line": 23,
+                  "source_path": "tests/example.fs",
+                  "artifact_refs": [],
+                  "source_column": null,
+                  "schema_version": 1
+                },
+                "diagnostic_id": "806acbd0-2b1e-4c17-970e-021287823ddc:5"
+              },
+              {
+                "sequence": 6,
+                "body": "step-finished: Test failure#1 unstable",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 7,
+                "body": "stage-committed: Test failure",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 356
+          }
+        }
+      ],
+      "first_actionable_diagnostic_ms": 507.37893814221025,
+      "diagnostics": [
+        {
+          "observed_ms": 507.37893814221025,
+          "diagnostic_id": "806acbd0-2b1e-4c17-970e-021287823ddc:5",
+          "diagnostic": {
+            "step": "junit",
+            "stage": "Test failure",
+            "output": null,
+            "result": "failure",
+            "message": "expected 2 got 1\nassertion failed",
+            "category": "test",
+            "exit_code": null,
+            "test_name": "planted_failure",
+            "truncated": false,
+            "test_class": "Example.Tests",
+            "report_path": "results.xml",
+            "source_line": 23,
+            "source_path": "tests/example.fs",
+            "artifact_refs": [],
+            "source_column": null,
+            "schema_version": 1
+          }
+        }
+      ]
+    },
+    {
+      "label": "snapshot",
+      "admission": {
+        "build_id": "156aef9c-9d90-41ea-b6fb-69c44068c680",
+        "node_id": "fe2a1d28-eae3-4091-9c0d-51ff6fc2f664",
+        "attempt_id": "fdbd30a2-c36f-445f-8000-4a05a778e56f",
+        "number": 5,
+        "was_existing": false,
+        "client_elapsed_ms": 73
+      },
+      "watch_exit": 0,
+      "status": "success",
+      "terminal_or_reconciliation_ms": 1459.3901173211634,
+      "pages": [
+        {
+          "observed_ms": 337.0427810586989,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "fdbd30a2-c36f-445f-8000-4a05a778e56f",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "156aef9c-9d90-41ea-b6fb-69c44068c680",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 1,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 0,
+                "body": "step-started: Reproduce#0 sh",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 41
+          }
+        },
+        {
+          "observed_ms": 440.214775968343,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "fdbd30a2-c36f-445f-8000-4a05a778e56f",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "156aef9c-9d90-41ea-b6fb-69c44068c680",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 1,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 1,
+                "body": "+ cat message.txt",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 2,
+                "body": "FG267_REPRODUCTION_ORIGINAL",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 3,
+                "body": "+ sleep 1",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 157
+          }
+        },
+        {
+          "observed_ms": 542.5394703634083,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "fdbd30a2-c36f-445f-8000-4a05a778e56f",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "156aef9c-9d90-41ea-b6fb-69c44068c680",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 260
+          }
+        },
+        {
+          "observed_ms": 644.5894311182201,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "fdbd30a2-c36f-445f-8000-4a05a778e56f",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "156aef9c-9d90-41ea-b6fb-69c44068c680",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 362
+          }
+        },
+        {
+          "observed_ms": 746.5712414123118,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "fdbd30a2-c36f-445f-8000-4a05a778e56f",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "156aef9c-9d90-41ea-b6fb-69c44068c680",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 464
+          }
+        },
+        {
+          "observed_ms": 848.5416700132191,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "fdbd30a2-c36f-445f-8000-4a05a778e56f",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "156aef9c-9d90-41ea-b6fb-69c44068c680",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 566
+          }
+        },
+        {
+          "observed_ms": 951.0459969751537,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "fdbd30a2-c36f-445f-8000-4a05a778e56f",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "156aef9c-9d90-41ea-b6fb-69c44068c680",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 668
+          }
+        },
+        {
+          "observed_ms": 1052.9212760739028,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "fdbd30a2-c36f-445f-8000-4a05a778e56f",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "156aef9c-9d90-41ea-b6fb-69c44068c680",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 770
+          }
+        },
+        {
+          "observed_ms": 1154.4702900573611,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "fdbd30a2-c36f-445f-8000-4a05a778e56f",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "156aef9c-9d90-41ea-b6fb-69c44068c680",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 872
+          }
+        },
+        {
+          "observed_ms": 1256.4296103082597,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "fdbd30a2-c36f-445f-8000-4a05a778e56f",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "156aef9c-9d90-41ea-b6fb-69c44068c680",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 974
+          }
+        },
+        {
+          "observed_ms": 1358.3564590662718,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "fdbd30a2-c36f-445f-8000-4a05a778e56f",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "156aef9c-9d90-41ea-b6fb-69c44068c680",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 1076
+          }
+        },
+        {
+          "observed_ms": 1459.3901173211634,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "fdbd30a2-c36f-445f-8000-4a05a778e56f",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "156aef9c-9d90-41ea-b6fb-69c44068c680",
+            "status": "success",
+            "cancellation_requested": false,
+            "is_terminal": true,
+            "from_sequence": 4,
+            "next_sequence": 6,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 4,
+                "body": "step-finished: Reproduce#0 success",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 5,
+                "body": "stage-committed: Reproduce",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 1177
+          }
+        }
+      ],
+      "first_actionable_diagnostic_ms": null,
+      "diagnostics": []
+    },
+    {
+      "label": "reproduced",
+      "admission": {
+        "build_id": "294d7b03-88fa-4d8c-8e1d-163dfe7d21b0",
+        "node_id": "e70cf0cc-94cb-43a0-9b23-19ad343dbb38",
+        "attempt_id": "a31544af-ebc4-4ab5-99fa-069adadd1c3c",
+        "number": 6,
+        "was_existing": false,
+        "client_elapsed_ms": 81
+      },
+      "watch_exit": 0,
+      "status": "success",
+      "terminal_or_reconciliation_ms": 1443.3980360627174,
+      "pages": [
+        {
+          "observed_ms": 222.2944302484393,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "a31544af-ebc4-4ab5-99fa-069adadd1c3c",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "294d7b03-88fa-4d8c-8e1d-163dfe7d21b0",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 0,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 40
+          }
+        },
+        {
+          "observed_ms": 324.5047330856323,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "a31544af-ebc4-4ab5-99fa-069adadd1c3c",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "294d7b03-88fa-4d8c-8e1d-163dfe7d21b0",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 1,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 0,
+                "body": "step-started: Reproduce#0 sh",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 154
+          }
+        },
+        {
+          "observed_ms": 426.5022831968963,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "a31544af-ebc4-4ab5-99fa-069adadd1c3c",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "294d7b03-88fa-4d8c-8e1d-163dfe7d21b0",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 1,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 1,
+                "body": "+ cat message.txt",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 2,
+                "body": "FG267_REPRODUCTION_ORIGINAL",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 3,
+                "body": "+ sleep 1",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 255
+          }
+        },
+        {
+          "observed_ms": 528.475743252784,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "a31544af-ebc4-4ab5-99fa-069adadd1c3c",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "294d7b03-88fa-4d8c-8e1d-163dfe7d21b0",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 358
+          }
+        },
+        {
+          "observed_ms": 630.3745121695101,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "a31544af-ebc4-4ab5-99fa-069adadd1c3c",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "294d7b03-88fa-4d8c-8e1d-163dfe7d21b0",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 460
+          }
+        },
+        {
+          "observed_ms": 732.0863283239305,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "a31544af-ebc4-4ab5-99fa-069adadd1c3c",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "294d7b03-88fa-4d8c-8e1d-163dfe7d21b0",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 561
+          }
+        },
+        {
+          "observed_ms": 834.3247612938285,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "a31544af-ebc4-4ab5-99fa-069adadd1c3c",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "294d7b03-88fa-4d8c-8e1d-163dfe7d21b0",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 663
+          }
+        },
+        {
+          "observed_ms": 935.9461669810116,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "a31544af-ebc4-4ab5-99fa-069adadd1c3c",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "294d7b03-88fa-4d8c-8e1d-163dfe7d21b0",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 765
+          }
+        },
+        {
+          "observed_ms": 1037.4693609774113,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "a31544af-ebc4-4ab5-99fa-069adadd1c3c",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "294d7b03-88fa-4d8c-8e1d-163dfe7d21b0",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 867
+          }
+        },
+        {
+          "observed_ms": 1139.1051271930337,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "a31544af-ebc4-4ab5-99fa-069adadd1c3c",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "294d7b03-88fa-4d8c-8e1d-163dfe7d21b0",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 968
+          }
+        },
+        {
+          "observed_ms": 1240.5144390650094,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "a31544af-ebc4-4ab5-99fa-069adadd1c3c",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "294d7b03-88fa-4d8c-8e1d-163dfe7d21b0",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 1070
+          }
+        },
+        {
+          "observed_ms": 1342.0917242765427,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "a31544af-ebc4-4ab5-99fa-069adadd1c3c",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "294d7b03-88fa-4d8c-8e1d-163dfe7d21b0",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 1171
+          }
+        },
+        {
+          "observed_ms": 1443.3980360627174,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "a31544af-ebc4-4ab5-99fa-069adadd1c3c",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "43ef6b897eac4fad2ebc56f5f159b1d481911fd123c0ed46364b4f0994286e9d",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "294d7b03-88fa-4d8c-8e1d-163dfe7d21b0",
+            "status": "success",
+            "cancellation_requested": false,
+            "is_terminal": true,
+            "from_sequence": 4,
+            "next_sequence": 6,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 4,
+                "body": "step-finished: Reproduce#0 success",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 5,
+                "body": "stage-committed: Reproduce",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 1273
+          }
+        }
+      ],
+      "first_actionable_diagnostic_ms": null,
+      "diagnostics": []
+    },
+    {
+      "label": "wrong-tool",
+      "admission": {
+        "build_id": "5b0bbd45-5754-4390-9c71-8f06f3116881",
+        "node_id": "46f9ccd6-c714-4256-8adf-be457bb4dbd4",
+        "attempt_id": "4e83de9a-2d78-44c6-b0c4-2b875fb78405",
+        "number": 7,
+        "was_existing": false,
+        "client_elapsed_ms": 71
+      },
+      "watch_exit": 5,
+      "status": "reconciliation_required",
+      "terminal_or_reconciliation_ms": 221.04346426203847,
+      "pages": [
+        {
+          "observed_ms": 221.04346426203847,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "environment": {
+                "architecture": "x64",
+                "dotnet_major": 10,
+                "os": "linux"
+              },
+              "expected_tool_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "file_count": 1,
+              "kind": "content_snapshot",
+              "manifest_sha256": "29717f4183b29d2db15885f41bc7a25c83c6bc876a804f316b0be3f5eb8ae9cf",
+              "observed_runtime_version": null,
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": null,
+              "schema_version": 1,
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "pending"
+            },
+            "build_id": "5b0bbd45-5754-4390-9c71-8f06f3116881",
+            "status": "reconciliation_required",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 1,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 0,
+                "body": "",
+                "truncated": false,
+                "diagnostic": {
+                  "step": null,
+                  "stage": null,
+                  "output": null,
+                  "result": "reconciliation_required",
+                  "message": "materialization_failed",
+                  "category": "infrastructure",
+                  "exit_code": null,
+                  "test_name": null,
+                  "truncated": false,
+                  "test_class": null,
+                  "report_path": null,
+                  "source_line": null,
+                  "source_path": null,
+                  "artifact_refs": [],
+                  "source_column": null,
+                  "schema_version": 1
+                },
+                "diagnostic_id": "4e83de9a-2d78-44c6-b0c4-2b875fb78405:0"
+              }
+            ],
+            "client_elapsed_ms": 47
+          }
+        }
+      ],
+      "first_actionable_diagnostic_ms": 221.04346426203847,
+      "diagnostics": [
+        {
+          "observed_ms": 221.04346426203847,
+          "diagnostic_id": "4e83de9a-2d78-44c6-b0c4-2b875fb78405:0",
+          "diagnostic": {
+            "step": null,
+            "stage": null,
+            "output": null,
+            "result": "reconciliation_required",
+            "message": "materialization_failed",
+            "category": "infrastructure",
+            "exit_code": null,
+            "test_name": null,
+            "truncated": false,
+            "test_class": null,
+            "report_path": null,
+            "source_line": null,
+            "source_path": null,
+            "artifact_refs": [],
+            "source_column": null,
+            "schema_version": 1
+          }
+        }
+      ]
+    },
+    {
+      "label": "unpinned",
+      "admission": {
+        "build_id": "4c4a91c9-9753-471a-872a-6dfae82c0010",
+        "node_id": "09951324-e019-4382-926c-e5e268045aba",
+        "attempt_id": "e177750e-5846-4759-9636-1060f93fbec6",
+        "number": 8,
+        "was_existing": false,
+        "client_elapsed_ms": 72
+      },
+      "watch_exit": 0,
+      "status": "success",
+      "terminal_or_reconciliation_ms": 1438.3199606090784,
+      "pages": [
+        {
+          "observed_ms": 212.66423864290118,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "e177750e-5846-4759-9636-1060f93fbec6",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "b53309191325f48c99b7868f331041055609777176abfa469b9c0fa696c01438",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": null,
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "4c4a91c9-9753-471a-872a-6dfae82c0010",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 0,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 38
+          }
+        },
+        {
+          "observed_ms": 315.5674897134304,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "e177750e-5846-4759-9636-1060f93fbec6",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "b53309191325f48c99b7868f331041055609777176abfa469b9c0fa696c01438",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": null,
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "4c4a91c9-9753-471a-872a-6dfae82c0010",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 0,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 153
+          }
+        },
+        {
+          "observed_ms": 417.91443480178714,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "e177750e-5846-4759-9636-1060f93fbec6",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "b53309191325f48c99b7868f331041055609777176abfa469b9c0fa696c01438",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": null,
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "4c4a91c9-9753-471a-872a-6dfae82c0010",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 0,
+                "body": "step-started: Reproduce#0 sh",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 1,
+                "body": "+ cat message.txt",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 2,
+                "body": "FG267_REPRODUCTION_ORIGINAL",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 3,
+                "body": "+ sleep 1",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 255
+          }
+        },
+        {
+          "observed_ms": 519.8560836724937,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "e177750e-5846-4759-9636-1060f93fbec6",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "b53309191325f48c99b7868f331041055609777176abfa469b9c0fa696c01438",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": null,
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "4c4a91c9-9753-471a-872a-6dfae82c0010",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 357
+          }
+        },
+        {
+          "observed_ms": 621.8303539790213,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "e177750e-5846-4759-9636-1060f93fbec6",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "b53309191325f48c99b7868f331041055609777176abfa469b9c0fa696c01438",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": null,
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "4c4a91c9-9753-471a-872a-6dfae82c0010",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 459
+          }
+        },
+        {
+          "observed_ms": 723.7999136559665,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "e177750e-5846-4759-9636-1060f93fbec6",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "b53309191325f48c99b7868f331041055609777176abfa469b9c0fa696c01438",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": null,
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "4c4a91c9-9753-471a-872a-6dfae82c0010",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 561
+          }
+        },
+        {
+          "observed_ms": 826.3183198869228,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "e177750e-5846-4759-9636-1060f93fbec6",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "b53309191325f48c99b7868f331041055609777176abfa469b9c0fa696c01438",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": null,
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "4c4a91c9-9753-471a-872a-6dfae82c0010",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 664
+          }
+        },
+        {
+          "observed_ms": 928.134077694267,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "e177750e-5846-4759-9636-1060f93fbec6",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "b53309191325f48c99b7868f331041055609777176abfa469b9c0fa696c01438",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": null,
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "4c4a91c9-9753-471a-872a-6dfae82c0010",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 765
+          }
+        },
+        {
+          "observed_ms": 1030.2823898382485,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "e177750e-5846-4759-9636-1060f93fbec6",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "b53309191325f48c99b7868f331041055609777176abfa469b9c0fa696c01438",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": null,
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "4c4a91c9-9753-471a-872a-6dfae82c0010",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 868
+          }
+        },
+        {
+          "observed_ms": 1132.4914027936757,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "e177750e-5846-4759-9636-1060f93fbec6",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "b53309191325f48c99b7868f331041055609777176abfa469b9c0fa696c01438",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": null,
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "4c4a91c9-9753-471a-872a-6dfae82c0010",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 970
+          }
+        },
+        {
+          "observed_ms": 1234.355770982802,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "e177750e-5846-4759-9636-1060f93fbec6",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "b53309191325f48c99b7868f331041055609777176abfa469b9c0fa696c01438",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": null,
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "4c4a91c9-9753-471a-872a-6dfae82c0010",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 1072
+          }
+        },
+        {
+          "observed_ms": 1336.4080819301307,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "e177750e-5846-4759-9636-1060f93fbec6",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "b53309191325f48c99b7868f331041055609777176abfa469b9c0fa696c01438",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": null,
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "4c4a91c9-9753-471a-872a-6dfae82c0010",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 1174
+          }
+        },
+        {
+          "observed_ms": 1438.3199606090784,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "e177750e-5846-4759-9636-1060f93fbec6",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "44b9ba7f-e12d-4a50-aff6-83d51d2d8079",
+              "schema_version": 1,
+              "manifest_sha256": "b53309191325f48c99b7868f331041055609777176abfa469b9c0fa696c01438",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": null,
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "4c4a91c9-9753-471a-872a-6dfae82c0010",
+            "status": "success",
+            "cancellation_requested": false,
+            "is_terminal": true,
+            "from_sequence": 4,
+            "next_sequence": 6,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 4,
+                "body": "step-finished: Reproduce#0 success",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 5,
+                "body": "stage-committed: Reproduce",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 1276
+          }
+        }
+      ],
+      "first_actionable_diagnostic_ms": null,
+      "diagnostics": []
+    },
+    {
+      "label": "cancel",
+      "admission": {
+        "build_id": "2027c616-0c3f-4fbe-9d72-bd56744a0a6a",
+        "node_id": "5584d939-f47b-4e08-86be-9a1621ec5641",
+        "attempt_id": "09104081-8496-40b7-a403-53902dd91458",
+        "number": 9,
+        "was_existing": false,
+        "client_elapsed_ms": 49
+      },
+      "watch_exit": 5,
+      "status": "reconciliation_required",
+      "terminal_or_reconciliation_ms": 814.6970239467919,
+      "pages": [
+        {
+          "observed_ms": 404.84094014391303,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "2027c616-0c3f-4fbe-9d72-bd56744a0a6a",
+            "status": "running",
+            "cancellation_requested": true,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 1,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 0,
+                "body": "step-started: Cancelable#0 sh",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 50
+          }
+        },
+        {
+          "observed_ms": 507.8054927289486,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "2027c616-0c3f-4fbe-9d72-bd56744a0a6a",
+            "status": "running",
+            "cancellation_requested": true,
+            "is_terminal": false,
+            "from_sequence": 1,
+            "next_sequence": 1,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 164
+          }
+        },
+        {
+          "observed_ms": 610.1601668633521,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "2027c616-0c3f-4fbe-9d72-bd56744a0a6a",
+            "status": "running",
+            "cancellation_requested": true,
+            "is_terminal": false,
+            "from_sequence": 1,
+            "next_sequence": 1,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 267
+          }
+        },
+        {
+          "observed_ms": 712.3963199555874,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "2027c616-0c3f-4fbe-9d72-bd56744a0a6a",
+            "status": "running",
+            "cancellation_requested": true,
+            "is_terminal": false,
+            "from_sequence": 1,
+            "next_sequence": 1,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 369
+          }
+        },
+        {
+          "observed_ms": 814.6970239467919,
+          "record": {
+            "schema_version": 1,
+            "source_identity": null,
+            "build_id": "2027c616-0c3f-4fbe-9d72-bd56744a0a6a",
+            "status": "reconciliation_required",
+            "cancellation_requested": true,
+            "is_terminal": false,
+            "from_sequence": 1,
+            "next_sequence": 2,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 1,
+                "body": "",
+                "truncated": false,
+                "diagnostic": {
+                  "step": null,
+                  "stage": null,
+                  "output": null,
+                  "result": "reconciliation_required",
+                  "message": "build_cancelled",
+                  "category": "infrastructure",
+                  "exit_code": null,
+                  "test_name": null,
+                  "truncated": false,
+                  "test_class": null,
+                  "report_path": null,
+                  "source_line": null,
+                  "source_path": null,
+                  "artifact_refs": [],
+                  "source_column": null,
+                  "schema_version": 1
+                },
+                "diagnostic_id": "09104081-8496-40b7-a403-53902dd91458:1"
+              }
+            ],
+            "client_elapsed_ms": 471
+          }
+        }
+      ],
+      "first_actionable_diagnostic_ms": 814.6970239467919,
+      "diagnostics": [
+        {
+          "observed_ms": 814.6970239467919,
+          "diagnostic_id": "09104081-8496-40b7-a403-53902dd91458:1",
+          "diagnostic": {
+            "step": null,
+            "stage": null,
+            "output": null,
+            "result": "reconciliation_required",
+            "message": "build_cancelled",
+            "category": "infrastructure",
+            "exit_code": null,
+            "test_name": null,
+            "truncated": false,
+            "test_class": null,
+            "report_path": null,
+            "source_line": null,
+            "source_path": null,
+            "artifact_refs": [],
+            "source_column": null,
+            "schema_version": 1
+          }
+        }
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "name": "shell_exit7_typed_diagnostic",
+      "passed": true
+    },
+    {
+      "name": "junit_test_identity_and_source",
+      "passed": true
+    },
+    {
+      "name": "exact_snapshot_replay_same_identity",
+      "passed": true
+    },
+    {
+      "name": "changed_manifest_conflicts",
+      "passed": true
+    },
+    {
+      "name": "download_is_original_bytes",
+      "passed": true
+    },
+    {
+      "name": "fresh_build_reproduction",
+      "passed": true
+    },
+    {
+      "name": "reproduction_snapshot_sha256",
+      "passed": true
+    },
+    {
+      "name": "reproduction_pipeline_sha256",
+      "passed": true
+    },
+    {
+      "name": "reproduction_manifest_sha256",
+      "passed": true
+    },
+    {
+      "name": "reproduction_run_host_sha256",
+      "passed": true
+    },
+    {
+      "name": "snapshot_verified_original_output",
+      "passed": true
+    },
+    {
+      "name": "reproduced_verified_original_output",
+      "passed": true
+    },
+    {
+      "name": "wrong-tool_infrastructure_diagnostic",
+      "passed": true
+    },
+    {
+      "name": "raw_snapshot_not_executed_as_pipeline",
+      "passed": true
+    },
+    {
+      "name": "optional_missing_pin_not_invented",
+      "passed": true
+    },
+    {
+      "name": "explicit_cancellation_preserves_authority",
+      "passed": true
+    }
+  ],
+  "client_sha256": "a8d25663227997d5221552613e456a5de5594a30304c74dac9b0e462ba8416ad",
+  "harness_sha256": "eb243707d3c8fed747dc3017c8409229047f44c16567eb00720d94549f20a2e1",
+  "timing_scope": "monotonic client-process observations from admission start; typed diagnostics only",
+  "tool_identity": {
+    "observed_runtime_version": "10.0.12",
+    "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc"
+  }
+}

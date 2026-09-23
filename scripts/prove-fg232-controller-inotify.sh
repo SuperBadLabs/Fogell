@@ -402,8 +402,8 @@ set -e
 admin "$database" \
   -c "GRANT USAGE ON SCHEMA public TO $role" \
   -c "GRANT SELECT, UPDATE(singleton) ON controller_metadata TO $role" \
-  -c "GRANT SELECT, INSERT, UPDATE, DELETE ON organizations, projects, builds, nodes, attempts, events, outbox, log_chunks, effect_checkpoints, retry_decisions, build_definitions TO $role" \
-  -c "GRANT SELECT ON organization_work_roots TO $role" \
+  -c "GRANT SELECT, INSERT, UPDATE, DELETE ON organizations, projects, builds, nodes, attempts, events, outbox, log_chunks, effect_checkpoints, retry_decisions, build_definitions, source_verifications TO $role" \
+  -c "GRANT SELECT ON organization_work_roots, build_retention TO $role" \
   -c "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $role" >/dev/null
 
 # `env` replaces itself with the controller, so the background pid is the

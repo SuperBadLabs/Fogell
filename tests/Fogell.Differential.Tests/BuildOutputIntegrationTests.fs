@@ -199,7 +199,8 @@ let buildOutputIntegration =
               withRoot "persisted-overflow" (fun root workspace ->
                   let published = ResizeArray<string>()
                   let hooks =
-                      { OnOutput = published.Add
+                      { OnDiagnostic = ignore
+                        OnOutput = published.Add
                         IsRestartedRun = false
                         ShouldExecute = fun _ _ -> true
                         StageWasCommitted = fun _ -> false

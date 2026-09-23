@@ -1,0 +1,13 @@
+pipeline {
+  agent any
+  stages {
+    stage('Build and test Fogell Domain') {
+      steps {
+        sh 'bash scripts/self-hosted-pilot/build-test.sh'
+        junit testResults: 'reports/domain.xml'
+        archiveArtifacts artifacts: 'reports/**'
+        stash name: 'pilot-reports', includes: 'reports/**'
+      }
+    }
+  }
+}

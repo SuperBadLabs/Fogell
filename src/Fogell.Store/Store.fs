@@ -17,6 +17,22 @@ type CancellationOutcome =
     | AlreadyTerminal of status: string
     | NoSuchBuild
 
+/// Bounded log evidence sampled together with authoritative build status.
+type FeedbackChunk =
+    { Sequence: int
+      Body: string
+      Truncated: bool
+      Diagnostic: string option
+      DiagnosticId: string option }
+
+type FeedbackSnapshot =
+    { SourceIdentity: JsonElement option
+      Status: string
+      CancellationRequested: bool
+      EvidenceExpired: bool
+      Chunks: FeedbackChunk list
+      HasMore: bool }
+
 /// The database-linearized decision immediately before a local worker may
 /// launch a child. A cancellation that wins this decision is made terminal
 /// without starting user code.
@@ -1031,12 +1047,13 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                      AND has_column_privilege(
                          current_user, 'public.controller_metadata', 'singleton', 'UPDATE')
                      AND has_table_privilege(current_user, 'public.organization_work_roots', 'SELECT')
+                     AND has_table_privilege(current_user, 'public.build_retention', 'SELECT')
                      AND NOT EXISTS (
                          SELECT 1
                            FROM unnest(ARRAY[
                              'organizations', 'projects', 'builds', 'nodes', 'attempts',
                              'events', 'outbox', 'log_chunks', 'effect_checkpoints',
-                             'retry_decisions', 'build_definitions'
+                             'retry_decisions', 'build_definitions', 'source_verifications'
                            ]) AS required_table(name)
                            CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'])
                              AS required_privilege(name)
@@ -1768,7 +1785,8 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                 existing.Transaction <- tx
                 existing.CommandText <-
                     "SELECT b.id, b.number, n.id, a.id,
-                            d.source_digest, d.admission_fingerprint
+                            d.source_digest, d.admission_fingerprint,
+                            EXISTS(SELECT 1 FROM build_retention r WHERE r.organization_id=b.organization_id AND r.build_id=b.id)
                      FROM builds b
                      JOIN nodes n
                        ON n.build_id = b.id AND n.organization_id = b.organization_id AND n.ordinal = 0
@@ -1788,8 +1806,10 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                     tx.Commit()
                     Ok None
                 else
+                    let retained = reader.GetBoolean 6
                     let sameDefinition =
-                        not (reader.IsDBNull 4)
+                        not retained
+                        && not (reader.IsDBNull 4)
                         && not (reader.IsDBNull 5)
                         && CryptographicOperations.FixedTimeEquals(reader.GetFieldValue<byte array>(4), sourceDigest)
                         && CryptographicOperations.FixedTimeEquals(reader.GetFieldValue<byte array>(5), fingerprint)
@@ -1797,7 +1817,7 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                     if not sameDefinition then
                         reader.Close()
                         tx.Rollback()
-                        Error "idempotency key is already bound to a different pipeline or placement policy"
+                        Error(if retained then "evidence_expired" else "idempotency key is already bound to a different pipeline or placement policy")
                     else
                         let admission =
                             { BuildId = BuildId(reader.GetGuid 0)
@@ -1876,7 +1896,8 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             existing.Transaction <- tx
             existing.CommandText <-
                 "SELECT b.id, b.number, n.id, a.id,
-                        d.source_digest, d.admission_fingerprint
+                        d.source_digest, d.admission_fingerprint,
+                            EXISTS(SELECT 1 FROM build_retention r WHERE r.organization_id=b.organization_id AND r.build_id=b.id)
                  FROM builds b
                  JOIN nodes n    ON n.build_id = b.id AND n.organization_id = b.organization_id AND n.ordinal = 0
                  JOIN attempts a ON a.node_id = n.id  AND a.organization_id = n.organization_id AND a.ordinal = 0
@@ -1890,8 +1911,10 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             use reader = existing.ExecuteReader()
 
             if reader.Read() then
+                let retained = reader.GetBoolean 6
                 let sameDefinition =
-                    not (reader.IsDBNull 4)
+                    not retained
+                    && not (reader.IsDBNull 4)
                     && not (reader.IsDBNull 5)
                     && CryptographicOperations.FixedTimeEquals(reader.GetFieldValue<byte array>(4), sourceDigest)
                     && CryptographicOperations.FixedTimeEquals(reader.GetFieldValue<byte array>(5), fingerprint)
@@ -1899,7 +1922,7 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                 if not sameDefinition then
                     reader.Close()
                     tx.Rollback()
-                    Error "idempotency key is already bound to a different pipeline or placement policy"
+                    Error(if retained then "evidence_expired" else "idempotency key is already bound to a different pipeline or placement policy")
                 else
                     let result =
                         { BuildId = BuildId(reader.GetGuid 0)
@@ -2873,6 +2896,28 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                 | :? Guid as value -> value
                 | _ -> failwith "reconciled attempt has no build lineage"
 
+            // The same fenced state transition publishes typed infrastructure
+            // evidence before its reconciliation status can become visible.
+            use diagnostic = conn.CreateCommand()
+            diagnostic.Transaction <- tx
+            diagnostic.CommandText <-
+                "WITH allocation AS (
+                     UPDATE builds SET next_log_sequence = next_log_sequence + 1
+                      WHERE organization_id = @o AND id = @b
+                     RETURNING next_log_sequence - 1 AS build_sequence
+                 )
+                 INSERT INTO log_chunks (organization_id, build_id, attempt_id, sequence, build_sequence, body, diagnostic)
+                 SELECT @o, @b, @a,
+                        (SELECT COALESCE(MAX(sequence), -1) + 1 FROM log_chunks WHERE organization_id = @o AND attempt_id = @a),
+                        allocation.build_sequence, '', @diagnostic::jsonb FROM allocation"
+            diagnostic.Parameters.AddWithValue("o", org.Value) |> ignore
+            diagnostic.Parameters.AddWithValue("b", buildId) |> ignore
+            diagnostic.Parameters.AddWithValue("a", attempt.Value) |> ignore
+            diagnostic.Parameters.AddWithValue("diagnostic",
+                ExecutionDiagnostic.create "infrastructure" "reconciliation_required" reason
+                |> ExecutionDiagnostic.serialize) |> ignore
+            diagnostic.ExecuteNonQuery() |> ignore
+
             let eventPayload = JsonSerializer.Serialize(dict [ "reason", reason ])
             use event = conn.CreateCommand()
             event.Transaction <- tx
@@ -3147,7 +3192,8 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
          fence: Fence,
          owner: string,
          startSequence: int,
-         bodies: string array)
+         bodies: string array,
+         ?diagnostics: string option array)
         : bool =
         if isNull bodies then
             invalidArg "bodies" "log batch bodies cannot be null"
@@ -3159,6 +3205,12 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         // array while this call is validating it. Snapshot the bounded input
         // so the exact frames checked here are the frames bound below.
         let frames = Array.copy bodies
+        let diagnosticFrames = defaultArg diagnostics (Array.create frames.Length None) |> Array.copy
+        if diagnosticFrames.Length <> frames.Length then invalidArg "diagnostics" "diagnostic and log frames must align"
+        for diagnostic in diagnosticFrames do
+            match diagnostic with
+            | Some json when ExecutionDiagnostic.decode json |> Option.isNone -> invalidArg "diagnostics" "invalid bounded diagnostic"
+            | _ -> ()
 
         if frames.Length = 0 then
             true
@@ -3166,7 +3218,7 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             if startSequence < 0 || int64 startSequence + int64 frames.Length > int64 Int32.MaxValue then
                 invalidArg "startSequence" "log batch sequences and resulting cursor must fit in Int32"
 
-            let mutable utf8Bytes = 0L
+            let mutable utf8Bytes = diagnosticFrames |> Array.sumBy (Option.map (fun d -> int64 (Encoding.UTF8.GetByteCount d)) >> Option.defaultValue 0L)
 
             for body in frames do
                 if isNull body then
@@ -3188,8 +3240,8 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                     cmd.Transaction <- tx
                     cmd.CommandText <-
                         "WITH incoming AS (
-                             SELECT body, ordinal::integer - 1 AS offset
-                               FROM unnest(@bodies::text[]) WITH ORDINALITY AS frame(body, ordinal)
+                             SELECT body, diagnostic::jsonb AS diagnostic, ordinal::integer - 1 AS offset
+                               FROM unnest(@bodies::text[], @diagnostics::text[]) WITH ORDINALITY AS frame(body, diagnostic, ordinal)
                          ),
                          allocation AS (
                              UPDATE builds b
@@ -3214,9 +3266,9 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                              RETURNING b.next_log_sequence - @count AS build_start
                          )
                          INSERT INTO log_chunks
-                                (organization_id, build_id, attempt_id, sequence, build_sequence, body)
+                                (organization_id, build_id, attempt_id, sequence, build_sequence, body, diagnostic)
                          SELECT @o, @b, @a, @start + incoming.offset,
-                                allocation.build_start + incoming.offset, incoming.body
+                                allocation.build_start + incoming.offset, incoming.body, incoming.diagnostic
                            FROM allocation
                            CROSS JOIN incoming"
                     cmd.Parameters.AddWithValue("o", org.Value) |> ignore
@@ -3228,6 +3280,7 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                     cmd.Parameters.AddWithValue("last", startSequence + frames.Length - 1) |> ignore
                     cmd.Parameters.AddWithValue("count", frames.Length) |> ignore
                     cmd.Parameters.AddWithValue("bodies", frames) |> ignore
+                    cmd.Parameters.AddWithValue("diagnostics", diagnosticFrames |> Array.map (Option.defaultValue null)) |> ignore
                     cmd.ExecuteNonQuery() = frames.Length
 
             if appended then tx.Commit() else tx.Rollback()
@@ -3251,19 +3304,21 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
     /// FG-060a/FG-064. The build lineage and progressive read are one query.
     /// Some [] therefore means a real build with no chunks at this offset,
     /// while None means that org/project/build lineage does not exist.
-    member _.ReadLogPage
+    member _.ReadLogEvidence
         (org: OrganizationId, project: ProjectId, build: BuildId, fromSequence: int, limit: int)
-        : (int * string) list option =
+        : (bool * (int * string) list) option =
         use conn = openConn ()
         use tx = beginTenantTransaction conn org
         use cmd = conn.CreateCommand()
         cmd.Transaction <- tx
         cmd.CommandText <-
-            "SELECT l.build_sequence, l.body
+            "SELECT l.build_sequence, l.body, r.build_id IS NOT NULL
                FROM builds b
+               LEFT JOIN build_retention r ON r.organization_id=b.organization_id AND r.build_id=b.id
                LEFT JOIN log_chunks l
                  ON l.organization_id = b.organization_id
                 AND l.build_id = b.id
+                AND r.build_id IS NULL
                 AND l.build_sequence >= @s
               WHERE b.organization_id = @o
                 AND b.project_id = @p
@@ -3278,21 +3333,116 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
 
         use r = cmd.ExecuteReader()
         let mutable lineageExists = false
+        let mutable expired = false
 
         let chunks =
             [ while r.Read() do
                   lineageExists <- true
+                  expired <- r.GetBoolean 2
 
                   if not (r.IsDBNull 0) then
                       yield r.GetInt32 0, r.GetString 1 ]
 
         r.Close()
-        let result = if lineageExists then Some chunks else None
+        let result = if lineageExists then Some(expired, chunks) else None
         tx.Commit()
         result
 
+    member this.ReadLogPage(org, project, build, fromSequence, limit) =
+        this.ReadLogEvidence(org, project, build, fromSequence, limit) |> Option.map snd
+
     member this.ReadLog(org: OrganizationId, project: ProjectId, build: BuildId, fromSequence: int) =
         this.ReadLogPage(org, project, build, fromSequence, Int32.MaxValue)
+
+    /// Repeatable-read binds status, logs, continuation, retention and source
+    /// verification to one MVCC snapshot even when a retry is committed between reads.
+    /// Clip oversized rows in PostgreSQL before transferring them; rune-aware
+    /// clipping below enforces the exact UTF-8 budget without splitting a scalar.
+    member this.ReadFeedback
+        (org: OrganizationId, project: ProjectId, build: BuildId, fromSequence: int, limit: int)
+        : FeedbackSnapshot option =
+        let byteLimit = 64 * 1024
+        let chunkLimit = max 1 limit
+        use conn = openConn ()
+        use tx = beginTenantTransactionAt conn org System.Data.IsolationLevel.RepeatableRead
+        use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
+        cmd.CommandText <-
+            "SELECT b.status, b.cancellation_requested, l.build_sequence,
+                    CASE WHEN l.ordinal = 1 OR l.total_bytes <= @bytes
+                         THEN left(l.body, @bytes) ELSE NULL END, l.body_bytes,
+                    CASE WHEN l.ordinal = 1 OR l.total_bytes <= @bytes THEN l.diagnostic::text ELSE NULL END,
+                    l.diagnostic_id, r.build_id IS NOT NULL
+               FROM builds b
+               LEFT JOIN build_retention r ON r.organization_id=b.organization_id AND r.build_id=b.id
+               LEFT JOIN LATERAL (
+                   SELECT candidate.*, row_number() OVER (ORDER BY build_sequence) AS ordinal,
+                          sum(body_bytes) OVER (ORDER BY build_sequence) AS total_bytes
+                     FROM (
+                         SELECT build_sequence, body, diagnostic,
+                                attempt_id::text || ':' || sequence::text AS diagnostic_id,
+                                octet_length(body) + COALESCE(octet_length(diagnostic::text), 0) AS body_bytes FROM log_chunks
+                          WHERE organization_id = b.organization_id AND build_id = b.id
+                            AND r.build_id IS NULL
+                            AND build_sequence >= @s
+                          ORDER BY build_sequence LIMIT @limit
+                     ) candidate
+               ) l ON true
+              WHERE b.organization_id = @o AND b.project_id = @p AND b.id = @b
+              ORDER BY l.build_sequence"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("p", project.Value) |> ignore
+        cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+        cmd.Parameters.AddWithValue("s", fromSequence) |> ignore
+        cmd.Parameters.AddWithValue("limit", int64 chunkLimit + 1L) |> ignore
+        cmd.Parameters.AddWithValue("bytes", byteLimit) |> ignore
+        use reader = cmd.ExecuteReader()
+        let chunks = ResizeArray<FeedbackChunk>()
+        let mutable snapshot = None
+        let mutable remaining = byteLimit
+        let mutable hasMore = false
+        while not hasMore && reader.Read() do
+            snapshot <- Some(reader.GetString 0, reader.GetBoolean 1, reader.GetBoolean 7)
+            if not (reader.IsDBNull 2) then
+                let originalBytes = reader.GetInt32 4
+                if chunks.Count >= chunkLimit
+                   || (chunks.Count > 0 && (chunks.[0].Truncated || originalBytes > remaining)) then
+                    hasMore <- true
+                else
+                    let body = reader.GetString 3
+                    let diagnostic = if reader.IsDBNull 5 then None else Some(reader.GetString 5)
+                    let diagnosticBytes = diagnostic |> Option.map Encoding.UTF8.GetByteCount |> Option.defaultValue 0
+                    let bodyBudget = remaining - diagnosticBytes
+                    let truncated = originalBytes > remaining
+                    let prefix =
+                        if not truncated then body
+                        else
+                            let mutable used = 0
+                            let mutable chars = 0
+                            let mutable full = false
+                            for rune in body.EnumerateRunes() do
+                                if not full && used + rune.Utf8SequenceLength <= bodyBudget then
+                                    used <- used + rune.Utf8SequenceLength
+                                    chars <- chars + rune.Utf16SequenceLength
+                                else full <- true
+                            body.Substring(0, chars)
+                    chunks.Add { Sequence = reader.GetInt32 2; Body = prefix; Truncated = truncated
+                                 Diagnostic = diagnostic
+                                 DiagnosticId = diagnostic |> Option.map (fun _ -> reader.GetString 6) }
+                    remaining <- remaining - Encoding.UTF8.GetByteCount prefix - diagnosticBytes
+        reader.Close()
+        let identity =
+            if snapshot.IsSome then this.ReadSourceIdentitySnapshot(conn, tx, org, project, build)
+            else None
+        tx.Commit()
+        snapshot
+        |> Option.map (fun (status, cancelled, expired) ->
+            { SourceIdentity = identity
+              Status = status
+              CancellationRequested = cancelled
+              EvidenceExpired = expired
+              Chunks = List.ofSeq chunks
+              HasMore = hasMore })
 
     /// Cancellation is IDEMPOTENT by design. A retried request — after a client
     /// timeout, say — must not look like an error: the caller's intent is already
@@ -3374,7 +3524,9 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         use cmd = conn.CreateCommand()
         cmd.Transaction <- tx
         cmd.CommandText <-
-            "SELECT a.state
+            "SELECT CASE WHEN EXISTS (SELECT 1 FROM build_retention r
+                         WHERE r.organization_id=b.organization_id AND r.build_id=b.id)
+                         THEN 'evidence_expired' ELSE a.state END
                FROM builds b
                JOIN nodes n
                  ON n.organization_id = b.organization_id
@@ -3459,7 +3611,9 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                                 (SELECT count(*)
                                    FROM nodes all_nodes
                                   WHERE all_nodes.organization_id = b.organization_id
-                                    AND all_nodes.build_id = b.id)
+                                    AND all_nodes.build_id = b.id),
+                                EXISTS (SELECT 1 FROM build_retention r
+                                         WHERE r.organization_id=b.organization_id AND r.build_id=b.id)
                            FROM builds b
                           WHERE b.organization_id = @o AND b.id = @b
                           FOR UPDATE OF b"
@@ -3474,6 +3628,7 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                         let actualProject = buildReader.GetGuid 0
                         let buildStatus = buildReader.GetString 1
                         let nodeCount = buildReader.GetInt64 2
+                        let evidenceExpired = buildReader.GetBoolean 3
                         buildReader.Close()
                         let terminalBuild =
                             buildStatus = "success"
@@ -3486,7 +3641,7 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                         // Legacy output is keyed only by build. More than one
                         // node makes ownership by an attempt inherently
                         // ambiguous, so no attempt URL may adopt those bytes.
-                        if actualProject <> project.Value || not terminalBuild || nodeCount <> 1L then
+                        if actualProject <> project.Value || not terminalBuild || nodeCount <> 1L || evidenceExpired then
                             notEligible ()
                         else
                             use childCmd = conn.CreateCommand()
@@ -3520,3 +3675,107 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         let count = cmd.ExecuteScalar() :?> int64 |> int
         tx.Commit()
         count
+
+    /// FG-267. Payload/expiry/lineage come from one database snapshot, so a
+    /// selected tombstone never degrades to a legacy 404 after payload deletion.
+    member _.ReadSourceDefinitionState(org: OrganizationId, project: ProjectId, build: BuildId) : Result<byte array option, string> =
+        use conn = openConn ()
+        use tx = beginTenantTransaction conn org
+        use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
+        cmd.CommandText <-
+            "SELECT d.source_bytes,r.build_id FROM builds b
+               LEFT JOIN build_definitions d ON d.organization_id=b.organization_id AND d.build_id=b.id
+               LEFT JOIN build_retention r ON r.organization_id=b.organization_id AND r.build_id=b.id
+              WHERE b.organization_id=@o AND b.project_id=@p AND b.id=@b"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("p", project.Value) |> ignore
+        cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+        use reader = cmd.ExecuteReader()
+        let result =
+            if not (reader.Read()) then Ok None
+            elif not (reader.IsDBNull 1) then Error "evidence_expired"
+            elif reader.IsDBNull 0 then Ok None
+            else Ok(Some(reader.GetFieldValue<byte array> 0))
+        reader.Close()
+        tx.Commit()
+        result
+
+    member this.ReadSourceDefinition(org: OrganizationId, project: ProjectId, build: BuildId) : byte array option =
+        match this.ReadSourceDefinitionState(org, project, build) with Ok value -> value | Error _ -> None
+
+    /// Verification is fenced by the same active attempt/lease/restore epoch
+    /// as output publication. The payload is reconstructed from validated
+    /// immutable source, not arbitrary caller metadata or log text.
+    member this.RecordSourceVerification
+        (claim: ExecutionClaim, owner: string, snapshot: SourceSnapshot, runHostSha256: string) =
+        SourceSnapshot.validate snapshot |> ignore
+        match SourceSnapshot.decode claim.PipelineSource with
+        | Ok(Some admitted) when admitted = snapshot -> ()
+        | _ -> invalidArg "snapshot" "snapshot differs from claimed immutable definition"
+        if runHostSha256.Length <> 64 || runHostSha256 |> Seq.exists (fun c -> not (Char.IsAsciiHexDigit c)) then
+            invalidArg "runHostSha256" "expected SHA-256"
+        let identity = SourceSnapshot.identity snapshot "verified" (Some runHostSha256)
+        use conn = openConn ()
+        use tx = beginTenantTransaction conn claim.OrganizationId
+        let accepted =
+            if not (this.LockLogLineage(conn, tx, claim.OrganizationId, claim.BuildId, claim.AttemptId)) then false
+            else
+                use cmd = conn.CreateCommand()
+                cmd.Transaction <- tx
+                cmd.CommandText <-
+                    "INSERT INTO source_verifications(organization_id,build_id,attempt_id,fence,identity_json)
+                     SELECT @o,@b,a.id,a.fence,@identity::jsonb || jsonb_build_object('attempt_id',a.id,'fence',a.fence)
+                       FROM attempts a JOIN nodes n ON n.organization_id=a.organization_id AND n.id=a.node_id
+                       JOIN build_definitions d ON d.organization_id=n.organization_id AND d.build_id=n.build_id
+                      WHERE a.organization_id=@o AND a.id=@a AND n.build_id=@b AND d.source_digest=@source_digest
+                        AND a.fence=@f AND a.lease_owner=@owner AND a.lease_expires_at > clock_timestamp()
+                        AND a.state IN ('offered','accepted','running')
+                        AND a.restore_epoch=(SELECT restore_epoch FROM controller_metadata WHERE singleton)
+                     ON CONFLICT(organization_id,attempt_id) DO UPDATE
+                         SET fence=EXCLUDED.fence,identity_json=EXCLUDED.identity_json,verified_at=clock_timestamp()
+                       WHERE source_verifications.fence <= EXCLUDED.fence"
+                cmd.Parameters.AddWithValue("o", claim.OrganizationId.Value) |> ignore
+                cmd.Parameters.AddWithValue("b", claim.BuildId.Value) |> ignore
+                cmd.Parameters.AddWithValue("a", claim.AttemptId.Value) |> ignore
+                cmd.Parameters.AddWithValue("f", claim.Fence.Value) |> ignore
+                cmd.Parameters.AddWithValue("owner", owner) |> ignore
+                cmd.Parameters.AddWithValue("identity", identity.GetRawText()) |> ignore
+                cmd.Parameters.AddWithValue("source_digest", SHA256.HashData claim.PipelineSource) |> ignore
+                cmd.ExecuteNonQuery() = 1
+        if accepted then tx.Commit() else tx.Rollback()
+        accepted
+
+    member private _.ReadSourceIdentitySnapshot(conn: NpgsqlConnection, tx: NpgsqlTransaction, org: OrganizationId, project: ProjectId, build: BuildId) : JsonElement option =
+        use cmd = conn.CreateCommand()
+        cmd.Transaction <- tx
+        cmd.CommandText <-
+            "SELECT v.identity_json::text,
+                    CASE WHEN v.identity_json IS NULL AND r.build_id IS NULL THEN d.source_bytes ELSE NULL END
+               FROM builds b JOIN nodes n ON n.organization_id=b.organization_id AND n.build_id=b.id AND n.ordinal=0
+               JOIN attempts a ON a.organization_id=n.organization_id AND a.node_id=n.id
+               LEFT JOIN source_verifications v ON v.organization_id=a.organization_id AND v.attempt_id=a.id
+               LEFT JOIN build_definitions d ON d.organization_id=b.organization_id AND d.build_id=b.id
+               LEFT JOIN build_retention r ON r.organization_id=b.organization_id AND r.build_id=b.id
+              WHERE b.organization_id=@o AND b.project_id=@p AND b.id=@b
+              ORDER BY a.ordinal DESC LIMIT 1"
+        cmd.Parameters.AddWithValue("o", org.Value) |> ignore
+        cmd.Parameters.AddWithValue("p", project.Value) |> ignore
+        cmd.Parameters.AddWithValue("b", build.Value) |> ignore
+        use reader = cmd.ExecuteReader()
+        if not (reader.Read()) then None
+        elif not (reader.IsDBNull 0) then
+            use document = JsonDocument.Parse(reader.GetString 0)
+            Some(document.RootElement.Clone())
+        elif not (reader.IsDBNull 1) then
+            match SourceSnapshot.decode (reader.GetFieldValue<byte array> 1) with
+            | Ok(Some snapshot) -> Some(SourceSnapshot.identity snapshot "pending" None)
+            | _ -> None
+        else None
+
+    member this.ReadSourceIdentity(org: OrganizationId, project: ProjectId, build: BuildId) : JsonElement option =
+        use conn = openConn ()
+        use tx = beginTenantTransactionAt conn org System.Data.IsolationLevel.RepeatableRead
+        let result = this.ReadSourceIdentitySnapshot(conn, tx, org, project, build)
+        tx.Commit()
+        result

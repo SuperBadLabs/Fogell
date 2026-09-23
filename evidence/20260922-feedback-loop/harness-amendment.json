@@ -1,0 +1,8 @@
+{
+  "path": "scripts/prove-feedback-loop.py",
+  "measured_sha256": "20da88beabcfd1e1ab93b72cc394ac09e213cb688b115846fcc5d5bcf9340e2a",
+  "reviewed_sha256": "35f3dea238ff71b5c213e1c1222d5df88e85092938447cbe88abeeac243642ec",
+  "change": "Signal owned process group only while leader remains unreaped; never signal after successful wait to avoid PID reuse race.",
+  "validation": "Final checker self-test, three deadline and three output-cap guards passed; all three real receipts reverified.",
+  "live_campaigns_rerun": false
+}

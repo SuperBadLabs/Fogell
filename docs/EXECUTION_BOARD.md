@@ -4,14 +4,22 @@ audience: mixed
 category: engineering-board
 purpose: Engineering backlog for reliable self-hosted CI and an evidence-backed Jenkins migration surface.
 lifecycle: live
-last-verified: 2026-09-15
+last-verified: 2026-09-22
 accounting-verified: 2026-09-15
 verification-scope: Operating policy and derived accounting; ticket claims retain their own evidence dates.
 ---
 
 # Fogell — Execution Board
 
-Mission: **reliable, self-hosted CI with an explicit Jenkins migration path.**
+Mission: **reliable, self-hosted CI for the human and AI development feedback
+loop, with an explicit Jenkins migration path.**
+
+**Active product work, 2026-09-22:** the owner requested product/architecture
+design boards and delegated execution of the tight-feedback-loop initiative.
+The [AI feedback board](AI_FEEDBACK_BOARD.md) owns its ordered ticket queue;
+the [design boards](architecture/AI_FEEDBACK_LOOP.md) define the workflow and
+contracts. A bounded internal experiment is brought forward alongside production
+hardening. Production release gates and the operating contract below remain.
 
 **Binding direction, 2026-09-15:** [ADR 0010](adr/0010-production-first-ci.md)
 supersedes near-100% compatibility and corpus coverage as the release goal.

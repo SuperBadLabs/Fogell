@@ -816,7 +816,18 @@ module FogellSide =
                         buildStartTimeInMillis
                         isRestartedRun
                         (persistence |> Option.map (fun hooks -> hooks.OnOutput))
-                { context with ArtifactLimits = artifactLimits }
+                { context with
+                    ArtifactLimits = artifactLimits
+                    EmitDiagnostic = fun diagnostic ->
+                        persistence |> Option.iter (fun hooks ->
+                            lock context.MaskingSecretsLock (fun () ->
+                                let safe = ExecutionDiagnostic.sanitize context.MaskSecrets diagnostic
+                                let encoded = ExecutionDiagnostic.serialize safe
+                                context.ReserveCapturedOutput encoded.Length
+                                if Secrets.detectLeaks (context.BoundSecrets()) encoded |> List.isEmpty then
+                                    hooks.OnDiagnostic safe
+                                else
+                                    hooks.OnDiagnostic (ExecutionDiagnostic.create "infrastructure" "failure" "Diagnostic withheld by credential leak screening"))) }
 
             try
                 // FG-053. The SCRIPT decides whether a timestamp-shaped prefix is

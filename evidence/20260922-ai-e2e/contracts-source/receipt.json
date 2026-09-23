@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "organization": "5b1ef02b-c15a-4c85-831f-6b54d5896d86",
+  "project": "3895c68c-8eda-4896-85ca-c6742c03c130",
+  "passed": false,
+  "scope": "source/cancellation only",
+  "runs": [],
+  "controls": [],
+  "client_sha256": "a8d25663227997d5221552613e456a5de5594a30304c74dac9b0e462ba8416ad",
+  "harness_sha256": "059cef0e0608f965bbf5984b98608d98028dd213cc6c6e2a04d7d0752e7ea339",
+  "timing_scope": "monotonic client-process observations from admission start; typed diagnostics only",
+  "tool_identity": {
+    "observed_runtime_version": "10.0.12",
+    "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc"
+  },
+  "error": "snapshot-submit: expected exit 0, observed 3"
+}

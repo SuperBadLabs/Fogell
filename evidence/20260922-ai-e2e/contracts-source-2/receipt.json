@@ -1,0 +1,1224 @@
+{
+  "schema_version": 1,
+  "organization": "9c2150aa-3f48-4644-b48f-f7da8f89a6b1",
+  "project": "d453f883-3999-4cf1-baa8-a54a0e65d9fd",
+  "passed": false,
+  "scope": "source/cancellation only",
+  "runs": [
+    {
+      "label": "snapshot",
+      "admission": {
+        "build_id": "9a7a1ed2-aede-4ed5-8164-3120857f13d9",
+        "node_id": "fac76ad5-d3a5-4664-aec9-177f5a1fa73d",
+        "attempt_id": "b23a8d6a-8497-4175-95d2-e8fe27807466",
+        "number": 1,
+        "was_existing": false,
+        "client_elapsed_ms": 71
+      },
+      "watch_exit": 0,
+      "status": "success",
+      "terminal_or_reconciliation_ms": 1454.3418721295893,
+      "pages": [
+        {
+          "observed_ms": 329.9699570052326,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "b23a8d6a-8497-4175-95d2-e8fe27807466",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "9a7a1ed2-aede-4ed5-8164-3120857f13d9",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 0,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 44
+          }
+        },
+        {
+          "observed_ms": 433.16892720758915,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "b23a8d6a-8497-4175-95d2-e8fe27807466",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "9a7a1ed2-aede-4ed5-8164-3120857f13d9",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 0,
+                "body": "step-started: Reproduce#0 sh",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 1,
+                "body": "+ cat message.txt",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 2,
+                "body": "FG267_REPRODUCTION_ORIGINAL",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 3,
+                "body": "+ sleep 1",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 159
+          }
+        },
+        {
+          "observed_ms": 535.1516823284328,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "b23a8d6a-8497-4175-95d2-e8fe27807466",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "9a7a1ed2-aede-4ed5-8164-3120857f13d9",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 261
+          }
+        },
+        {
+          "observed_ms": 637.5140422023833,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "b23a8d6a-8497-4175-95d2-e8fe27807466",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "9a7a1ed2-aede-4ed5-8164-3120857f13d9",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 363
+          }
+        },
+        {
+          "observed_ms": 739.6368281915784,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "b23a8d6a-8497-4175-95d2-e8fe27807466",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "9a7a1ed2-aede-4ed5-8164-3120857f13d9",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 466
+          }
+        },
+        {
+          "observed_ms": 843.5399672016501,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "b23a8d6a-8497-4175-95d2-e8fe27807466",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "9a7a1ed2-aede-4ed5-8164-3120857f13d9",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 569
+          }
+        },
+        {
+          "observed_ms": 945.5372719094157,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "b23a8d6a-8497-4175-95d2-e8fe27807466",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "9a7a1ed2-aede-4ed5-8164-3120857f13d9",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 671
+          }
+        },
+        {
+          "observed_ms": 1047.4048051983118,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "b23a8d6a-8497-4175-95d2-e8fe27807466",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "9a7a1ed2-aede-4ed5-8164-3120857f13d9",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 773
+          }
+        },
+        {
+          "observed_ms": 1149.170228280127,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "b23a8d6a-8497-4175-95d2-e8fe27807466",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "9a7a1ed2-aede-4ed5-8164-3120857f13d9",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 875
+          }
+        },
+        {
+          "observed_ms": 1250.915699172765,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "b23a8d6a-8497-4175-95d2-e8fe27807466",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "9a7a1ed2-aede-4ed5-8164-3120857f13d9",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 977
+          }
+        },
+        {
+          "observed_ms": 1352.642951067537,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "b23a8d6a-8497-4175-95d2-e8fe27807466",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "9a7a1ed2-aede-4ed5-8164-3120857f13d9",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 1079
+          }
+        },
+        {
+          "observed_ms": 1454.3418721295893,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "b23a8d6a-8497-4175-95d2-e8fe27807466",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "9a7a1ed2-aede-4ed5-8164-3120857f13d9",
+            "status": "success",
+            "cancellation_requested": false,
+            "is_terminal": true,
+            "from_sequence": 4,
+            "next_sequence": 6,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 4,
+                "body": "step-finished: Reproduce#0 success",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 5,
+                "body": "stage-committed: Reproduce",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 1180
+          }
+        }
+      ],
+      "first_actionable_diagnostic_ms": null,
+      "diagnostics": []
+    },
+    {
+      "label": "reproduced",
+      "admission": {
+        "build_id": "1a23faa8-22ec-44fd-aaf7-e94524338a02",
+        "node_id": "8e738506-d1b0-4a29-a571-78940740990c",
+        "attempt_id": "9dcd659b-c500-4cb1-98e6-d8d3b9f9fabc",
+        "number": 2,
+        "was_existing": false,
+        "client_elapsed_ms": 70
+      },
+      "watch_exit": 0,
+      "status": "success",
+      "terminal_or_reconciliation_ms": 1544.4687670096755,
+      "pages": [
+        {
+          "observed_ms": 217.673412989825,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "9dcd659b-c500-4cb1-98e6-d8d3b9f9fabc",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "1a23faa8-22ec-44fd-aaf7-e94524338a02",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 0,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 44
+          }
+        },
+        {
+          "observed_ms": 320.5444482155144,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "9dcd659b-c500-4cb1-98e6-d8d3b9f9fabc",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "1a23faa8-22ec-44fd-aaf7-e94524338a02",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 0,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 159
+          }
+        },
+        {
+          "observed_ms": 423.0006793513894,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "9dcd659b-c500-4cb1-98e6-d8d3b9f9fabc",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "1a23faa8-22ec-44fd-aaf7-e94524338a02",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 2,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 0,
+                "body": "step-started: Reproduce#0 sh",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 1,
+                "body": "+ cat message.txt",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 261
+          }
+        },
+        {
+          "observed_ms": 525.0119939446449,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "9dcd659b-c500-4cb1-98e6-d8d3b9f9fabc",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "1a23faa8-22ec-44fd-aaf7-e94524338a02",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 2,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 2,
+                "body": "FG267_REPRODUCTION_ORIGINAL",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 3,
+                "body": "+ sleep 1",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 363
+          }
+        },
+        {
+          "observed_ms": 627.8294301591814,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "9dcd659b-c500-4cb1-98e6-d8d3b9f9fabc",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "1a23faa8-22ec-44fd-aaf7-e94524338a02",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 466
+          }
+        },
+        {
+          "observed_ms": 730.0271969288588,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "9dcd659b-c500-4cb1-98e6-d8d3b9f9fabc",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "1a23faa8-22ec-44fd-aaf7-e94524338a02",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 568
+          }
+        },
+        {
+          "observed_ms": 833.1992872990668,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "9dcd659b-c500-4cb1-98e6-d8d3b9f9fabc",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "1a23faa8-22ec-44fd-aaf7-e94524338a02",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 671
+          }
+        },
+        {
+          "observed_ms": 934.9039383232594,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "9dcd659b-c500-4cb1-98e6-d8d3b9f9fabc",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "1a23faa8-22ec-44fd-aaf7-e94524338a02",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 773
+          }
+        },
+        {
+          "observed_ms": 1036.283405032009,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "9dcd659b-c500-4cb1-98e6-d8d3b9f9fabc",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "1a23faa8-22ec-44fd-aaf7-e94524338a02",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 875
+          }
+        },
+        {
+          "observed_ms": 1137.9805961623788,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "9dcd659b-c500-4cb1-98e6-d8d3b9f9fabc",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "1a23faa8-22ec-44fd-aaf7-e94524338a02",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 976
+          }
+        },
+        {
+          "observed_ms": 1238.7804663740098,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "9dcd659b-c500-4cb1-98e6-d8d3b9f9fabc",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "1a23faa8-22ec-44fd-aaf7-e94524338a02",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 1077
+          }
+        },
+        {
+          "observed_ms": 1340.577017981559,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "9dcd659b-c500-4cb1-98e6-d8d3b9f9fabc",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "1a23faa8-22ec-44fd-aaf7-e94524338a02",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 4,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 1179
+          }
+        },
+        {
+          "observed_ms": 1442.8254361264408,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "9dcd659b-c500-4cb1-98e6-d8d3b9f9fabc",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "1a23faa8-22ec-44fd-aaf7-e94524338a02",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 4,
+            "next_sequence": 6,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 4,
+                "body": "step-finished: Reproduce#0 success",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              },
+              {
+                "sequence": 5,
+                "body": "stage-committed: Reproduce",
+                "truncated": false,
+                "diagnostic": null,
+                "diagnostic_id": null
+              }
+            ],
+            "client_elapsed_ms": 1281
+          }
+        },
+        {
+          "observed_ms": 1544.4687670096755,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "kind": "content_snapshot",
+              "fence": 1,
+              "attempt_id": "9dcd659b-c500-4cb1-98e6-d8d3b9f9fabc",
+              "file_count": 1,
+              "environment": {
+                "os": "linux",
+                "architecture": "x64",
+                "dotnet_major": 10
+              },
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "schema_version": 1,
+              "manifest_sha256": "3345585dff50b84107e440c0b94a9764cb1161e94bb0f7bf3c341687bb096742",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "verified",
+              "expected_tool_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc",
+              "observed_runtime_version": "10.0.12"
+            },
+            "build_id": "1a23faa8-22ec-44fd-aaf7-e94524338a02",
+            "status": "success",
+            "cancellation_requested": false,
+            "is_terminal": true,
+            "from_sequence": 6,
+            "next_sequence": 6,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 1383
+          }
+        }
+      ],
+      "first_actionable_diagnostic_ms": null,
+      "diagnostics": []
+    },
+    {
+      "label": "wrong-tool",
+      "admission": {
+        "build_id": "a3505925-9895-4fba-9af7-70ef380c73c0",
+        "node_id": "141f8bcf-3681-436b-8332-672c42ca2189",
+        "attempt_id": "8fa433fb-d04c-42be-b243-b267b1ef2a2a",
+        "number": 3,
+        "was_existing": false,
+        "client_elapsed_ms": 70
+      },
+      "watch_exit": 5,
+      "status": "reconciliation_required",
+      "terminal_or_reconciliation_ms": 218.8206957653165,
+      "pages": [
+        {
+          "observed_ms": 218.8206957653165,
+          "record": {
+            "schema_version": 1,
+            "source_identity": {
+              "environment": {
+                "architecture": "x64",
+                "dotnet_major": 10,
+                "os": "linux"
+              },
+              "expected_tool_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "file_count": 1,
+              "kind": "content_snapshot",
+              "manifest_sha256": "1ddd7e27a212e923bfd04e92dc0ec02de05f2bf620272500ab67c7603d3b21ad",
+              "observed_runtime_version": null,
+              "parent_loop_id": "4f86f3c8-9141-43d6-9fd9-deb0a11a3857",
+              "pipeline_sha256": "aa044bc074f2e01c454da654e34cca24f3712b095cb029f5ddb8051a80d30786",
+              "run_host_sha256": null,
+              "schema_version": 1,
+              "snapshot_sha256": "7f7caff2d842234de947cb0286be06a0a3c516e23def25464487a20ce01e5c2c",
+              "verification_state": "pending"
+            },
+            "build_id": "a3505925-9895-4fba-9af7-70ef380c73c0",
+            "status": "reconciliation_required",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 1,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 0,
+                "body": "",
+                "truncated": false,
+                "diagnostic": {
+                  "step": null,
+                  "stage": null,
+                  "output": null,
+                  "result": "reconciliation_required",
+                  "message": "materialization_failed",
+                  "category": "infrastructure",
+                  "exit_code": null,
+                  "test_name": null,
+                  "truncated": false,
+                  "test_class": null,
+                  "report_path": null,
+                  "source_line": null,
+                  "source_path": null,
+                  "artifact_refs": [],
+                  "source_column": null,
+                  "schema_version": 1
+                },
+                "diagnostic_id": "8fa433fb-d04c-42be-b243-b267b1ef2a2a:0"
+              }
+            ],
+            "client_elapsed_ms": 41
+          }
+        }
+      ],
+      "first_actionable_diagnostic_ms": 218.8206957653165,
+      "diagnostics": [
+        {
+          "observed_ms": 218.8206957653165,
+          "diagnostic_id": "8fa433fb-d04c-42be-b243-b267b1ef2a2a:0",
+          "diagnostic": {
+            "step": null,
+            "stage": null,
+            "output": null,
+            "result": "reconciliation_required",
+            "message": "materialization_failed",
+            "category": "infrastructure",
+            "exit_code": null,
+            "test_name": null,
+            "truncated": false,
+            "test_class": null,
+            "report_path": null,
+            "source_line": null,
+            "source_path": null,
+            "artifact_refs": [],
+            "source_column": null,
+            "schema_version": 1
+          }
+        }
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "name": "exact_snapshot_replay_same_identity",
+      "passed": true
+    },
+    {
+      "name": "changed_manifest_conflicts",
+      "passed": true
+    },
+    {
+      "name": "download_is_original_bytes",
+      "passed": true
+    },
+    {
+      "name": "fresh_build_reproduction",
+      "passed": true
+    },
+    {
+      "name": "reproduction_snapshot_sha256",
+      "passed": true
+    },
+    {
+      "name": "reproduction_pipeline_sha256",
+      "passed": true
+    },
+    {
+      "name": "reproduction_manifest_sha256",
+      "passed": true
+    },
+    {
+      "name": "reproduction_run_host_sha256",
+      "passed": true
+    },
+    {
+      "name": "snapshot_verified_original_output",
+      "passed": true
+    },
+    {
+      "name": "reproduced_verified_original_output",
+      "passed": true
+    },
+    {
+      "name": "wrong-tool_infrastructure_diagnostic",
+      "passed": true
+    }
+  ],
+  "client_sha256": "a8d25663227997d5221552613e456a5de5594a30304c74dac9b0e462ba8416ad",
+  "harness_sha256": "2efa2d91f58944aebb70e417b2fc0596012793e5f0d3d393b5d0f716e276e4ab",
+  "timing_scope": "monotonic client-process observations from admission start; typed diagnostics only",
+  "tool_identity": {
+    "observed_runtime_version": "10.0.12",
+    "run_host_sha256": "48841b07ebf5d842b35ec131e5a9d75490df3ce81ad46102c8cc788ea6a4f7bc"
+  },
+  "error": "wrong-tool-raw-pipeline-submit: expected exit 0, observed 3"
+}

@@ -15,13 +15,18 @@
     <Project Path="src/Fogell.Pipeline.Parser/Fogell.Pipeline.Parser.fsproj" />
   </Folder>
   <Folder Name="/tools/">
+    <Project Path="tools/Fogell.Client/Fogell.Client.fsproj" />
     <Project Path="tools/Fogell.Corpus.Score/Fogell.Corpus.Score.fsproj" />
     <Project Path="tools/Fogell.Crash.Harness/Fogell.Crash.Harness.fsproj" />
     <Project Path="tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj" />
     <Project Path="tools/Fogell.Run.Host/Fogell.Run.Host.fsproj" />
+    <Project Path="tools/Fogell.Recovery/Fogell.Recovery.fsproj" />
+    <Project Path="tools/Fogell.Retention/Fogell.Retention.fsproj" />
     <Project Path="tools/Fogell.Watch.Inbox/Fogell.Watch.Inbox.fsproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Fogell.Client.Tests/Fogell.Client.Tests.fsproj" />
+    <Project Path="tests/Fogell.Retention.Tests/Fogell.Retention.Tests.fsproj" />
     <Project Path="tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj" />
     <Project Path="tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj" />
     <Project Path="tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj" />

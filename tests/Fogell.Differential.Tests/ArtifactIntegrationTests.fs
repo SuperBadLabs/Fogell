@@ -35,7 +35,8 @@ let private expectLimit result =
     | Ok trace -> failtestf "expected quota refusal, got %s (%A)" trace.Result trace.EngineNotes
 
 let private hooks (publish: string -> unit) : PersistenceHooks =
-    { OnOutput = publish
+    { OnDiagnostic = ignore
+      OnOutput = publish
       IsRestartedRun = false
       ShouldExecute = fun _ _ -> true
       StageWasCommitted = fun _ -> false

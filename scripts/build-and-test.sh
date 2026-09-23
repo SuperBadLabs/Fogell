@@ -196,6 +196,15 @@ if lane_active build; then
   ./scripts/run-project-tests.sh \
     || { echo "TESTS FAILED"; exit 1; }
 
+  # Exercise the feedback campaign's negative controls and process/output bounds
+  # without requiring a running controller; the live campaign is separate evidence.
+  python3 scripts/prove-feedback-loop.py --self-test \
+    || { echo "FEEDBACK CHECKER PROOF FAILED"; exit 1; }
+  python3 scripts/test-pilot-artifact-verifier.py \
+    || { echo "SELF-HOSTED PILOT CHECKER PROOF FAILED"; exit 1; }
+  python3 scripts/test-paired-recovery-inventory.py \
+    || { echo "PAIRED RECOVERY INVENTORY PROOF FAILED"; exit 1; }
+
   # FG-228 evidence. STAYS IN `build` while its mutation proof moved to the
   # `mutants` lane: this runs the built Differential CLI with --no-build against
   # the tree prove-dependency-locks.sh produced above, and no such tree exists in

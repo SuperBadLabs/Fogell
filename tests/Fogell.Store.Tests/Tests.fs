@@ -546,7 +546,7 @@ let migrations =
                           (applied
                            |> List.filter (fun item -> not item.AlreadyPresent)
                            |> List.map (fun item -> item.Version))
-                          [ "0009"; "0010"; "0011"; "0012"; "0013"; "0014" ]
+                          [ "0009"; "0010"; "0011"; "0012"; "0013"; "0014"; "0015"; "0016"; "0017" ]
                           "only the forward repair and invariant guard migrations are pending"
 
                   use repaired = target.CreateCommand()
@@ -845,9 +845,9 @@ let tenantIsolation =
                         GRANT SELECT ON
                           organizations, projects, builds, nodes, attempts,
                           events, outbox, log_chunks, effect_checkpoints, retry_decisions,
-                          build_definitions
+                          build_definitions, source_verifications
                         TO {roleName};
-                        GRANT SELECT ON organization_work_roots TO {roleName};
+                        GRANT SELECT ON organization_work_roots, build_retention TO {roleName};
                         GRANT USAGE ON events_id_seq, outbox_id_seq, log_chunks_id_seq, effect_checkpoints_uncertain_seq TO {roleName}"
 
                   // Deliberately disable Npgsql's pool reset and force one physical
@@ -866,7 +866,7 @@ let tenantIsolation =
                       $"GRANT INSERT, UPDATE, DELETE ON
                           organizations, projects, builds, nodes, attempts,
                           events, outbox, log_chunks, effect_checkpoints, retry_decisions,
-                          build_definitions
+                          build_definitions, source_verifications
                         TO {roleName}"
 
                   Expect.isFalse
@@ -918,9 +918,9 @@ let tenantIsolation =
                         GRANT SELECT, INSERT, UPDATE, DELETE ON
                           organizations, projects, builds, nodes, attempts,
                           events, outbox, log_chunks, effect_checkpoints, retry_decisions,
-                          build_definitions
+                          build_definitions, source_verifications
                         TO {roleName};
-                        GRANT SELECT ON organization_work_roots TO {roleName};
+                        GRANT SELECT ON organization_work_roots, build_retention TO {roleName};
                         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {roleName}"
 
                   // Deliberately disable Npgsql's pool reset and force one physical
@@ -1168,7 +1168,7 @@ let tenantIsolation =
                   admin
                       $"GRANT USAGE ON SCHEMA public TO {roleName};
                         GRANT SELECT, UPDATE (restore_epoch) ON controller_metadata TO {roleName};
-                        GRANT SELECT ON organization_work_roots TO {roleName};
+                        GRANT SELECT ON organization_work_roots, build_retention TO {roleName};
                         GRANT SELECT, UPDATE ON attempts, nodes, builds TO {roleName};
                         GRANT SELECT, UPDATE ON effect_checkpoints TO {roleName};
                         GRANT INSERT ON events, outbox TO {roleName};

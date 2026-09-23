@@ -46,6 +46,7 @@ type PersistenceHooks =
       /// Throwing is an infrastructure failure: it is surfaced as
       /// OutputPublicationException and must not become build semantics.
       OnOutput: string -> unit
+      OnDiagnostic: ExecutionDiagnostic -> unit
       /// True when this attempt RESUMES an interrupted journal — what
       /// `when { isRestartedRun() }` evaluates to.
       IsRestartedRun: bool

@@ -252,6 +252,11 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
             None
 
     let eventPublisher (claim: ExecutionClaim) (nextSequence: int ref) (frames: EventFrame array) =
+        let diagnostics = Array.map EventStream.eventDiagnostic frames
+        let bodies = Array.map2 (fun frame diagnostic ->
+            match diagnostic with
+            | Some _ -> ""
+            | None -> EventStream.eventBody frame) frames diagnostics
         let appended =
             store.AppendLogBatchFenced(
                 claim.OrganizationId,
@@ -260,7 +265,8 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                 claim.Fence,
                 owner,
                 nextSequence.Value,
-                Array.map EventStream.eventBody frames)
+                bodies,
+                diagnostics = diagnostics)
 
         if appended then
             nextSequence.Value <- nextSequence.Value + frames.Length
@@ -396,7 +402,18 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                 // created. A deterministic mismatch must not escape while the
                 // attempt is merely offered: lease recovery would otherwise queue
                 // the same poisoned FIFO row forever.
-                atomicDefinition definitionPath claim.PipelineSource
+                match SourceSnapshot.decode claim.PipelineSource with
+                | Error error -> invalidOp error
+                | Ok None -> atomicDefinition definitionPath claim.PipelineSource
+                | Ok(Some snapshot) ->
+                    match SourceSnapshot.verifyEnvironment snapshot with Error error -> invalidOp error | Ok () -> ()
+                    atomicDefinition definitionPath (Convert.FromBase64String snapshot.PipelineBase64)
+                    atomicDefinition (definitionPath + ".snapshot.json") claim.PipelineSource
+                    let runnerDigest = SourceSnapshot.runtimeToolDigest config.RunHostPath
+                    if not (isNull snapshot.ExpectedToolSha256) && snapshot.ExpectedToolSha256 <> runnerDigest then
+                        invalidOp "source tool identity differs from manifest"
+                    if not (store.RecordSourceVerification(claim, owner, snapshot, runnerDigest)) then
+                        invalidOp "source verification publication lost execution authority"
                 Directory.CreateDirectory workspaceRoot |> ignore
                 match
                     ArtifactSnapshots.prepareRetryWithLimits
@@ -478,6 +495,9 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
                             start.Environment["HOME"] <- neutralHome
                             start.Environment["TMPDIR"] <- tempRoot
                             start.Environment["FOGELL_EVENT_FILE"] <- eventPath
+                            match SourceSnapshot.decode claim.PipelineSource with
+                            | Ok(Some _) -> start.Environment["FOGELL_SOURCE_SNAPSHOT_FILE"] <- definitionPath + ".snapshot.json"
+                            | _ -> ()
                             start.Environment["FOGELL_CONTROLLER_LIVENESS_PIPE"] <- "1"
                             start.Environment["FOGELL_PROCESS_GROUP_REGISTRY"] <- containmentPath
                             // Project-scoped numbering is durable admission truth. Passing

@@ -87,6 +87,7 @@ type WalkerCtx =
       /// the reference engine does not provide is not a favour, it is a
       /// divergence.
       /// Receipt: `parallel-always-failfast`.
+      EmitDiagnostic: Fogell.Domain.ExecutionDiagnostic -> unit
       Emit: string -> unit
       /// Append shell output already processed by the run-scoped raw matcher.
       /// It still receives timestamps, leak screening, ordering, and external
@@ -855,7 +856,8 @@ module WalkerCtx =
 
                 safe, Secrets.detectLeaks secrets safe.Text)
 
-        { ArtifactLimits = ArtifactLimits.Defaults
+        { EmitDiagnostic = ignore
+          ArtifactLimits = ArtifactLimits.Defaults
           Emit = emit
           EmitRedacted = emitRedacted
           Admit = admit

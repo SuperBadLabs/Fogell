@@ -1,0 +1,111 @@
+{
+  "recorded_at_utc": "2026-09-23T04:31:03.429704+00:00",
+  "all_gate_components_passed_across_runs": true,
+  "uninterrupted_full_gate_pass": false,
+  "project_tests": [
+    {
+      "project": "tests/Fogell.Client.Tests/Fogell.Client.Tests.fsproj",
+      "tests": 17,
+      "passed": 17,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    },
+    {
+      "project": "tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj",
+      "tests": 114,
+      "passed": 114,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    },
+    {
+      "project": "tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj",
+      "tests": 443,
+      "passed": 443,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    },
+    {
+      "project": "tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj",
+      "tests": 41,
+      "passed": 41,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    },
+    {
+      "project": "tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj",
+      "tests": 202,
+      "passed": 202,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    },
+    {
+      "project": "tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj",
+      "tests": 243,
+      "passed": 243,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    },
+    {
+      "project": "tests/Fogell.Journal.Tests/Fogell.Journal.Tests.fsproj",
+      "tests": 31,
+      "passed": 31,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    },
+    {
+      "project": "tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj",
+      "tests": 143,
+      "passed": 143,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    },
+    {
+      "project": "tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj",
+      "tests": 112,
+      "passed": 112,
+      "ignored": 0,
+      "failed": 0,
+      "errored": 0
+    }
+  ],
+  "total_project_tests": 1346,
+  "ignored_project_tests": 0,
+  "initial_gate": {
+    "command": "FOGELL_TEST_DATABASE_URL=<isolated test database> ./scripts/build-and-test.sh",
+    "exit_code": 1,
+    "completed": "build, mutants, prelude, and audits through seal verification",
+    "stop": "FG-094 refused because FOGELL_REGRESSION_BASELINE and FOGELL_JENKINS_ORACLE were unset despite mounted corpus"
+  },
+  "corrected_check": {
+    "command": "FOGELL_REGRESSION_BASELINE=/home/srikanth/projects/fogell-baselines/fg-094-candidate/baseline.json FOGELL_JENKINS_ORACLE=/home/srikanth/projects/chengis/chengis/test/resources/jenkins-oracle/Jenkins-RAnvil-Chengis-228-projects.tsv python3 scripts/check-compatibility-regression.py",
+    "exit_code": 0
+  },
+  "remaining_lanes": {
+    "command": "FOGELL_GATE_LANES='stale-refs lanes' ./scripts/build-and-test.sh (same isolated test database and corrected baseline/oracle environment)",
+    "exit_code": 0
+  },
+  "logs": [
+    {
+      "path": "/tmp/fogell-feedback-full-gate.log",
+      "sha256": "dbdb816163fb84baf9210cc3fb8030cb8c30713bcef24b0cc17561ee8e89d2ff"
+    },
+    {
+      "path": "/tmp/fogell-feedback-regression.log",
+      "sha256": "3a0c2946829f042f59e52e1c798053913410f7a7f3f5e79adae570cb5802c1df"
+    },
+    {
+      "path": "/tmp/fogell-feedback-remaining-gate.log",
+      "sha256": "cb5e451e00aebbbb8a9a27bee07e13b48b9083d987af3b08610810e7a9561827"
+    }
+  ],
+  "review": "Primary API/client/proof integration review; independent subagent client/proof and board/documentation reviews; findings corrected before closeout. Harness-only post-campaign correction tracked in harness-amendment.json.",
+  "publication": "No commit, push or PR. Existing full uninterrupted pre-publication gate and external review requirements remain."
+}

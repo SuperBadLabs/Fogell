@@ -49,7 +49,8 @@ let private request root script =
         | Result.Ok p -> p
         | Result.Error e -> failwith e.Describe
 
-    { Name = "sh"
+    { OnDiagnostic = None
+      Name = "sh"
       Script = Some script
       Workspace = ws
       Environment = []
@@ -4066,6 +4067,7 @@ let externalInterrupt =
                         OnRedactedOutput = None
                         OnRedactedAdmission = None
                         CreateRedactedAdmission = None
+                        OnDiagnostic = None
                         ReserveCapturedOutput = None
                         Named = [ "testResults", "report.xml" ]
                         Artifacts = None
@@ -4107,6 +4109,7 @@ let externalInterrupt =
                         OnRedactedOutput = None
                         OnRedactedAdmission = None
                         CreateRedactedAdmission = None
+                        OnDiagnostic = None
                         ReserveCapturedOutput = None
                         Named = [ "testResults", "nothing-matches-*.xml" ]
                         Artifacts = None
@@ -6653,6 +6656,58 @@ let maskingOnOutputPath =
               Expect.stringContains r.Stdout "plain-output" "unchanged"
           } ]
 
+let private diagnosticEvidence =
+    testList "FG-266 diagnostics"
+        [ test "JUnit names planted failure and masks before bounding fields" {
+              let root = tempRoot ()
+              try
+                  let req = request root ""
+                  let secret = String.replicate 3000 "S"
+                  let binding = Secrets.bind root "TOKEN" secret
+                  try
+                      File.WriteAllText(Path.Combine(req.Workspace, "results.xml"),
+                          "<testsuite name='Example'><testcase classname='Tests' name='planted_failure' file='test.fs' line='23'><failure message='" + secret + "'>assert expected 2 got 1</failure></testcase></testsuite>")
+                      let streamed = ResizeArray<ExecutionDiagnostic>()
+                      let gate = obj ()
+                      let onDiagnostic d =
+                          Expect.isTrue (System.Threading.Monitor.IsEntered gate) "masking and publication share the credential registration lock"
+                          streamed.Add d
+                      let result = Executor.runStep { req with Name = "junit"; Script = None; Named = [ "testResults", "results.xml" ]; Secrets = [ binding ]; MaskingSecretsLock = Some gate; OnDiagnostic = Some onDiagnostic }
+                      Expect.equal streamed.Count 1 "direct callback receives the failed case"
+                      Expect.stringContains streamed.[0].Message "****" "direct callback is masked before clipping"
+                      Expect.isFalse ((ExecutionDiagnostic.serialize streamed.[0]).Contains "SSSS") "direct callback cannot leak a secret prefix"
+                      Expect.equal result.Status Unstable "workload test failure remains unstable"
+                      Expect.equal result.Diagnostics.Length 1 "one failed test"
+                      let d = result.Diagnostics.Head
+                      Expect.equal d.TestName "planted_failure" "typed identity"
+                      Expect.equal d.TestClass "Tests" "typed class"
+                      Expect.throwsT<IOException>
+                          (fun () -> Executor.runStep { req with Name = "junit"; Script = None; Named = [ "testResults", "results.xml" ]; OnDiagnostic = Some(fun _ -> raise (IOException "event transport failed")) } |> ignore)
+                          "diagnostic transport failure escapes the report parser rather than becoming a workload parse error"
+                      Expect.equal d.SourcePath "test.fs" "reported source only"
+                      Expect.equal d.SourceLine (Nullable 23L) "reported source line"
+                      Expect.stringContains d.Message "****" "secret masked before field clipping"
+                      Expect.isFalse (d.Message.Contains "SSSS") "no secret prefix leaks"
+                      let huge = { d with Message = String.replicate 4000 "😀"; ArtifactRefs = Array.create 20 "artifact" }
+                      let bounded = ExecutionDiagnostic.sanitize id huge
+                      Expect.isTrue bounded.Truncated "truncation explicit"
+                      Expect.isLessThan (Text.Encoding.UTF8.GetByteCount(ExecutionDiagnostic.serialize bounded)) 16384 "bounded encoded frame"
+                  finally Secrets.revoke [ binding ]
+              finally Directory.Delete(root, true)
+          }
+          test "JUnit failed-case collection is bounded with explicit omission" {
+              let root = tempRoot ()
+              try
+                  let req = request root ""
+                  File.WriteAllText(Path.Combine(req.Workspace, "results.xml"),
+                      "<testsuite name='Tests'>" + String.concat "" [ for i in 1..80 -> $"<testcase name='case{i}'><failure>failed</failure></testcase>" ] + "</testsuite>")
+                  let result = Executor.runStep { req with Name = "junit"; Script = None; Named = [ "testResults", "results.xml" ] }
+                  Expect.equal result.TestTotals (Some(80,80,0)) "summary remains complete"
+                  Expect.equal result.Diagnostics.Length 65 "64 named cases and an explicit omission diagnostic"
+                  Expect.isTrue (List.last result.Diagnostics).Truncated "omission visible"
+              finally Directory.Delete(root, true)
+          } ]
+
 [<EntryPoint>]
 let main argv =
     match argv with
@@ -6700,7 +6755,8 @@ let main argv =
             (testSequenced
                 (testList
                     "Fogell.Execution"
-                    [ CaptureOutputBudgetTests.captureOutputBudget
+                    [ diagnosticEvidence
+                      CaptureOutputBudgetTests.captureOutputBudget
                       ArtifactPublishingTests.artifactPublishing
                       workspaceHygiene
                       shellExecution

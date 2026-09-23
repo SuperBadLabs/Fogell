@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "passed": false,
+  "restore_target": "fogell_pilot_restored_20260922",
+  "rto_seconds_target": 120,
+  "rpo_lost_records_target": 0,
+  "requires_controller_control": true,
+  "harness_sha256": "a970382f5ff94a86b9d4d9fd37d6945f4c8937902e22f9e4b24cc15f2e196e67",
+  "proof_input_sha256": {
+    "workload": "8fb4d25ef0f6018c2a2821e8d7793537f8591390c61c640517a324c5e9c3b2f1",
+    "authority": "a0fe67e7c3eb818deac477215de2ed611e1d3674e26f7dc0fe5d51d945ff62cc",
+    "post_restore_command": "ed4f1a23dbd7d7d17889d71c37b434fb2f8f16ad493cc826edb0ebf3b8aec753"
+  },
+  "error": "state contains a link or special file"
+}

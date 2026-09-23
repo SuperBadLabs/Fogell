@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "started_at_utc": "2026-09-23T05:11:20.066813+00:00",
+  "revision": "includes exact build HOME/stash roots; removes redundant effect write trigger to preserve classification order",
+  "database_scope": "fresh unique fogell_retention_UUID database per run, dropped by test finally",
+  "run_timeout_seconds": 60,
+  "runs": [
+    {
+      "run": 1,
+      "exit_code": 0,
+      "elapsed_ms": 1160.039,
+      "passed": true
+    },
+    {
+      "run": 2,
+      "exit_code": 0,
+      "elapsed_ms": 1110.052,
+      "passed": true
+    },
+    {
+      "run": 3,
+      "exit_code": 0,
+      "elapsed_ms": 1086.344,
+      "passed": true
+    }
+  ],
+  "passed": true,
+  "sha256": {
+    "tools/Fogell.Retention/Filesystem.fs": "b5d3716b0bee2e94c3f67582b918ced82c216a026e9f8cc94478e06797b6e29f",
+    "tools/Fogell.Retention/Retention.fs": "fbc352b3688189c39d7cd30f1838fbb6d117f25593e0d87f1cc41d9c4ee9fcd9",
+    "tools/Fogell.Retention/Program.fs": "3076d8b66cd764620fc00080ba84d18b9ab28e62209eef3723dbf5c19c7f33b7",
+    "src/Fogell.Store/migrations/0017_retention.sql": "91ca4b8a08e6340c3c3dfd900804ce31174ec33e8f02b4e8157f8c7278be564d",
+    "tests/Fogell.Retention.Tests/Tests.fs": "4f30fe7dc8eed2669503dbd7be28c89a9c506858a11577e2b5cd8158996dab0e",
+    "tools/Fogell.Retention/bin/Release/net10.0/Fogell.Retention.dll": "9cfd98155a49a57134b3508533aa7cb4e25d2834f431c4e527fc4d82a276bfcf",
+    "tools/Fogell.Retention/bin/Release/net10.0/Fogell.Store.dll": "8a706a73d29e2575d6ea99ff855bddbd765d825697af6e5d058809a2ae0faf09",
+    "tools/Fogell.Retention/bin/Release/net10.0/Fogell.Domain.dll": "5a2c6986d7610ad22117860eb159f0760e4fde44dbe4dad55985e97fac185b66"
+  }
+}

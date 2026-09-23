@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "started_at_utc": "2026-09-23T04:56:50.407467+00:00",
+  "database_scope": "fresh unique fogell_retention_UUID database per run, dropped by test finally",
+  "run_timeout_seconds": 60,
+  "runs": [
+    {
+      "run": 1,
+      "exit_code": 0,
+      "elapsed_ms": 791.243,
+      "passed": true
+    },
+    {
+      "run": 2,
+      "exit_code": 0,
+      "elapsed_ms": 796.52,
+      "passed": true
+    },
+    {
+      "run": 3,
+      "exit_code": 0,
+      "elapsed_ms": 836.515,
+      "passed": true
+    }
+  ],
+  "passed": true,
+  "sha256": {
+    "tools/Fogell.Retention/Filesystem.fs": "b5d3716b0bee2e94c3f67582b918ced82c216a026e9f8cc94478e06797b6e29f",
+    "tools/Fogell.Retention/Retention.fs": "327dff1e4f60df16bcfaab006505c4c5bd24efda2850f2f540edb42171fda71d",
+    "tools/Fogell.Retention/Program.fs": "3076d8b66cd764620fc00080ba84d18b9ab28e62209eef3723dbf5c19c7f33b7",
+    "src/Fogell.Store/migrations/0017_retention.sql": "1ca57923818fdc82b7f9ee6dc2d6ff3b338a0283f67190576599a6cc7716ccd3",
+    "tests/Fogell.Retention.Tests/Tests.fs": "ef35fd78bfbfa8d435e551d999314a394975bdd28440beffedb44f6337bc3a98",
+    "tools/Fogell.Retention/bin/Release/net10.0/Fogell.Retention.dll": "8b67a12354908d96c93d0f21a4b34162458e8f8846c24421b5e1b2233a658b96",
+    "tools/Fogell.Retention/bin/Release/net10.0/Fogell.Store.dll": "bda6aa1f644d562fd4ad5f2380b0b70f1d77d2a73233f1e5782655f916b17443",
+    "tools/Fogell.Retention/bin/Release/net10.0/Fogell.Domain.dll": "5a2c6986d7610ad22117860eb159f0760e4fde44dbe4dad55985e97fac185b66"
+  }
+}

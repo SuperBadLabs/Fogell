@@ -7,7 +7,8 @@ open Fogell.Domain
 /// This is the layer the interpreter's *requested effects* land in. The
 /// interpreter decides what should happen; nothing until here actually does it.
 type StepRequest =
-    { Name: string
+    { OnDiagnostic: (ExecutionDiagnostic -> unit) option
+      Name: string
       Script: string option
       /// An ALREADY-CREATED directory the step runs in.
       ///
@@ -105,7 +106,8 @@ type StepRequest =
       BuildKey: string }
 
 type StepResult =
-    { Status: BuildStatus
+    { Diagnostics: ExecutionDiagnostic list
+      Status: BuildStatus
       ExitCode: int option
       Stdout: string
       Stderr: string
@@ -164,7 +166,8 @@ type StepResult =
 module Executor =
 
     let private ok status =
-        { Status = status
+        { Diagnostics = []
+          Status = status
           ExitCode = None
           Stdout = ""
           Stderr = ""
@@ -468,7 +471,8 @@ module Executor =
                 | Some a, None -> Some a
                 | None, b -> b
 
-            { Status = status
+            { Diagnostics = []
+              Status = status
               ExitCode = exitCode
               // Buffered output is masked too — a caller that reads Stdout
               // instead of streaming must not get a different secrecy guarantee.
@@ -658,8 +662,27 @@ module Executor =
                     TestTotals = Some(0, 0, 0)
                     TestDuration = Some 0.0f }
 
+            let diagnostics = ResizeArray<ExecutionDiagnostic>()
+            let mutable omitted = false
+            let record diagnostic =
+                if diagnostics.Count < 64 then
+                    let publish () =
+                        let secrets = request.MaskingSecrets |> Option.map (fun f -> f ()) |> Option.defaultValue request.Secrets
+                        let safe = ExecutionDiagnostic.sanitize (Secrets.mask secrets) diagnostic
+                        request.OnDiagnostic |> Option.iter (fun emit -> emit safe)
+                        diagnostics.Add safe
+                    // Keep registration, whole-field masking, clipping and synchronous
+                    // publication under the same lock: a newly bound secret must not
+                    // become only a clipped prefix before the final publication mask.
+                    match request.MaskingSecretsLock with
+                    | Some gate -> lock gate publish
+                    | None -> publish ()
+                elif not omitted then
+                    omitted <- true
+                    request.OnDiagnostic |> Option.iter (fun emit ->
+                        emit { ExecutionDiagnostic.create "test" "failure" "Additional failed tests omitted by the 64-case diagnostic limit" with Truncated = true })
             match
-                Publish.parseJUnitWithAbort
+                Publish.parseJUnitWithDiagnostics record
                     request.Workspace
                     (patterns raw)
                     request.JUnitSkipOldReportsSince
@@ -719,6 +742,9 @@ module Executor =
                         Success
 
                 { ok status with
+                    Diagnostics =
+                        [ yield! diagnostics
+                          if omitted then yield { ExecutionDiagnostic.create "test" "failure" "Additional failed tests omitted by the 64-case diagnostic limit" with Truncated = true } ]
                     TestTotals = Some(total, failed, skipped)
                     TestDuration = duration
                     StageWarning = if marksStageUnstable then Some Unstable else None

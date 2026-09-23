@@ -1,12 +1,22 @@
 # Fogell
 
-Reliable, self-hosted CI in F#, with an explicit Jenkins migration path.
+Self-hosted CI in F# for a tight human and AI development feedback loop, with
+an explicit Jenkins migration path.
 
 Fogell prioritizes predictable execution, bounded resource use, and recoverable
 operations. Full Jenkins compatibility is not a release goal. The
 [product direction and release gates](docs/PRODUCT_DIRECTION.md) govern new work;
 the [pipeline contract](docs/architecture/PIPELINE_CONTRACT.md) separates required
 behavior from what the current implementation has proven.
+
+The [AI feedback ticket board](docs/AI_FEEDBACK_BOARD.md) and
+[product and architecture design boards](docs/architecture/AI_FEEDBACK_LOOP.md)
+track the implemented submit, observe, diagnose, correct, and verify workflow.
+Clients can capture explicit source snapshots, follow bounded typed feedback,
+reproduce retained inputs, and verify the worker's source and tool identities.
+The [end-to-end evidence](evidence/20260922-ai-e2e/README.md) records a 30-loop
+self-hosted pilot, bounded retention and paired recovery under a declared
+trusted-worker profile. Production release remains a separate gate.
 
 The current authoring input remains Jenkinsfile syntax. A planned versioned
 migration profile will define its supported subset; current proven parity,
@@ -57,6 +67,14 @@ FOGELL_BUILD_CONFIGURATION=Release \
 The final line begins `FG-224 PROOF PASS`. For a persistent controller and the
 authenticated submit/status/log workflow, follow the
 [controller host runbook](docs/runbooks/controller-host.md).
+
+For the agent-facing submit/watch/feedback/cancel workflow, use the
+[F# feedback client](docs/runbooks/feedback-client.md). The
+[failure/fix proof](docs/runbooks/feedback-loop-proof.md) exercises the client
+against an explicitly configured disposable controller.
+For captured source and reproduction, see [source snapshots](docs/runbooks/source-snapshots.md).
+Operators can follow the [retention](docs/runbooks/retention.md) and
+[self-hosted pilot and recovery](docs/runbooks/self-hosted-pilot.md) runbooks.
 
 ## Engineering bastion
 

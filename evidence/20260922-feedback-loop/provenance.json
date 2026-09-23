@@ -1,0 +1,10 @@
+{
+  "base_commit": "1c010549f7738cbd9bbc4ef3e62b9cb412d610d0",
+  "tree_state": "uncommitted working tree; source-manifest binds measured inputs",
+  "source_file_count": 166,
+  "binary_file_count": 108,
+  "source_manifest_sha256": "9409773cfa3700895025c2bbd33b1618e9c90b8dc5c4c964f8b62adcd64fe02c",
+  "binary_manifest_sha256": "4640a6da59ab384c9a601f4c4047fbc12e21efdad24bd29894c90928f0c3b447",
+  "sdk": "10.0.301",
+  "deployment": "dedicated disposable PostgreSQL container; separate pilot database/restricted runtime role; loopback controller and private /tmp state; trusted fixtures, no storage-pool or isolation claim"
+}

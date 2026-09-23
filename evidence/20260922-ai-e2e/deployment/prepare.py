@@ -1,0 +1,10 @@
+import datetime,hashlib,importlib.util,json,pathlib,platform,subprocess
+root=pathlib.Path(__file__).resolve().parent
+c=json.loads((root/'lab.json').read_text());repo=pathlib.Path('/home/srikanth/projects/fogell')
+spec=importlib.util.spec_from_file_location('lab',root/'lab.py');lab=importlib.util.module_from_spec(spec);spec.loader.exec_module(lab)
+tool=json.loads(subprocess.check_output(['dotnet',str(repo/'tools/Fogell.Client/bin/Release/net10.0/Fogell.Client.dll'),'tool-identity','--run-host',str(repo/'tools/Fogell.Run.Host/bin/Release/net10.0/Fogell.Run.Host')]))
+decl={'profile':1,'declared_at_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'host':platform.platform(),'cpu_models':sorted(set(line.split(':',1)[1].strip() for line in pathlib.Path('/proc/cpuinfo').read_text().splitlines() if line.startswith('model name'))),'sdk':subprocess.check_output(['dotnet','--version']).decode().strip(),'postgres':lab.sql('SHOW server_version'),'run_host':tool,'controller':{'workers':1,'max_pipeline_bytes':16777216,'max_log_chunks':100,'poll_ms':50,'lease_seconds':60,'storage_pool_enabled':False,'state_physical_measured_ceiling_bytes':201326592},'binary_files':{str(p.relative_to(repo)):hashlib.sha256(p.read_bytes()).hexdigest() for d in ['src/Fogell.Controller.Host','tools/Fogell.Run.Host','tools/Fogell.Client','tools/Fogell.Retention','tools/Fogell.Recovery'] for p in (repo/d/'bin/Release/net10.0').iterdir() if p.is_file()}}
+(root/'deployment.json').write_text(json.dumps(decl,indent=2)+'\n')
+args=['python3',str(repo/'scripts/prove-self-hosted-pilot.py'),'--url',c['url'],'--organization',c['organization'],'--project',c['project'],'--token-file',str(root/'token'),'--cache',str(root/'packages'),'--state-root',str(root/'state'),'--deployment-declaration',str(root/'deployment.json'),'--retention-command',str(root/'retention-command.json'),'--tool-sha256',tool['run_host_sha256'],'--loops','1','--work',str(root/'smoke-work-1'),'--output',str(root/'smoke-1')]
+(root/'smoke-command.json').write_text(json.dumps(args))
+print(json.dumps({'prepared':True,'run_host':tool}))

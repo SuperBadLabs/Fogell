@@ -1,0 +1,624 @@
+{
+  "schema_version": 1,
+  "controller_identity": "base 1c010549 plus uncommitted M1 feedback implementation; source and runtime dependency manifest recorded separately",
+  "campaign_id": "92294c8a-685b-4fb3-b1f7-4952b9122c51",
+  "started_at_utc": "2026-09-23T04:06:33.072693+00:00",
+  "controller_binary_sha256": "6beb1d2d7bd2ea754117701dd2bedee79b6d353f03810cfd3ac6ba16d17f3680",
+  "client_sha256": "0917b18ff074690c7621808b79651be9513f8e1a44635eccf60576b6f6f75b2d",
+  "environment": "local Linux single trusted controller; isolated PostgreSQL database and state root reused after campaign 1; warm binaries; sequential campaign 2 of 3; fixtures contain deliberate 1-second delay",
+  "organization_id": "3385cbff-de2e-453c-9c12-5d4ea76c66c4",
+  "project_id": "e19c2ffe-5897-4797-8bbe-ae968a179209",
+  "observation_clock": "harness monotonic; relative to each submit process start",
+  "timing_scope": "client process startup, HTTP, polling; not server queue or diagnosis latency",
+  "limits": {
+    "poll_interval_ms": 100,
+    "watch_timeout_seconds": 60,
+    "request_timeout_seconds": 10,
+    "max_response_bytes": 1048576,
+    "max_process_output_bytes": 4194304
+  },
+  "runs": [
+    {
+      "fixture": "failed",
+      "fixture_sha256": "7cd3e6528d9e823afa756c565b9b33c35e239eb15195661a9d16c164a19bf93a",
+      "idempotency_key": "fg265-failed-da89acc9-f39b-4afe-9d59-ea57bd7bc3a7",
+      "submit_exit": 0,
+      "admission_ms": 105.00238696113229,
+      "admission": {
+        "build_id": "c6bf517e-2fa2-4c07-8aac-7e63e825e5be",
+        "node_id": "3456d2b0-f763-43e0-8962-d138a497d2ac",
+        "attempt_id": "a0a06fc8-31d1-48a2-9da4-4db8c5dac22d",
+        "number": 3,
+        "was_existing": false,
+        "client_elapsed_ms": 45
+      },
+      "watch_exit": 1,
+      "pages": [
+        {
+          "observed_ms": 203.27795995399356,
+          "record": {
+            "schema_version": 1,
+            "build_id": "c6bf517e-2fa2-4c07-8aac-7e63e825e5be",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 0,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 46
+          }
+        },
+        {
+          "observed_ms": 305.12996669858694,
+          "record": {
+            "schema_version": 1,
+            "build_id": "c6bf517e-2fa2-4c07-8aac-7e63e825e5be",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 1,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 0,
+                "body": "step-started: Verify candidate#0 sh",
+                "truncated": false
+              }
+            ],
+            "client_elapsed_ms": 160
+          }
+        },
+        {
+          "observed_ms": 406.9028226658702,
+          "record": {
+            "schema_version": 1,
+            "build_id": "c6bf517e-2fa2-4c07-8aac-7e63e825e5be",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 1,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 1,
+                "body": "+ printf FG265_ASSERTION_FAILED expected=2 actual=1",
+                "truncated": false
+              },
+              {
+                "sequence": 2,
+                "body": "",
+                "truncated": false
+              },
+              {
+                "sequence": 3,
+                "body": "FG265_ASSERTION_FAILED expected=2 actual=1",
+                "truncated": false
+              },
+              {
+                "sequence": 4,
+                "body": "+ sleep 1",
+                "truncated": false
+              }
+            ],
+            "client_elapsed_ms": 261
+          }
+        },
+        {
+          "observed_ms": 508.39102594181895,
+          "record": {
+            "schema_version": 1,
+            "build_id": "c6bf517e-2fa2-4c07-8aac-7e63e825e5be",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 363
+          }
+        },
+        {
+          "observed_ms": 609.5345336943865,
+          "record": {
+            "schema_version": 1,
+            "build_id": "c6bf517e-2fa2-4c07-8aac-7e63e825e5be",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 464
+          }
+        },
+        {
+          "observed_ms": 710.85315477103,
+          "record": {
+            "schema_version": 1,
+            "build_id": "c6bf517e-2fa2-4c07-8aac-7e63e825e5be",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 565
+          }
+        },
+        {
+          "observed_ms": 812.5491896644235,
+          "record": {
+            "schema_version": 1,
+            "build_id": "c6bf517e-2fa2-4c07-8aac-7e63e825e5be",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 667
+          }
+        },
+        {
+          "observed_ms": 914.0378027223051,
+          "record": {
+            "schema_version": 1,
+            "build_id": "c6bf517e-2fa2-4c07-8aac-7e63e825e5be",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 769
+          }
+        },
+        {
+          "observed_ms": 1015.3795736841857,
+          "record": {
+            "schema_version": 1,
+            "build_id": "c6bf517e-2fa2-4c07-8aac-7e63e825e5be",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 870
+          }
+        },
+        {
+          "observed_ms": 1116.7886746115983,
+          "record": {
+            "schema_version": 1,
+            "build_id": "c6bf517e-2fa2-4c07-8aac-7e63e825e5be",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 971
+          }
+        },
+        {
+          "observed_ms": 1218.0315046571195,
+          "record": {
+            "schema_version": 1,
+            "build_id": "c6bf517e-2fa2-4c07-8aac-7e63e825e5be",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 1073
+          }
+        },
+        {
+          "observed_ms": 1319.2473738454282,
+          "record": {
+            "schema_version": 1,
+            "build_id": "c6bf517e-2fa2-4c07-8aac-7e63e825e5be",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 6,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 5,
+                "body": "+ exit 1",
+                "truncated": false
+              }
+            ],
+            "client_elapsed_ms": 1174
+          }
+        },
+        {
+          "observed_ms": 1420.9192786365747,
+          "record": {
+            "schema_version": 1,
+            "build_id": "c6bf517e-2fa2-4c07-8aac-7e63e825e5be",
+            "status": "failure",
+            "cancellation_requested": false,
+            "is_terminal": true,
+            "from_sequence": 6,
+            "next_sequence": 9,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 6,
+                "body": "ERROR: script returned exit code 1",
+                "truncated": false
+              },
+              {
+                "sequence": 7,
+                "body": "step-finished: Verify candidate#0 failure",
+                "truncated": false
+              },
+              {
+                "sequence": 8,
+                "body": "stage-committed: Verify candidate",
+                "truncated": false
+              }
+            ],
+            "client_elapsed_ms": 1275
+          }
+        }
+      ],
+      "first_nonempty_feedback_ms": 305.12996669858694,
+      "terminal_observed_ms": 1420.9192786365747
+    },
+    {
+      "fixture": "corrected",
+      "fixture_sha256": "b436a9c3e9f7705e8dc08b7fc6fed3fb1f37a9f38b4a70ed73c6f4ba3109c172",
+      "idempotency_key": "fg265-corrected-1c85419e-39a5-4854-82ca-6167e7cbe9ac",
+      "submit_exit": 0,
+      "admission_ms": 111.6232993081212,
+      "admission": {
+        "build_id": "ec4177b4-2b9e-4e4d-8c6a-c8439bddf6ab",
+        "node_id": "a6c76cf2-7eb7-4e1e-823b-f8052947362c",
+        "attempt_id": "bb95e11f-3a9f-4887-93aa-1b81c64be2c8",
+        "number": 4,
+        "was_existing": false,
+        "client_elapsed_ms": 52
+      },
+      "watch_exit": 0,
+      "pages": [
+        {
+          "observed_ms": 203.08306626975536,
+          "record": {
+            "schema_version": 1,
+            "build_id": "ec4177b4-2b9e-4e4d-8c6a-c8439bddf6ab",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 0,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 40
+          }
+        },
+        {
+          "observed_ms": 305.3406891413033,
+          "record": {
+            "schema_version": 1,
+            "build_id": "ec4177b4-2b9e-4e4d-8c6a-c8439bddf6ab",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 0,
+            "next_sequence": 1,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 0,
+                "body": "step-started: Verify candidate#0 sh",
+                "truncated": false
+              }
+            ],
+            "client_elapsed_ms": 154
+          }
+        },
+        {
+          "observed_ms": 407.3400082997978,
+          "record": {
+            "schema_version": 1,
+            "build_id": "ec4177b4-2b9e-4e4d-8c6a-c8439bddf6ab",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 1,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 1,
+                "body": "+ printf FG265_ASSERTION_PASSED expected=2 actual=2",
+                "truncated": false
+              },
+              {
+                "sequence": 2,
+                "body": "",
+                "truncated": false
+              },
+              {
+                "sequence": 3,
+                "body": "FG265_ASSERTION_PASSED expected=2 actual=2",
+                "truncated": false
+              },
+              {
+                "sequence": 4,
+                "body": "+ sleep 1",
+                "truncated": false
+              }
+            ],
+            "client_elapsed_ms": 256
+          }
+        },
+        {
+          "observed_ms": 508.7842200882733,
+          "record": {
+            "schema_version": 1,
+            "build_id": "ec4177b4-2b9e-4e4d-8c6a-c8439bddf6ab",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 358
+          }
+        },
+        {
+          "observed_ms": 610.2920733392239,
+          "record": {
+            "schema_version": 1,
+            "build_id": "ec4177b4-2b9e-4e4d-8c6a-c8439bddf6ab",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 459
+          }
+        },
+        {
+          "observed_ms": 711.7977561429143,
+          "record": {
+            "schema_version": 1,
+            "build_id": "ec4177b4-2b9e-4e4d-8c6a-c8439bddf6ab",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 561
+          }
+        },
+        {
+          "observed_ms": 813.6031520552933,
+          "record": {
+            "schema_version": 1,
+            "build_id": "ec4177b4-2b9e-4e4d-8c6a-c8439bddf6ab",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 663
+          }
+        },
+        {
+          "observed_ms": 915.235267020762,
+          "record": {
+            "schema_version": 1,
+            "build_id": "ec4177b4-2b9e-4e4d-8c6a-c8439bddf6ab",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 764
+          }
+        },
+        {
+          "observed_ms": 1017.0066533610225,
+          "record": {
+            "schema_version": 1,
+            "build_id": "ec4177b4-2b9e-4e4d-8c6a-c8439bddf6ab",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 866
+          }
+        },
+        {
+          "observed_ms": 1118.603767361492,
+          "record": {
+            "schema_version": 1,
+            "build_id": "ec4177b4-2b9e-4e4d-8c6a-c8439bddf6ab",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 967
+          }
+        },
+        {
+          "observed_ms": 1220.1473410241306,
+          "record": {
+            "schema_version": 1,
+            "build_id": "ec4177b4-2b9e-4e4d-8c6a-c8439bddf6ab",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 5,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [],
+            "client_elapsed_ms": 1069
+          }
+        },
+        {
+          "observed_ms": 1321.8063153326511,
+          "record": {
+            "schema_version": 1,
+            "build_id": "ec4177b4-2b9e-4e4d-8c6a-c8439bddf6ab",
+            "status": "running",
+            "cancellation_requested": false,
+            "is_terminal": false,
+            "from_sequence": 5,
+            "next_sequence": 6,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 5,
+                "body": "+ exit 0",
+                "truncated": false
+              }
+            ],
+            "client_elapsed_ms": 1171
+          }
+        },
+        {
+          "observed_ms": 1423.2742483727634,
+          "record": {
+            "schema_version": 1,
+            "build_id": "ec4177b4-2b9e-4e4d-8c6a-c8439bddf6ab",
+            "status": "success",
+            "cancellation_requested": false,
+            "is_terminal": true,
+            "from_sequence": 6,
+            "next_sequence": 8,
+            "has_more": false,
+            "truncated": false,
+            "chunks": [
+              {
+                "sequence": 6,
+                "body": "step-finished: Verify candidate#0 success",
+                "truncated": false
+              },
+              {
+                "sequence": 7,
+                "body": "stage-committed: Verify candidate",
+                "truncated": false
+              }
+            ],
+            "client_elapsed_ms": 1272
+          }
+        }
+      ],
+      "first_nonempty_feedback_ms": 305.3406891413033,
+      "terminal_observed_ms": 1423.2742483727634
+    }
+  ],
+  "passed": true,
+  "controls": [
+    {
+      "control": "false_success",
+      "rejected": true,
+      "reason": "failed has unexpected terminal status"
+    },
+    {
+      "control": "missing_output",
+      "rejected": true,
+      "reason": "expected execution output absent"
+    },
+    {
+      "control": "undrained_terminal",
+      "rejected": true,
+      "reason": "terminal evidence was not drained"
+    },
+    {
+      "control": "wrong_watch_exit",
+      "rejected": true,
+      "reason": "watch exit differs"
+    },
+    {
+      "control": "reused_submission_key",
+      "rejected": true,
+      "reason": "reused submission key"
+    },
+    {
+      "control": "wrong_build_identity",
+      "rejected": true,
+      "reason": "feedback build identity differs"
+    },
+    {
+      "control": "cursor_gap",
+      "rejected": true,
+      "reason": "feedback cursor gap or replay"
+    },
+    {
+      "control": "nonfinite_timing",
+      "rejected": true,
+      "reason": "non-monotonic observation"
+    },
+    {
+      "control": "regressed_timing",
+      "rejected": true,
+      "reason": "non-monotonic observation"
+    },
+    {
+      "control": "missing_progressive_feedback",
+      "rejected": true,
+      "reason": "nonempty progressive feedback was not observed before terminal"
+    }
+  ]
+}

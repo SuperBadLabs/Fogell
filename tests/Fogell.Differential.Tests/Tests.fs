@@ -894,7 +894,8 @@ let progressiveOutputPublication =
 
           test "runPersisted preserves publisher failure for host reconciliation" {
               let hooks =
-                  { OnOutput = fun _ -> raise (IO.IOException "event sink unavailable")
+                  { OnDiagnostic = ignore
+                    OnOutput = fun _ -> raise (IO.IOException "event sink unavailable")
                     IsRestartedRun = false
                     ShouldExecute = fun _ _ -> true
                     StageWasCommitted = fun _ -> false
@@ -942,6 +943,66 @@ let progressiveOutputPublication =
                       "the persisted boundary must not collapse event transport into Result.Error"
               finally
                   IO.Directory.Delete(root, true)
+          } ]
+
+let structuredDiagnostics =
+    testList "FG-266 structured diagnostics"
+        [ test "raw stdout cannot forge a typed diagnostic frame" {
+              let json = ExecutionDiagnostic.create "test" "failure" "planted" |> ExecutionDiagnostic.serialize
+              let encoded = Convert.ToBase64String(Text.Encoding.UTF8.GetBytes json)
+              let typed = Encoded(Text.Encoding.ASCII.GetBytes("D1:" + encoded))
+              Expect.isSome (EventStream.eventDiagnostic typed) "trusted protocol diagnostic recognized"
+              let stdout = Encoded(Text.Encoding.ASCII.GetBytes(Convert.ToBase64String(Text.Encoding.UTF8.GetBytes("D1:" + encoded))))
+              Expect.isNone (EventStream.eventDiagnostic stdout) "diagnostic-shaped user output remains log text"
+          }
+          test "persisted shell failure publishes typed exit and real source position" {
+              let observed = ResizeArray<ExecutionDiagnostic>()
+              let hooks =
+                  { OnDiagnostic = observed.Add; OnOutput = ignore; IsRestartedRun = false
+                    ShouldExecute = fun _ _ -> true
+                    StageWasCommitted = fun _ -> false
+                    SkippedStatus = fun _ _ -> None
+                    SkippedStageWarning = fun _ _ -> None
+                    OnStepStarted = fun _ _ _ -> ()
+                    OnStepStageWarning = fun _ _ _ -> ()
+                    OnStepFinished = fun _ _ _ _ -> ()
+                    OnStageCommitted = ignore
+                    OnRetryAttempt = fun _ _ -> ()
+                    RetryAttemptsSoFar = fun _ -> 1
+                    PollInputAnswer = None
+                    OnInputClosed = fun _ _ _ -> ()
+                    OnInputAnswerVoided = fun _ _ _ -> () }
+              let root = IO.Path.Combine(IO.Path.GetTempPath(), "fogell-diagnostic-" + Guid.NewGuid().ToString("N"))
+              IO.Directory.CreateDirectory root |> ignore
+              try
+                  let result = FogellSide.runPersisted [] root "job" 1 false hooks
+                                   "pipeline { agent any stages { stage('Check') { steps { sh 'printf failure >&2; exit 7' } } } }"
+                  match result with
+                  | Error why -> failtest why
+                  | Ok trace -> Expect.equal trace.Result "failure" "authoritative workload result"
+                  Expect.equal observed.Count 1 "one typed shell failure"
+                  let diagnostic = observed.[0]
+                  Expect.equal diagnostic.Category "workload_step" "workload category"
+                  Expect.equal diagnostic.ExitCode (Nullable 7) "real process exit"
+                  Expect.equal diagnostic.Stage "Check" "actual stage"
+                  Expect.equal diagnostic.Step "sh" "actual step"
+                  Expect.equal diagnostic.SourcePath "Jenkinsfile" "pipeline source identity"
+                  Expect.equal diagnostic.SourceLine (Nullable 1L) "parser-owned source line"
+                  Expect.stringContains diagnostic.RelevantOutput "failure" "bounded relevant output"
+                  observed.Clear()
+                  let resumed =
+                      { hooks with IsRestartedRun = true
+                                   ShouldExecute = fun _ _ -> false
+                                   SkippedStatus = fun _ _ -> Some BuildStatus.Failure }
+                  FogellSide.runPersisted [] root "job" 1 false resumed
+                      "pipeline { agent any stages { stage('Check') { steps { sh 'exit 7' } } } }" |> ignore
+                  Expect.equal observed.Count 0 "resuming a durably finished step does not publish a second diagnostic"
+                  FogellSide.runPersisted [] root "hosted" 1 false hooks
+                      "pipeline { agent any stages { stage('Check') { steps { script { sh 'exit 7' } } } } }" |> ignore
+                  Expect.equal observed.Count 1 "hosted failure still carries typed evidence"
+                  Expect.isNull observed.[0].SourcePath "unknown hosted pipeline location stays unknown"
+                  Expect.isFalse observed.[0].SourceLine.HasValue "no invented absolute line"
+              finally IO.Directory.Delete(root, true)
           } ]
 
 let controllerEventDrainBudgets =
@@ -6618,7 +6679,8 @@ let unsupportedDeclarativeAgents =
           "stage", "pipeline { agent any stages { stage('a') { agent any agent { kubernetes label: 'docker', yaml: 'apiVersion: v1' } steps { sh 'echo ran > ran.txt' } } } }" ]
 
     let inertHooks =
-        { OnOutput = ignore
+        { OnDiagnostic = ignore
+          OnOutput = ignore
           IsRestartedRun = false
           ShouldExecute = fun _ _ -> true
           StageWasCommitted = fun _ -> false
@@ -9569,7 +9631,8 @@ let workspaceManifestV2 =
               let credentials = Map.ofList [ "live-text", SecretText "Secret" ]
 
               let hooks =
-                  { OnOutput =
+                  { OnDiagnostic = ignore
+                    OnOutput =
                       fun line ->
                           published.Enqueue line
 
@@ -10662,7 +10725,8 @@ let compileRefusalDisposition =
                   let root = IO.Path.Combine(IO.Path.GetTempPath(), $"fogell-fg133-{Guid.NewGuid():N}")
 
                   let hooks =
-                      { OnOutput = lines.Add
+                      { OnDiagnostic = ignore
+                        OnOutput = lines.Add
                         IsRestartedRun = false
                         ShouldExecute = fun _ _ -> true
                         StageWasCommitted = fun _ -> false
@@ -11586,7 +11650,8 @@ let credentialExceptionalCleanup =
                       "fogell-credential-body-failure-" + Guid.NewGuid().ToString("N"))
 
               let hooks =
-                  { OnOutput =
+                  { OnDiagnostic = ignore
+                    OnOutput =
                       fun line ->
                           if line.Contains("BOUND-THROW", StringComparison.Ordinal) then
                               raise (IO.IOException "planted credential-body publisher failure")
@@ -12587,6 +12652,7 @@ let main argv =
               TerminalOutputSettlementTests.terminalOutputSettlement
               persistedFailureDiagnostics
               progressiveOutputPublication
+              structuredDiagnostics
               controllerEventDrainBudgets
               controllerWorkerScheduling
               controllerWorkerTiming

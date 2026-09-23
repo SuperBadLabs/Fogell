@@ -63,6 +63,9 @@ type StashStore =
 
 module Publish =
 
+    type private DiagnosticCallbackException(inner: exn) =
+        inherit Exception("diagnostic callback failed", inner)
+
     type private MissingJUnitTestNameException() =
         inherit IOException("JUnit testcase has no name attribute or class fallback")
 
@@ -1092,7 +1095,8 @@ module Publish =
     /// StepRequest.DeadlineExpired was documented as polled by "archive, junit" and
     /// only archive read it, so a `timeout` whose last step is `junit` could scan many
     /// reports and return Success or Unstable after the deadline.
-    let internal parseJUnitWithAbortUsingScanLimit
+    let private parseJUnitCore
+        (onFailure: Fogell.Domain.ExecutionDiagnostic -> unit)
         (scanLimit: int)
         (workspace: string)
         (patterns: string list)
@@ -1360,6 +1364,20 @@ module Publish =
                                 skipped <- skipped + 1L
                             elif hasDirectChild "failure" element || hasDirectChild "error" element then
                                 failed <- failed + 1L
+                                let attr name = firstAttribute name element |> Option.map (fun a -> a.Value) |> Option.defaultValue null
+                                let failure =
+                                    Seq.append (directElements "failure" element) (directElements "error" element)
+                                    |> Seq.tryHead
+                                let message = failure |> Option.map (fun e ->
+                                    let summary = firstAttribute "message" e |> Option.map (fun a -> a.Value) |> Option.defaultValue ""
+                                    summary + "\n" + e.Value) |> Option.defaultValue "test failed"
+                                let line = match Int64.TryParse(attr "line") with | true, n when n > 0L -> Nullable n | _ -> Nullable()
+                                try
+                                    onFailure
+                                        { Fogell.Domain.ExecutionDiagnostic.create "test" "failure" message with
+                                            TestName = attr "name"; TestClass = attr "classname"
+                                            SourcePath = attr "file"; SourceLine = line; ReportPath = relative }
+                                with ex -> raise (DiagnosticCallbackException ex)
 
                         match doc.Root with
                         | null -> ()
@@ -1451,6 +1469,7 @@ module Publish =
                                     |> Array.rev
                                     |> Array.iter (fun nested -> pending.Push(nested, false))
                 with
+                | :? DiagnosticCallbackException as ex -> raise ex.InnerException
                 | :? OldJUnitReportException -> ()
                 | :? EmptyJUnitReportException ->
                     total <- total + 1L
@@ -1489,6 +1508,12 @@ module Publish =
                      |> List.forall (fun value -> value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue) ->
                 Ok(int total, int failed, int skipped, duration)
             | false, None, false -> Error(Unreadable "test report counts exceed the JUnit Integer summary range")
+
+    let internal parseJUnitWithAbortUsingScanLimit scanLimit workspace patterns skipOldReportsSince abort =
+        parseJUnitCore ignore scanLimit workspace patterns skipOldReportsSince abort
+
+    let parseJUnitWithDiagnostics onFailure workspace patterns skipOldReportsSince abort =
+        parseJUnitCore onFailure junitScanLimit workspace patterns skipOldReportsSince abort
 
     let parseJUnitWithAbort workspace patterns skipOldReportsSince abort =
         parseJUnitWithAbortUsingScanLimit
