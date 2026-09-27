@@ -1,114 +1,35 @@
-# Product direction and release gates
+# Product direction and roadmap
 
-Fogell's goal is reliable, self-hosted CI for a tight human and AI development
-feedback loop. A practical Jenkins migration path is secondary.
-[ADR 0010](adr/0010-production-first-ci.md) governs the compatibility boundary.
-The owner's 2026-09-22 direction is developed in the
-[product and architecture boards](architecture/AI_FEEDBACK_LOOP.md), with
-implementation tracked on the [AI feedback ticket board](AI_FEEDBACK_BOARD.md).
-This is a delivery plan, not a production certification.
+Fogell is reliable self-hosted CI for human and AI development feedback loops.
+Native versioned JSON is the only pipeline authoring contract. Work is selected
+by supported user workflows, safety and operational evidence.
 
-## Initial user and deployment
+The native baseline passes 569 automated tests and the local runner/controller
+proof: admission, source verification, failure/fix feedback, artifacts, source
+retrieval, cancellation, terminal replay and interrupted-run reconciliation.
+The build has zero warnings or errors. This is functional validation; sustained
+operation and recovery objectives still require the qualification below.
 
-Target a small team operating CI for mutually trusted projects on a dedicated
-Linux host or VM with PostgreSQL and externally enforced resource and network
-controls. The [threat model](THREAT_MODEL.md) defines the current boundary;
-container use alone does not make same-UID workloads hostile-tenant safe.
-The global controller bearer token is not per-user RBAC. Broader tenancy,
-untrusted pull requests, and remote-worker isolation need separate designs and
-proof before being offered.
+The [26 September Luigi campaign](../reports/luigi-2026-09-26/REPORT.md)
+found release qualification blockers beyond the passing gate: failed JUnit
+results broke persisted execution, and newline-terminated environment names
+bypass validation. It also measured a practical burst-output queue limit.
+The JUnit/journal integration is fixed in the current working tree and covered
+by persisted-runner and controller regressions. Resolve the remaining findings
+before advancing to a sustained native pilot.
 
-Current pipeline input is Jenkinsfile syntax interpreted by the existing F#
-engine. Parsing, execution support, and proven Jenkins parity are different
-claims. The [generated ledger](COMPATIBILITY-LEDGER.tsv),
-[scorecard](COMPATIBILITY-SCORECARD.md), and
-[known limitations](KNOWN-LIMITATIONS.md) describe the current evidence.
-They are regression and migration tools, not the release progress meter.
+This release replaces the previous authoring/runtime path. Old campaign results
+are historical and do not qualify the native runtime. Production release requires
+fresh validation of the supported profile.
 
-## What has landed
-
-The merged production batches have bounded individual runner output, improved
-log publication throughput, introduced shared output budgets across a build,
-and bounded artifact publication and interrupted-copy cleanup. The
-[controller runbook](runbooks/controller-host.md) owns the settings and limits.
-The PRs linked in ADR 0010 own their measured validation results.
-
-The opt-in [bounded storage pool](runbooks/storage-pool.md) adds kernel-enforced
-aggregate workspace, stash, artifact, and runner scratch limits for one local
-worker. It requires an operator-provisioned dedicated filesystem with finite
-bytes and inodes. Free-space guards control admission; an exclusive durable
-pool marker prevents overlapping Fogell writers and blocks uncertain restart.
-It is not a per-build quota, concurrent-worker reservation, or history-retention
-policy. Without this opt-in policy, arbitrary workspace writes remain unbounded.
-Missing terminal execution evidence still requires reconciliation.
-
-## Release gates
-
-The AI feedback initiative brings a bounded internal failure/fix experiment
-forward alongside production hardening. This changes experiment sequencing:
-we learn from a real agent-facing workflow before the sustained pilot. It does
-not waive retention, operator recovery, trust boundaries, or the release gates
-below. The AI board owns experiment scope and measurements; this table owns
-production release criteria.
-
-These are ordered delivery batches. Each is open until its stated evidence is
-produced; this table introduces no DONE ticket and changes no historical board
-accounting. Security or correctness defects in the supported path take priority
-over this sequence.
-
-| Order | Deliverable | Required acceptance evidence |
+| Order | Deliverable | Exit evidence |
 | --- | --- | --- |
-| 1 — Storage safety | Workspace/stash bounds and disk-capacity admission, with explicit operator policy and a race-safe capacity decision. | Concurrent builds cannot bypass the configured reservation or quota; actual writes are constrained by the declared enforcement boundary. Disk pressure refuses new work with a durable reason. Cancellation, crash, and restart release or reconcile reservations without deleting another attempt's data. A normal control succeeds after pressure is relieved. |
-| 2 — Retention | Bounded, resumable cleanup for logs, completed workspaces, snapshots, and artifact history. | Age/size/count policies preserve active attempts and required reconciliation evidence. Concurrent cleanup, restart mid-delete, filesystem substitution, and database/filesystem disagreement fail safely. Work per sweep is bounded and usage eventually returns below the declared target under the tested workload. |
-| 3 — Operator recovery | Installation, upgrade/rollback, paired database/state backup and restore, reconciliation procedures, and useful health/capacity signals. | Run the procedures against a disposable deployment, including interrupted upgrade and stale workers after restore. Record recovery time and any data loss; compare them with explicit release targets. Do not claim a target before measuring it. |
-| 4 — Controlled pilot | A versioned migration profile, actionable eligibility report, named representative CI jobs, and a sustained load/failure campaign. | A pipeline gets a supported, needs-change, or refused disposition with reasons. Approved jobs run through Controller.Host, preserve expected outputs and artifacts, and survive the declared cancellation/restart cases. Pin the profile, workload, concurrency, duration, resource limits, and pass thresholds before the campaign. Include Fogell building and testing itself as a candidate workload, subject to that profile. |
+| 1 | Native execution qualification | Controller admission, source snapshots, typed failure/fix feedback, artifacts, cancellation and crash/restart work end to end with the native definition format. |
+| 2 | Unattended operations | Scheduled retention and backups, cleanup catch-up after downtime, held-work alerts and measured filesystem/database capacity. |
+| 3 | Representative sustained pilot | Full Fogell build/test plus named real projects over multiple days; cold dependency and resource-pressure cases; uncensored latency and failure measurements. |
+| 4 | Recovery qualification | Native runtime installation, upgrade/rollback and paired restore, including stale writers; measured whole-procedure recovery time and data loss against declared objectives. |
+| 5 | Expanded deployment only when needed | Independently designed worker isolation, quotas, user authorization and remote execution, each with adversarial evidence. |
 
-Batch 1's first implementation uses a dedicated filesystem as the aggregate
-write boundary and admits one Fogell writer at a time. The storage-pool runbook
-states its enforcement, recovery, and trust assumptions. Per-build isolation
-and concurrent workers would require independently enforced slots or quotas;
-application byte counting cannot provide either. The
-[persistent ext4 campaign](../evidence/20260916-ext4-persistence/README.md)
-closes the VM crash/reboot evidence gap for this single-writer profile: nine
-abrupt guest terminations cover active execution, a synced recovery receipt
-before clearing, and the completed clear. Dirty state refuses new work after
-reboot; explicit recovery preserves receipts and permits the queued control.
-This is not physical-host power-loss certification or paired backup/restore
-proof. Retention is the next delivery batch; operator recovery remains a
-separate release gate.
-
-## Selecting work from the existing board
-
-1. Fix a security, false-success, data-loss, or availability defect affecting the
-   supported path according to its measured severity.
-2. Deliver the bounded internal feedback milestone on the
-   [AI feedback board](AI_FEEDBACK_BOARD.md) alongside the release gates above.
-   Sustained unattended use still requires retention and recovery evidence.
-3. Add a capability only when a named user workflow needs it. State who needs
-   it, its Fogell contract, migration impact, failure modes, operating cost,
-   implementation scope, and acceptance measurement before implementing it.
-
-The legacy board keeps ticket statuses and evidence; being unselected does not
-mean a ticket is fixed. Compatibility-only expansion is deferred until it meets
-rule 3. No ticket becomes urgent merely because it admits more corpus files.
-Existing supported behavior keeps its tests and receipts. Differential probes
-are required when making or changing a Jenkins compatibility claim; they are
-not the oracle for a new Fogell-only operational feature.
-
-PR #446's proposed capability waves require re-triage against these rules.
-Its corpus survey and design work remain useful inputs. Its replacement must
-identify which proposed capabilities serve the pilot; it cannot silently restore
-corpus-ranked delivery. This decision does not claim those proposed features
-have been implemented or authorize executing additional corpus files.
-
-## Delivery and cost
-
-Use one PR for a coherent batch, with cheaper implementation agents and an
-independent reviewer where useful. Review shared lifecycle and failure behavior
-before publication. Use automatic GitHub reviews; do not request extra paid
-reviews or replace a PR solely to retrigger a reviewer. Record exact-commit
-coverage and any tooling limitation honestly. The
-[board operating contract](EXECUTION_BOARD.md#execution-cycle-and-definition-of-done)
-defines the required local-QA/Codex route, optional stale Copilot coverage, and
-the explicit evidence fallback for an unsupported bot-result format. Existing
-required checks and the full pre-publication gate remain in force.
+Correctness, data loss, false success and security defects in the supported path
+precede feature work. Keep the global bearer, single-node and trusted-workload
+limits explicit. Do not publish or deploy a release without owner authorization.

@@ -1787,11 +1787,6 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
 
                     Ok { Effects = page; NextCursor = next }
 
-    /// Read-only idempotency probe for admission compatibility across stricter
-    /// execution preflights. An exact durable result may be replayed without
-    /// asking the current release to admit the source again. A miss is only a
-    /// hint: the caller must still use AdmitBuild after preflight, because its
-    /// transaction and unique constraint remain the create/race arbiter.
     member _.TryReplayAdmission(input: AdmissionProbe) : Result<Admission option, string> =
         if String.IsNullOrWhiteSpace input.IdempotencyKey then
             Error "idempotency key is required"
@@ -1995,10 +1990,6 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
                 insert.Parameters.AddWithValue("k", input.IdempotencyKey) |> ignore
                 let number = insert.ExecuteScalar() :?> int
 
-                // The persisted runner owns one whole Jenkinsfile.  Scheduling
-                // it once per parsed stage would duplicate cross-stage effects
-                // and break environment/post semantics, so a build has exactly
-                // one local execution node; stage detail remains in the source.
                 let firstNode = Guid.NewGuid()
                 use n = conn.CreateCommand()
                 n.Transaction <- tx
@@ -2989,10 +2980,6 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
         tx.Commit()
         requested
 
-    /// FG-061 wait diagnostics. Distinguishes an EMPTY queue from a concrete
-    /// capability mismatch, and names the missing capabilities — Jenkins' own
-    /// "There are no nodes with the label X" is the behaviour worth matching
-    /// (JB-AGT-004), and it is far better than an unexplained wait.
     member _.ExplainWait(org: OrganizationId, trustPool: string, capabilities: string list) : string =
         use conn = openConn ()
         use tx = beginTenantTransaction conn org
@@ -3494,7 +3481,6 @@ type Store(connectionString: string, ?maintenanceConnectionString: string) =
             || status = "unstable"
             || status = "failure"
             || status = "aborted"
-            // Read compatibility for pre-FG-224 fixtures/rows.
             || status = "succeeded"
             || status = "failed"
             ->

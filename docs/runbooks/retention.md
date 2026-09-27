@@ -3,7 +3,7 @@
 `Fogell.Retention` expires terminal execution payload under an explicit
 organization policy. It is an operator tool using the maintenance connection;
 it is not a worker capability or automatic unattended scheduler. Read the
-[ownership/state-machine design](../architecture/RETENTION.md) first.
+[deployment boundary](../THREAT_MODEL.md) first.
 
 The supported implementation requires Linux x64, a filesystem exposing statx
 mount/inode/birth identity, and working descriptor-relative rename/unlink/fsync.
@@ -76,9 +76,3 @@ status remain durable. Payload expiry copies source/admission digests to the
 tombstone first; repeating the old admission key refuses expired evidence.
 Use a new deliberate submission for a new run. No retention operation creates a
 retry, repairs uncertain effects or changes terminal execution truth.
-
-The [retained focused proof](../../evidence/20260922-retention/README.md) covers
-23 safety tests against fresh PostgreSQL databases, repeated three times. Each
-test run creates and drops only its UUID-named database and private temporary
-state trees. The real feedback/pilot campaign records workload capacity recovery
-separately; policy bounds and workloads must accompany any such claim.

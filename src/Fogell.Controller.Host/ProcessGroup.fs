@@ -191,11 +191,6 @@ module internal ProcessGroup =
 
             if fields.Length <= 19 then None else Some fields
 
-    /// A zombie cannot execute code, write a journal, or perform an external
-    /// effect. LinuxKit may retain it indefinitely when container pid 1 does
-    /// not reap, so kill(-pgid, 0) is not an extinction oracle. getpgid filters
-    /// candidates before stat is read; an uncertain membership query or an
-    /// unreadable target-group stat remains fail-closed.
     let internal classifyGroupMembers processGroupId observations =
         let mutable live = false
         let mutable defunct = false

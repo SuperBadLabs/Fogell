@@ -1,8 +1,0 @@
-[00:10:19 INF] EXPECTO? Running tests... <Expecto>
-[00:10:25 INF] EXPECTO! 1 tests run in 00:00:06.3381179 for Fogell.Store.FG-026b effect reconciliation.classification is commit-ordered per organization: a classifier waits behind a held classification of the same organization, its rows carry the later uncertain_at, a cursor issued from the earlier rows reaches them, and a held live attempt is still never waited on – 1 passed, 0 ignored, 0 failed, 0 errored. Success! <Expecto>
-[00:10:25 INF] EXPECTO?! Summary...
-Passed:  1
-	Fogell.Store.FG-026b effect reconciliation.classification is commit-ordered per organization: a classifier waits behind a held classification of the same organization, its rows carry the later uncertain_at, a cursor issued from the earlier rows reaches them, and a held live attempt is still never waited on
-Ignored: 0
-Failed:  0
-Errored: 0 <Expecto>

@@ -1,8 +1,0 @@
-SELECT 'public.effect_checkpoints_uncertain_seq' || E'\t' || last_value::text || E'\t' || is_called::text FROM public.effect_checkpoints_uncertain_seq
-SELECT 'public.events_id_seq' || E'\t' || last_value::text || E'\t' || is_called::text FROM public.events_id_seq
-SELECT 'public.log_chunks_id_seq' || E'\t' || last_value::text || E'\t' || is_called::text FROM public.log_chunks_id_seq
-SELECT 'public.outbox_id_seq' || E'\t' || last_value::text || E'\t' || is_called::text FROM public.outbox_id_seq
-public.effect_checkpoints_uncertain_seq	1	false
-public.events_id_seq	1	false
-public.log_chunks_id_seq	1	true
-public.outbox_id_seq	1	false

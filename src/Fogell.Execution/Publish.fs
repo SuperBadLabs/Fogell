@@ -8,10 +8,6 @@ open System.Text
 open System.Threading
 open System.Text.RegularExpressions
 
-/// Where published artifacts and test results are collected. Kept separate from
-/// the workspace so archiving is observable without polluting what the next step
-/// sees — and so the differential's workspace hash is not perturbed by the act
-/// of archiving.
 type ArtifactStore =
     { Root: string
       Limits: ArtifactLimits }
@@ -27,15 +23,6 @@ type ArtifactStore =
     static member withLimits(limits: ArtifactLimits) (store: ArtifactStore) =
         { store with Limits = limits }
 
-/// FG-042 / FG-043. Artifact archiving and test-result ingest.
-///
-/// Both are *publishing* operations: they read the workspace and record
-/// something durable elsewhere. Neither mutates the workspace, which is what
-/// keeps the differential's workspace hash meaningful.
-/// FG-043. Why a test-report read did not produce counts. REVIEW FIX (Codex, PR #14
-/// round 10): an interruption was returned as a plain `Error`, so the caller mapped it
-/// to Failure and a `timeout` ending in `junit` selected `post { failure }` instead of
-/// `post { aborted }` — unlike shell and archive timeouts. The cause has to survive.
 type JUnitProblem =
     | Interrupted
     | NoReports
@@ -45,17 +32,10 @@ type JUnitProblem =
 
 module JUnitDiagnostics =
 
-    /// FG-212. Literal line captured from the pinned Jenkins/JUnit oracle. The
-    /// enhanced-NPE local name belongs to that exact runtime build.
     [<Literal>]
     let MissingTestNameMessage =
-        "Cannot invoke \"String.contains(java.lang.CharSequence)\" because \"nameAttr\" is null"
+        "Test report case is missing a name"
 
-/// FG-047. Controller-side stash storage.
-///
-/// Jenkins keeps a stash with the BUILD, not in the workspace, which is what makes it
-/// survive `deleteDir()` — measured in the behavioural spec. Storing it under the
-/// workspace would pass a naive test and fail the one that matters.
 type StashStore =
     { Root: string }
 
@@ -143,9 +123,6 @@ module Publish =
         let regex = compileGlobRegex caseSensitive pattern
         fun (relative: string) -> regex.IsMatch relative
 
-    /// Expand a Jenkins-style ant glob (`**/*.jar`, `target/*.txt`, `out.txt`)
-    /// against a workspace. Deliberately supports only the forms measured in the
-    /// corpus; anything else is reported rather than silently matching nothing.
     let private expandGlobWithCase (caseSensitive: bool) (workspace: string) (pattern: string) : string list =
         if not (Directory.Exists workspace) then
             []
@@ -159,9 +136,6 @@ module Publish =
             |> Array.sort
             |> Array.toList
 
-    // Existing archive/stash compatibility is case-insensitive. JUnit's pinned
-    // Ant FileSet keeps DirectoryScanner.caseSensitive at its true default, so
-    // report selection uses a separate exact-case entry point.
     let expandGlob workspace pattern = expandGlobWithCase false workspace pattern
 
     // Ant tokenizes include patterns by path component and discards empty tokens,
@@ -393,11 +367,6 @@ module Publish =
                 | Some failure -> Error failure
                 | None -> Error(Unreadable($"JUnit report scan failed: {ex.GetType().Name}"))
 
-    // FileInfo.Exists/Length do not consistently follow a dangling Unix link the
-    // way java.io.File does: Exists may describe the link entry and Length can
-    // then throw while Java's exists()/length() report false/zero. Resolve links
-    // explicitly for the JUnit paths whose Ant/Jenkins behavior depends on the
-    // final target. Other publishers intentionally keep their existing semantics.
     type private JUnitTargetResolution =
         | TargetMissing
         | TargetFound of FileInfo
@@ -894,10 +863,6 @@ module Publish =
         (limits: ArtifactLimits)
         (abort: unit -> bool)
         =
-        // Archive scanning accepts untrusted Jenkinsfile patterns. Its regexes
-        // are generated from glob literals only, so the non-backtracking engine
-        // bounds each match. Independent compilation and evaluation counters
-        // prevent pattern count from multiplying the filesystem-entry budget.
         let mutable compiledPatterns = 0
         let matchers =
             patterns
@@ -1084,23 +1049,12 @@ module Publish =
     let archive store buildKey workspace patterns =
         archiveWithAbort store buildKey workspace patterns (fun () -> false) |> fst
 
-    /// Parse JUnit XML totals. The pinned plugin derives its summary from testcase
-    /// children and ignores the suite aggregate attributes, which are frequently
-    /// absent, stale, or producer-specific.
-    /// The pinned JUnit plugin turns a syntactically malformed `.xml` report into
-    /// one synthetic failed test (`[failed-to-read]`) and continues aggregating
-    /// the other matched reports. Preserve that narrow compatibility rule while
-    /// keeping nonzero-file open failures and malformed non-XML inputs unreadable.
-    /// `abort` is polled between report files. REVIEW FIX (Codex, PR #14 round 9):
-    /// StepRequest.DeadlineExpired was documented as polled by "archive, junit" and
-    /// only archive read it, so a `timeout` whose last step is `junit` could scan many
-    /// reports and return Success or Unstable after the deadline.
     let private parseJUnitCore
         (onFailure: Fogell.Domain.ExecutionDiagnostic -> unit)
         (scanLimit: int)
         (workspace: string)
         (patterns: string list)
-        (skipOldReportsSince: int64 option)
+        (not_beforeSince: int64 option)
         (abort: unit -> bool)
         : Result<int * int * int * single option, JUnitProblem> =
         let files, selectionProblem =
@@ -1125,7 +1079,7 @@ module Publish =
             Error selectionProblem.Value
         elif List.isEmpty files then
             // Keep absence distinct from a report which matched but could not be
-            // read. `allowEmptyResults` may permit this condition, but must never
+            // read. `allow_empty` may permit this condition, but must never
             // suppress a genuine I/O or parse failure.
             Error NoReports
         else
@@ -1151,14 +1105,9 @@ module Publish =
                     aborted <- true
                 else
                 try
-                    // Jenkins calls File.length() before opening or parsing. Java
-                    // returns zero both for a zero-byte file and for a path which
-                    // vanished after glob expansion, so both become one synthetic
-                    // `[empty]` failure without an open attempt. A non-empty parse
-                    // failure is recovered only for an exact lowercase `.xml` path.
                     match candidate.PhysicalTarget with
                     | None ->
-                        match skipOldReportsSince with
+                        match not_beforeSince with
                         | Some _ ->
                             immediateProblem <-
                                 Some(
@@ -1179,7 +1128,7 @@ module Publish =
                                 FileAccess.Read,
                                 FileShare.ReadWrite ||| FileShare.Delete)
 
-                        match skipOldReportsSince with
+                        match not_beforeSince with
                         | Some buildStartTimeInMillis ->
                             let modified =
                                 File.GetLastWriteTimeUtc(stream.SafeFileHandle)
@@ -1475,7 +1424,7 @@ module Publish =
                     total <- total + 1L
                     failed <- failed + 1L
                 | (:? FileNotFoundException | :? DirectoryNotFoundException)
-                    when Option.isNone skipOldReportsSince ->
+                    when Option.isNone not_beforeSince ->
                     // A wildcard-selected dangling target is one synthetic empty
                     // report. Timestamp filtering deliberately keeps the existing
                     // unreadable FileNotFound classification instead.
@@ -1509,18 +1458,18 @@ module Publish =
                 Ok(int total, int failed, int skipped, duration)
             | false, None, false -> Error(Unreadable "test report counts exceed the JUnit Integer summary range")
 
-    let internal parseJUnitWithAbortUsingScanLimit scanLimit workspace patterns skipOldReportsSince abort =
-        parseJUnitCore ignore scanLimit workspace patterns skipOldReportsSince abort
+    let internal parseJUnitWithAbortUsingScanLimit scanLimit workspace patterns not_beforeSince abort =
+        parseJUnitCore ignore scanLimit workspace patterns not_beforeSince abort
 
-    let parseJUnitWithDiagnostics onFailure workspace patterns skipOldReportsSince abort =
-        parseJUnitCore onFailure junitScanLimit workspace patterns skipOldReportsSince abort
+    let parseJUnitWithDiagnostics onFailure workspace patterns not_beforeSince abort =
+        parseJUnitCore onFailure junitScanLimit workspace patterns not_beforeSince abort
 
-    let parseJUnitWithAbort workspace patterns skipOldReportsSince abort =
+    let parseJUnitWithAbort workspace patterns not_beforeSince abort =
         parseJUnitWithAbortUsingScanLimit
             junitScanLimit
             workspace
             patterns
-            skipOldReportsSince
+            not_beforeSince
             abort
 
     let parseJUnit (workspace: string) (patterns: string list) =
@@ -1725,9 +1674,6 @@ module Stash =
             pending.Enqueue initialState
             visited.Add initialState |> ignore
 
-            // Jenkinsfile globs are untrusted. Bound the product search; an
-            // exhausted proof returns the fail-closed answer (a survivor may
-            // exist), which can only cause a link refusal or ordinary descent.
             let maxSearchStates = 10000
 
             while pending.Count > 0
@@ -1816,8 +1762,6 @@ module Stash =
                         normalizePattern excludePattern,
                         StringComparison.OrdinalIgnoreCase))
                 |> not)
-        // Jenkinsfile patterns are untrusted and controller-lived. Compile each
-        // once for this selection, but do not retain tenant strings globally.
         let includeMatchers = includes |> List.map (Publish.compileGlobMatcher false)
         let excludeMatchers = excludes |> List.map (Publish.compileGlobMatcher false)
         let includePrograms = includes |> List.map (compileGlobProgram false)
@@ -1948,17 +1892,6 @@ module Stash =
 
         problem, (files |> Seq.distinct |> Seq.sort |> Seq.toList), aborted
 
-    /// A stash name comes from the Jenkinsfile, which is UNTRUSTED third-party CI
-    /// code. Used directly it is a path-traversal primitive, and `save` deletes its
-    /// target recursively before recreating it — so `stash name: '../../..'` would
-    /// have destroyed whatever it resolved to, and `unstash` would copy arbitrary
-    /// controller files into the workspace. Flagged independently by both reviewers
-    /// on PR #15.
-    ///
-    /// The name is treated as an OPAQUE KEY: a readable slug for humans plus a hash
-    /// of the original, so two distinct names can never collide and no name can
-    /// escape the root. The canonical result is then re-checked against the root,
-    /// because a defence you have not asserted is a hope.
     let private safeKey (name: string) =
         let slug =
             String(name |> Seq.map (fun c -> if Char.IsLetterOrDigit c then c else '-') |> Seq.toArray)

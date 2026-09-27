@@ -205,7 +205,7 @@ let tests = testList "controller client" [
     testCase "mutating transport failures are never replayed" <| fun _ ->
         let source = Path.GetTempFileName()
         try
-            File.WriteAllText(source, "pipeline { agent any; stages { stage('test') { steps { echo 'ok' } } } }")
+            File.WriteAllText(source, "{\"version\":1,\"stages\":[{\"name\":\"test\",\"steps\":[{\"echo\":\"ok\"}]}]}")
             for command, extras in [ "submit", [| "--pipeline"; source; "--idempotency-key"; "explicit-key" |]; "cancel", [||] ] do
                 let mutable calls = 0
                 let send (request: HttpRequestMessage) _ =

@@ -1,9 +1,0 @@
-{
-  "source_commit": "d4a9bc76e20e60313fb0dc8e61553f697d6da19d",
-  "release_archive_sha256": "af98c32a15136abb4fe50af5dcd7bcca79d1182187d3cabc60b84c4b4d45c3ca",
-  "built_from_isolated_git_archive": true,
-  "build_exit_code": 0,
-  "build_warnings": 0,
-  "build_errors": 0,
-  "gate_receipt_sha256": "8d92a970442c1ebcd2ac751b23118875e5607b6029b75a85c3c8acb653f56d8c"
-}

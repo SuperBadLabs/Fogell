@@ -325,12 +325,6 @@ module Router =
                     return Ok(bytes.ToArray())
         }
 
-    /// POST …/builds — submit a Jenkinsfile.
-    ///
-    /// The body is the pipeline source. It is PARSED before admission, so a
-    /// malformed pipeline is rejected with its error code and source position
-    /// rather than becoming a queued build that fails later for reasons the
-    /// submitter cannot see.
     let private submit (state: ApiState) (ctx: HttpContext) =
         task {
             if not (authorized state ctx) then
@@ -441,26 +435,17 @@ module Router =
                                                   RequiredTrustPool = probe.RequiredTrustPool
                                                   RequiredCapabilities = probe.RequiredCapabilities }
 
-                                            // Parse success is deliberately broader than execution
-                                            // capability. Only a fresh key must satisfy the same
-                                            // fail-closed persisted preflight as Run.Host before
-                                            // binding a build number or idempotency key.
-                                            match Fogell.Differential.FogellSide.preflightControllerExecution source with
-                                            | Result.Error why ->
+                                            match state.Store.AdmitBuild input with
+                                            | Result.Error "evidence_expired" -> return! fail ctx 410 "evidence_expired" "build evidence has expired" None
+                                            | Result.Error e when
+                                                e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
+                                                ->
+                                                return! fail ctx 409 "idempotency_conflict" e None
+                                            | Result.Error _ ->
                                                 return!
-                                                    fail ctx 422 "execution_unsupported" why None
-                                            | Result.Ok _ ->
-                                                match state.Store.AdmitBuild input with
-                                                | Result.Error "evidence_expired" -> return! fail ctx 410 "evidence_expired" "build evidence has expired" None
-                                                | Result.Error e when
-                                                    e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
-                                                    ->
-                                                    return! fail ctx 409 "idempotency_conflict" e None
-                                                | Result.Error _ ->
-                                                    return!
-                                                        fail ctx 503 "admission_unavailable"
-                                                            "build admission is temporarily unavailable" None
-                                                | Result.Ok admission -> return! respond admission
+                                                    fail ctx 503 "admission_unavailable"
+                                                        "build admission is temporarily unavailable" None
+                                            | Result.Ok admission -> return! respond admission
         }
         :> Threading.Tasks.Task
 

@@ -1,6 +1,0 @@
-{
-  "passed": true,
-  "aggregate_matches_primary": true,
-  "summary_sha256": "ed53fbb7d33c68334493d1fca8d5fffa85281b8e3a7caa7007c1c2bb3c0334fe",
-  "scope": "Separate agent independently ran recovery and full aggregate verification on the extracted credential-scanned export; private database/state payload equality remains adapter-attested."
-}

@@ -56,6 +56,7 @@ module Retention =
         let number=number.ToString(Globalization.CultureInfo.InvariantCulture)
         let home=Text.Encoding.UTF8.GetBytes(b+"\u0000"+number) |> Security.Cryptography.SHA256.HashData |> Convert.ToHexStringLower
         [| yield $"workspaces/{o}/{b}"
+           yield $"workspaces/{o}/{b}.fogell-tmp"
            yield $"workspaces/{o}/_agent_home/{home}"
            yield $"workspaces/{o}/_artifacts/_stash/{b}#build-{number}"
            yield $"workspaces/{o}/_artifacts/{b}"
@@ -130,7 +131,7 @@ module Retention =
                         let source=scalar connection "SELECT source_bytes FROM build_definitions WHERE organization_id=@org AND build_id=@build" ["org",box org;"build",box build]
                         if isNull source || source=box DBNull.Value then failwith "definition_database_missing"
                         let source=source :?> byte array
-                        let definitionPath= $"definitions/{org:N}/{build:N}/Jenkinsfile"
+                        let definitionPath= $"definitions/{org:N}/{build:N}/pipeline.json"
                         match Fogell.Domain.SourceSnapshot.decode source with
                         | Error _ -> failwith "definition_database_invalid"
                         | Ok None -> Filesystem.verifyDefinition root manifest definitionPath (Security.Cryptography.SHA256.HashData source)

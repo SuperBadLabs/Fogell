@@ -298,7 +298,7 @@ let retryAttempts =
               Expect.equal
                   (Resume.stageWarningOf plan "Flaky" 0)
                   (Some BuildStatus.Unstable)
-                  "the earlier FlowNode remains inside the Jenkins stage graph"
+                  "the prior stage warning remains durable"
           } ]
 
 /// FG-207. A failed/aborted completion and the reason that explains it remain

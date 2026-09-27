@@ -20,30 +20,25 @@ type StepRequest =
       Workspace: string
       Environment: (string * string) list
       TimeoutMs: int64 option
-      /// FG-174. `sh(returnStdout: true)` captures stdout rather than printing it.
-      /// The trace on stderr still streams, which is what Jenkins does.
       CaptureStdout: bool
-      /// FG-177. `junit(skipMarkingBuildUnstable: true)` leaves a build successful
+      /// FG-177. `junit(skip_build_warning: true)` leaves a build successful
       /// when parsed reports contain failures. The walker resolves this from the
       /// typed/literal argument before dispatch; the executor never guesses a
       /// boolean from the rendered `Named` strings.
-      JUnitSkipMarkingBuildUnstable: bool
-      /// `junit(allowEmptyResults: true)` permits either no matching reports or
+      ReportSkipBuildWarning: bool
+      /// `junit(allow_empty: true)` permits either no matching reports or
       /// a matched aggregate containing no recognized result. The walker owns
       /// the typed boolean boundary and supplies the decision before scanning.
-      JUnitAllowEmptyResults: bool
-      /// FG-220. When present, `skipOldReports: true` filters against this
+      ReportAllowEmpty: bool
+      /// FG-220. When present, `not_before: true` filters against this
       /// build-start Unix-millisecond origin. None is the default/explicit-false
       /// path and performs no timestamp read.
-      JUnitSkipOldReportsSince: int64 option
-      /// FG-177. `junit(skipMarkingStageUnstable: true)` suppresses the
+      ReportNotBefore: int64 option
+      /// FG-177. `junit(skip_stage_warning: true)` suppresses the
       /// pipeline-node/stage UNSTABLE decoration independently of the returned
       /// summary. As with the build flag, the walker supplies a typed decision;
       /// this layer never reconstructs a boolean from rendered argument text.
-      JUnitSkipMarkingStageUnstable: bool
-      /// The WORKSPACE root (not the step's cwd): durable-task roots its script
-      /// scaffolding at the workspace's @tmp sibling even inside `dir()`, and the
-      /// executed script's $0 is observable.
+      ReportSkipStageWarning: bool
       WorkspaceRoot: string option
       /// Historical public callback. Process bytes are decoded only after raw
       /// masking; executor-generated shell narration is masked before delivery.
@@ -66,7 +61,7 @@ type StepRequest =
       CreateRedactedAdmission: (unit -> RedactedAdmission) option
       /// Shared build quota for captured stdout, charged before retention.
       ReserveCapturedOutput: (int -> unit) option
-      /// Named arguments as written (`artifacts:`, `testResults:`, `pattern:`).
+      /// Named arguments as written (`artifacts:`, `pattern:`, `pattern:`).
       Named: (string * string) list
       /// Where publishing steps write. None disables them by failing closed.
       Artifacts: ArtifactStore option
@@ -116,7 +111,7 @@ type StepResult =
       ProcessGroupId: int option
       /// Populated for shell steps so callers can assert on containment.
       Termination: Termination option
-      /// Relative paths published by `archiveArtifacts`, in sorted order.
+      /// Relative paths published by `archive`, in sorted order.
       Archived: string list
       /// Test totals parsed by `junit`: total, failed, skipped.
       TestTotals: (int * int * int) option
@@ -125,27 +120,9 @@ type StepResult =
       TestDuration: single option
       /// A warning contribution attached to the current pipeline stage rather
       /// than folded into the build result. JUnit is the first producer: failed
-      /// reports contribute UNSTABLE unless `skipMarkingStageUnstable` was set.
+      /// reports contribute UNSTABLE unless `skip_stage_warning` was set.
       /// Failure/abort arms never decorate a stage through this channel.
       StageWarning: BuildStatus option
-      /// FG-174. The captured stdout UNMASKED, and ONLY when `CaptureStdout` asked for
-      /// it — None on every other step, so the raw text exists nowhere it was not
-      /// requested.
-      ///
-      /// `Stdout` above is MASKED, which is right for everything that prints or is
-      /// compared, and wrong for the one consumer that is not printing: a value handed
-      /// back to the pipeline. MEASURED, and held by receipt `credentials-returnstdout` —
-      /// `def t = sh(script: 'printf %s "$TOKEN"', returnStdout: true)` gives Jenkins
-      /// `t.length() == 12` and gave Fogell `4`, because `****` is what it captured. A
-      /// pipeline that captures a credential and passes it to the next command therefore
-      /// authenticated with the mask. Raised in review on PR #53.
-      ///
-      /// THIS IS NOT A HOLE IN MASKING. Jenkins masks the LOG, not the value, and every
-      /// path out of the engine still masks: `echo` masks its message (FG-044b), a shell
-      /// argument carrying it is masked on the way to the console, and the receipt only
-      /// ever sees `Stdout`. What changes is that the interpreter's own variable holds
-      /// what the program actually wrote, which is the only thing that makes
-      /// `returnStdout` usable with a credential at all.
       CapturedStdoutRaw: string option
       Diagnostic: string option
       /// FG-103: the engine reporting on its OWN checks — a leak scan that could
@@ -188,18 +165,11 @@ module Executor =
     ///
     /// Built here rather than by the caller so it cannot drift from `ok` — a hand-rolled
     /// record that quietly gained a field would be a `StepResult` nobody else produces.
-    /// `ExitCode` stays None, which is load-bearing: `returnStatus` suppression keys on
-    /// an exit code EXISTING, so a refusal can never be converted into a status answer.
+    /// `ExitCode` stays None because no process ran; consumers must distinguish
+    /// admission refusal from a command that ran and returned an exit code.
     let refusedBeforeRunning (why: string) =
         { ok Failure with Diagnostic = Some why }
 
-    /// Run a `sh`-shaped step. Exit code maps to status, and the diagnostic
-    /// names *why* on any non-success — never a bare code.
-    ///
-    /// Beating Jenkins here (JB-DUR-005): when a step's process disappears,
-    /// Jenkins takes ~10 minutes to conclude anything and then reports
-    /// `exit code -1` with no mention of a restart. Fogell owns the process, so
-    /// the diagnostic always says what happened.
     let runShell (request: StepRequest) (script: string) : StepResult =
         if not (System.IO.Directory.Exists request.Workspace) then
             { ok Failure with
@@ -503,31 +473,24 @@ module Executor =
                 | _ -> None
               DurableId = run.DurableId }
 
-    /// Read a step argument that may be positional or named, matching Jenkins'
-    /// tolerance for `archiveArtifacts '*.jar'` and
-    /// `archiveArtifacts artifacts: '*.jar'`.
     let private argument (request: StepRequest) (names: string list) =
         match request.Script with
         | Some v when v <> "" -> Some v
         | _ -> names |> List.tryPick (fun n -> request.Named |> List.tryPick (fun (k, v) -> if k = n then Some v else None))
 
-    /// Jenkins accepts a comma-separated glob list in one string.
     let private patterns (raw: string) =
         raw.Split(',') |> Array.map (fun s -> s.Trim()) |> Array.filter (fun s -> s <> "") |> Array.toList
 
-    /// FG-042. `archiveArtifacts artifacts: '<glob>' [, allowEmptyArchive: true]`
+    /// FG-042. `archive artifacts: '<glob>' [, allow_empty: true]`
     let private runArchive (request: StepRequest) : StepResult =
         match request.Artifacts, argument request [ "artifacts" ] with
         | None, _ ->
             { ok Failure with
-                Diagnostic = Some "archiveArtifacts requires an artifact store; none configured" }
+                Diagnostic = Some "archive requires an artifact store; none configured" }
         | _, None ->
             { ok Failure with
-                Diagnostic = Some "archiveArtifacts requires an 'artifacts' pattern" }
+                Diagnostic = Some "archive requires an 'artifacts' pattern" }
         | Some store, Some raw ->
-            // Jenkins prints this banner before archiving. Emitting the same line
-            // is parity; excluding it from comparison would merely hide a
-            // difference the user can see.
             request.OnLine |> Option.iter (fun f -> f "Archiving artifacts")
 
             // Either cause stops the archive; the diagnostic names neither, because
@@ -545,7 +508,7 @@ module Executor =
 
             let allowEmpty =
                 request.Named
-                |> List.exists (fun (k, v) -> k = "allowEmptyArchive" && v.Trim().ToLowerInvariant() = "true")
+                |> List.exists (fun (k, v) -> k = "allow_empty" && v.Trim().ToLowerInvariant() = "true")
 
             if aborted then
                 // REVIEW FIX (Codex, PR #14 round 3): the previous version LOGGED the
@@ -565,19 +528,9 @@ module Executor =
                         Some
                             $"archiving interrupted after {published.Length} file(s); the artifact set is INCOMPLETE" }
             elif List.isEmpty published then
-                // Jenkins' archive advisory, measured on 2.568.1 in its three
-                // variants (typographic quotes and all) — printed whether or not the
-                // empty archive is allowed, BEFORE the outcome line. A substring
-                // suppression used to hide the Jenkins side of this; both engines
-                // speak it now and the sentences compare (FG-102).
                 let advisory =
                     let q (x: string) = "\u2018" + x + "\u2019"
 
-                    // MEASURED (receipt `archive-multi-pattern-advisory`): for a
-                    // comma-separated list Jenkins validates the
-                    // individual Ant masks, advising on the FIRST unmatched one —
-                    // `missing/**,other-*.zip` advises on `missing/**` alone (the
-                    // Configuration-error line keeps the full list).
                     let raw =
                         raw.Split(',')
                         |> Array.map (fun m -> m.Trim())
@@ -616,15 +569,9 @@ module Executor =
                 request.OnLine |> Option.iter (fun f -> f advisory)
 
                 if not allowEmpty then
-                    // Jenkins fails the build here rather than passing quietly, and
-                    // a silent empty archive is the worst outcome for a user.
                     { ok Failure with
                         Diagnostic = Some $"No artifacts found that match the file pattern \"{raw}\"" }
                 else
-                    // MEASURED (receipt `archive-allow-empty-boolean`, Jenkins 2.568.1):
-                    // `allowEmptyArchive: true` PERMITS the empty archive but still says
-                    // so — and the build runs on. Passing silently would hide a broken
-                    // glob from the very person who opted into tolerating it.
                     request.OnLine
                     |> Option.iter (fun f -> f $"No artifacts found that match the file pattern \"{raw}\". Configuration error?")
 
@@ -632,12 +579,12 @@ module Executor =
             else
                 { ok Success with Archived = published }
 
-    /// FG-043. `junit '<glob>'` / `junit testResults: '<glob>'`
+    /// FG-043. `junit '<glob>'` / `junit pattern: '<glob>'`
     let private runJUnit (request: StepRequest) : StepResult =
-        match argument request [ "testResults"; "pattern" ] with
+        match argument request [ "pattern" ] with
         | None ->
             { ok Failure with
-                Diagnostic = Some "junit requires a 'testResults' pattern" }
+                Diagnostic = Some "junit requires a 'pattern' pattern" }
         | Some raw ->
             request.OnLine |> Option.iter (fun f -> f "Recording test results")
 
@@ -652,7 +599,7 @@ module Executor =
             let noReports = "No test report files were found. Configuration error?"
             let noResults = "None of the test reports contained any result"
             let missingTestName = JUnitDiagnostics.MissingTestNameMessage
-            let missingIdentity = "Cannot invoke \"String.lastIndexOf(int)\" because \"this.className\" is null"
+            let missingIdentity = "Test report case is missing its identity"
 
             let emptySummary (messages: string list) =
                 messages
@@ -685,7 +632,7 @@ module Executor =
                 Publish.parseJUnitWithDiagnostics record
                     request.Workspace
                     (patterns raw)
-                    request.JUnitSkipOldReportsSince
+                    request.ReportNotBefore
                     abort
             with
             // REVIEW FIX (Codex, PR #14 round 10): every error became Failure, so a
@@ -696,7 +643,7 @@ module Executor =
                 { ok Aborted with
                     Diagnostic = Some "junit aborted: the step was interrupted while reading test reports" }
             | Result.Error NoReports ->
-                if request.JUnitAllowEmptyResults then
+                if request.ReportAllowEmpty then
                     // The pinned plugin emits both messages: the parser permits
                     // the missing glob, then the aggregate summary is also empty.
                     emptySummary [ noReports; noResults ]
@@ -704,10 +651,6 @@ module Executor =
                     request.OnLine |> Option.iter (fun emit -> emit noReports)
                     { ok Failure with Diagnostic = Some noReports }
             | Result.Error(MissingTestName relative) ->
-                // Unlike FG-211's later null-className failure, Jenkins prints
-                // a report-specific wrapper before its exception envelope. The
-                // wrapper is ordinary compared output; the exact root cause stays
-                // the diagnostic owned by the hosted step boundary.
                 let reportPath =
                     System.IO.Path.GetFullPath(System.IO.Path.Combine(request.Workspace, relative))
                 request.OnLine |> Option.iter (fun emit -> emit $"Failed to read {reportPath}")
@@ -717,26 +660,17 @@ module Executor =
                 { ok Failure with Diagnostic = Some missingIdentity }
             | Result.Error(Unreadable m) -> { ok Failure with Diagnostic = Some m }
             | Result.Ok(total, _, _, _) when total = 0 ->
-                if request.JUnitAllowEmptyResults then
+                if request.ReportAllowEmpty then
                     emptySummary [ noResults ]
                 else
                     request.OnLine |> Option.iter (fun emit -> emit noResults)
                     { ok Failure with Diagnostic = Some noResults }
             | Result.Ok(total, failed, skipped, duration) ->
-                // Jenkins marks the build UNSTABLE (not failed) when tests fail:
-                // the build worked, the code did not.
-                // The build and stage flags are two typed inputs to one measured
-                // matrix. A failed report contributes a stage warning unless stage
-                // marking is skipped; that surviving warning contributes UNSTABLE
-                // to the build unless build marking is skipped too. Reports are
-                // still parsed and their counts returned in every combination.
-                // Interrupts and unreadable reports have already exited through the
-                // failure arms above and neither flag can suppress them.
                 let marksStageUnstable =
-                    failed > 0 && not request.JUnitSkipMarkingStageUnstable
+                    failed > 0 && not request.ReportSkipStageWarning
 
                 let status =
-                    if marksStageUnstable && not request.JUnitSkipMarkingBuildUnstable then
+                    if marksStageUnstable && not request.ReportSkipBuildWarning then
                         Unstable
                     else
                         Success
@@ -758,16 +692,13 @@ module Executor =
     /// with a named reason — never a silent success (ADR 0001).
     let runStep (request: StepRequest) : StepResult =
         match request.Name, request.Script with
-        | "archiveArtifacts", _ -> runArchive request
-        | "junit", _ -> runJUnit request
-        | ("sh" | "bat"), Some script -> runShell request script
-        | ("sh" | "bat"), None ->
+        | "archive", _ -> runArchive request
+        | "test_report", _ -> runJUnit request
+        | "run", Some script -> runShell request script
+        | "run", None ->
             { ok Failure with
                 Diagnostic = Some $"step '{request.Name}' requires a script argument" }
-        | ("echo" | "println"), Some message ->
-            // FG-044b. Masking lived ONLY on the shell path, so `echo "$TOKEN"` published
-            // the credential verbatim while Jenkins prints `****`. Any path that emits
-            // output has to mask, or the guarantee is "we mask, except where we forgot".
+        | "echo", Some message ->
             let masked =
                 if List.isEmpty request.Secrets then message else Secrets.mask request.Secrets message
 
@@ -780,18 +711,6 @@ module Executor =
             for note in leaks do
                 request.OnLine |> Option.iter (fun f -> f note)
 
-            // A MULTI-LINE MESSAGE IS MULTIPLE LOG LINES. Jenkins writes the message to
-            // the build log, so an embedded newline becomes a line break there; this
-            // handed `OnLine` one record containing a `\n`, and everything downstream
-            // that counts or compares lines then saw one line where Jenkins has two.
-            //
-            // MEASURED (`script-sh-returnstdout`): `echo "withnl:[${out}]"` over a
-            // captured "value\n" gives Jenkins seven output lines and Fogell six. Found
-            // only once `returnStdout` could produce a multi-line value at all — no
-            // existing case echoes one — but the rule is JENKINS', not the capture
-            // path's, so it is fixed here for every caller rather than at the one that
-            // exposed it. `String.concat` on the way into `Stdout` below keeps the text
-            // itself byte-identical.
             request.OnLine
             |> Option.iter (fun f ->
                 for line in masked.Split '\n' do
@@ -799,37 +718,9 @@ module Executor =
 
             { ok Success with
                 Stdout = masked + "\n"
-                // Only when nobody streamed them. The differential runner ALWAYS supplies
-                // OnLine and then re-emits every Stderr line, so returning them here too
-                // printed each warning TWICE for a single leak.
                 Stderr =
                     match request.OnLine, leaks with
                     | None, (_ :: _) -> String.concat "\n" leaks + "\n"
                     | _ -> "" }
-        // FG-178. `echo()` WITH NO MESSAGE PRINTS `null`, and it does NOT fail.
-        //
-        // Review reported that Jenkins REJECTS the call and asked for a required-argument
-        // check. MEASURED instead of implemented, and held by receipt
-        // `script-echo-no-message`; the report was wrong on the Jenkins
-        // half: `script { echo(); sh 'echo ran > ran.txt' }` SUCCEEDS on Jenkins with the
-        // shell running, and the console shows the literal `null` — Groovy stringifying a
-        // null message. Fogell agreed on result and workspace and printed NOTHING, so the
-        // only divergence was the missing line.
-        //
-        // Enforcing a required argument here would have been a FALSE REFUSAL of a
-        // pipeline Jenkins accepts — the second review finding on this branch that was
-        // materially wrong about Jenkins, and the second caught by probing before
-        // implementing. `Stdout` alone was not enough: the differential compares what
-        // STREAMED, and nothing called `OnLine`.
-        | "echo", None ->
-            request.OnLine |> Option.iter (fun f -> f "null")
-            { ok Success with Stdout = "null\n" }
-        // FG-258. Groovy's zero-argument println writes one blank line and returns
-        // null. The differential comparison drops blank output records, but direct
-        // executor consumers still receive the byte-accurate callback.
-        | "println", None ->
-            request.OnLine |> Option.iter (fun f -> f "")
-            { ok Success with Stdout = "\n" }
         | name, _ ->
-            { ok Failure with
-                Diagnostic = Some $"step '{name}' is not implemented; unsupported behaviour fails closed" }
+            { ok Failure with Diagnostic = Some $"invalid native step: '{name}'" }

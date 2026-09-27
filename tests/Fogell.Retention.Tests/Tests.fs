@@ -34,7 +34,7 @@ type Lab() =
     member _.Seed(state: string) =
         number<-number+1
         let build,node,attempt=Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid()
-        let source=Text.Encoding.UTF8.GetBytes("pipeline { agent any; stages { stage('x') { steps { echo 'retention' } } } }")
+        let source=Text.Encoding.UTF8.GetBytes("{\"version\":1,\"stages\":[{\"name\":\"x\",\"steps\":[{\"echo\":\"retention\"}]}]}")
         let digest=SHA256.HashData source
         sql "INSERT INTO builds(id,organization_id,project_id,number,idempotency_key,status) VALUES(@b,@o,@p,@num,@key,@status);
           INSERT INTO nodes(id,organization_id,build_id,name,ordinal,required_trust_pool,status) VALUES(@n,@o,@b,'n',0,'trusted-linux',@status);
@@ -45,14 +45,14 @@ type Lab() =
              "state",box state;"result",(if state="terminal" then box "success" else box DBNull.Value);
              "source",box source;"digest",box digest] |> ignore
         let home=Text.Encoding.UTF8.GetBytes(build.ToString("N")+"\u0000"+string number) |> SHA256.HashData |> Convert.ToHexStringLower
-        for relative in [$"workspaces/{org:N}/{build:N}";$"workspaces/{org:N}/_artifact-snapshots/{attempt:N}"
+        for relative in [$"workspaces/{org:N}/{build:N}";$"workspaces/{org:N}/{build:N}.fogell-tmp";$"workspaces/{org:N}/_artifact-snapshots/{attempt:N}"
                          $"workspaces/{org:N}/_agent_home/{home}";$"workspaces/{org:N}/_artifacts/_stash/{build:N}#build-{number}"] do
             let path=Path.Combine(root,relative)
             Directory.CreateDirectory path |> ignore
             File.WriteAllText(Path.Combine(path,"evidence.txt"),String('x',1024))
         let definition=Path.Combine(root,$"definitions/{org:N}/{build:N}")
         Directory.CreateDirectory definition |> ignore
-        File.WriteAllBytes(Path.Combine(definition,"Jenkinsfile"),source)
+        File.WriteAllBytes(Path.Combine(definition,"pipeline.json"),source)
         build,node,attempt
     member _.Sweep(p,cut)=Retention.sweep database root org p cut
     member _.Count(table)=
@@ -177,7 +177,7 @@ let tests = testSequenced <| testList "retention" [
     test "database definition disagreement refuses selection" {
         use lab=new Lab()
         let build,_,_=lab.Seed "terminal"
-        File.WriteAllText(Path.Combine(lab.Root,$"definitions/{lab.Org:N}/{build:N}/Jenkinsfile"),"substituted source")
+        File.WriteAllText(Path.Combine(lab.Root,$"definitions/{lab.Org:N}/{build:N}/pipeline.json"),"substituted source")
         Expect.throws(fun ()->lab.Sweep(policy,ignore) |> ignore) "wrong paired filesystem rejected"
         Expect.equal (lab.Count "build_retention") 0 "no deletion authorized"
         Expect.equal (lab.Count "log_chunks") 2 "evidence retained"

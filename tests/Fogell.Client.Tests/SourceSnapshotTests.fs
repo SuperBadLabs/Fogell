@@ -10,7 +10,7 @@ open Fogell.Domain
 open Fogell.Client
 
 let private make files =
-    let pipeline = Encoding.UTF8.GetBytes "pipeline { agent any; stages { stage('verify') { steps { sh 'cat input.txt' } } } }"
+    let pipeline = Encoding.UTF8.GetBytes "{\"version\":1,\"stages\":[{\"name\":\"verify\",\"steps\":[{\"run\":\"cat input.txt\"}]}]}"
     let entries = files |> Array.map (fun (path, text) ->
         let bytes = Encoding.UTF8.GetBytes(text: string)
         { Path = path; ContentBase64 = Convert.ToBase64String bytes; Sha256 = SourceSnapshot.digest bytes; Executable = false })
@@ -89,7 +89,7 @@ let tests = testList "FG-267 source snapshots" [
 
     testCase "pack freezes dirty source while moving Git HEAD remains unclaimed" <| fun _ ->
         withRoot <| fun root ->
-            let pipeline = Path.Combine(root, "Jenkinsfile")
+            let pipeline = Path.Combine(root, "pipeline.json")
             let inventory = Path.Combine(root, "inventory.txt")
             let source = Path.Combine(root, "input.txt")
             File.WriteAllBytes(pipeline, Convert.FromBase64String((make [| "input.txt", "x" |]).PipelineBase64))
@@ -147,7 +147,7 @@ let tests = testList "FG-267 source snapshots" [
 
     testCase "packer excludes symlinks and credential filenames before output" <| fun _ ->
         withRoot <| fun root ->
-            let pipeline = Path.Combine(root, "Jenkinsfile")
+            let pipeline = Path.Combine(root, "pipeline.json")
             File.WriteAllBytes(pipeline, Convert.FromBase64String((make [| "input.txt", "x" |]).PipelineBase64))
             let inventory = Path.Combine(root, "inventory.txt")
             File.WriteAllText(Path.Combine(root, "token"), "must-not-be-exported")

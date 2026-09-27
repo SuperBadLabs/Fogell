@@ -1,1 +1,0 @@
-archive-schema-cli-exit=1

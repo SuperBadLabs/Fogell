@@ -360,7 +360,7 @@ type LocalWorker(config: ControllerConfig, store: Store, logger: ILogger<LocalWo
         task {
             let buildKey = claim.BuildId.Value.ToString "N"
             let orgKey = claim.OrganizationId.Value.ToString "N"
-            let definitionPath = Path.Combine(config.StateRoot, "definitions", orgKey, buildKey, "Jenkinsfile")
+            let definitionPath = Path.Combine(config.StateRoot, "definitions", orgKey, buildKey, "pipeline.json")
             let journalPath = WorkerPaths.journalPath config.StateRoot claim.OrganizationId claim.AttemptId
             let eventPath =
                 Path.Combine(

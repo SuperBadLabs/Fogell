@@ -1,5 +1,0 @@
-single=true
-doubled=true
-many=true
-case-decoy=false
-rooted=false

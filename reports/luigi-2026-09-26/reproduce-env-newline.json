@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "env": {
+    "NAME\n": "x"
+  },
+  "stages": [
+    {
+      "name": "verify",
+      "steps": [
+        {
+          "echo": "admitted"
+        }
+      ]
+    }
+  ]
+}

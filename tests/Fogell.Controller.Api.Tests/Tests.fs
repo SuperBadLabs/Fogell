@@ -95,7 +95,7 @@ let private freshProject () =
     org, project
 
 let private pipeline =
-    "pipeline {\n  agent any\n  stages {\n    stage('Build') {\n      steps { echo 'hi' }\n    }\n  }\n}\n"
+    "{\"version\":1,\"stages\":[{\"name\":\"Build\",\"steps\":[{\"echo\":\"hi\"}]}]}"
 
 let private client = new HttpClient()
 
@@ -121,7 +121,7 @@ let private send (method: HttpMethod) (url: string) (bearer: string option) (ide
     let req = new HttpRequestMessage(method, url)
     bearer |> Option.iter (fun t -> req.Headers.TryAddWithoutValidation("authorization", $"Bearer {t}") |> ignore)
     idem |> Option.iter (fun k -> req.Headers.TryAddWithoutValidation("idempotency-key", k) |> ignore)
-    body |> Option.iter (fun b -> req.Content <- new StringContent(b, Encoding.UTF8, "application/x-jenkinsfile"))
+    body |> Option.iter (fun b -> req.Content <- new StringContent(b, Encoding.UTF8, "application/vnd.fogell.pipeline.v1+json"))
     let r = client.Send req
     let text = r.Content.ReadAsStringAsync().Result
     int r.StatusCode, text
@@ -131,7 +131,7 @@ let private sendBytes (url: string) (idem: string) (body: byte array) =
     req.Headers.TryAddWithoutValidation("authorization", $"Bearer {token}") |> ignore
     req.Headers.TryAddWithoutValidation("idempotency-key", idem) |> ignore
     req.Content <- new ByteArrayContent(body)
-    req.Content.Headers.TryAddWithoutValidation("content-type", "application/x-jenkinsfile") |> ignore
+    req.Content.Headers.TryAddWithoutValidation("content-type", "application/vnd.fogell.pipeline.v1+json") |> ignore
     use response = client.Send req
     int response.StatusCode, response.Content.ReadAsStringAsync().Result
 
@@ -141,7 +141,7 @@ let private sendChunked (url: string) (idem: string) (body: byte array) =
     req.Headers.TryAddWithoutValidation("idempotency-key", idem) |> ignore
     req.Headers.TransferEncodingChunked <- Nullable true
     req.Content <- new UnknownLengthContent(body)
-    req.Content.Headers.TryAddWithoutValidation("content-type", "application/x-jenkinsfile") |> ignore
+    req.Content.Headers.TryAddWithoutValidation("content-type", "application/vnd.fogell.pipeline.v1+json") |> ignore
     use response = client.Send req
     int response.StatusCode, response.Content.ReadAsStringAsync().Result
 
@@ -1359,7 +1359,7 @@ let endpoints =
               let org, project = freshProject ()
               let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
               let unsupported =
-                  "pipeline { agent any tools { maven 'm3' } stages { stage('Build') { steps { echo 'hi' } } } }"
+                  "{\"version\":1,\"tools\":{},\"stages\":[{\"name\":\"Build\",\"steps\":[{\"echo\":\"hi\"}]}]}"
 
               let buildCount () =
                   use connection = new Npgsql.NpgsqlConnection(connectionString)
@@ -1380,11 +1380,11 @@ let endpoints =
                   use payload = JsonDocument.Parse body
                   Expect.equal
                       (payload.RootElement.GetProperty("code").GetString())
-                      "execution_unsupported"
+                      "unknown_section"
                       $"unsupported attempt {attempt} has the stable API code"
                   Expect.stringContains
                       (payload.RootElement.GetProperty("message").GetString())
-                      "unsupported_tools"
+                      "unknown field: tools"
                       $"unsupported attempt {attempt} preserves the shared preflight reason"
                   Expect.equal (buildCount ()) 0 $"unsupported attempt {attempt} creates no build"
 
@@ -1405,7 +1405,7 @@ let endpoints =
               let org, project = freshProject ()
               let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
               let unbounded =
-                  "pipeline { agent any stages { stage('Gate') { steps { input message: 'Deploy?' } } } }"
+                  "{\"version\":1,\"stages\":[{\"name\":\"Gate\",\"steps\":[{\"approval\":\"Deploy?\"}]}]}"
 
               let buildCount () =
                   use connection = new Npgsql.NpgsqlConnection(connectionString)
@@ -1424,11 +1424,11 @@ let endpoints =
                   use payload = JsonDocument.Parse body
                   Expect.equal
                       (payload.RootElement.GetProperty("code").GetString())
-                      "execution_unsupported"
+                      "unknown_section"
                       $"attempt {attempt} keeps the public capability code"
                   Expect.stringStarts
                       (payload.RootElement.GetProperty("message").GetString())
-                      "unsupported_input_approval:"
+                      "unknown_section at 1:1: unknown field: approval"
                       $"attempt {attempt} names the exact controller limitation"
                   Expect.equal (buildCount ()) 0 $"attempt {attempt} creates no durable build"
 
@@ -1465,20 +1465,20 @@ let endpoints =
               let cases =
                   [ "duplicate flattened stage name",
                     "journal-duplicate",
-                    "pipeline { agent any stages { stage('same') { steps { echo 'first' } } stage('outer') { parallel { stage('same') { steps { echo 'second' } } } } } }",
-                    "persisted runs require globally unique stage names; duplicated: same"
+                    "{\"version\":1,\"stages\":[{\"name\":\"same\",\"steps\":[{\"echo\":\"first\"}]},{\"name\":\"same\",\"steps\":[{\"echo\":\"second\"}]}]}",
+                    "duplicate stage name"
                     "tab in stage name",
                     "journal-tab",
-                    "pipeline { agent any stages { stage('bad\\tname') { steps { echo 'hi' } } } }",
-                    "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: bad\\tname"
+                    "{\"version\":1,\"stages\":[{\"name\":\"bad\\tname\",\"steps\":[{\"echo\":\"hi\"}]}]}",
+                    "stage name must be 1–128 characters without control characters"
                     "newline in stage name",
                     "journal-newline",
-                    "pipeline { agent any stages { stage('bad\\nname') { steps { echo 'hi' } } } }",
-                    "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: bad\\nname"
+                    "{\"version\":1,\"stages\":[{\"name\":\"bad\\nname\",\"steps\":[{\"echo\":\"hi\"}]}]}",
+                    "stage name must be 1–128 characters without control characters"
                     "carriage return in stage name",
                     "journal-carriage-return",
-                    "pipeline { agent any stages { stage('bad\\rname') { steps { echo 'hi' } } } }",
-                    "persisted runs cannot journal stage names containing tabs, newlines, or carriage returns: bad\\rname" ]
+                    "{\"version\":1,\"stages\":[{\"name\":\"bad\\rname\",\"steps\":[{\"echo\":\"hi\"}]}]}",
+                    "stage name must be 1–128 characters without control characters" ]
 
               for label, key, source, expectedReason in cases do
                   let org, project = freshProject ()
@@ -1500,9 +1500,9 @@ let endpoints =
                       use payload = JsonDocument.Parse body
                       Expect.equal
                           (payload.RootElement.GetProperty("code").GetString())
-                          "execution_unsupported"
+                          (if key="journal-duplicate" then "duplicate_section" else "expected_stage")
                           $"{label}: attempt {attempt} has the stable API code"
-                      Expect.equal
+                      Expect.stringContains
                           (payload.RootElement.GetProperty("message").GetString())
                           expectedReason
                           $"{label}: attempt {attempt} preserves the canonical persisted preflight reason"
@@ -1517,7 +1517,7 @@ let endpoints =
 
           test "legacy journal-unsafe admission replays before fresh-source preflight" {
               let unsafeSource =
-                  "pipeline { agent any stages { stage('legacy\\tstage') { steps { echo 'hi' } } } }"
+                  "{\"version\":1,\"stages\":[{\"name\":\"legacy\\tstage\",\"steps\":[{\"echo\":\"hi\"}]}]}"
 
               let legacyOrg, legacyProject = freshProject ()
               let legacyKey = "legacy-unsafe-replay"
@@ -1558,7 +1558,7 @@ let endpoints =
 
               let changedCode, changedBody =
                   send HttpMethod.Post legacyUrl (Some token) (Some legacyKey)
-                      (Some(unsafeSource.Replace("echo 'hi'", "echo 'changed'")))
+                      (Some(unsafeSource.Replace("hi", "changed")))
               Expect.equal changedCode 409 "the legacy key cannot substitute different bytes"
               Expect.stringContains changedBody "idempotency_conflict" "conflict keeps its stable API code"
               Expect.equal (countBuilds legacyOrg legacyProject) 1 "conflict creates no build"
@@ -1568,8 +1568,8 @@ let endpoints =
                   $"{baseUrl}/api/v1/organizations/{freshOrg.Value}/projects/{freshProjectId.Value}/builds"
               let freshCode, freshBody =
                   send HttpMethod.Post freshUrl (Some token) (Some "fresh-unsafe") (Some unsafeSource)
-              Expect.equal freshCode 422 "the compatibility probe does not admit fresh unsafe source"
-              Expect.stringContains freshBody "execution_unsupported" "fresh refusal keeps its stable API code"
+              Expect.equal freshCode 422 "the admission probe does not admit fresh unsafe source"
+              Expect.stringContains freshBody "expected_stage" "fresh refusal keeps its stable API code"
               Expect.equal (countBuilds freshOrg freshProjectId) 0 "fresh unsafe source creates no build"
 
               let malformedOrg, malformedProject = freshProject ()
@@ -1604,19 +1604,19 @@ let endpoints =
               Expect.equal (countBuilds malformedOrg malformedProject) 1 "malformed conflict creates no build"
           }
 
-          test "one idempotency key cannot substitute different Jenkinsfile bytes" {
+          test "one idempotency key cannot substitute different pipeline.json bytes" {
               let org, project = freshProject ()
               let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
               let firstCode, _ = send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some pipeline)
               Expect.equal firstCode 201 "control admitted"
-              let changed = pipeline.Replace("echo 'hi'", "echo 'different'")
+              let changed = pipeline.Replace("hi", "different")
               let conflictCode, conflict =
                   send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some changed)
               Expect.equal conflictCode 409 "substitution conflicts"
               Expect.stringContains conflict "idempotency_conflict" "stable conflict code"
 
               let malformedCode, malformedBody =
-                  send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some "pipeline {")
+                  send HttpMethod.Post url (Some token) (Some "api-source-bound") (Some "{")
               Expect.equal malformedCode 409 "a bound key conflicts before parser classification"
               Expect.stringContains malformedBody "idempotency_conflict" "malformed replacement has the stable conflict code"
 
@@ -1631,7 +1631,7 @@ let endpoints =
               Expect.stringContains invalidUtf8Body "idempotency_conflict" "invalid-byte replacement has the stable conflict code"
 
               let freshMalformedCode, freshMalformedBody =
-                  send HttpMethod.Post url (Some token) (Some "fresh-malformed") (Some "pipeline {")
+                  send HttpMethod.Post url (Some token) (Some "fresh-malformed") (Some "{")
               Expect.equal freshMalformedCode 422 "a fresh malformed request still reaches the parser"
               Expect.stringContains freshMalformedBody "malformed_syntax" "fresh malformed request keeps its parser code"
 
@@ -1651,7 +1651,7 @@ let endpoints =
               let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
               let key = "api-mixed-race"
               let sourceA = pipeline
-              let sourceB = pipeline.Replace("echo 'hi'", "echo 'other'")
+              let sourceB = pipeline.Replace("hi", "other")
               use gate = new Threading.ManualResetEventSlim(false)
 
               let requests =
@@ -1704,7 +1704,7 @@ let endpoints =
               request.Headers.TryAddWithoutValidation("authorization", $"Bearer {token}") |> ignore
               request.Headers.TryAddWithoutValidation("idempotency-key", "placement-denied") |> ignore
               request.Headers.TryAddWithoutValidation("fogell-trust-pool", "privileged") |> ignore
-              request.Content <- new StringContent(pipeline, Encoding.UTF8, "application/x-jenkinsfile")
+              request.Content <- new StringContent(pipeline, Encoding.UTF8, "application/vnd.fogell.pipeline.v1+json")
               use response = client.Send request
               let denied = response.Content.ReadAsStringAsync().Result
               Expect.equal (int response.StatusCode) 400 "placement header denied"
@@ -1760,17 +1760,17 @@ let endpoints =
           test "a malformed pipeline renders its exact excerpt" {
               let org, project = freshProject ()
               let url = $"{baseUrl}/api/v1/organizations/{org.Value}/projects/{project.Value}/builds"
-              let source = "  node {\r\n\tsh 'make'\r\n}"
+              let source = "?"
               let code, body = send HttpMethod.Post url (Some token) (Some "bad-1") (Some source)
               Expect.equal code 422 "unprocessable"
               use payload = JsonDocument.Parse body
               let root = payload.RootElement
-              Expect.equal (root.GetProperty("code").GetString()) "no_pipeline_block" "named code"
+              Expect.equal (root.GetProperty("code").GetString()) "malformed_syntax" "named code"
               Expect.equal (root.GetProperty("position").GetString()) "1:1" "typed position remains separate"
 
               Expect.equal
                   (root.GetProperty("message").GetString())
-                  "no_pipeline_block at 1:1: no declarative `pipeline { }` block found\n  node {\n^"
+                  "malformed_syntax at 1:1: invalid pipeline JSON\n?\n^"
                   "the public admission response carries the exact bounded diagnostic"
 
               Expect.equal

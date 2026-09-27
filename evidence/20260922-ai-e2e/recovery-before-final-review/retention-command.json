@@ -1,1 +1,0 @@
-["dotnet", "/home/srikanth/projects/fogell/tools/Fogell.Retention/bin/Release/net10.0/Fogell.Retention.dll", "--state-root", "/tmp/fogell-pilot-20260922-e2e/state", "--organization", "8705477c-37ea-438d-806a-8e763086b6f8", "--keep-builds", "2", "--max-bytes", "67108864", "--max-age-seconds", "86400", "--max-operations", "1024", "--budget-seconds", "30"]

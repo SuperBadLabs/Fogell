@@ -1,7 +1,5 @@
 namespace Fogell.Domain
 
-/// Jenkins' terminal build results, plus the non-terminal states Fogell needs
-/// to reconcile after a crash. Ordering is *severity*, not declaration order.
 type BuildStatus =
     | NotBuilt
     | Success
@@ -11,10 +9,6 @@ type BuildStatus =
 
 module BuildStatus =
 
-    /// Severity order. Higher wins in [worstOf]. Chosen to match Jenkins'
-    /// observable aggregation: a failing stage makes the build fail; an
-    /// unstable stage only degrades it; an abort dominates because the operator
-    /// asked for it and must not be masked by a later failure.
     let severity =
         function
         | NotBuilt -> 0

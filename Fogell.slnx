@@ -1,13 +1,10 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Fogell.Runtime/Fogell.Runtime.fsproj" />
     <Project Path="src/Fogell.Admission/Fogell.Admission.fsproj" />
     <Project Path="src/Fogell.Domain/Fogell.Domain.fsproj" />
-    <Project Path="src/Fogell.Groovy/Fogell.Groovy.fsproj" />
-    <Project Path="src/Fogell.Groovy.Parser/Fogell.Groovy.Parser.fsproj" />
-    <Project Path="src/Fogell.Groovy.Interpreter/Fogell.Groovy.Interpreter.fsproj" />
     <Project Path="src/Fogell.Controller.Api/Fogell.Controller.Api.fsproj" />
     <Project Path="src/Fogell.Controller.Host/Fogell.Controller.Host.fsproj" />
-    <Project Path="src/Fogell.Differential/Fogell.Differential.fsproj" />
     <Project Path="src/Fogell.Execution/Fogell.Execution.fsproj" />
     <Project Path="src/Fogell.Ir/Fogell.Ir.fsproj" />
     <Project Path="src/Fogell.Journal/Fogell.Journal.fsproj" />
@@ -16,22 +13,18 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Fogell.Client/Fogell.Client.fsproj" />
-    <Project Path="tools/Fogell.Corpus.Score/Fogell.Corpus.Score.fsproj" />
     <Project Path="tools/Fogell.Crash.Harness/Fogell.Crash.Harness.fsproj" />
-    <Project Path="tools/Fogell.Differential.Cli/Fogell.Differential.Cli.fsproj" />
     <Project Path="tools/Fogell.Run.Host/Fogell.Run.Host.fsproj" />
     <Project Path="tools/Fogell.Recovery/Fogell.Recovery.fsproj" />
     <Project Path="tools/Fogell.Retention/Fogell.Retention.fsproj" />
-    <Project Path="tools/Fogell.Watch.Inbox/Fogell.Watch.Inbox.fsproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Fogell.Runtime.Tests/Fogell.Runtime.Tests.fsproj" />
     <Project Path="tests/Fogell.Client.Tests/Fogell.Client.Tests.fsproj" />
     <Project Path="tests/Fogell.Retention.Tests/Fogell.Retention.Tests.fsproj" />
     <Project Path="tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj" />
-    <Project Path="tests/Fogell.Differential.Tests/Fogell.Differential.Tests.fsproj" />
     <Project Path="tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj" />
     <Project Path="tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj" />
-    <Project Path="tests/Fogell.Groovy.Tests/Fogell.Groovy.Tests.fsproj" />
     <Project Path="tests/Fogell.Journal.Tests/Fogell.Journal.Tests.fsproj" />
     <Project Path="tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj" />
     <Project Path="tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj" />

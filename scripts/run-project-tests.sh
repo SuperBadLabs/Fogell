@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run every tracked test project, independent of directory depth or filename.
+# Run every solution test project, independent of directory depth or filename.
 # The caller must build first; this runner deliberately uses --no-build so a
 # test execution cannot hide an inventory or configuration error behind a
 # second implicit build.
@@ -24,27 +24,21 @@ fi
 scratch="$(mktemp -d /tmp/fogell-project-tests.XXXXXX)"
 trap 'rm -rf -- "$scratch"' EXIT
 
-repository_git() {
-  # `git -C` does not override inherited repository/index selectors. Bind the
-  # inventory to the repository containing this script, even when a caller or
-  # hosted runner exports Git plumbing state for a different checkout.
-  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE \
-    -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
-    -u GIT_QUARANTINE_PATH -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE \
-    -u GIT_REPLACE_REF_BASE -u GIT_PREFIX -u GIT_NAMESPACE \
-    -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS \
-    git -C "$ROOT" --work-tree="$ROOT" \
-      -c core.hooksPath=/dev/null -c core.fsmonitor=false \
-      -c color.ui=false -c color.status=false "$@"
-}
-
 test_projects=()
 mapfile -d '' test_projects < <(
-  repository_git ls-files -z -- ':(glob)tests/**/*.fsproj'
+  python3 - "$ROOT/Fogell.slnx" <<'PYTHON'
+import sys, xml.etree.ElementTree as ET
+projects = [p.attrib['Path'] for p in ET.parse(sys.argv[1]).iter('Project')
+            if p.attrib['Path'].startswith('tests/')]
+if not projects or len(projects) != len(set(projects)):
+    raise SystemExit('invalid test project inventory')
+for project in projects:
+    sys.stdout.buffer.write(project.encode() + b'\0')
+PYTHON
 )
 inventory_pid=$!
 if ! wait "$inventory_pid"; then
-  echo "tracked test project inventory could not be read" >&2
+  echo "solution test project inventory could not be read" >&2
   exit 1
 fi
 [ "${#test_projects[@]}" -gt 0 ] || {

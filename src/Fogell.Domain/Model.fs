@@ -59,7 +59,6 @@ type Attempt =
       LeaseOwner: string option
       LeaseExpiresAt: DateTimeOffset option }
 
-/// One unit of scheduling — a stage, in Jenkins terms.
 type Node =
     { Id: NodeId
       BuildId: BuildId

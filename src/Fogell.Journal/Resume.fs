@@ -114,9 +114,6 @@ module Resume =
                                     |> Option.defaultValue BuildStatus.Success
                                     |> fun current -> BuildStatus.worstOf current status))
                             acc
-                    // Retry markers deliberately do not clear warnings. Jenkins'
-                    // prior-attempt FlowNodes remain inside the stage graph, so a
-                    // warning action from an earlier attempt still decorates it.
                     | _ -> acc)
                 Map.empty
 
@@ -220,41 +217,6 @@ module Resume =
     let stageWarningOf (plan: ResumePlan) (stage: string) (index: int) =
         Map.tryFind (stage, index) plan.StageWarnings
 
-    /// FG-046b. An interrupted `input` whose answer is already on record is the
-    /// ONE step that is safe to re-run. Every other step is refused because we
-    /// cannot know whether its effect happened; an `input`'s only effect IS the
-    /// answer, and the answer is durable, so running it again consults the
-    /// record instead of asking a human twice. Both halves are required: an
-    /// interrupted input with NO decision still refuses (nobody has answered),
-    /// and a decision recorded against a non-`input` step grants nothing.
-    ///
-    /// STATED LIMIT — it covers a BARE top-level `input` only. The durability
-    /// unit is the top-level step, so `timeout(…) { input … }` journals as
-    /// `timeout`: the answer is still recorded and still survives (the human is
-    /// never re-asked for it), but the interrupted WRAPPER refuses reconciliation
-    /// as any other wrapper does. That is deliberate, not an omission — a wrapper
-    /// body may hold other steps whose effects already landed, and re-running the
-    /// body to reach the prompt would re-run those too, which is exactly the
-    /// at-least-once outcome ADR 0003 rejects. Ten of the corpus's twenty-two
-    /// `input` files use the wrapped shape, so the limit is stated on the board
-    /// rather than buried here. `script { }` IS this limit too — the block is
-    /// one unit, a crash between its children refuses by name, and operator
-    /// attestation covers the WHOLE block — asserted by the FG-171 scenario in
-    /// `scripts/run-restart-lane.sh`, written because the FG-171 row claimed the
-    /// opposite failure: the lane proves no child ever duplicates, and that a
-    /// child the crash never reached does not run on a reconciled resume.
-    /// Fine-grained resume inside any block needs per-child durable identity,
-    /// which FG-135's stage-level attempt markers do not deliver — that is
-    /// FG-204.
-    ///
-    /// That a bare top-level `input` asks exactly ONE prompt — occurrence 1 — is
-    /// load-bearing beyond this function: this is the only place a resumed
-    /// attempt re-runs a prompt to consult a recorded answer, which is what
-    /// keeps WalkerCtx.NextInputOccurrence's DERIVED ordinal safe. Widening the
-    /// exemption to wrappers requires a durable ordinal first. The test below is
-    /// still written as "some occurrence under this key was answered" rather
-    /// than hard-coding 1, so such a widening cannot get a silent free pass from
-    /// a stale constant.
     let inputAnswered (plan: ResumePlan) (stage: string) (index: int) =
         Set.contains (stage, index) plan.InputSteps
         && plan.InputDecisions |> Map.exists (fun (s, i, _) _ -> s = stage && i = index)

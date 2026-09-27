@@ -1,7 +1,1 @@
-# A unified diff encodes blank context lines as one-space lines. They are valid
-# patch syntax, not source whitespace defects in the embedded evidence file.
-evidence/*/candidate.diff -whitespace
-# pg_dump schema inventories retain the exact measured trailing blank line.
-evidence/20260922-ai-e2e/upgrade-*/*.schema whitespace=-blank-at-eof
-# Preserve Git's measured hint lines in the complete gate log byte-for-byte.
-evidence/20260922-ai-e2e/full-gate.log whitespace=-blank-at-eol
+* text=auto
