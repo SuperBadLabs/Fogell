@@ -31,6 +31,7 @@ pipelines. It does not promise hostile-tenant isolation, remote workers, general
 Jenkinsfile translation, or a multi-node controller. Those are separate products
 with separate evidence requirements. No feature expansion enters this plan.
 
+The [release board](RELEASE_BOARD.md) orders the current and next wave's tickets.
 The dates below are decision deadlines for one focused engineering owner with
 access to the existing Luigi test host. A missed gate is recorded as missed; it
 does not silently move all later dates. Each gate needs an exact candidate commit,

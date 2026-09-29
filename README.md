@@ -70,4 +70,5 @@ qualify this native runtime. See [upgrade and recovery](docs/runbooks/recovery.m
 - `tools/`: client, run host, retention and restore activation.
 - `tests/`, `scripts/`: behavioral tests and operational checks.
 
-[Product roadmap](docs/PRODUCT_DIRECTION.md). Licensed under Apache 2.0.
+[Product roadmap](docs/PRODUCT_DIRECTION.md) and
+[release board](docs/RELEASE_BOARD.md). Licensed under Apache 2.0.
