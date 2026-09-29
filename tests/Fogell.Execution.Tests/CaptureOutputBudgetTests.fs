@@ -435,7 +435,7 @@ let captureOutputBudget =
               Expect.equal (abandoned.CompleteRedacted()).Text "" "abandonment never turns an unresolved suffix into EOF output"
           }
 
-          test "generated interrupt narration failure is deferred until the process group is reaped" {
+          test "generated interrupt narration failure is deferred through process-group cleanup" {
               let root = Path.Combine(Path.GetTempPath(), "fogell-generated-narration-" + Guid.NewGuid().ToString("N"))
               Directory.CreateDirectory root |> ignore
               let pidFile = Path.Combine(root, "child.pid")
@@ -467,7 +467,7 @@ let captureOutputBudget =
                   match waitForPid pidFile with
                   | None -> failtest "the child never established reaping evidence"
                   | Some pid ->
-                      Expect.isFalse (Directory.Exists(Path.Combine("/proc", string pid))) $"generated-admission failure returned only after reaping child {pid}"
+                      Expect.isTrue (waitForReap pid) $"generated-admission failure reaped child {pid} within the bound"
 
                   Expect.isFalse (File.Exists lateFile) "the parent did not reach its late effect"
               finally
@@ -558,7 +558,7 @@ let captureOutputBudget =
                   match waitForPid pidFile with
                   | None -> failtest "the child never established reaping evidence"
                   | Some pid ->
-                      Expect.isFalse (Directory.Exists(Path.Combine("/proc", string pid))) $"precedence failure returned only after reaping child {pid}"
+                      Expect.isTrue (waitForReap pid) $"precedence failure reaped child {pid} within the bound"
               finally
                   try
                       File.WriteAllText(releaseFile, "release")
