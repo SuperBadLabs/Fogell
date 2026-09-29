@@ -108,7 +108,8 @@ def controller_proof(root, container, port, runtime, fogell_representative_logs=
     require(mapping.endswith(f'127.0.0.1:{port}') or mapping == f'127.0.0.1:{port}', 'container/port mismatch')
     identity = uuid.uuid4().hex
     database, role = 'fogell_native_' + identity, 'fogell_native_runtime_' + identity
-    created_database = created_role = False
+    created_database = created_role = created_test_database = False
+    test_database = None
     process = None
     def sql(db, statement):
         return command([runtime, 'exec', container, 'psql', '-X', '-U', 'fogell', '-d', db,
@@ -271,6 +272,13 @@ def controller_proof(root, container, port, runtime, fogell_representative_logs=
             if fogell_representative_logs is not None:
                 logs = Path(fogell_representative_logs)
                 logs.mkdir(parents=True, exist_ok=True)
+                # The gate's retention/store suites advance restore epochs.
+                # Give them a separate database so they cannot fence the
+                # controller that is qualifying their output.
+                test_database = 'fogell_test_' + uuid.uuid4().hex
+                sql('postgres', f'CREATE DATABASE {test_database}')
+                created_test_database = True
+                test_admin = f'Host=127.0.0.1;Port={port};Username=fogell;Database={test_database}'
                 paths = subprocess.check_output(['git', 'ls-files', '-z'], cwd=ROOT).split(b'\0')
                 inventory_paths = [name.decode() for name in paths if name and
                                    all(not part.startswith('.') for part in Path(name.decode()).parts)]
@@ -279,7 +287,7 @@ def controller_proof(root, container, port, runtime, fogell_representative_logs=
                 inventory.write_text(''.join(path+'\n' for path in inventory_paths))
                 (logs/'fogell-files.txt').write_bytes(inventory.read_bytes())
                 gate_command = ('#!/bin/bash\nset -Eeuo pipefail\n'
-                                + 'FOGELL_TEST_DATABASE_URL=' + shlex.quote(admin)
+                                + 'FOGELL_TEST_DATABASE_URL=' + shlex.quote(test_admin)
                                 + ' /usr/bin/time -v ./scripts/build-and-test.sh |& tee fogell-gate.log')
                 definition = json.dumps({'version': 1,
                                          'env': {'NUGET_PACKAGES': str(Path.home()/'.nuget/packages')},
@@ -300,7 +308,7 @@ def controller_proof(root, container, port, runtime, fogell_representative_logs=
                     code, raw = request(f'{builds}/{representative_build}/feedback')
                     require(code == 200, 'Fogell representative feedback unavailable')
                     value = json.loads(raw)
-                    return value if value['is_terminal'] else None
+                    return value if value['is_terminal'] or value['status'] == 'reconciliation_required' else None
                 terminal = until(representative_terminal, 660)
                 elapsed = time.monotonic() - started
                 cursor, sequences, bodies, pages, feedback_bytes = 0, [], [], 0, 0
@@ -356,6 +364,8 @@ def controller_proof(root, container, port, runtime, fogell_representative_logs=
     finally:
         if process is not None:
             stop(process)
+        if created_test_database:
+            sql('postgres', f'DROP DATABASE {test_database} WITH (FORCE)')
         if created_database:
             sql('postgres', f'DROP DATABASE {database} WITH (FORCE)')
         if created_role:
