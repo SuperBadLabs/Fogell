@@ -35,7 +35,7 @@ automatic approval review pending explicit owner authorization.
 | — | [FG-305](tickets/FG-305.md) burst-output transport | W2 | Done | [350 markers, 15 feedback pages, 584/584 gate, 115/115 matrix](../reports/native-output-2026-09-29/REPORT.md). |
 | — | [FG-304](tickets/FG-304.md) independent qualification | W1 | Done | 115/115 matrix and 582-test full gate on `9550bb05`. |
 | — | [FG-303](tickets/FG-303.md) failed JUnit persistence | W1 | Done | Runner/controller regression and 569-test gate passed. |
-| — | [FG-301](tickets/FG-301.md) publish review baseline | W0 | Blocked | Explicit publication approval and working GitHub authentication. |
+| — | [FG-301](tickets/FG-301.md) publish review baseline | W0 | Blocked | Explicit approval for this exact branch; GitHub authentication works. |
 | — | [FG-307](tickets/FG-307.md) pilot/recovery decisions | W0 | Done | Maven, clenkins, Luigi, and numerical targets selected. |
 
 ## Operating rule
@@ -62,3 +62,4 @@ candidate or no release; unfinished expansion work is parked.
 | 2026-09-29 | Close FG-311 and FG-306 at `1d2973c0`, close W2, start W3 with FG-308, and split W4 into FG-312–314. | Fogell's source-snapshot controller gate passed 584/584 and its artifact matched paginated feedback; Maven's separate noisy output pass is retained. The [completion report](../reports/native-representative-complete-2026-09-29/REPORT.md) records both and the failed nested-fixture attempts. W3's backup and retention work is the next false-evidence/data-loss risk. |
 | 2026-09-29 | Start FG-309 alongside FG-308. | The board permits two Doing tickets; read-only alert checks can proceed independently while paired-backup work is built. |
 | 2026-09-29 | Keep FG-308 and FG-309 Doing after the local helper/rehearsal slice. | One disposable paired point was created, checked, and restored; the read-only operator check and failure records passed focused tests. Scheduled multiple points, retention catch-up, host alert delivery/calibration, and the 72-hour staging gate are still required. The [partial report](../reports/native-operations-progress-2026-09-29/REPORT.md) lists evidence and limits. |
+| 2026-09-29 | Confirm GitHub `main` remains `1c010549` and `gh` authentication works; keep FG-301 blocked only on exact publication approval. | The branch is 24 commits ahead and changes 4,487 files. Automatic approval review rejected the earlier push because the broad delegation did not explicitly authorize this migration payload. |
