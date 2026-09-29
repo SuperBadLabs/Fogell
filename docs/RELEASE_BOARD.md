@@ -23,7 +23,8 @@ automatic approval review pending explicit owner authorization.
 
 | Order | Ticket | Wave | State | Exit evidence |
 | --- | --- | --- | --- | --- |
-| 1 | [FG-306](tickets/FG-306.md) representative output | W2 | Doing | Real build/test and noisy workload through the controller. |
+| 1 | [FG-311](tickets/FG-311.md) nested process-test qualification | W2 | Doing | Full Fogell gate succeeds through the controller with reaping guarantees intact. |
+| 2 | [FG-306](tickets/FG-306.md) representative output | W2 | Blocked on FG-311 | Maven passed; full Fogell gate remains required. |
 | 3 | [FG-308](tickets/FG-308.md) paired backup and retention | W3 | Ready | Scheduled, checked recovery points and bounded cleanup. |
 | 4 | [FG-309](tickets/FG-309.md) operator alerts and capacity | W3 | Ready | Held-work and capacity alerts have measured thresholds. |
 | 5 | [FG-310](tickets/FG-310.md) unattended staging proof | W3 | Ready | 72-hour run and downtime catch-up recorded. |
@@ -53,3 +54,5 @@ candidate or no release; unfinished expansion work is parked.
 | 2026-09-29 | Select local Apache Maven and clenkins as the additional pilot repos, Luigi as host, and 5 s idle-host p95 feedback, 60 min recovery time, 24 h recovery point as working gates. | The two repos exercise Java and Clojure/JS workloads beyond Fogell's F# gate; the delegated project lead can revise the targets when evidence warrants. |
 | 2026-09-29 | Close W1 at `9550bb05` and start FG-305. | The carried-forward matrix passed 115/115, the locked gate passed 582 tests with zero warnings/errors, and the real controller proof passed. The reported burst-output failure is the next release blocker. |
 | 2026-09-29 | Close FG-305 at `016ed3b2` and start FG-306. | The exact traced burst passed through the controller with 350 ordered markers across 15 pages, 584 tests and the 115-case matrix passed, and the over-limit case retained its typed failure. W2 still needs representative workloads. |
+| 2026-09-29 | Add FG-311 ahead of the remaining FG-306 qualification. | The source-bound Fogell gate fails seven execution tests under the controller's nested process environment even though the standalone gate passes; a registry retry changes, but does not resolve, the failures. The controller reports failure correctly. Keep M2's gate and date unchanged. |
+| 2026-09-29 | Record Maven's controller output pass and block FG-306 on FG-311. | Maven debug output matched its artifact across 26 pages and 2,517 ordered records; Fogell's full gate still fails inside the controller. The [partial qualification](../reports/native-representative-2026-09-29/REPORT.md) retains both outcomes. |

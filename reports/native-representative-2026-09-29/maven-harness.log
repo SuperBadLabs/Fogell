@@ -1,0 +1,4 @@
+PASS native runner: artifacts, terminal replay, admission, crash reconciliation, changed-definition refusal
+PASS traced burst: 15 pages, 1411 ordered records, 350 markers and artifact
+PASS Maven representative: 26 pages, 2517 ordered records, 4.2s, artifact 188271 bytes
+PASS native controller: authentication, admission, snapshot failure/fix, failed JUnit, diagnostics, artifacts, source retrieval, cancellation
