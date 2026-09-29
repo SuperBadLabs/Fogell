@@ -287,13 +287,13 @@ def controller_proof(root, container, port, runtime, fogell_representative_logs=
                 inventory = root/'fogell-files.txt'
                 inventory.write_text(''.join(path+'\n' for path in inventory_paths))
                 (logs/'fogell-files.txt').write_bytes(inventory.read_bytes())
-                # This workload itself exercises ProcessGroup and verifies that
-                # its orphaned children have been reaped. Give the nested test
-                # processes their own registry/subreaper under the workspace.
+                # The gate itself exercises ProcessGroup and verifies that
+                # orphaned fixture children have disappeared from /proc.
+                # Give this nested workload its own active child reaper.
                 gate_command = ('#!/bin/bash\nset -Eeuo pipefail\n'
                                 + 'FOGELL_TEST_DATABASE_URL=' + shlex.quote(test_admin)
-                                + ' FOGELL_PROCESS_GROUP_REGISTRY="$PWD/.qualification-registry"'
-                                + ' /usr/bin/time -v ./scripts/build-and-test.sh |& tee fogell-gate.log')
+                                + ' /usr/bin/time -v python3 scripts/qualification/reap-descendants.py'
+                                + ' ./scripts/build-and-test.sh |& tee fogell-gate.log')
                 definition = json.dumps({'version': 1,
                                          'env': {'NUGET_PACKAGES': str(Path.home()/'.nuget/packages')},
                                          'stages': [{'name': 'representative', 'steps': [

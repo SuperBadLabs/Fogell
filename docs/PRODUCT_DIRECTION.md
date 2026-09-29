@@ -4,7 +4,7 @@ Fogell is reliable self-hosted CI for human and AI development feedback loops.
 Native versioned JSON is the only pipeline authoring contract. Work is selected
 by supported user workflows, safety and operational evidence.
 
-The native baseline passes 582 automated tests and the local runner/controller
+The current local native gate passes 584 automated tests and the runner/controller
 proof: admission, source verification, failure/fix feedback, artifacts, source
 retrieval, cancellation, terminal replay and interrupted-run reconciliation.
 The build has zero warnings or errors. This is functional validation; sustained
@@ -16,8 +16,13 @@ results broke persisted execution, newline-terminated environment names
 bypassed validation, and fast traced output reached a practical callback-queue
 limit. The first two defects are fixed. The
 [September 29 qualification](../reports/native-qualification-2026-09-29/REPORT.md)
-passed its 115-case matrix and full gate. Qualify output before advancing to a
-sustained native pilot.
+passed its 115-case matrix and full gate. The
+[burst-output qualification](../reports/native-output-2026-09-29/REPORT.md)
+passed the traced controller case and the updated 584-test gate. The
+[representative-output attempt](../reports/native-representative-2026-09-29/REPORT.md)
+passed Apache Maven's noisy build but exposed a nested process-test blocker
+when Fogell's own full gate ran as a controller workload. Close FG-311 before
+advancing to a sustained native pilot.
 
 This release replaces the previous authoring/runtime path. Old campaign results
 are historical and do not qualify the native runtime. Production release requires
