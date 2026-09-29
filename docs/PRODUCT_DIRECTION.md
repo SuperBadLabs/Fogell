@@ -1,4 +1,4 @@
-# Product direction and roadmap
+# Product direction and release milestones
 
 Fogell is reliable self-hosted CI for human and AI development feedback loops.
 Native versioned JSON is the only pipeline authoring contract. Work is selected
@@ -22,14 +22,32 @@ This release replaces the previous authoring/runtime path. Old campaign results
 are historical and do not qualify the native runtime. Production release requires
 fresh validation of the supported profile.
 
-| Order | Deliverable | Exit evidence |
-| --- | --- | --- |
-| 1 | Native execution qualification | Controller admission, source snapshots, typed failure/fix feedback, artifacts, cancellation and crash/restart work end to end with the native definition format. |
-| 2 | Unattended operations | Scheduled retention and backups, cleanup catch-up after downtime, held-work alerts and measured filesystem/database capacity. |
-| 3 | Representative sustained pilot | Full Fogell build/test plus named real projects over multiple days; cold dependency and resource-pressure cases; uncensored latency and failure measurements. |
-| 4 | Recovery qualification | Native runtime installation, upgrade/rollback and paired restore, including stale writers; measured whole-procedure recovery time and data loss against declared objectives. |
-| 5 | Expanded deployment only when needed | Independently designed worker isolation, quotas, user authorization and remote execution, each with adversarial evidence. |
+## First release boundary
 
-Correctness, data loss, false success and security defects in the supported path
-precede feature work. Keep the global bearer, single-node and trusted-workload
-limits explicit. Do not publish or deploy a release without owner authorization.
+The first native release supports one dedicated Linux host, PostgreSQL 16, one
+local worker, trusted workloads, a global operator bearer, and version 1 JSON
+pipelines. It does not promise hostile-tenant isolation, remote workers, general
+Jenkinsfile translation, or a multi-node controller. Those are separate products
+with separate evidence requirements. No feature expansion enters this plan.
+
+The dates below are decision deadlines for one focused engineering owner with
+access to the existing Luigi test host. A missed gate is recorded as missed; it
+does not silently move all later dates. Each gate needs an exact candidate commit,
+the commands or harness used, raw results, and a short pass/fail summary. The
+historical Luigi report remains an observation of its September 26 candidate.
+
+| Milestone | Deadline | Required result |
+| --- | --- | --- |
+| M0 — Reviewable baseline | October 2, 2026 | Publish the current native branch for review only after explicit owner approval of its source/report archives. Name two additional pilot repositories, choose the test host, and approve the pilot and recovery objectives below. A protected-main merge is not part of this milestone. |
+| M1 — Correctness blockers closed | October 9 | Reject trailing LF/CRLF and all other invalid environment-name characters; retain the fixed JUnit result and diagnostics through runner and controller persistence. Rerun the 115-case independent matrix against the exact candidate: 115/115 pass. The locked build, all test projects, and real controller proof pass with no warnings or skipped database suites. |
+| M2 — Output under real load | October 16 | The reported 350-marker default-tracing reproducer completes without `OUTPUT_LIMIT_EXCEEDED`, loss, duplication, or reordering. Run Fogell's full build/test output and one noisy representative workload through the controller, including pagination and artifacts. Exceeding a documented hard limit must still fail with a typed reason and retained evidence. |
+| M3 — Unattended operation | October 23 | Schedule paired database/state backups and retention, alert on held or reconciliation-required work and capacity thresholds, and prove cleanup catches up after downtime. Complete a 72-hour unattended staging run with backup, restore-point, alert, disk, and database measurements recorded. |
+| M4 — Sustained native pilot | November 6 | Run Fogell and the two named repositories for at least seven consecutive days and at least 50 builds, including ten deliberate failure/fix pairs, cold dependencies, a burst-output case, a controller restart, and a worker interruption. Every build ends terminal or explicitly requires reconciliation; no false success, lost artifact, or unobserved replay is accepted. On an otherwise idle host, target p95 accepted-submission-to-first-feedback at five seconds or less. Record all latency and resource measurements without censoring failures. |
+| M5 — Recovery and release decision | November 13 | From a clean release directory, rehearse install, upgrade, rollback, and paired database/state restore with a stale writer present. Measure the whole procedure against a proposed 60-minute recovery-time objective and 24-hour recovery-point objective, approved at M0. Decide **release candidate** only if M1–M5 pass and no supported-path correctness, data-loss, or security blocker remains; otherwise record **no release** and park expansion work. |
+
+The November 13 decision is the stop point for this release attempt. A failed
+milestone does not justify indefinite feature work or a partial success claim.
+Correctness, data loss, false success, and supported-path security defects take
+priority over new features. Keep the global bearer, single-node, and trusted-workload
+limits explicit. Publishing code or deploying a release still requires owner
+authorization; a passing gate alone does not grant it.
