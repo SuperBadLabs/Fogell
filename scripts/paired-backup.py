@@ -88,6 +88,30 @@ def canonical_hash(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def record_failed_attempt(parent: Path, output_name: str, error: Exception) -> Path:
+    """Persist only nonsecret failure metadata next to a discarded recovery point."""
+    failed_at = datetime.now(timezone.utc)
+    stamp = failed_at.strftime("%Y%m%dT%H%M%S.%fZ")
+    destination = parent / f"{output_name}.{stamp}.failed.json"
+    payload = {"timestamp": failed_at.isoformat(), "output": output_name,
+               "failure_class": type(error).__name__}
+    encoded = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb", closefd=False) as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        os.close(fd)
+    parent_fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
+    return destination
+
+
 def libpq_environment(npgsql: str) -> dict[str, str]:
     """Translate the documented semicolon-delimited Npgsql connection string.
 
@@ -186,7 +210,8 @@ def check(backup: Path) -> dict[str, object]:
         raise ValueError("pg_restore must be installed to check a recovery point")
     for key in ("database.custom", "state.tar"):
         path = backup / key
-        if not path.is_file() or digest(path) != manifest["files"][key]["sha256"]:
+        if (not path.is_file() or path.stat().st_size != manifest["files"][key]["size"]
+                or digest(path) != manifest["files"][key]["sha256"]):
             raise ValueError(f"missing or changed recovery file: {key}")
     with (backup / "database.custom").open("rb") as archive:
         listing = subprocess.run([pg_restore, "--list"], stdin=archive,
@@ -263,8 +288,21 @@ def create(args: argparse.Namespace) -> dict[str, object]:
         (output / "manifest.json").write_text(manifest_bytes, encoding="utf-8")
         # Recheck the durable representation before reporting success.
         return check(output)
-    except Exception:
-        shutil.rmtree(output, ignore_errors=True)
+    except Exception as error:
+        try:
+            shutil.rmtree(output)
+        except FileNotFoundError:
+            pass
+        except OSError as cleanup_error:
+            try:
+                record_failed_attempt(output.parent, output.name, error)
+            except OSError as record_error:
+                raise RuntimeError("backup failed; partial output cleanup and failure recording failed") from record_error
+            raise RuntimeError("backup failed; partial output cleanup failed") from cleanup_error
+        try:
+            record_failed_attempt(output.parent, output.name, error)
+        except OSError as record_error:
+            raise RuntimeError("backup failed; failure record could not be persisted") from record_error
         raise
 
 
@@ -284,7 +322,8 @@ def main() -> int:
     try:
         print(json.dumps(args.func(args), sort_keys=True))
         return 0
-    except (OSError, ValueError, KeyError, json.JSONDecodeError, subprocess.CalledProcessError, tarfile.TarError) as error:
+    except (OSError, ValueError, KeyError, RuntimeError, json.JSONDecodeError,
+            subprocess.CalledProcessError, tarfile.TarError) as error:
         print(f"paired-backup REFUSED: {error}", file=sys.stderr)
         return 1
 

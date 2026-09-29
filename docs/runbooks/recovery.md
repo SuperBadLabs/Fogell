@@ -42,3 +42,39 @@ by epoch activation and control checks. Do not run an older worker against newly
 admitted native definitions. Keep evidence from failed upgrades and rehearsals.
 Measure full service downtime, backup age/data loss and successful-control time;
 there is no currently certified native-release recovery SLO.
+
+## Local paired recovery-point helper
+
+`scripts/paired-backup.py` creates one recovery point after the operator has
+stopped admission, drained work, stopped every controller/worker/retention
+writer, and verified that no descendant still writes the state root. The
+`--writers-quiesced` flag records that assertion; the helper cannot prove it.
+Use a new absolute output directory outside the state root and a PostgreSQL 16
+client toolchain matching the server. Supply the maintenance connection through
+the existing `FOGELL_MAINTENANCE_DATABASE_URL` secret environment:
+
+```sh
+scripts/paired-backup.py create \
+  --state-root /srv/fogell/state \
+  --output /srv/fogell/backups/2026-09-29T180000Z \
+  --release-id EXACT_RELEASE_COMMIT \
+  --writers-quiesced
+scripts/paired-backup.py check /srv/fogell/backups/2026-09-29T180000Z
+```
+
+The point contains a PostgreSQL custom archive, state tar, and manifest with
+both hashes, the state inventory hash, schema version, release ID and creation
+time. `check` verifies both file hashes, the readable PostgreSQL archive table
+of contents, and the state inventory. It does not restore the archive or prove
+application recovery. Keep the point immutable and rehearse a paired restore
+into empty disposable destinations before relying on it. A scheduler and
+retention sweep are separate FG-308 work; never start them while writers are
+quiesced for a backup unless their runbook conditions are met.
+
+If creation fails after its output directory was created, the helper removes
+the partial point and writes an adjacent `<output>.<UTC timestamp>.failed.json`
+record containing only `timestamp`, `output`, and `failure_class`. Preserve
+these records with backup evidence. The operator check alerts while a failed
+attempt has no newer verified recovery point; successful verification clears
+that alert without deleting the failure record. Failed-check records do not
+make a recovery point valid: diagnose them and create a replacement point.

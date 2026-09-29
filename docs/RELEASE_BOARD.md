@@ -15,7 +15,7 @@ automatic approval review pending explicit owner authorization.
 | W0 | Reviewable baseline · Oct 2 | Approve publication scope; record pilot repos, host, and targets. | Publication blocked |
 | W1 | Correctness · Oct 9 | Invalid env names refused; failed JUnit stays unstable; independent 115/115 matrix and full native gate pass. | Complete; [evidence](../reports/native-qualification-2026-09-29/REPORT.md) |
 | W2 | Output · Oct 16 | Default-traced 350-marker case and representative build output complete without lost, duplicate, or reordered records. | Complete; [evidence](../reports/native-representative-complete-2026-09-29/REPORT.md) |
-| W3 | Operations · Oct 23 | Backups, retention, alerts, cleanup catch-up, and 72-hour unattended staging proof. | Active |
+| W3 | Operations · Oct 23 | Backups, retention, alerts, cleanup catch-up, and 72-hour unattended staging proof. | Active; [local slice](../reports/native-operations-progress-2026-09-29/REPORT.md) |
 | W4 | Pilot · Nov 6 | Seven days, 50 builds, ten failure/fix pairs across Fogell plus two named repos. | Next |
 | W5 | Recovery/decision · Nov 13 | Paired restore, upgrade/rollback, stale-writer proof, then release-candidate or no-release decision. | Planned; split after W4 |
 
@@ -24,7 +24,7 @@ automatic approval review pending explicit owner authorization.
 | Order | Ticket | Wave | State | Exit evidence |
 | --- | --- | --- | --- | --- |
 | 1 | [FG-308](tickets/FG-308.md) paired backup and retention | W3 | Doing | Scheduled, checked recovery points and bounded cleanup. |
-| 2 | [FG-309](tickets/FG-309.md) operator alerts and capacity | W3 | Ready | Held-work and capacity alerts have measured thresholds. |
+| 2 | [FG-309](tickets/FG-309.md) operator alerts and capacity | W3 | Doing | Held-work and capacity alerts have measured thresholds. |
 | 3 | [FG-310](tickets/FG-310.md) unattended staging proof | W3 | Ready | 72-hour run and downtime catch-up recorded. |
 | 4 | [FG-312](tickets/FG-312.md) pilot preparation | W4 | Ready | Exact repo/host manifest and three control runs. |
 | 5 | [FG-313](tickets/FG-313.md) failure and interruption pairs | W4 | Ready | Ten pairs and interruption evidence. |
@@ -60,3 +60,5 @@ candidate or no release; unfinished expansion work is parked.
 | 2026-09-29 | Add FG-311 ahead of the remaining FG-306 qualification. | The source-bound Fogell gate fails seven execution tests under the controller's nested process environment even though the standalone gate passes; a registry retry changes, but does not resolve, the failures. The controller reports failure correctly. Keep M2's gate and date unchanged. |
 | 2026-09-29 | Record Maven's controller output pass and block FG-306 on FG-311. | Maven debug output matched its artifact across 26 pages and 2,517 ordered records; Fogell's full gate still fails inside the controller. The [partial qualification](../reports/native-representative-2026-09-29/REPORT.md) retains both outcomes. |
 | 2026-09-29 | Close FG-311 and FG-306 at `1d2973c0`, close W2, start W3 with FG-308, and split W4 into FG-312–314. | Fogell's source-snapshot controller gate passed 584/584 and its artifact matched paginated feedback; Maven's separate noisy output pass is retained. The [completion report](../reports/native-representative-complete-2026-09-29/REPORT.md) records both and the failed nested-fixture attempts. W3's backup and retention work is the next false-evidence/data-loss risk. |
+| 2026-09-29 | Start FG-309 alongside FG-308. | The board permits two Doing tickets; read-only alert checks can proceed independently while paired-backup work is built. |
+| 2026-09-29 | Keep FG-308 and FG-309 Doing after the local helper/rehearsal slice. | One disposable paired point was created, checked, and restored; the read-only operator check and failure records passed focused tests. Scheduled multiple points, retention catch-up, host alert delivery/calibration, and the 72-hour staging gate are still required. The [partial report](../reports/native-operations-progress-2026-09-29/REPORT.md) lists evidence and limits. |

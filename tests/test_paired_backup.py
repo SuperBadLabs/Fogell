@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -56,6 +57,50 @@ class PairedBackupTests(unittest.TestCase):
             manifest = json.loads((base / "point" / "manifest.json").read_text())
             self.assertTrue(manifest["paired"])
             self.assertEqual(manifest["status"], "complete")
+            self.assertEqual(list(base.glob("point.*.failed.json")), [])
+
+    def test_failed_create_removes_partial_output_and_records_safe_failure_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "state"
+            root.mkdir()
+            (root / "artifact").write_bytes(b"local fixture")
+            bindir = base / "bin"
+            bindir.mkdir()
+            dump = bindir / "pg_dump"
+            dump.write_text("#!/bin/sh\nprintf 'partial archive'\nexit 17\n")
+            dump.chmod(0o755)
+            psql = bindir / "psql"
+            psql.write_text("#!/bin/sh\nprintf '17\\n'\n")
+            psql.chmod(0o755)
+            old_path = os.environ.get("PATH", "")
+            old_url = os.environ.get("FOGELL_MAINTENANCE_DATABASE_URL")
+            output = base / "failed-point"
+            try:
+                os.environ["PATH"] = str(bindir) + os.pathsep + old_path
+                os.environ["FOGELL_MAINTENANCE_DATABASE_URL"] = (
+                    "Host=127.0.0.1;Port=5432;Username=fogell;Database=fixture;Password=secret"
+                )
+                args = type("Args", (), {
+                    "state_root": str(root), "output": str(output),
+                    "release_id": "fixture", "writers_quiesced": True,
+                })()
+                with self.assertRaises(subprocess.CalledProcessError):
+                    paired_backup.create(args)
+            finally:
+                os.environ["PATH"] = old_path
+                if old_url is None:
+                    os.environ.pop("FOGELL_MAINTENANCE_DATABASE_URL", None)
+                else:
+                    os.environ["FOGELL_MAINTENANCE_DATABASE_URL"] = old_url
+            self.assertFalse(output.exists())
+            records = list(base.glob("failed-point.*.failed.json"))
+            self.assertEqual(len(records), 1)
+            record = json.loads(records[0].read_text())
+            self.assertEqual(set(record), {"timestamp", "output", "failure_class"})
+            self.assertEqual(record["output"], "failed-point")
+            self.assertEqual(record["failure_class"], "CalledProcessError")
+            self.assertNotIn("secret", records[0].read_text())
 
     def test_npgsql_connection_string_is_mapped_to_private_environment(self):
         environment = paired_backup.libpq_environment(
