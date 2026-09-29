@@ -19,10 +19,10 @@ limit. The first two defects are fixed. The
 passed its 115-case matrix and full gate. The
 [burst-output qualification](../reports/native-output-2026-09-29/REPORT.md)
 passed the traced controller case and the updated 584-test gate. The
-[representative-output attempt](../reports/native-representative-2026-09-29/REPORT.md)
-passed Apache Maven's noisy build but exposed a nested process-test blocker
-when Fogell's own full gate ran as a controller workload. Close FG-311 before
-advancing to a sustained native pilot.
+[representative-output qualification](../reports/native-representative-complete-2026-09-29/REPORT.md)
+passed Apache Maven's noisy build and Fogell's full 584-test source-snapshot
+gate through the controller. W2 is complete; paired backups, retention, alerts,
+and unattended staging remain required before a sustained native pilot.
 
 This release replaces the previous authoring/runtime path. Old campaign results
 are historical and do not qualify the native runtime. Production release requires

@@ -5,8 +5,8 @@ evidence changes the order of work. Keep detailed tickets for the active wave
 and the next wave; break down later waves when the preceding gate is measured.
 The supported release remains one trusted Linux host and one local worker.
 
-As of 2026-09-29, **W1 is complete**, **W2 is active**, and **W3 is next**.
-The qualified product candidate is local at `9550bb05`; GitHub `main` still
+As of 2026-09-29, **W1 and W2 are complete**, **W3 is active**, and **W4 is next**.
+The qualified product candidate is local at `1d2973c0`; GitHub `main` still
 has the Jenkinsfile runtime. Publication of the exact branch was rejected by
 automatic approval review pending explicit owner authorization.
 
@@ -14,20 +14,23 @@ automatic approval review pending explicit owner authorization.
 | --- | --- | --- | --- |
 | W0 | Reviewable baseline · Oct 2 | Approve publication scope; record pilot repos, host, and targets. | Publication blocked |
 | W1 | Correctness · Oct 9 | Invalid env names refused; failed JUnit stays unstable; independent 115/115 matrix and full native gate pass. | Complete; [evidence](../reports/native-qualification-2026-09-29/REPORT.md) |
-| W2 | Output · Oct 16 | Default-traced 350-marker case and representative build output complete without lost, duplicate, or reordered records. | Active |
-| W3 | Operations · Oct 23 | Backups, retention, alerts, cleanup catch-up, and 72-hour unattended staging proof. | Next |
-| W4 | Pilot · Nov 6 | Seven days, 50 builds, ten failure/fix pairs across Fogell plus two named repos. | Planned; split after W3 |
+| W2 | Output · Oct 16 | Default-traced 350-marker case and representative build output complete without lost, duplicate, or reordered records. | Complete; [evidence](../reports/native-representative-complete-2026-09-29/REPORT.md) |
+| W3 | Operations · Oct 23 | Backups, retention, alerts, cleanup catch-up, and 72-hour unattended staging proof. | Active |
+| W4 | Pilot · Nov 6 | Seven days, 50 builds, ten failure/fix pairs across Fogell plus two named repos. | Next |
 | W5 | Recovery/decision · Nov 13 | Paired restore, upgrade/rollback, stale-writer proof, then release-candidate or no-release decision. | Planned; split after W4 |
 
 ## Ordered tickets
 
 | Order | Ticket | Wave | State | Exit evidence |
 | --- | --- | --- | --- | --- |
-| 1 | [FG-311](tickets/FG-311.md) nested process-test qualification | W2 | Doing | Full Fogell gate succeeds through the controller with reaping guarantees intact. |
-| 2 | [FG-306](tickets/FG-306.md) representative output | W2 | Blocked on FG-311 | Maven passed; full Fogell gate remains required. |
-| 3 | [FG-308](tickets/FG-308.md) paired backup and retention | W3 | Ready | Scheduled, checked recovery points and bounded cleanup. |
-| 4 | [FG-309](tickets/FG-309.md) operator alerts and capacity | W3 | Ready | Held-work and capacity alerts have measured thresholds. |
-| 5 | [FG-310](tickets/FG-310.md) unattended staging proof | W3 | Ready | 72-hour run and downtime catch-up recorded. |
+| 1 | [FG-308](tickets/FG-308.md) paired backup and retention | W3 | Doing | Scheduled, checked recovery points and bounded cleanup. |
+| 2 | [FG-309](tickets/FG-309.md) operator alerts and capacity | W3 | Ready | Held-work and capacity alerts have measured thresholds. |
+| 3 | [FG-310](tickets/FG-310.md) unattended staging proof | W3 | Ready | 72-hour run and downtime catch-up recorded. |
+| 4 | [FG-312](tickets/FG-312.md) pilot preparation | W4 | Ready | Exact repo/host manifest and three control runs. |
+| 5 | [FG-313](tickets/FG-313.md) failure and interruption pairs | W4 | Ready | Ten pairs and interruption evidence. |
+| 6 | [FG-314](tickets/FG-314.md) seven-day pilot | W4 | Ready | Seven days, 50 builds, measured M4 verdict. |
+| — | [FG-311](tickets/FG-311.md) nested process-test qualification | W2 | Done | [584/584 controller gate and reaping evidence](../reports/native-representative-complete-2026-09-29/REPORT.md). |
+| — | [FG-306](tickets/FG-306.md) representative output | W2 | Done | [Fogell and Maven controller output](../reports/native-representative-complete-2026-09-29/REPORT.md). |
 | — | [FG-302](tickets/FG-302.md) environment-name admission | W1 | Done | Parser, runner, and controller refuse invalid names. |
 | — | [FG-305](tickets/FG-305.md) burst-output transport | W2 | Done | [350 markers, 15 feedback pages, 584/584 gate, 115/115 matrix](../reports/native-output-2026-09-29/REPORT.md). |
 | — | [FG-304](tickets/FG-304.md) independent qualification | W1 | Done | 115/115 matrix and 582-test full gate on `9550bb05`. |
@@ -56,3 +59,4 @@ candidate or no release; unfinished expansion work is parked.
 | 2026-09-29 | Close FG-305 at `016ed3b2` and start FG-306. | The exact traced burst passed through the controller with 350 ordered markers across 15 pages, 584 tests and the 115-case matrix passed, and the over-limit case retained its typed failure. W2 still needs representative workloads. |
 | 2026-09-29 | Add FG-311 ahead of the remaining FG-306 qualification. | The source-bound Fogell gate fails seven execution tests under the controller's nested process environment even though the standalone gate passes; a registry retry changes, but does not resolve, the failures. The controller reports failure correctly. Keep M2's gate and date unchanged. |
 | 2026-09-29 | Record Maven's controller output pass and block FG-306 on FG-311. | Maven debug output matched its artifact across 26 pages and 2,517 ordered records; Fogell's full gate still fails inside the controller. The [partial qualification](../reports/native-representative-2026-09-29/REPORT.md) retains both outcomes. |
+| 2026-09-29 | Close FG-311 and FG-306 at `1d2973c0`, close W2, start W3 with FG-308, and split W4 into FG-312–314. | Fogell's source-snapshot controller gate passed 584/584 and its artifact matched paginated feedback; Maven's separate noisy output pass is retained. The [completion report](../reports/native-representative-complete-2026-09-29/REPORT.md) records both and the failed nested-fixture attempts. W3's backup and retention work is the next false-evidence/data-loss risk. |
