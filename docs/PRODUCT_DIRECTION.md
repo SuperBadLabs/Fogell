@@ -4,7 +4,7 @@ Fogell is reliable self-hosted CI for human and AI development feedback loops.
 Native versioned JSON is the only pipeline authoring contract. Work is selected
 by supported user workflows, safety and operational evidence.
 
-The native baseline passes 569 automated tests and the local runner/controller
+The native baseline passes 582 automated tests and the local runner/controller
 proof: admission, source verification, failure/fix feedback, artifacts, source
 retrieval, cancellation, terminal replay and interrupted-run reconciliation.
 The build has zero warnings or errors. This is functional validation; sustained
@@ -12,11 +12,12 @@ operation and recovery objectives still require the qualification below.
 
 The [26 September Luigi campaign](../reports/luigi-2026-09-26/REPORT.md)
 found release qualification blockers beyond the passing gate: failed JUnit
-results broke persisted execution, and newline-terminated environment names
-bypass validation. It also measured a practical burst-output queue limit.
-The JUnit/journal integration is fixed in the current working tree and covered
-by persisted-runner and controller regressions. Resolve the remaining findings
-before advancing to a sustained native pilot.
+results broke persisted execution, newline-terminated environment names
+bypassed validation, and fast traced output reached a practical callback-queue
+limit. The first two defects are fixed. The
+[September 29 qualification](../reports/native-qualification-2026-09-29/REPORT.md)
+passed its 115-case matrix and full gate. Qualify output before advancing to a
+sustained native pilot.
 
 This release replaces the previous authoring/runtime path. Old campaign results
 are historical and do not qualify the native runtime. Production release requires
