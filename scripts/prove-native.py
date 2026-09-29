@@ -100,7 +100,8 @@ def runner_proof(root):
     print('PASS native runner: artifacts, terminal replay, admission, crash reconciliation, changed-definition refusal')
 
 
-def controller_proof(root, container, port, runtime, fogell_representative_logs=None):
+def controller_proof(root, container, port, runtime, fogell_representative_logs=None,
+                     maven_representative=None):
     require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', container), 'invalid container name')
     require(runtime in ('podman', 'docker') and 0 < port < 65536, 'invalid database transport')
     # The caller must explicitly identify a disposable database container.
@@ -143,7 +144,7 @@ def controller_proof(root, container, port, runtime, fogell_representative_logs=
                    FOGELL_STATE_ROOT=str(root/'state'), FOGELL_RUN_HOST_PATH=str(RUNNER),
                    FOGELL_LOCAL_TRUST_POOL='trusted-linux', FOGELL_MAX_PIPELINE_BYTES='262144',
                    FOGELL_MAX_LOG_CHUNKS='100', FOGELL_WORKER_POLL_MS='50', FOGELL_WORKER_LEASE_SECONDS='10')
-        def request(path, payload=None, auth=True, key=None):
+        def request(path, payload=None, auth=True, key=None, limit=2**20):
             headers = {'Authorization': 'Bearer '+token} if auth else {}
             if key:
                 headers['Idempotency-Key'] = key
@@ -152,9 +153,9 @@ def controller_proof(root, container, port, runtime, fogell_representative_logs=
             req = urllib.request.Request(url+path, data=payload, headers=headers)
             try:
                 with urllib.request.urlopen(req, timeout=3) as response:
-                    return response.status, response.read(2**20)
+                    return response.status, response.read(limit)
             except urllib.error.HTTPError as error:
-                return error.code, error.read(2**20)
+                return error.code, error.read(limit)
         with (root/'controller.log').open('wb') as log:
             process = subprocess.Popen([str(CONTROLLER)], env=env, stdout=log, stderr=log, start_new_session=True)
             def ready():
@@ -353,6 +354,87 @@ def controller_proof(root, container, port, runtime, fogell_representative_logs=
                         'Fogell representative feedback lost or duplicated its completion marker')
                 print(f'PASS Fogell representative: {pages} pages, {len(sequences)} ordered records, '
                       f'{elapsed:.1f}s, artifact {len(artifact)} bytes')
+            if maven_representative is not None:
+                maven_source, maven_bin, maven_cache, maven_logs = maven_representative
+                source, binary, cache, logs = map(Path, (maven_source, maven_bin, maven_cache, maven_logs))
+                require(source.is_dir() and binary.is_file() and cache.is_dir(),
+                        'Maven source, executable, and disposable cache are required')
+                logs.mkdir(parents=True, exist_ok=True)
+                maven_commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=source, text=True).strip()
+                paths = subprocess.check_output(['git', 'ls-files', '-z'], cwd=source).split(b'\0')
+                inventory_paths = [name.decode() for name in paths if name and
+                                   (name == b'pom.xml' or name.endswith(b'/pom.xml') or
+                                    name.startswith(b'api/maven-api-annotations/')) and
+                                   all(not part.startswith('.') for part in Path(name.decode()).parts)]
+                require(inventory_paths, 'Maven source inventory is empty')
+                inventory = root/'maven-files.txt'
+                inventory.write_text(''.join(path+'\n' for path in inventory_paths))
+                (logs/'maven-files.txt').write_bytes(inventory.read_bytes())
+                (logs/'maven-version.txt').write_bytes(command([binary, '-version']).stdout)
+                maven_command = ('#!/bin/bash\nset -Eeuo pipefail\n'
+                                 + '/usr/bin/time -v ' + shlex.quote(str(binary))
+                                 + ' -o -X ' + shlex.quote('-Dmaven.repo.local='+str(cache))
+                                 + ' -pl api/maven-api-annotations test |& tee maven-debug.log')
+                definition_file, snapshot = root/'maven-pipeline.json', root/'maven-snapshot.json'
+                definition_file.write_text(pipeline([
+                    {'run': maven_command, 'timeout_seconds': 180},
+                    {'archive': 'maven-debug.log', 'always': True},
+                ]))
+                command([CLIENT, 'snapshot', '--pipeline', definition_file,
+                         '--source-root', source, '--files-from', inventory,
+                         '--output', snapshot, '--parent-loop', uuid.uuid4()])
+                snapshot_sha = hashlib.sha256(snapshot.read_bytes()).hexdigest()
+                started = time.monotonic()
+                admission = json.loads(command([CLIENT, 'submit', *common, '--snapshot', snapshot,
+                                               '--idempotency-key', 'maven-debug-'+uuid.uuid4().hex]).stdout)
+                representative_build, representative_attempt = admission['build_id'], admission['attempt_id']
+                def maven_terminal():
+                    code, raw = request(f'{builds}/{representative_build}/feedback')
+                    require(code == 200, 'Maven representative feedback unavailable')
+                    value = json.loads(raw)
+                    return value if value['is_terminal'] or value['status'] == 'reconciliation_required' else None
+                terminal = until(maven_terminal, 240)
+                elapsed = time.monotonic() - started
+                cursor, sequences, bodies, pages, feedback_bytes = 0, [], [], 0, 0
+                with (logs/'maven-feedback.jsonl').open('wb') as stream:
+                    while True:
+                        code, raw = request(f'{builds}/{representative_build}/feedback?from={cursor}')
+                        require(code == 200, 'Maven representative feedback page unavailable')
+                        page = json.loads(raw)
+                        require(len(page['chunks']) <= 100, 'Maven representative page exceeded bound')
+                        stream.write(raw+b'\n')
+                        feedback_bytes += len(raw)
+                        sequences.extend(chunk['sequence'] for chunk in page['chunks'])
+                        bodies.extend(chunk['body'] for chunk in page['chunks'])
+                        pages += 1
+                        if not page['has_more']:
+                            break
+                        require(page['next_sequence'] > cursor, 'Maven representative cursor did not advance')
+                        cursor = page['next_sequence']
+                status, artifact = request(f'{builds}/{representative_build}/attempts/{representative_attempt}/artifacts/maven-debug.log',
+                                           limit=16*2**20)
+                if status == 200:
+                    (logs/'maven-debug.log').write_bytes(artifact)
+                metrics = {'candidate_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+                           'maven_source_commit': maven_commit, 'source_snapshot_sha256': snapshot_sha,
+                           'source_file_count': len(inventory_paths), 'build_id': representative_build,
+                           'attempt_id': representative_attempt, 'status': terminal['status'],
+                           'elapsed_seconds': round(elapsed, 3), 'feedback_pages': pages,
+                           'feedback_records': len(sequences), 'feedback_bytes': feedback_bytes,
+                           'artifact_status': status,
+                           'artifact_sha256': hashlib.sha256(artifact).hexdigest() if status == 200 else None,
+                           'state_bytes': sum(path.stat().st_size for path in (root/'state').rglob('*') if path.is_file())}
+                (logs/'maven-metrics.json').write_text(json.dumps(metrics, indent=2, sort_keys=True)+'\n')
+                require(terminal['status'] == 'success', 'Maven representative build failed')
+                require(sequences == sorted(set(sequences)), 'Maven representative feedback duplicated or reordered sequences')
+                require(status == 200 and b'BUILD SUCCESS' in artifact,
+                        'Maven representative artifact missing or incomplete')
+                artifact_lines = artifact.decode(errors='replace').splitlines()
+                require(artifact_lines and any(bodies[i:i+len(artifact_lines)] == artifact_lines
+                                               for i, body in enumerate(bodies) if body == artifact_lines[0]),
+                        'Maven representative feedback differs from the archived output')
+                print(f'PASS Maven representative: {pages} pages, {len(sequences)} ordered records, '
+                      f'{elapsed:.1f}s, artifact {len(artifact)} bytes')
             # Cancellation is explicit and observed through terminal feedback.
             status, raw = request(builds, pipeline([{'run':'sleep 30'}]).encode(), key='cancel')
             require(status == 201, 'cancellation control not admitted')
@@ -382,15 +464,25 @@ def main():
     parser.add_argument('--port', type=int)
     parser.add_argument('--runtime', default='podman', choices=['podman','docker'])
     parser.add_argument('--fogell-representative-logs')
+    parser.add_argument('--maven-representative-logs')
+    parser.add_argument('--maven-source')
+    parser.add_argument('--maven-bin')
+    parser.add_argument('--maven-cache')
     args = parser.parse_args()
     require(bool(args.container) == bool(args.port), '--container and --port must be provided together')
     require(not args.fogell_representative_logs or args.container,
             '--fogell-representative-logs requires a disposable controller database')
+    require(not args.maven_representative_logs or
+            (args.container and args.maven_source and args.maven_bin and args.maven_cache),
+            'Maven representative requires controller database, source, executable, and cache')
+    maven_representative = ((args.maven_source, args.maven_bin, args.maven_cache,
+                             args.maven_representative_logs) if args.maven_representative_logs else None)
     with tempfile.TemporaryDirectory(prefix='fogell-native-proof-') as temp:
         root = Path(temp)
         runner_proof(root)
         if args.container:
-            controller_proof(root, args.container, args.port, args.runtime, args.fogell_representative_logs)
+            controller_proof(root, args.container, args.port, args.runtime,
+                             args.fogell_representative_logs, maven_representative)
 
 
 if __name__ == '__main__':
