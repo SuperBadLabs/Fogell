@@ -23,12 +23,12 @@ automatic approval review pending explicit owner authorization.
 
 | Order | Ticket | Wave | State | Exit evidence |
 | --- | --- | --- | --- | --- |
-| 1 | [FG-305](tickets/FG-305.md) burst-output transport | W2 | Doing | 350 traced markers complete with exact ordered output. |
-| 2 | [FG-306](tickets/FG-306.md) representative output | W2 | Ready | Real build/test and noisy workload through the controller. |
+| 1 | [FG-306](tickets/FG-306.md) representative output | W2 | Doing | Real build/test and noisy workload through the controller. |
 | 3 | [FG-308](tickets/FG-308.md) paired backup and retention | W3 | Ready | Scheduled, checked recovery points and bounded cleanup. |
 | 4 | [FG-309](tickets/FG-309.md) operator alerts and capacity | W3 | Ready | Held-work and capacity alerts have measured thresholds. |
 | 5 | [FG-310](tickets/FG-310.md) unattended staging proof | W3 | Ready | 72-hour run and downtime catch-up recorded. |
 | — | [FG-302](tickets/FG-302.md) environment-name admission | W1 | Done | Parser, runner, and controller refuse invalid names. |
+| — | [FG-305](tickets/FG-305.md) burst-output transport | W2 | Done | [350 markers, 15 feedback pages, 584/584 gate, 115/115 matrix](../reports/native-output-2026-09-29/REPORT.md). |
 | — | [FG-304](tickets/FG-304.md) independent qualification | W1 | Done | 115/115 matrix and 582-test full gate on `9550bb05`. |
 | — | [FG-303](tickets/FG-303.md) failed JUnit persistence | W1 | Done | Runner/controller regression and 569-test gate passed. |
 | — | [FG-301](tickets/FG-301.md) publish review baseline | W0 | Blocked | Explicit publication approval and working GitHub authentication. |
@@ -52,3 +52,4 @@ candidate or no release; unfinished expansion work is parked.
 | 2026-09-29 | Keep W4–W5 outcomes on the board; split W3 into FG-308–310 when W1 closed. | The active and next wave now have actionable tickets without guessing the later pilot/recovery implementation. |
 | 2026-09-29 | Select local Apache Maven and clenkins as the additional pilot repos, Luigi as host, and 5 s idle-host p95 feedback, 60 min recovery time, 24 h recovery point as working gates. | The two repos exercise Java and Clojure/JS workloads beyond Fogell's F# gate; the delegated project lead can revise the targets when evidence warrants. |
 | 2026-09-29 | Close W1 at `9550bb05` and start FG-305. | The carried-forward matrix passed 115/115, the locked gate passed 582 tests with zero warnings/errors, and the real controller proof passed. The reported burst-output failure is the next release blocker. |
+| 2026-09-29 | Close FG-305 at `016ed3b2` and start FG-306. | The exact traced burst passed through the controller with 350 ordered markers across 15 pages, 584 tests and the 115-case matrix passed, and the over-limit case retained its typed failure. W2 still needs representative workloads. |
