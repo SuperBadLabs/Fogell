@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Bounded native runner/recovery checks; optional isolated controller proof."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import secrets
+import shlex
 import socket
 import subprocess
 import tempfile
@@ -98,7 +100,7 @@ def runner_proof(root):
     print('PASS native runner: artifacts, terminal replay, admission, crash reconciliation, changed-definition refusal')
 
 
-def controller_proof(root, container, port, runtime):
+def controller_proof(root, container, port, runtime, fogell_representative_logs=None):
     require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', container), 'invalid container name')
     require(runtime in ('podman', 'docker') and 0 < port < 65536, 'invalid database transport')
     # The caller must explicitly identify a disposable database container.
@@ -266,6 +268,79 @@ def controller_proof(root, container, port, runtime):
             status, data = request(f"{builds}/{burst['build_id']}/attempts/{burst['attempt_id']}/artifacts/burst.txt")
             require(status == 200 and data == b'burst-done', 'traced burst artifact differs')
             print(f'PASS traced burst: {pages} pages, {len(sequences)} ordered records, 350 markers and artifact')
+            if fogell_representative_logs is not None:
+                logs = Path(fogell_representative_logs)
+                logs.mkdir(parents=True, exist_ok=True)
+                paths = subprocess.check_output(['git', 'ls-files', '-z'], cwd=ROOT).split(b'\0')
+                inventory_paths = [name.decode() for name in paths if name and
+                                   all(not part.startswith('.') for part in Path(name.decode()).parts)]
+                require(inventory_paths, 'Fogell source inventory is empty')
+                inventory = root/'fogell-files.txt'
+                inventory.write_text(''.join(path+'\n' for path in inventory_paths))
+                (logs/'fogell-files.txt').write_bytes(inventory.read_bytes())
+                gate_command = ('#!/bin/bash\nset -Eeuo pipefail\n'
+                                + 'FOGELL_TEST_DATABASE_URL=' + shlex.quote(admin)
+                                + ' /usr/bin/time -v ./scripts/build-and-test.sh |& tee fogell-gate.log')
+                definition = json.dumps({'version': 1,
+                                         'env': {'NUGET_PACKAGES': str(Path.home()/'.nuget/packages')},
+                                         'stages': [{'name': 'representative', 'steps': [
+                                             {'run': gate_command, 'timeout_seconds': 600},
+                                             {'archive': 'fogell-gate.log', 'always': True}]}]})
+                definition_file, snapshot = root/'fogell-pipeline.json', root/'fogell-snapshot.json'
+                definition_file.write_text(definition)
+                command([CLIENT, 'snapshot', '--pipeline', definition_file,
+                         '--source-root', ROOT, '--files-from', inventory,
+                         '--output', snapshot, '--parent-loop', uuid.uuid4()])
+                snapshot_sha = hashlib.sha256(snapshot.read_bytes()).hexdigest()
+                started = time.monotonic()
+                admission = json.loads(command([CLIENT, 'submit', *common, '--snapshot', snapshot,
+                                               '--idempotency-key', 'fogell-full-'+uuid.uuid4().hex]).stdout)
+                representative_build, representative_attempt = admission['build_id'], admission['attempt_id']
+                def representative_terminal():
+                    code, raw = request(f'{builds}/{representative_build}/feedback')
+                    require(code == 200, 'Fogell representative feedback unavailable')
+                    value = json.loads(raw)
+                    return value if value['is_terminal'] else None
+                terminal = until(representative_terminal, 660)
+                elapsed = time.monotonic() - started
+                cursor, sequences, bodies, pages, feedback_bytes = 0, [], [], 0, 0
+                with (logs/'fogell-feedback.jsonl').open('wb') as stream:
+                    while True:
+                        code, raw = request(f'{builds}/{representative_build}/feedback?from={cursor}')
+                        require(code == 200, 'Fogell representative feedback page unavailable')
+                        page = json.loads(raw)
+                        require(len(page['chunks']) <= 100, 'Fogell representative page exceeded bound')
+                        stream.write(raw+b'\n')
+                        feedback_bytes += len(raw)
+                        sequences.extend(chunk['sequence'] for chunk in page['chunks'])
+                        bodies.extend(chunk['body'] for chunk in page['chunks'])
+                        pages += 1
+                        if not page['has_more']:
+                            break
+                        require(page['next_sequence'] > cursor, 'Fogell representative cursor did not advance')
+                        cursor = page['next_sequence']
+                status, artifact = request(f'{builds}/{representative_build}/attempts/{representative_attempt}/artifacts/fogell-gate.log')
+                if status == 200:
+                    (logs/'fogell-gate.log').write_bytes(artifact)
+                metrics = {'candidate_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+                           'source_snapshot_sha256': snapshot_sha, 'source_file_count': len(inventory_paths),
+                           'build_id': representative_build, 'attempt_id': representative_attempt,
+                           'status': terminal['status'], 'elapsed_seconds': round(elapsed, 3),
+                           'feedback_pages': pages, 'feedback_records': len(sequences),
+                           'feedback_bytes': feedback_bytes, 'artifact_status': status,
+                           'artifact_sha256': hashlib.sha256(artifact).hexdigest() if status == 200 else None,
+                           'state_bytes': sum(path.stat().st_size for path in (root/'state').rglob('*') if path.is_file())}
+                (logs/'fogell-metrics.json').write_text(json.dumps(metrics, indent=2, sort_keys=True)+'\n')
+                require(terminal['status'] == 'success', 'Fogell representative gate failed')
+                require(sequences == sorted(set(sequences)), 'Fogell representative feedback duplicated or reordered sequences')
+                require(status == 200 and b'OK native pipeline gate' in artifact,
+                        'Fogell representative gate artifact missing or incomplete')
+                require(sum('EXPECTO!' in body for body in bodies) == 9,
+                        'Fogell representative feedback lost or duplicated a test summary')
+                require(sum('OK native pipeline gate' in body for body in bodies) == 1,
+                        'Fogell representative feedback lost or duplicated its completion marker')
+                print(f'PASS Fogell representative: {pages} pages, {len(sequences)} ordered records, '
+                      f'{elapsed:.1f}s, artifact {len(artifact)} bytes')
             # Cancellation is explicit and observed through terminal feedback.
             status, raw = request(builds, pipeline([{'run':'sleep 30'}]).encode(), key='cancel')
             require(status == 201, 'cancellation control not admitted')
@@ -292,13 +367,16 @@ def main():
     parser.add_argument('--container')
     parser.add_argument('--port', type=int)
     parser.add_argument('--runtime', default='podman', choices=['podman','docker'])
+    parser.add_argument('--fogell-representative-logs')
     args = parser.parse_args()
     require(bool(args.container) == bool(args.port), '--container and --port must be provided together')
+    require(not args.fogell_representative_logs or args.container,
+            '--fogell-representative-logs requires a disposable controller database')
     with tempfile.TemporaryDirectory(prefix='fogell-native-proof-') as temp:
         root = Path(temp)
         runner_proof(root)
         if args.container:
-            controller_proof(root, args.container, args.port, args.runtime)
+            controller_proof(root, args.container, args.port, args.runtime, args.fogell_representative_logs)
 
 
 if __name__ == '__main__':
