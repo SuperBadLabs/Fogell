@@ -1,6 +1,7 @@
 module Fogell.Pipeline.Parser.Tests
 
 open Expecto
+open System.Text.Json
 open Fogell.Admission
 open Fogell.Pipeline.Parser
 
@@ -14,6 +15,29 @@ let tests = testList "native pipeline admission" [
             Expect.equal pipeline.Stages.Head.Steps.Length 2 "steps"
             Expect.equal pipeline.Environment ["MODE","test"] "literal environment"
     }
+    test "environment names accept ASCII identifier boundaries at root and step scope" {
+        let source = """{"version":1,"env":{"_A9":"root","Z_0":"also root"},"stages":[{"name":"build","steps":[{"echo":"ok","env":{"_STEP9":"step","S_0":"also step"}}]}]}"""
+        match Parser.parse source with
+        | Error e -> failtest (string e)
+        | Ok pipeline ->
+            Expect.equal pipeline.Environment ["_A9", "root"; "Z_0", "also root"] "root identifiers"
+            Expect.equal pipeline.Stages.Head.Steps.Head.Environment ["_STEP9", "step"; "S_0", "also step"] "step identifiers"
+    }
+    testList "environment names reject trailing and control characters at both scopes" [
+        for scope in [ "pipeline"; "step" ] do
+            for suffix, invalidChar in [ "LF", "\n"; "CRLF", "\r\n"; "tab", "\t"; "DEL", "\u007f"; "non-ASCII", "é"; "punctuation", "-" ] do
+                test $"{scope} {suffix}" {
+                    let invalidEnv = "\"env\":{" + JsonSerializer.Serialize("NAME" + invalidChar) + ":\"x\"},"
+                    let source =
+                        if scope = "pipeline" then
+                            "{\"version\":1," + invalidEnv + "\"stages\":[{\"name\":\"build\",\"steps\":[{\"echo\":\"ok\"}]}]}"
+                        else
+                            "{\"version\":1,\"stages\":[{\"name\":\"build\",\"steps\":[{\"echo\":\"ok\"," + invalidEnv + "}]}]}"
+                    match Parser.parse source with
+                    | Ok _ -> failtest "unexpected admission"
+                    | Error error -> Expect.equal error.Code MalformedSyntax "invalid environment name refused"
+                }
+    ]
     testList "rejects before execution" [
         for name, source, code in [
             "unknown version", valid.Replace("\"version\":1","\"version\":2"), UnsupportedConstruct

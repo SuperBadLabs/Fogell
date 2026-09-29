@@ -34,7 +34,9 @@ module Parser =
             let names = Collections.Generic.HashSet<string>(StringComparer.Ordinal)
             [ for property in env.EnumerateObject() do
                 if not (names.Add property.Name) then refuse DuplicateSection "duplicate environment name"
-                if not (Regex.IsMatch(property.Name, "^[A-Za-z_][A-Za-z0-9_]*$")) then
+                // `$` also matches immediately before a final newline. Environment
+                // names must end at the actual end of the JSON property string.
+                if not (Regex.IsMatch(property.Name, "^[A-Za-z_][A-Za-z0-9_]*\\z")) then
                     refuse MalformedSyntax "invalid environment name"
                 if property.Name.StartsWith("FOGELL_", StringComparison.Ordinal) then
                     refuse UnsupportedConstruct "FOGELL_ environment names are reserved"

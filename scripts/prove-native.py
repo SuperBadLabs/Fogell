@@ -70,6 +70,13 @@ def runner_proof(root):
                              capture_output=True, timeout=10)
     require(outcome.returncode != 0 and not (root/'bad.journal').exists()
             and not (root/'bad-ws').exists(), 'invalid admission mutated execution state')
+    bad.write_text(json.dumps({'version':1,'env':{'NAME\n':'x'},
+                               'stages':[{'name':'verify','steps':[{'echo':'x'}]}]}))
+    outcome = subprocess.run([str(RUNNER), str(bad), str(root/'bad-ws'), 'build', str(root/'bad.journal')],
+                             capture_output=True, timeout=10)
+    require(outcome.returncode == 2 and b'invalid environment name' in outcome.stderr
+            and not (root/'bad.journal').exists() and not (root/'bad-ws').exists(),
+            'newline environment name reached execution state')
     # A real kill after the effect starts must never replay that effect.
     source.write_text(pipeline([{'run': 'printf started >> effect; sleep 30; printf forbidden > after'}]))
     args[-1] = root/'crash.journal'
@@ -158,6 +165,12 @@ def controller_proof(root, container, port, runtime):
             require(request(builds, b'{}', auth=False)[0] == 401, 'unauthenticated admission accepted')
             require(request(builds, b'not JSON', key='bad')[0] == 422, 'malformed definition accepted')
             require(request(builds, b'{"version":2,"stages":[]}', key='bad')[0] == 422, 'unsupported version accepted')
+            invalid_root = json.loads(pipeline([{'echo':'x'}]))
+            invalid_root['env'] = {'NAME\n':'x'}
+            invalid_step = json.loads(pipeline([{'echo':'x','env':{'NAME\r\n':'x'}}]))
+            for name, definition in [('root',invalid_root),('step',invalid_step)]:
+                require(request(builds, json.dumps(definition).encode(), key='bad-env-'+name)[0] == 422,
+                        f'{name} newline environment name was admitted')
             source = root/'source'
             source.mkdir()
             (source/'input.txt').write_text('native source identity')
