@@ -23,12 +23,13 @@ automatic approval review pending explicit owner authorization.
 
 | Order | Ticket | Wave | State | Exit evidence |
 | --- | --- | --- | --- | --- |
-| 1 | [FG-308](tickets/FG-308.md) paired backup and retention | W3 | Doing | Scheduled, checked recovery points and bounded cleanup. |
-| 2 | [FG-309](tickets/FG-309.md) operator alerts and capacity | W3 | Doing | Held-work and capacity alerts have measured thresholds. |
-| 3 | [FG-310](tickets/FG-310.md) unattended staging proof | W3 | Ready | 72-hour run and downtime catch-up recorded. |
-| 4 | [FG-312](tickets/FG-312.md) pilot preparation | W4 | Ready | Exact repo/host manifest and three control runs. |
-| 5 | [FG-313](tickets/FG-313.md) failure and interruption pairs | W4 | Ready | Ten pairs and interruption evidence. |
-| 6 | [FG-314](tickets/FG-314.md) seven-day pilot | W4 | Ready | Seven days, 50 builds, measured M4 verdict. |
+| 1 | [FG-315](tickets/FG-315.md) maintenance quiescence | W3 | Doing | Admission/drain and writer-extinction proof before backup. |
+| 2 | [FG-308](tickets/FG-308.md) paired backup and retention | W3 | Blocked on FG-315 | Scheduled, checked recovery points and bounded cleanup. |
+| 3 | [FG-309](tickets/FG-309.md) operator alerts and capacity | W3 | Doing | Held-work and capacity alerts have measured thresholds. |
+| 4 | [FG-310](tickets/FG-310.md) unattended staging proof | W3 | Ready | 72-hour run and downtime catch-up recorded. |
+| 5 | [FG-312](tickets/FG-312.md) pilot preparation | W4 | Ready | Exact repo/host manifest and three control runs. |
+| 6 | [FG-313](tickets/FG-313.md) failure and interruption pairs | W4 | Ready | Ten pairs and interruption evidence. |
+| 7 | [FG-314](tickets/FG-314.md) seven-day pilot | W4 | Ready | Seven days, 50 builds, measured M4 verdict. |
 | — | [FG-311](tickets/FG-311.md) nested process-test qualification | W2 | Done | [584/584 controller gate and reaping evidence](../reports/native-representative-complete-2026-09-29/REPORT.md). |
 | — | [FG-306](tickets/FG-306.md) representative output | W2 | Done | [Fogell and Maven controller output](../reports/native-representative-complete-2026-09-29/REPORT.md). |
 | — | [FG-302](tickets/FG-302.md) environment-name admission | W1 | Done | Parser, runner, and controller refuse invalid names. |
@@ -63,3 +64,4 @@ candidate or no release; unfinished expansion work is parked.
 | 2026-09-29 | Start FG-309 alongside FG-308. | The board permits two Doing tickets; read-only alert checks can proceed independently while paired-backup work is built. |
 | 2026-09-29 | Keep FG-308 and FG-309 Doing after the local helper/rehearsal slice. | One disposable paired point was created, checked, and restored; the read-only operator check and failure records passed focused tests. Scheduled multiple points, retention catch-up, host alert delivery/calibration, and the 72-hour staging gate are still required. The [partial report](../reports/native-operations-progress-2026-09-29/REPORT.md) lists evidence and limits. |
 | 2026-09-29 | Confirm GitHub `main` remains `1c010549` and `gh` authentication works; keep FG-301 blocked only on exact publication approval. | The branch is 24 commits ahead and changes 4,487 files. Automatic approval review rejected the earlier push because the broad delegation did not explicitly authorize this migration payload. |
+| 2026-09-29 | Add FG-315 ahead of FG-308; block FG-308 and keep FG-309 Doing. | The current controller has no admission pause/drain or independent writer-extinction contract. A timer that merely stops services can interrupt active external effects; a shell hook returning zero does not prove a paired backup is safe. Keep W3's October 23 gate and date unchanged. |

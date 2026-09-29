@@ -36,9 +36,15 @@ the Luigi host have not been done. The helper retains nonsecret failed-attempt
 records and the operator check clears that alert only after a newer verified
 point, while preserving the record.
 
-FG-308 and FG-309 remain **Doing**. FG-308 still needs scheduled multiple
-recovery points, a staged paired restore with application checks, and bounded
-retention catch-up without affecting active/uncertain work. FG-309 still needs
+FG-308's manual helper passed, but an unattended schedule exposed a new
+prerequisite: the current controller has no admission pause/drain or independent
+writer-extinction contract. Stopping services on a timer can interrupt active
+external effects; a shell verifier's exit zero is not sufficient proof. The
+uncommitted hook-driven runner was discarded. [FG-315](../../docs/tickets/FG-315.md)
+now owns the prerequisite. FG-308 is **Blocked on FG-315**; it still needs
+scheduled multiple recovery points, a staged paired restore with application
+checks, and bounded retention catch-up without affecting active/uncertain
+work. FG-309 remains **Doing** and still needs
 an operator delivery channel, deduplication and clear behavior, measured host
 thresholds, and induced end-to-end alerts. FG-310's 72-hour unattended run
 starts only after those dependencies are ready.
