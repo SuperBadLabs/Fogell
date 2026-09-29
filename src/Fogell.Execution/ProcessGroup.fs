@@ -299,6 +299,8 @@ module ProcessGroup =
 
     [<Literal>]
     let CallbackLimitCount = 1024
+    /// A permanently blocked sink must eventually release process cleanup.
+    let CallbackBackpressureTimeoutMs = 5_000
 
     /// [StringBuilder.AppendLine] writes the platform terminator, which is two
     /// UTF-16 code units on CRLF platforms. Keep the capacity calculation
@@ -1299,11 +1301,13 @@ module ProcessGroup =
         let outputLimitReached =
             Tasks.TaskCompletionSource<unit>(Tasks.TaskCreationOptions.RunContinuationsAsynchronously)
         let mutable outputFailure: exn option = None
+        let mutable wakeCallbackWaiters = fun () -> ()
         let reportOutputFailure error =
             lock outputFailureGate (fun () ->
                 if outputFailure.IsNone then
                     outputFailure <- Some error
                     outputLimitReached.TrySetResult(()) |> ignore)
+            wakeCallbackWaiters ()
 
         let reportOutputLimit () = reportOutputFailure (OutputLimitExceededException())
 
@@ -1321,6 +1325,8 @@ module ProcessGroup =
         let mutable queuedCallbackCharacters = 0
         let mutable queuedCallbackCount = 0
 
+        wakeCallbackWaiters <- fun () -> lock lineCallbackGate (fun () -> Monitor.PulseAll lineCallbackGate)
+
         proc.Exited.Add(fun _ -> processExited.TrySetResult(()) |> ignore)
 
         let enqueueAction characters action =
@@ -1328,38 +1334,58 @@ module ProcessGroup =
             | None -> ()
             | Some callback ->
                 lock lineCallbackGate (fun () ->
-                    if lineCallbacksOpen then
-                        if queuedCallbackCount >= CallbackLimitCount
-                           || characters > OutputLimitCharacters - queuedCallbackCharacters then
+                    let waitClock = Stopwatch.StartNew()
+                    // Let the pipe reader wait for bounded queue space. This also
+                    // applies backpressure to the child once the pipe fills. A
+                    // failed sink or cleanup closure wakes the waiter below. The
+                    // finite wait also releases a child blocked behind a sink
+                    // that never returns.
+                    while characters <= OutputLimitCharacters
+                          && lineCallbacksOpen
+                          && not (hasOutputFailure ())
+                          && (queuedCallbackCount >= CallbackLimitCount
+                              || characters > OutputLimitCharacters - queuedCallbackCharacters) do
+                        let remaining = CallbackBackpressureTimeoutMs - int waitClock.ElapsedMilliseconds
+
+                        if remaining <= 0 then
                             reportOutputLimit ()
                         else
-                            queuedCallbackCount <- queuedCallbackCount + 1
-                            queuedCallbackCharacters <- queuedCallbackCharacters + characters
-                            // The reader invokes this callback path serially. Running a
-                            // hostile user callback there would prevent an
-                            // already-written following line from reaching the buffer and
-                            // makes the pre-signal snapshot misclassify it. Keep delivery
-                            // serialized, but move it onto an asynchronous continuation so
-                            // reader ingestion and EOF can advance independently. This is
-                            // deliberately within the successful reservation branch: an
-                            // rejected callback must neither run nor release capacity it
-                            // never acquired.
-                            lineCallbackTail <-
-                                lineCallbackTail.ContinueWith(
-                                    Action<Tasks.Task>(fun previous ->
-                                        try
-                                            // Keep a failed output sink sticky. Awaiting only
-                                            // the final continuation is sufficient because
-                                            // every successor first propagates its antecedent.
-                                            previous.GetAwaiter().GetResult()
-                                            callback ()
-                                        finally
-                                            lock lineCallbackGate (fun () ->
-                                                queuedCallbackCount <- queuedCallbackCount - 1
-                                                queuedCallbackCharacters <- queuedCallbackCharacters - characters)),
-                                    CancellationToken.None,
-                                    Tasks.TaskContinuationOptions.None,
-                                    Tasks.TaskScheduler.Default))
+                            Monitor.Wait(lineCallbackGate, remaining) |> ignore
+
+                    if lineCallbacksOpen then
+                        if not (hasOutputFailure ()) then
+                            if characters > OutputLimitCharacters then
+                                reportOutputLimit ()
+                            else
+                                queuedCallbackCount <- queuedCallbackCount + 1
+                                queuedCallbackCharacters <- queuedCallbackCharacters + characters
+                                // The reader invokes this callback path serially. Running a
+                                // hostile user callback there would prevent an
+                                // already-written following line from reaching the buffer and
+                                // makes the pre-signal snapshot misclassify it. Keep delivery
+                                // serialized, but move it onto an asynchronous continuation so
+                                // reader ingestion and EOF can advance independently.
+                                lineCallbackTail <-
+                                    lineCallbackTail.ContinueWith(
+                                        Action<Tasks.Task>(fun previous ->
+                                            try
+                                                try
+                                                    // Keep a failed output sink sticky. Awaiting only
+                                                    // the final continuation is sufficient because
+                                                    // every successor first propagates its antecedent.
+                                                    previous.GetAwaiter().GetResult()
+                                                    callback ()
+                                                with error ->
+                                                    reportOutputFailure error
+                                                    reraise ()
+                                            finally
+                                                lock lineCallbackGate (fun () ->
+                                                    queuedCallbackCount <- queuedCallbackCount - 1
+                                                    queuedCallbackCharacters <- queuedCallbackCharacters - characters
+                                                    Monitor.PulseAll lineCallbackGate)),
+                                        CancellationToken.None,
+                                        Tasks.TaskContinuationOptions.None,
+                                        Tasks.TaskScheduler.Default))
 
         let enqueueLine (callback: (string -> unit) option) (line: string) =
             enqueueAction line.Length (callback |> Option.map (fun publish -> fun () -> publish line))
@@ -1401,6 +1427,7 @@ module ProcessGroup =
         let closeAndGetLineCallbackTail () =
             lock lineCallbackGate (fun () ->
                 lineCallbacksOpen <- false
+                Monitor.PulseAll lineCallbackGate
                 lineCallbackTail)
 
         let emit (sink: Text.StringBuilder) (line: string) =

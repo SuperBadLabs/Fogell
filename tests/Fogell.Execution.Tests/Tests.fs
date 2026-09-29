@@ -5696,39 +5696,93 @@ let maskingOnOutputPath =
                   "the existing sink suffix is included in the same CRLF bound"
           }
 
-          test "a stalled output callback cannot grow an unbounded publication queue" {
+          test "a burst waits for bounded callback space and drains in order" {
               let mutable delivered = 0
+              let received = Collections.Concurrent.ConcurrentQueue<string>()
               use firstCallbackStarted = new Threading.ManualResetEventSlim(false)
               use releaseCallbacks = new Threading.ManualResetEventSlim(false)
+              let lineCount = ProcessGroup.CallbackLimitCount + 256
 
               let running =
                   Threading.Tasks.Task.Run(fun () ->
                       ProcessGroup.run
-                          { RunRequest.create ("set +x; i=0; while [ $i -lt 1100 ]; do printf 'line\\n'; i=$((i+1)); done", tempRoot ()) with
+                          { RunRequest.create ($"#!/bin/sh\ni=0; while [ $i -lt {lineCount} ]; do printf 'line-%%04d\\n' $i; i=$((i+1)); done", tempRoot ()) with
                               OnLine =
-                                  Some(fun _ ->
+                                  Some(fun line ->
                                       let position = Threading.Interlocked.Increment(&delivered)
 
                                       if position = 1 then
                                           firstCallbackStarted.Set()
-                                          releaseCallbacks.Wait()) }
-                      |> ignore)
+                                          releaseCallbacks.Wait()
+
+                                      received.Enqueue line) })
 
               try
                   Expect.isTrue (firstCallbackStarted.Wait 3_000) "the first callback blocks before the backlog is filled"
-                  Expect.throwsT<OutputLimitExceededException>
-                      (fun () -> running.GetAwaiter().GetResult())
-                      "the bounded callback backlog fails the run instead of retaining every pending line"
+                  Threading.Thread.Sleep 150
+                  Expect.isFalse running.IsCompleted "the bounded backlog holds the producer while callback delivery is blocked"
               finally
                   releaseCallbacks.Set()
 
-              Expect.isTrue
-                  (Threading.SpinWait.SpinUntil((fun () -> Threading.Volatile.Read(&delivered) = ProcessGroup.CallbackLimitCount), 5_000))
-                  "all reserved callbacks drain after the gate is released"
-              Expect.equal
-                  (Threading.Volatile.Read(&delivered))
-                  ProcessGroup.CallbackLimitCount
-                  "the rejected callback and every later record were never scheduled"
+              let result = running.GetAwaiter().GetResult()
+              Expect.equal result.Outcome (Completed 0) "the producer completes after callback space opens"
+              Expect.equal (Threading.Volatile.Read(&delivered)) lineCount "every callback drains once"
+              Expect.sequenceEqual
+                  (received.ToArray())
+                  [| for i in 0 .. lineCount - 1 -> sprintf "line-%04d" i |]
+                  "bounded delivery preserves every line in order"
+          }
+
+          test "the default traced 350-marker workload retains every marker" {
+              let command = "i=0; while [ $i -lt 350 ]; do printf 'page-marker-%s\\n' \"$i\"; i=$((i+1)); done"
+
+              for attempt in 1 .. 3 do
+                  let received = Collections.Concurrent.ConcurrentQueue<string>()
+
+                  let result =
+                      ProcessGroup.run
+                          { RunRequest.create (command, tempRoot ()) with
+                              OnLine = Some received.Enqueue }
+
+                  Expect.equal result.Outcome (Completed 0) $"traced run {attempt} succeeds"
+
+                  let markers =
+                      received.ToArray()
+                      |> Array.filter (fun line -> line.StartsWith("page-marker-", StringComparison.Ordinal))
+
+                  Expect.sequenceEqual
+                      markers
+                      [| for i in 0 .. 349 -> $"page-marker-{i}" |]
+                      $"traced run {attempt} publishes each marker once in order"
+          }
+
+          test "a permanently stalled output sink releases process cleanup" {
+              use callbackStarted = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let lineCount = 20_000
+              let clock = Stopwatch.StartNew()
+
+              let running =
+                  Threading.Tasks.Task.Run(fun () ->
+                      ProcessGroup.run
+                          { RunRequest.create ($"#!/bin/sh\ni=0; while [ $i -lt {lineCount} ]; do printf 'line\\n'; i=$((i+1)); done", tempRoot ()) with
+                              OnLine =
+                                  Some(fun _ ->
+                                      callbackStarted.Set()
+                                      releaseCallback.Wait()) }
+                      |> ignore)
+
+              try
+                  Expect.isTrue (callbackStarted.Wait 3_000) "the output sink is stalled"
+                  Expect.throwsT<OutputLimitExceededException>
+                      (fun () -> running.GetAwaiter().GetResult())
+                      "backpressure eventually fails closed and reaps the blocked producer"
+                  Expect.isLessThan
+                      clock.ElapsedMilliseconds
+                      (int64 ProcessGroup.CallbackBackpressureTimeoutMs + 3_000L)
+                      "the stalled sink cannot hold cleanup indefinitely"
+              finally
+                  releaseCallback.Set()
           }
 
           test "bounded capture retains CRLF exactly while stderr keeps line framing" {

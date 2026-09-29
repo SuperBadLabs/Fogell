@@ -229,6 +229,43 @@ def controller_proof(root, container, port, runtime):
             status, data = request(f"{builds}/{junit_build['build_id']}/attempts/{junit_build['attempt_id']}/artifacts/report.xml")
             require(status == 200 and b'<failure message="broken"/>' in data,
                     'failed-JUnit artifact was not published')
+            # Keep the original default shell tracing on: it is the burst that
+            # exposed the bounded callback queue in the Luigi campaign.
+            burst_command = "i=0; while [ $i -lt 350 ]; do printf 'page-marker-%s\\n' \"$i\"; i=$((i+1)); done"
+            status, raw = request(builds, pipeline([
+                {'run': burst_command},
+                {'run': 'printf burst-done > burst.txt'},
+                {'archive': 'burst.txt'},
+            ]).encode(), key='traced-burst')
+            require(status == 201, 'traced burst was not admitted')
+            burst = json.loads(raw)
+            def burst_feedback():
+                code, raw = request(f"{builds}/{burst['build_id']}/feedback")
+                require(code == 200, 'traced burst feedback unavailable')
+                value = json.loads(raw)
+                return value if value['is_terminal'] else None
+            require(until(burst_feedback, 60)['status'] == 'success', 'traced burst did not succeed')
+            cursor, sequences, bodies, pages = 0, [], [], 0
+            while True:
+                code, raw = request(f"{builds}/{burst['build_id']}/feedback?from={cursor}")
+                require(code == 200, 'traced burst feedback page unavailable')
+                page = json.loads(raw)
+                require(len(page['chunks']) <= 100, 'traced burst page exceeded its bound')
+                sequences.extend(chunk['sequence'] for chunk in page['chunks'])
+                bodies.extend(chunk['body'] for chunk in page['chunks'])
+                pages += 1
+                if not page['has_more']:
+                    break
+                require(page['next_sequence'] > cursor, 'traced burst cursor did not advance')
+                cursor = page['next_sequence']
+            markers = [body for body in bodies if body.startswith('page-marker-')]
+            require(pages > 1 and sequences == sorted(set(sequences)),
+                    'traced burst feedback duplicated or reordered sequences')
+            require(markers == [f'page-marker-{i}' for i in range(350)],
+                    'traced burst lost, duplicated, or reordered markers')
+            status, data = request(f"{builds}/{burst['build_id']}/attempts/{burst['attempt_id']}/artifacts/burst.txt")
+            require(status == 200 and data == b'burst-done', 'traced burst artifact differs')
+            print(f'PASS traced burst: {pages} pages, {len(sequences)} ordered records, 350 markers and artifact')
             # Cancellation is explicit and observed through terminal feedback.
             status, raw = request(builds, pipeline([{'run':'sleep 30'}]).encode(), key='cancel')
             require(status == 201, 'cancellation control not admitted')
