@@ -5,14 +5,14 @@ evidence changes the order of work. Keep detailed tickets for the active wave
 and the next wave; break down later waves when the preceding gate is measured.
 The supported release remains one trusted Linux host and one local worker.
 
-As of 2026-09-29, **W1 and W2 are complete**, **W3 is active**, and **W4 is next**.
-The qualified product candidate is local at `1d2973c0`; GitHub `main` still
-has the Jenkinsfile runtime. Publication of the exact branch was rejected by
-automatic approval review pending explicit owner authorization.
+As of 2026-09-29, **W0–W2 are complete**, **W3 is active**, and **W4 is next**.
+The native JSON baseline was merged into GitHub `main` as `4bd42a86` through
+[PR #454](https://github.com/SuperBadLabs/Fogell/pull/454). Its required PR
+gate passed. The exact W2 workload qualification candidate was `1d2973c0`.
 
 | Wave | Milestone and deadline | Gate | Status |
 | --- | --- | --- | --- |
-| W0 | Reviewable baseline · Oct 2 | Approve publication scope; record pilot repos, host, and targets. | Publication blocked |
+| W0 | Reviewable baseline · Oct 2 | Approve publication scope; record pilot repos, host, and targets. | Complete; [PR #454](https://github.com/SuperBadLabs/Fogell/pull/454) |
 | W1 | Correctness · Oct 9 | Invalid env names refused; failed JUnit stays unstable; independent 115/115 matrix and full native gate pass. | Complete; [evidence](../reports/native-qualification-2026-09-29/REPORT.md) |
 | W2 | Output · Oct 16 | Default-traced 350-marker case and representative build output complete without lost, duplicate, or reordered records. | Complete; [evidence](../reports/native-representative-complete-2026-09-29/REPORT.md) |
 | W3 | Operations · Oct 23 | Backups, retention, alerts, cleanup catch-up, and 72-hour unattended staging proof. | Active; [local slice](../reports/native-operations-progress-2026-09-29/REPORT.md) |
@@ -36,7 +36,7 @@ automatic approval review pending explicit owner authorization.
 | — | [FG-305](tickets/FG-305.md) burst-output transport | W2 | Done | [350 markers, 15 feedback pages, 584/584 gate, 115/115 matrix](../reports/native-output-2026-09-29/REPORT.md). |
 | — | [FG-304](tickets/FG-304.md) independent qualification | W1 | Done | 115/115 matrix and 582-test full gate on `9550bb05`. |
 | — | [FG-303](tickets/FG-303.md) failed JUnit persistence | W1 | Done | Runner/controller regression and 569-test gate passed. |
-| — | [FG-301](tickets/FG-301.md) publish review baseline | W0 | Blocked | Explicit approval for this exact branch; GitHub authentication works. |
+| — | [FG-301](tickets/FG-301.md) publish review baseline | W0 | Done | PR #454 merged at `4bd42a86` after required `gate` passed. |
 | — | [FG-307](tickets/FG-307.md) pilot/recovery decisions | W0 | Done | Maven, clenkins, Luigi, and numerical targets selected. |
 
 ## Operating rule
@@ -65,3 +65,4 @@ candidate or no release; unfinished expansion work is parked.
 | 2026-09-29 | Keep FG-308 and FG-309 Doing after the local helper/rehearsal slice. | One disposable paired point was created, checked, and restored; the read-only operator check and failure records passed focused tests. Scheduled multiple points, retention catch-up, host alert delivery/calibration, and the 72-hour staging gate are still required. The [partial report](../reports/native-operations-progress-2026-09-29/REPORT.md) lists evidence and limits. |
 | 2026-09-29 | Confirm GitHub `main` remains `1c010549` and `gh` authentication works; keep FG-301 blocked only on exact publication approval. | The branch is 24 commits ahead and changes 4,487 files. Automatic approval review rejected the earlier push because the broad delegation did not explicitly authorize this migration payload. |
 | 2026-09-29 | Add FG-315 ahead of FG-308; block FG-308 and keep FG-309 Doing. | The current controller has no admission pause/drain or independent writer-extinction contract. A timer that merely stops services can interrupt active external effects; a shell hook returning zero does not prove a paired backup is safe. Keep W3's October 23 gate and date unchanged. |
+| 2026-09-29 | Close FG-301 and W0 after [PR #454](https://github.com/SuperBadLabs/Fogell/pull/454) merged into `main` at `4bd42a86`. | The user explicitly authorized merging the native branch, its required PR `gate` passed on `aa1e1750`, and GitHub confirmed the merge. The native baseline is now on `main`; W3 and later release gates remain open. |
