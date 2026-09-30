@@ -26,8 +26,8 @@ baseline, not the Luigi pilot or a multi-user capacity result.
 | Measurement | p50 | p95 | Range |
 | --- | ---: | ---: | ---: |
 | Submit command round trip | 141.7 ms | 179.3 ms | 117.9–184.1 ms |
-| Accepted to first feedback | 157.9 ms | 216.0 ms | 104.2–265.8 ms |
-| Accepted to terminal feedback | 210.9 ms | 297.4 ms | 155.6–321.0 ms |
+| Submit response to first feedback | 157.9 ms | 216.0 ms | 104.2–265.8 ms |
+| Submit response to terminal feedback | 210.9 ms | 297.4 ms | 155.6–321.0 ms |
 
 All **30/30** controller builds completed successfully. Each returned five
 unique feedback records; the temporary controller state tree measured 43,140
@@ -43,11 +43,12 @@ real controller proof passed. `/usr/bin/time -v` reported a maximum resident
 set of 533,604 KiB (521.1 MiB); this is the maximum observed process in the
 gate command tree, not the sum of concurrent processes.
 
-The local accepted-to-first-feedback p95 is below the working five-second
-idle-host target. The release board still requires a seven-day Luigi pilot
-with cold dependencies, interruptions, failure/fix pairs, and uncensored
-latency samples. These short, sequential local jobs do not establish that
-pilot result or a throughput ceiling.
+The observed client-side response-to-feedback p95 is below five seconds. It
+starts after the server has accepted the build, so it cannot alone prove the
+release board's accepted-submission-to-first-feedback target. That target
+still requires a seven-day Luigi pilot with cold dependencies, interruptions,
+failure/fix pairs, and uncensored latency samples. These short, sequential
+local jobs do not establish the pilot result or a throughput ceiling.
 
 ## Reproduction and raw data
 
