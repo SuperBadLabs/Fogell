@@ -1,0 +1,46 @@
+PASS native source/dependency inventory
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Fogell.Domain -> /home/srikanth/projects/fogell/src/Fogell.Domain/bin/Release/net10.0/Fogell.Domain.dll
+  Fogell.Ir -> /home/srikanth/projects/fogell/src/Fogell.Ir/bin/Release/net10.0/Fogell.Ir.dll
+  Fogell.Admission -> /home/srikanth/projects/fogell/src/Fogell.Admission/bin/Release/net10.0/Fogell.Admission.dll
+  Fogell.Store -> /home/srikanth/projects/fogell/src/Fogell.Store/bin/Release/net10.0/Fogell.Store.dll
+  Fogell.Execution -> /home/srikanth/projects/fogell/src/Fogell.Execution/bin/Release/net10.0/Fogell.Execution.dll
+  Fogell.Pipeline.Parser -> /home/srikanth/projects/fogell/src/Fogell.Pipeline.Parser/bin/Release/net10.0/Fogell.Pipeline.Parser.dll
+  Fogell.Controller.Api -> /home/srikanth/projects/fogell/src/Fogell.Controller.Api/bin/Release/net10.0/Fogell.Controller.Api.dll
+  Fogell.Journal -> /home/srikanth/projects/fogell/src/Fogell.Journal/bin/Release/net10.0/Fogell.Journal.dll
+  Fogell.Controller.Host -> /home/srikanth/projects/fogell/src/Fogell.Controller.Host/bin/Release/net10.0/Fogell.Controller.Host.dll
+  Fogell.Runtime -> /home/srikanth/projects/fogell/src/Fogell.Runtime/bin/Release/net10.0/Fogell.Runtime.dll
+  Fogell.Client -> /home/srikanth/projects/fogell/tools/Fogell.Client/bin/Release/net10.0/Fogell.Client.dll
+  Fogell.Client.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Client.Tests/bin/Release/net10.0/Fogell.Client.Tests.dll
+  Fogell.Controller.Api.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Controller.Api.Tests/bin/Release/net10.0/Fogell.Controller.Api.Tests.dll
+  Fogell.Domain.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.Tests.dll
+  Fogell.Execution.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Execution.Tests/bin/Release/net10.0/Fogell.Execution.Tests.dll
+  Fogell.Journal.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Journal.Tests/bin/Release/net10.0/Fogell.Journal.Tests.dll
+  Fogell.Pipeline.Parser.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Pipeline.Parser.Tests/bin/Release/net10.0/Fogell.Pipeline.Parser.Tests.dll
+  Fogell.Retention -> /home/srikanth/projects/fogell/tools/Fogell.Retention/bin/Release/net10.0/Fogell.Retention.dll
+  Fogell.Retention.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Retention.Tests/bin/Release/net10.0/Fogell.Retention.Tests.dll
+  Fogell.Runtime.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Runtime.Tests/bin/Release/net10.0/Fogell.Runtime.Tests.dll
+  Fogell.Store.Tests -> /home/srikanth/projects/fogell/tests/Fogell.Store.Tests/bin/Release/net10.0/Fogell.Store.Tests.dll
+  Fogell.Crash.Harness -> /home/srikanth/projects/fogell/tools/Fogell.Crash.Harness/bin/Release/net10.0/fogell-crash-harness.dll
+  Fogell.Recovery -> /home/srikanth/projects/fogell/tools/Fogell.Recovery/bin/Release/net10.0/Fogell.Recovery.dll
+  Fogell.Run.Host -> /home/srikanth/projects/fogell/tools/Fogell.Run.Host/bin/Release/net10.0/Fogell.Run.Host.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:30.85
+tests/Fogell.Runtime.Tests/Fogell.Runtime.Tests.fsproj: EXPECTO! 9 tests run in 00:00:01.5431353 for native runtime – 9 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Client.Tests/Fogell.Client.Tests.fsproj: EXPECTO! 27 tests run in 00:00:01.0522725 for client – 27 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Retention.Tests/Fogell.Retention.Tests.fsproj: EXPECTO! 23 tests run in 00:00:00.8976411 for retention – 23 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj: EXPECTO! 116 tests run in 00:00:11.9041059 for Fogell.Controller.Api – 116 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj: EXPECTO! 41 tests run in 00:00:00.0768853 for Fogell.Domain – 41 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj: EXPECTO! 196 tests run in 00:00:38.8493620 for Fogell.Execution – 196 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Journal.Tests/Fogell.Journal.Tests.fsproj: EXPECTO! 31 tests run in 00:00:00.2470075 for Fogell.Journal – 31 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj: EXPECTO! 113 tests run in 00:00:13.4575071 for Fogell.Store – 113 passed, 0 ignored, 0 failed, 0 errored. Success!
+tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj: EXPECTO! 28 tests run in 00:00:00.0469698 for native pipeline admission – 28 passed, 0 ignored, 0 failed, 0 errored. Success!
+PASS native runner: artifacts, terminal replay, admission, crash reconciliation, changed-definition refusal
+PASS traced burst: 15 pages, 1411 ordered records, 350 markers and artifact
+PASS native controller: authentication, admission, snapshot failure/fix, failed JUnit, diagnostics, artifacts, source retrieval, cancellation
+OK native pipeline gate
