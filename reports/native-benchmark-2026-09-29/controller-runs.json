@@ -1,0 +1,359 @@
+{
+  "benchmark": "fogell-native-controller",
+  "container": "fogell-gate-postgres-local-job-1-3058018-16219",
+  "failures": [],
+  "format_version": 1,
+  "postgres_major": 16,
+  "repeats_requested": 30,
+  "repeats_succeeded": 30,
+  "revision": "bdf682ef02ba343977310ad504a74d819c9a0eff",
+  "runs": [
+    {
+      "accepted_to_first_feedback_ms": 170.153,
+      "accepted_to_terminal_ms": 274.418,
+      "attempt_id": "9e4a8639-6089-4c49-bc9a-3f4567b80a05",
+      "build_id": "212b8e26-c5a3-4a99-bfbc-b3ebc360dad2",
+      "feedback_pages_polled": 6,
+      "feedback_records": 5,
+      "index": 0,
+      "status": "success",
+      "submit_round_trip_ms": 164.062
+    },
+    {
+      "accepted_to_first_feedback_ms": 158.372,
+      "accepted_to_terminal_ms": 210.278,
+      "attempt_id": "32dc5bff-7a77-47e9-aa35-9a1a4d8a117e",
+      "build_id": "4bba20dc-ccfa-428a-a626-1b8aef406724",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 1,
+      "status": "success",
+      "submit_round_trip_ms": 126.985
+    },
+    {
+      "accepted_to_first_feedback_ms": 106.943,
+      "accepted_to_terminal_ms": 159.158,
+      "attempt_id": "f6ae4143-f882-42fe-a6da-188bc972f203",
+      "build_id": "eed111b5-fc85-4a0b-b2c9-370197770dcf",
+      "feedback_pages_polled": 4,
+      "feedback_records": 5,
+      "index": 2,
+      "status": "success",
+      "submit_round_trip_ms": 124.068
+    },
+    {
+      "accepted_to_first_feedback_ms": 106.813,
+      "accepted_to_terminal_ms": 211.016,
+      "attempt_id": "5e390fcc-6800-4922-ab00-66c901904baa",
+      "build_id": "beff24c3-96e5-4475-ae8e-ff6609ca051d",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 3,
+      "status": "success",
+      "submit_round_trip_ms": 127.87
+    },
+    {
+      "accepted_to_first_feedback_ms": 265.825,
+      "accepted_to_terminal_ms": 265.826,
+      "attempt_id": "dc10bf8d-5207-49c4-825d-479d2620f5fd",
+      "build_id": "d9256a98-2e32-456b-8c3b-27dfc6da4618",
+      "feedback_pages_polled": 6,
+      "feedback_records": 5,
+      "index": 4,
+      "status": "success",
+      "submit_round_trip_ms": 117.917
+    },
+    {
+      "accepted_to_first_feedback_ms": 161.861,
+      "accepted_to_terminal_ms": 214.878,
+      "attempt_id": "8f9af989-86bf-48c9-88e9-251c0db81093",
+      "build_id": "c3a81c41-de95-420e-b2d9-275cafa06d4e",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 5,
+      "status": "success",
+      "submit_round_trip_ms": 138.307
+    },
+    {
+      "accepted_to_first_feedback_ms": 160.979,
+      "accepted_to_terminal_ms": 316.174,
+      "attempt_id": "68c66107-b7c1-4eb2-a9ad-659c25d278a6",
+      "build_id": "e880ad5a-90e8-4ba7-9574-77457d0cb32b",
+      "feedback_pages_polled": 7,
+      "feedback_records": 5,
+      "index": 6,
+      "status": "success",
+      "submit_round_trip_ms": 135.432
+    },
+    {
+      "accepted_to_first_feedback_ms": 158.543,
+      "accepted_to_terminal_ms": 210.716,
+      "attempt_id": "98e9735c-489f-42ca-9dbe-ba88a1baea8f",
+      "build_id": "d12b44cf-38b8-49b2-b882-1268591e0611",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 7,
+      "status": "success",
+      "submit_round_trip_ms": 139.734
+    },
+    {
+      "accepted_to_first_feedback_ms": 155.913,
+      "accepted_to_terminal_ms": 258.597,
+      "attempt_id": "43cdfa94-c42e-4b44-93a6-4e9bbe143c92",
+      "build_id": "3e06eb3d-4de6-4641-b31e-2cd821e28f76",
+      "feedback_pages_polled": 6,
+      "feedback_records": 5,
+      "index": 8,
+      "status": "success",
+      "submit_round_trip_ms": 133.461
+    },
+    {
+      "accepted_to_first_feedback_ms": 155.362,
+      "accepted_to_terminal_ms": 206.665,
+      "attempt_id": "fe835c88-227f-4067-83ef-a1302a6c4c8d",
+      "build_id": "5d5bb2fd-65ad-45f5-8a25-90873cfb6096",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 9,
+      "status": "success",
+      "submit_round_trip_ms": 140.819
+    },
+    {
+      "accepted_to_first_feedback_ms": 158.38,
+      "accepted_to_terminal_ms": 210.016,
+      "attempt_id": "d0ea3861-f49f-4d1c-a3e6-8d9da185dd76",
+      "build_id": "82fefe86-b8d1-4b81-99e7-28cf5aa584ed",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 10,
+      "status": "success",
+      "submit_round_trip_ms": 142.555
+    },
+    {
+      "accepted_to_first_feedback_ms": 157.464,
+      "accepted_to_terminal_ms": 209.693,
+      "attempt_id": "2c08a7e7-18f5-46f8-b35d-a480098c6046",
+      "build_id": "6fe7da1f-eeec-4148-8b45-36b190ba5bdb",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 11,
+      "status": "success",
+      "submit_round_trip_ms": 149.434
+    },
+    {
+      "accepted_to_first_feedback_ms": 104.202,
+      "accepted_to_terminal_ms": 155.591,
+      "attempt_id": "e26a495b-0865-4282-b82a-21f9985e2628",
+      "build_id": "71464784-d298-45e3-ab78-6be3b92d4484",
+      "feedback_pages_polled": 4,
+      "feedback_records": 5,
+      "index": 12,
+      "status": "success",
+      "submit_round_trip_ms": 144.889
+    },
+    {
+      "accepted_to_first_feedback_ms": 156.485,
+      "accepted_to_terminal_ms": 207.817,
+      "attempt_id": "e314be3f-a071-4a6e-90e4-d1264407bcf3",
+      "build_id": "cfb28a01-ceae-45bb-ba0d-fee364888253",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 13,
+      "status": "success",
+      "submit_round_trip_ms": 147.724
+    },
+    {
+      "accepted_to_first_feedback_ms": 155.811,
+      "accepted_to_terminal_ms": 207.112,
+      "attempt_id": "94f80589-132b-4641-a348-035f2e1c8470",
+      "build_id": "827c09d6-5b9a-4dd3-824a-9732393e8c68",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 14,
+      "status": "success",
+      "submit_round_trip_ms": 128.664
+    },
+    {
+      "accepted_to_first_feedback_ms": 157.13,
+      "accepted_to_terminal_ms": 208.362,
+      "attempt_id": "330794da-723f-48ba-bd58-b2aed28c895b",
+      "build_id": "51e275db-1a0a-43f0-99a6-ded74f5fb707",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 15,
+      "status": "success",
+      "submit_round_trip_ms": 149.991
+    },
+    {
+      "accepted_to_first_feedback_ms": 155.438,
+      "accepted_to_terminal_ms": 207.125,
+      "attempt_id": "69266c3a-ec7a-4656-9cb8-86444d31001d",
+      "build_id": "a5d76105-bc60-4159-9a71-4937523fe963",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 16,
+      "status": "success",
+      "submit_round_trip_ms": 133.655
+    },
+    {
+      "accepted_to_first_feedback_ms": 157.049,
+      "accepted_to_terminal_ms": 260.234,
+      "attempt_id": "d1084ec8-18f5-4f49-b69b-b88bf3438ebe",
+      "build_id": "2af8c871-58ea-4cff-828b-eeca9138a56d",
+      "feedback_pages_polled": 6,
+      "feedback_records": 5,
+      "index": 17,
+      "status": "success",
+      "submit_round_trip_ms": 133.929
+    },
+    {
+      "accepted_to_first_feedback_ms": 155.544,
+      "accepted_to_terminal_ms": 207.272,
+      "attempt_id": "f2a7144e-e5df-4528-ad65-4b4b25cf8ba3",
+      "build_id": "b8379803-65c7-45da-956c-fad8ba0a9003",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 18,
+      "status": "success",
+      "submit_round_trip_ms": 133.262
+    },
+    {
+      "accepted_to_first_feedback_ms": 157.028,
+      "accepted_to_terminal_ms": 208.643,
+      "attempt_id": "5683a19d-4374-4aa1-b78d-4984d81583c5",
+      "build_id": "32845164-9a2f-4f96-83f0-6ac89590dba9",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 19,
+      "status": "success",
+      "submit_round_trip_ms": 133.021
+    },
+    {
+      "accepted_to_first_feedback_ms": 212.695,
+      "accepted_to_terminal_ms": 264.7,
+      "attempt_id": "ca056ff4-4f14-4f45-a127-b1b13610cc00",
+      "build_id": "38285edb-69b1-4560-83d4-513368e035fd",
+      "feedback_pages_polled": 6,
+      "feedback_records": 5,
+      "index": 20,
+      "status": "success",
+      "submit_round_trip_ms": 143.896
+    },
+    {
+      "accepted_to_first_feedback_ms": 109.008,
+      "accepted_to_terminal_ms": 161.178,
+      "attempt_id": "0f007d2a-2eb4-439d-b366-c6a6c6d4003b",
+      "build_id": "242d8004-5a3d-4a5a-9dbf-e7f56163ea92",
+      "feedback_pages_polled": 4,
+      "feedback_records": 5,
+      "index": 21,
+      "status": "success",
+      "submit_round_trip_ms": 162.21
+    },
+    {
+      "accepted_to_first_feedback_ms": 156.092,
+      "accepted_to_terminal_ms": 207.596,
+      "attempt_id": "31dbad9c-d140-4c66-9441-01eb8ec8c794",
+      "build_id": "07ce8c8d-c31e-44f7-a81f-6eccf46cd152",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 22,
+      "status": "success",
+      "submit_round_trip_ms": 135.845
+    },
+    {
+      "accepted_to_first_feedback_ms": 160.689,
+      "accepted_to_terminal_ms": 213.636,
+      "attempt_id": "d1c5f251-9f5d-4337-ad92-1d1a9ce404cf",
+      "build_id": "09f1ff91-b2d2-4193-a956-fcb65ecf49c4",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 23,
+      "status": "success",
+      "submit_round_trip_ms": 154.52
+    },
+    {
+      "accepted_to_first_feedback_ms": 212.34,
+      "accepted_to_terminal_ms": 264.642,
+      "attempt_id": "a6570bde-2836-433b-a402-77940bde39a5",
+      "build_id": "dfded086-26d2-4109-8dcc-c882889814a0",
+      "feedback_pages_polled": 6,
+      "feedback_records": 5,
+      "index": 24,
+      "status": "success",
+      "submit_round_trip_ms": 178.615
+    },
+    {
+      "accepted_to_first_feedback_ms": 214.738,
+      "accepted_to_terminal_ms": 267.275,
+      "attempt_id": "13a6b494-f93a-4b52-aea9-4e89112916d5",
+      "build_id": "1bae571e-16bf-457f-961f-0a55449e59b7",
+      "feedback_pages_polled": 6,
+      "feedback_records": 5,
+      "index": 25,
+      "status": "success",
+      "submit_round_trip_ms": 184.051
+    },
+    {
+      "accepted_to_first_feedback_ms": 158.917,
+      "accepted_to_terminal_ms": 212.716,
+      "attempt_id": "45a23aff-e1c8-47eb-89de-0023aa60ce87",
+      "build_id": "f889e6f0-b094-48de-9ccb-ce01af0d56c6",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 26,
+      "status": "success",
+      "submit_round_trip_ms": 158.822
+    },
+    {
+      "accepted_to_first_feedback_ms": 216.766,
+      "accepted_to_terminal_ms": 268.809,
+      "attempt_id": "db558f13-0b93-4e88-ae67-cdfa4742379b",
+      "build_id": "9628ad98-205d-4e73-802c-f4e833cb9a09",
+      "feedback_pages_polled": 6,
+      "feedback_records": 5,
+      "index": 27,
+      "status": "success",
+      "submit_round_trip_ms": 179.776
+    },
+    {
+      "accepted_to_first_feedback_ms": 159.565,
+      "accepted_to_terminal_ms": 212.162,
+      "attempt_id": "ab57bb76-ab57-475a-a9d6-80ac53a4e57a",
+      "build_id": "6824006c-9846-4e8b-a085-7fb0a48e0faa",
+      "feedback_pages_polled": 5,
+      "feedback_records": 5,
+      "index": 28,
+      "status": "success",
+      "submit_round_trip_ms": 159.299
+    },
+    {
+      "accepted_to_first_feedback_ms": 215.077,
+      "accepted_to_terminal_ms": 320.984,
+      "attempt_id": "fe59e1a1-f51e-4cfc-9995-fb4ced265a11",
+      "build_id": "850bc886-d054-45ff-bd3c-571489dd2860",
+      "feedback_pages_polled": 7,
+      "feedback_records": 5,
+      "index": 29,
+      "status": "success",
+      "submit_round_trip_ms": 175.581
+    }
+  ],
+  "summary": {
+    "accepted_to_first_feedback_ms": {
+      "p50": 157.918,
+      "p95": 216.006
+    },
+    "accepted_to_terminal_ms": {
+      "p50": 210.866,
+      "p95": 297.384
+    },
+    "controller_peak_rss_bytes": 131514368,
+    "feedback_records_total": 150,
+    "state_bytes": 43140,
+    "submit_round_trip_ms": {
+      "p50": 141.687,
+      "p95": 179.254
+    }
+  }
+}
