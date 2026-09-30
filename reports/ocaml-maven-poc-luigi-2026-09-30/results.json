@@ -1,0 +1,604 @@
+{
+  "host": "luigi",
+  "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.39",
+  "cpu_count": 56,
+  "maven_version": "\u001b[1mApache Maven 3.8.7\u001b[m",
+  "java_version": "javac 25.0.4.1",
+  "ocaml_version": "4.14.1",
+  "ocaml_executable_sha256": "38a469e063e1fe06249b8316b08ff44af9f3a16fc7ef6f53fd6f4e1d0d7bd07d",
+  "scope": "serial, offline warm-cache clean package; same three main and three test sources, one resource, ten JUnit 4 tests",
+  "runs": [
+    {
+      "tool": "maven",
+      "iteration": 0,
+      "warmup": true,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.79,
+      "monotonic_wall_seconds": 3.7988,
+      "user_cpu_seconds": 13.67,
+      "system_cpu_seconds": 1.24,
+      "max_rss_kib": 330816,
+      "load_before": [
+        1.42626953125,
+        0.9599609375,
+        0.671875
+      ],
+      "load_after": [
+        1.47265625,
+        0.9775390625,
+        0.67919921875
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/warmup-maven.log",
+      "time_file": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/warmup-maven.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 0,
+      "warmup": true,
+      "command": [
+        "/home/srikanth/fogell-ocaml-poc-2026-09-30/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-ocaml-poc-2026-09-30/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.14,
+      "monotonic_wall_seconds": 2.1507,
+      "user_cpu_seconds": 5.73,
+      "system_cpu_seconds": 0.7,
+      "max_rss_kib": 116032,
+      "load_before": [
+        1.47265625,
+        0.9775390625,
+        0.67919921875
+      ],
+      "load_after": [
+        1.47265625,
+        0.9775390625,
+        0.67919921875
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/warmup-ocaml.log",
+      "time_file": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/warmup-ocaml.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 1,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.58,
+      "monotonic_wall_seconds": 3.5876,
+      "user_cpu_seconds": 13.53,
+      "system_cpu_seconds": 1.25,
+      "max_rss_kib": 325824,
+      "load_before": [
+        1.47265625,
+        0.9775390625,
+        0.67919921875
+      ],
+      "load_after": [
+        1.75537109375,
+        1.04443359375,
+        0.70263671875
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/01-maven.log",
+      "time_file": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/01-maven.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 1,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-ocaml-poc-2026-09-30/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-ocaml-poc-2026-09-30/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.18,
+      "monotonic_wall_seconds": 2.1845,
+      "user_cpu_seconds": 5.73,
+      "system_cpu_seconds": 0.7,
+      "max_rss_kib": 117824,
+      "load_before": [
+        1.75537109375,
+        1.04443359375,
+        0.70263671875
+      ],
+      "load_after": [
+        1.75537109375,
+        1.04443359375,
+        0.70263671875
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/01-ocaml.log",
+      "time_file": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/01-ocaml.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 2,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-ocaml-poc-2026-09-30/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-ocaml-poc-2026-09-30/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.17,
+      "monotonic_wall_seconds": 2.1795,
+      "user_cpu_seconds": 5.73,
+      "system_cpu_seconds": 0.64,
+      "max_rss_kib": 116032,
+      "load_before": [
+        1.75537109375,
+        1.04443359375,
+        0.70263671875
+      ],
+      "load_after": [
+        1.85546875,
+        1.0771484375,
+        0.71533203125
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/02-ocaml.log",
+      "time_file": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/02-ocaml.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 2,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.82,
+      "monotonic_wall_seconds": 3.83,
+      "user_cpu_seconds": 14.16,
+      "system_cpu_seconds": 1.34,
+      "max_rss_kib": 329756,
+      "load_before": [
+        1.85546875,
+        1.0771484375,
+        0.71533203125
+      ],
+      "load_after": [
+        2.427734375,
+        1.208984375,
+        0.76025390625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/02-maven.log",
+      "time_file": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/02-maven.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 3,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.8,
+      "monotonic_wall_seconds": 3.807,
+      "user_cpu_seconds": 13.94,
+      "system_cpu_seconds": 1.36,
+      "max_rss_kib": 324568,
+      "load_before": [
+        2.427734375,
+        1.208984375,
+        0.76025390625
+      ],
+      "load_after": [
+        2.427734375,
+        1.208984375,
+        0.76025390625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/03-maven.log",
+      "time_file": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/03-maven.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 3,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-ocaml-poc-2026-09-30/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-ocaml-poc-2026-09-30/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.33,
+      "monotonic_wall_seconds": 2.3348,
+      "user_cpu_seconds": 5.93,
+      "system_cpu_seconds": 0.61,
+      "max_rss_kib": 114240,
+      "load_before": [
+        2.427734375,
+        1.208984375,
+        0.76025390625
+      ],
+      "load_after": [
+        2.5537109375,
+        1.25537109375,
+        0.77783203125
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/03-ocaml.log",
+      "time_file": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/03-ocaml.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 4,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-ocaml-poc-2026-09-30/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-ocaml-poc-2026-09-30/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.26,
+      "monotonic_wall_seconds": 2.2704,
+      "user_cpu_seconds": 5.82,
+      "system_cpu_seconds": 0.57,
+      "max_rss_kib": 116928,
+      "load_before": [
+        2.5537109375,
+        1.25537109375,
+        0.77783203125
+      ],
+      "load_after": [
+        2.5537109375,
+        1.25537109375,
+        0.77783203125
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/04-ocaml.log",
+      "time_file": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/04-ocaml.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 4,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.54,
+      "monotonic_wall_seconds": 3.5493,
+      "user_cpu_seconds": 13.35,
+      "system_cpu_seconds": 1.09,
+      "max_rss_kib": 319112,
+      "load_before": [
+        2.5537109375,
+        1.25537109375,
+        0.77783203125
+      ],
+      "load_after": [
+        2.75,
+        1.31787109375,
+        0.80078125
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/04-maven.log",
+      "time_file": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/04-maven.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 5,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.8,
+      "monotonic_wall_seconds": 3.8056,
+      "user_cpu_seconds": 13.47,
+      "system_cpu_seconds": 1.12,
+      "max_rss_kib": 319268,
+      "load_before": [
+        2.75,
+        1.31787109375,
+        0.80078125
+      ],
+      "load_after": [
+        3.01025390625,
+        1.39599609375,
+        0.8291015625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/05-maven.log",
+      "time_file": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/05-maven.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 5,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-ocaml-poc-2026-09-30/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-ocaml-poc-2026-09-30/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.18,
+      "monotonic_wall_seconds": 2.1855,
+      "user_cpu_seconds": 5.68,
+      "system_cpu_seconds": 0.62,
+      "max_rss_kib": 116928,
+      "load_before": [
+        3.01025390625,
+        1.39599609375,
+        0.8291015625
+      ],
+      "load_after": [
+        3.01025390625,
+        1.39599609375,
+        0.8291015625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/05-ocaml.log",
+      "time_file": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/05-ocaml.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 6,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-ocaml-poc-2026-09-30/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-ocaml-poc-2026-09-30/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.29,
+      "monotonic_wall_seconds": 2.3017,
+      "user_cpu_seconds": 5.88,
+      "system_cpu_seconds": 0.63,
+      "max_rss_kib": 116032,
+      "load_before": [
+        3.01025390625,
+        1.39599609375,
+        0.8291015625
+      ],
+      "load_after": [
+        3.169921875,
+        1.4560546875,
+        0.8515625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/06-ocaml.log",
+      "time_file": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/06-ocaml.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 6,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.8,
+      "monotonic_wall_seconds": 3.8025,
+      "user_cpu_seconds": 14.08,
+      "system_cpu_seconds": 1.32,
+      "max_rss_kib": 328164,
+      "load_before": [
+        3.169921875,
+        1.4560546875,
+        0.8515625
+      ],
+      "load_after": [
+        3.169921875,
+        1.4560546875,
+        0.8515625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/06-maven.log",
+      "time_file": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/06-maven.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 7,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.6,
+      "monotonic_wall_seconds": 3.6031,
+      "user_cpu_seconds": 13.73,
+      "system_cpu_seconds": 1.23,
+      "max_rss_kib": 332084,
+      "load_before": [
+        3.169921875,
+        1.4560546875,
+        0.8515625
+      ],
+      "load_after": [
+        3.55712890625,
+        1.56494140625,
+        0.89013671875
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/07-maven.log",
+      "time_file": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/07-maven.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 7,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-ocaml-poc-2026-09-30/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-ocaml-poc-2026-09-30/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.28,
+      "monotonic_wall_seconds": 2.288,
+      "user_cpu_seconds": 5.93,
+      "system_cpu_seconds": 0.72,
+      "max_rss_kib": 116928,
+      "load_before": [
+        3.55712890625,
+        1.56494140625,
+        0.89013671875
+      ],
+      "load_after": [
+        3.43212890625,
+        1.572265625,
+        0.896484375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/07-ocaml.log",
+      "time_file": "/home/srikanth/fogell-ocaml-poc-2026-09-30/benchmark-results/07-ocaml.time"
+    }
+  ]
+}
