@@ -53,6 +53,19 @@ module internal EventStream =
             with _ ->
                 "controller refused a malformed child log frame"
 
+    /// Typed frames have a protocol tag outside base64; ordinary stdout is
+    /// always base64-only, so printing diagnostic-shaped text cannot forge one.
+    let eventDiagnostic frame =
+        match frame with
+        | Encoded bytes when bytes.Length > 3 && bytes.[0] = byte 'D' && bytes.[1] = byte '1' && bytes.[2] = byte ':' ->
+            try
+                Text.Encoding.ASCII.GetString(bytes, 3, bytes.Length - 3)
+                |> Convert.FromBase64String |> strictUtf8.GetString
+                |> Fogell.Domain.ExecutionDiagnostic.decode
+                |> Option.map Fogell.Domain.ExecutionDiagnostic.serialize
+            with _ -> None
+        | _ -> None
+
     /// Consume a bounded prefix of an append-only, newline-framed stream.
     /// Offset advances only for bytes actually inspected, so bytes read ahead
     /// into the local buffer are safely re-read by the next batch. The callback

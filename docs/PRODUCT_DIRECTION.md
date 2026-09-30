@@ -1,101 +1,60 @@
-# Product direction and release gates
+# Product direction and release milestones
 
-Fogell's goal is reliable, self-hosted CI with a practical Jenkins migration
-path. [ADR 0010](adr/0010-production-first-ci.md) is the binding scope decision.
-This is a delivery plan, not a production certification.
+Fogell is reliable self-hosted CI for human and AI development feedback loops.
+Native versioned JSON is the only pipeline authoring contract. Work is selected
+by supported user workflows, safety and operational evidence.
 
-## Initial user and deployment
+The current local native gate passes 584 automated tests and the runner/controller
+proof: admission, source verification, failure/fix feedback, artifacts, source
+retrieval, cancellation, terminal replay and interrupted-run reconciliation.
+The build has zero warnings or errors. This is functional validation; sustained
+operation and recovery objectives still require the qualification below.
 
-Target a small team operating CI for mutually trusted projects on a dedicated
-Linux host or VM with PostgreSQL and externally enforced resource and network
-controls. The [threat model](THREAT_MODEL.md) defines the current boundary;
-container use alone does not make same-UID workloads hostile-tenant safe.
-The global controller bearer token is not per-user RBAC. Broader tenancy,
-untrusted pull requests, and remote-worker isolation need separate designs and
-proof before being offered.
+The [26 September Luigi campaign](../reports/luigi-2026-09-26/REPORT.md)
+found release qualification blockers beyond the passing gate: failed JUnit
+results broke persisted execution, newline-terminated environment names
+bypassed validation, and fast traced output reached a practical callback-queue
+limit. The first two defects are fixed. The
+[September 29 qualification](../reports/native-qualification-2026-09-29/REPORT.md)
+passed its 115-case matrix and full gate. The
+[burst-output qualification](../reports/native-output-2026-09-29/REPORT.md)
+passed the traced controller case and the updated 584-test gate. The
+[representative-output qualification](../reports/native-representative-complete-2026-09-29/REPORT.md)
+passed Apache Maven's noisy build and Fogell's full 584-test source-snapshot
+gate through the controller. W2 is complete; paired backups, retention, alerts,
+and unattended staging remain required before a sustained native pilot.
 
-Current pipeline input is Jenkinsfile syntax interpreted by the existing F#
-engine. Parsing, execution support, and proven Jenkins parity are different
-claims. The [generated ledger](COMPATIBILITY-LEDGER.tsv),
-[scorecard](COMPATIBILITY-SCORECARD.md), and
-[known limitations](KNOWN-LIMITATIONS.md) describe the current evidence.
-They are regression and migration tools, not the release progress meter.
+This release replaces the previous authoring/runtime path. Old campaign results
+are historical and do not qualify the native runtime. Production release requires
+fresh validation of the supported profile.
 
-## What has landed
+## First release boundary
 
-The merged production batches have bounded individual runner output, improved
-log publication throughput, introduced shared output budgets across a build,
-and bounded artifact publication and interrupted-copy cleanup. The
-[controller runbook](runbooks/controller-host.md) owns the settings and limits.
-The PRs linked in ADR 0010 own their measured validation results.
+The first native release supports one dedicated Linux host, PostgreSQL 16, one
+local worker, trusted workloads, a global operator bearer, and version 1 JSON
+pipelines. It does not promise hostile-tenant isolation, remote workers, general
+Jenkinsfile translation, or a multi-node controller. Those are separate products
+with separate evidence requirements. No feature expansion enters this plan.
 
-The opt-in [bounded storage pool](runbooks/storage-pool.md) adds kernel-enforced
-aggregate workspace, stash, artifact, and runner scratch limits for one local
-worker. It requires an operator-provisioned dedicated filesystem with finite
-bytes and inodes. Free-space guards control admission; an exclusive durable
-pool marker prevents overlapping Fogell writers and blocks uncertain restart.
-It is not a per-build quota, concurrent-worker reservation, or history-retention
-policy. Without this opt-in policy, arbitrary workspace writes remain unbounded.
-Missing terminal execution evidence still requires reconciliation.
+The [release board](RELEASE_BOARD.md) orders the current and next wave's tickets.
+The dates below are decision deadlines for one focused engineering owner with
+access to the existing Luigi test host. A missed gate is recorded as missed; it
+does not silently move all later dates. Each gate needs an exact candidate commit,
+the commands or harness used, raw results, and a short pass/fail summary. The
+historical Luigi report remains an observation of its September 26 candidate.
 
-## Release gates
-
-These are ordered delivery batches. Each is open until its stated evidence is
-produced; this table introduces no DONE ticket and changes no historical board
-accounting. Security or correctness defects in the supported path take priority
-over this sequence.
-
-| Order | Deliverable | Required acceptance evidence |
+| Milestone | Deadline | Required result |
 | --- | --- | --- |
-| 1 — Storage safety | Workspace/stash bounds and disk-capacity admission, with explicit operator policy and a race-safe capacity decision. | Concurrent builds cannot bypass the configured reservation or quota; actual writes are constrained by the declared enforcement boundary. Disk pressure refuses new work with a durable reason. Cancellation, crash, and restart release or reconcile reservations without deleting another attempt's data. A normal control succeeds after pressure is relieved. |
-| 2 — Retention | Bounded, resumable cleanup for logs, completed workspaces, snapshots, and artifact history. | Age/size/count policies preserve active attempts and required reconciliation evidence. Concurrent cleanup, restart mid-delete, filesystem substitution, and database/filesystem disagreement fail safely. Work per sweep is bounded and usage eventually returns below the declared target under the tested workload. |
-| 3 — Operator recovery | Installation, upgrade/rollback, paired database/state backup and restore, reconciliation procedures, and useful health/capacity signals. | Run the procedures against a disposable deployment, including interrupted upgrade and stale workers after restore. Record recovery time and any data loss; compare them with explicit release targets. Do not claim a target before measuring it. |
-| 4 — Controlled pilot | A versioned migration profile, actionable eligibility report, named representative CI jobs, and a sustained load/failure campaign. | A pipeline gets a supported, needs-change, or refused disposition with reasons. Approved jobs run through Controller.Host, preserve expected outputs and artifacts, and survive the declared cancellation/restart cases. Pin the profile, workload, concurrency, duration, resource limits, and pass thresholds before the campaign. Include Fogell building and testing itself as a candidate workload, subject to that profile. |
+| M0 — Reviewable baseline | October 2, 2026 | Publish the current native branch for review only after explicit owner approval of its source/report archives. Name two additional pilot repositories, choose the test host, and approve the pilot and recovery objectives below. A protected-main merge is not part of this milestone. |
+| M1 — Correctness blockers closed | October 9 | Reject trailing LF/CRLF and all other invalid environment-name characters; retain the fixed JUnit result and diagnostics through runner and controller persistence. Rerun the 115-case independent matrix against the exact candidate: 115/115 pass. The locked build, all test projects, and real controller proof pass with no warnings or skipped database suites. |
+| M2 — Output under real load | October 16 | The reported 350-marker default-tracing reproducer completes without `OUTPUT_LIMIT_EXCEEDED`, loss, duplication, or reordering. Run Fogell's full build/test output and one noisy representative workload through the controller, including pagination and artifacts. Exceeding a documented hard limit must still fail with a typed reason and retained evidence. |
+| M3 — Unattended operation | October 23 | Schedule paired database/state backups and retention, alert on held or reconciliation-required work and capacity thresholds, and prove cleanup catches up after downtime. Complete a 72-hour unattended staging run with backup, restore-point, alert, disk, and database measurements recorded. |
+| M4 — Sustained native pilot | November 6 | Run Fogell and the two named repositories for at least seven consecutive days and at least 50 builds, including ten deliberate failure/fix pairs, cold dependencies, a burst-output case, a controller restart, and a worker interruption. Every build ends terminal or explicitly requires reconciliation; no false success, lost artifact, or unobserved replay is accepted. On an otherwise idle host, target p95 accepted-submission-to-first-feedback at five seconds or less. Record all latency and resource measurements without censoring failures. |
+| M5 — Recovery and release decision | November 13 | From a clean release directory, rehearse install, upgrade, rollback, and paired database/state restore with a stale writer present. Measure the whole procedure against a proposed 60-minute recovery-time objective and 24-hour recovery-point objective, approved at M0. Decide **release candidate** only if M1–M5 pass and no supported-path correctness, data-loss, or security blocker remains; otherwise record **no release** and park expansion work. |
 
-Batch 1's first implementation uses a dedicated filesystem as the aggregate
-write boundary and admits one Fogell writer at a time. The storage-pool runbook
-states its enforcement, recovery, and trust assumptions. Per-build isolation
-and concurrent workers would require independently enforced slots or quotas;
-application byte counting cannot provide either. The
-[persistent ext4 campaign](../evidence/20260916-ext4-persistence/README.md)
-closes the VM crash/reboot evidence gap for this single-writer profile: nine
-abrupt guest terminations cover active execution, a synced recovery receipt
-before clearing, and the completed clear. Dirty state refuses new work after
-reboot; explicit recovery preserves receipts and permits the queued control.
-This is not physical-host power-loss certification or paired backup/restore
-proof. Retention is the next delivery batch; operator recovery remains a
-separate release gate.
-
-## Selecting work from the existing board
-
-1. Fix a security, false-success, data-loss, or availability defect affecting the
-   supported path according to its measured severity.
-2. Complete the release gates above, starting with storage safety.
-3. Add a capability only when a named user workflow needs it. State who needs
-   it, its Fogell contract, migration impact, failure modes, operating cost,
-   implementation scope, and acceptance measurement before implementing it.
-
-The legacy board keeps ticket statuses and evidence; being unselected does not
-mean a ticket is fixed. Compatibility-only expansion is deferred until it meets
-rule 3. No ticket becomes urgent merely because it admits more corpus files.
-Existing supported behavior keeps its tests and receipts. Differential probes
-are required when making or changing a Jenkins compatibility claim; they are
-not the oracle for a new Fogell-only operational feature.
-
-PR #446's proposed capability waves require re-triage against these rules.
-Its corpus survey and design work remain useful inputs. Its replacement must
-identify which proposed capabilities serve the pilot; it cannot silently restore
-corpus-ranked delivery. This decision does not claim those proposed features
-have been implemented or authorize executing additional corpus files.
-
-## Delivery and cost
-
-Use one PR for a coherent batch, with cheaper implementation agents and an
-independent reviewer where useful. Review shared lifecycle and failure behavior
-before publication. Use automatic GitHub reviews; do not request extra paid
-reviews or replace a PR solely to retrigger a reviewer. Record exact-commit
-coverage and any tooling limitation honestly. The
-[board operating contract](EXECUTION_BOARD.md#execution-cycle-and-definition-of-done)
-defines the required local-QA/Codex route, optional stale Copilot coverage, and
-the explicit evidence fallback for an unsupported bot-result format. Existing
-required checks and the full pre-publication gate remain in force.
+The November 13 decision is the stop point for this release attempt. A failed
+milestone does not justify indefinite feature work or a partial success claim.
+Correctness, data loss, false success, and supported-path security defects take
+priority over new features. Keep the global bearer, single-node, and trusted-workload
+limits explicit. Publishing code or deploying a release still requires owner
+authorization; a passing gate alone does not grant it.

@@ -4,13 +4,6 @@ open System
 open System.Diagnostics
 open System.Threading
 
-/// FG-222. Explicit process environments at the controller/build boundary.
-///
-/// A build receives only the small fixed compatibility baseline at run
-/// entry plus pipeline/stage/withEnv/credential overlays. Controller-owned SCM
-/// fetches have a separate allowlist because SSH agents, Git configuration and
-/// certificate/proxy settings are controller authority and must never become
-/// build input.
 type ControllerScmEnvironment = private ControllerScmEnvironment of (string * string) list
 
 module LaunchEnvironment =
@@ -26,10 +19,6 @@ module LaunchEnvironment =
 
     let private selected names = names |> List.choose ambient
 
-    /// The measured environment-of-necessity for Jenkins compatibility. PATH is
-    /// required by ordinary shell commands. HOME and TMPDIR are Fogell-owned
-    /// build-local paths, not the controller account's home or temporary area.
-    /// Everything else must be declared by the build.
     let buildBaseline agentHome =
         [ "PATH", FallbackPath
           "HOME", agentHome
@@ -159,12 +148,6 @@ module LaunchEnvironment =
 /// `setsid`; untrusted multi-tenant work needs VM-level isolation.
 type Outcome =
     | Completed of exitCode: int
-    /// FG-033. The step's process was terminated by a signal from OUTSIDE this
-    /// engine — an operator, an OOM killer, a container stop.
-    ///
-    /// Jenkins takes ~10 minutes to conclude anything here and then reports
-    /// `exit code -1` with no mention of why (JB-DUR-005). Fogell owns the
-    /// process, so it knows immediately and names the signal.
     | Signalled of signal: int
     | TimedOut
     | Cancelled
@@ -182,10 +165,6 @@ type Termination =
       GracefulExit: bool
       /// True when SIGKILL was needed after the grace period elapsed.
       Escalated: bool
-      /// Descendants still alive after the group was reaped. Should be zero:
-      /// Jenkins leaves `nohup`ed children running and we promised to beat that.
-      /// -1 means the check itself was UNAVAILABLE (the /proc read failed) — an
-      /// unknown is reported as unknown, never as a clean zero.
       LeakedProcesses: int }
 
 /// Why [waitForProcessExit] returned — decided ONCE, when the wait ends.
@@ -243,8 +222,6 @@ type RunRequest =
     { Command: string
       WorkingDirectory: string
       Environment: (string * string) list
-      /// Milliseconds. int64 because a Jenkins `timeout(time: 30, unit: 'DAYS')`
-      /// exceeds Int32.MaxValue ms and must not be silently shortened.
       TimeoutMs: int64 option
       /// How long a step may take to honour SIGTERM before it is killed.
       GraceMs: int
@@ -279,39 +256,15 @@ type RunRequest =
       /// FG-236. Opaque raw-output policy. Stdout and stderr each create an
       /// independent matcher before CR/LF framing.
       OutputRedaction: OutputRedactionPolicy option
-      /// FG-174. `sh(returnStdout: true)` CAPTURES stdout instead of printing it.
-      ///
-      /// Seen on pinned Jenkins: the xtrace line still appears in the console — Jenkins
-      /// prints `+ printf value` — while the program's own output does NOT. UNPROVEN
-      /// in-repo, and said so: the probe diverges because Fogell cannot yet reproduce it,
-      /// so it has no receipt until the trace moves off stdout. So this
-      /// suppresses the ECHO of stdout only; stderr, which is where `sh -x` writes the
-      /// trace, keeps streaming. Both sinks are still filled, so the captured value is
-      /// unaffected.
-      ///
-      /// Without this the compared output gained lines Jenkins never produced, and the
-      /// captured value picked up the trace as well — measured by lifting the refusal and
-      /// running it, not by reading the code.
       SuppressStdoutEcho: bool
-      /// Set when the step's group should be reaped even on success. Jenkins does
-      /// NOT do this — measured: `nohup`ed children survive both success and
-      /// abort, and JENKINS_NODE_COOKIE=dontKillMe is moot because nothing is
-      /// killed. FG-032 beats that, with an opt-out.
       ReapGroup: bool
-      /// FG-036. Polled while the step runs; when it returns true the step is
-      /// interrupted from OUTSIDE — a `failFast` sibling failing, or an operator
-      /// abort. It takes the same SIGTERM -> grace -> SIGKILL path a timeout
-      /// takes, because JB-FAIL-003 measured Jenkins using ONE interrupt
-      /// mechanism for both, and a script's trap handler cannot tell them apart.
-      /// The outcome is [Cancelled], not [TimedOut]: the step did not run out of
-      /// time, so reporting a timeout would misattribute the cause.
       Interrupt: (unit -> bool) option
       /// When BOTH the deadline and an interrupt are observable in the same poll,
       /// this decides which event was actually EARLIER — the caller owns the
       /// timestamps (its clock stamps the sibling failure and its deadline), so the
       /// tie cannot be broken here. None means deadline-first, the plain reading.
       InterruptBeatsDeadline: (unit -> bool) option
-      /// See [StepRequest.WorkspaceRoot] — where the @tmp scaffolding roots.
+      /// See [StepRequest.WorkspaceRoot] — where command scaffolding is created.
       WorkspaceRoot: string option }
 
     static member create(command, workingDirectory) =
@@ -338,7 +291,7 @@ module ProcessGroup =
 
     /// Every limit is measured in UTF-16 code units, the unit used by
     /// StreamReader, StringBuilder and RedactedText. A 16 Mi-unit record
-    /// preserves established 8 MiB returnStdout workloads while bounding each
+    /// preserves established 8 MiB captured stdout workloads while bounding each
     /// retained stream, framed record and callback backlog for one invocation.
 
     [<Literal>]
@@ -346,6 +299,8 @@ module ProcessGroup =
 
     [<Literal>]
     let CallbackLimitCount = 1024
+    /// A permanently blocked sink must eventually release process cleanup.
+    let CallbackBackpressureTimeoutMs = 5_000
 
     /// [StringBuilder.AppendLine] writes the platform terminator, which is two
     /// UTF-16 code units on CRLF platforms. Keep the capacity calculation
@@ -983,9 +938,6 @@ module ProcessGroup =
         else
             terminateGroupWithAnchor identity graceMs
 
-    /// SIGTERM the group, wait out the grace period, then SIGKILL. This is the
-    /// contract measured on Jenkins (JB-FAIL-003): the interrupt is a trappable
-    /// TERM with a grace window, and scripts install handlers expecting it.
     let terminateGroup (pgid: int) (graceMs: int) : Termination =
         let termDelivered = Native.signalGroup pgid Native.SIGTERM
         let exitedOnTerm = termDelivered && waitForGroupExit pgid graceMs
@@ -1002,9 +954,6 @@ module ProcessGroup =
           Escalated = escalated
           LeakedProcesses = survivorsIn pgid }
 
-    /// Reap whatever remains of a group after the step's direct child exited.
-    /// A step that backgrounds a daemon leaves it in the group; Jenkins lets it
-    /// survive, we do not.
     let reap (pgid: int) (graceMs: int) : Termination =
         if survivorsIn pgid = 0 then
             { GracefulExit = true
@@ -1237,47 +1186,10 @@ module ProcessGroup =
             + "wait $fogell_inner; fogell_rc=$?; "
             + "exit $fogell_rc")
         psi.ArgumentList.Add "fogell-wait-wrapper" // $0 for the outer waiter
-        // `-xe`, exactly as Jenkins' durable-task runs a shell step: `-x` makes the
-        // trace an EMITTED, COMPARED artifact on both engines (retiring the last
-        // wording-only suppression and FG-002c's continuation gap with it), and
-        // `-e` is the errexit semantics the receipts were already measured against.
-        // `2>&1` merges the streams IN THE SHELL: the trace goes to stderr, and
-        // .NET's two async pipe readers deliver cross-stream events in racy order —
-        // output lines overtook their own trace. One pipe is kernel-ordered, and it
-        // is also exactly what Jenkins' console is. The pgid marker stays on the
-        // OUTER stderr, printed before anything is redirected.
-        //
-        // A SHEBANG script is the exception, as it is on Jenkins: durable-task
-        // executes the named interpreter directly and injects no flags, so a
-        // `#!/bin/bash` script runs under bash untraced. The script goes to a file
-        // (its interpreter line only works from one) and is executed as itself.
-        // Owner-only from the first byte — the script text can carry a rendered
-        // credential, and a 0644 window in shared /tmp is a disclosure. Deletion is
-        // guaranteed by the disposable below, exception paths included.
         let mutable mintedDurableId: string option = None
 
         let shebangFile =
             if true then // EVERY script materialises — see the wrapper comment
-                // In the workspace's `@tmp` SIBLING — Jenkins' own durable-script
-                // location: executable where builds execute (hardened hosts mount
-                // /tmp noexec) and already excluded from the workspace hash as
-                // scaffolding, so no user-creatable basename is ever excluded.
-                // `script.sh` inside a per-step directory under `@tmp`, then a COPY
-                // beside it, and the COPY is what runs — the same OBSERVABLE identity
-                // durable-task gives a script: it writes `script.sh`, does
-                // `cp script.sh script.sh.copy` and executes the copy (JENKINS-70874:
-                // a writable handle to the original, inherited by a fork, raised
-                // "Text file busy"), so `$0` ends in `script.sh.copy`, the original
-                // stays beside it, and the copy carries the original's mode. MEASURED
-                // on the pinned lab (durable-task 686, 2026-09-04, receipt
-                // `sh-script-identity`); until then this ran `script.sh` itself, and
-                // the first corpus file whose output names `$0` (dash's `not found`
-                // line in `linuxacademy_cicd-pipeline-train-schedule-cd`) diverged on
-                // exactly that basename (FG-245). The random parent keeps parallel
-                // steps apart and `@tmp` keeps both files out of the workspace hash.
-                // durable-task's exact layout: <workspace>@tmp/durable-<8hex>/script.sh
-                // and script.sh.copy, rooted at the WORKSPACE even inside dir() — the
-                // full $0 is observable
                 let root =
                     let r = defaultArg request.WorkspaceRoot request.WorkingDirectory
                     // trim only REDUNDANT separators: "/" must stay the filesystem
@@ -1285,14 +1197,11 @@ module ProcessGroup =
                     if r.Length > 1 then r.TrimEnd '/' else r
                 let hex = Guid.NewGuid().ToString("N").Substring(0, 8)
                 mintedDurableId <- Some hex
-                let tmpDir = IO.Path.Combine(root + "@tmp", $"durable-{hex}")
+                let tmpDir = IO.Path.Combine(root + ".fogell-tmp", $"command-{hex}")
 
                 IO.Directory.CreateDirectory tmpDir |> ignore
-                let f = IO.Path.Combine(tmpDir, "script.sh")
+                let f = IO.Path.Combine(tmpDir, "command.sh")
 
-                // the EXECUTE bit follows durable-task: only a shebang script gets
-                // it (only a shebang script is exec'd) — an ordinary script runs
-                // under `sh -xe` and a `[ -x \"$0\" ]` probe must say what Jenkins says
                 let mode =
                     if request.Command.StartsWith "#!" then
                         IO.UnixFileMode.UserRead ||| IO.UnixFileMode.UserWrite ||| IO.UnixFileMode.UserExecute
@@ -1310,12 +1219,10 @@ module ProcessGroup =
 
                 try
                     writeOwnerOnly f
-                    writeOwnerOnly (f + ".copy")
                     Some f
                 with e ->
                     // a partial secret-bearing file must not outlive a failed write —
                     // the cleanup disposable is registered only after creation succeeds
-                    (try IO.File.Delete(f + ".copy") with _ -> ())
                     (try IO.File.Delete f with _ -> ())
                     raise e
             else
@@ -1328,7 +1235,6 @@ module ProcessGroup =
 
         let deleteShebang (f: string) =
             try
-                if IO.File.Exists(f + ".copy") then IO.File.Delete(f + ".copy")
                 if IO.File.Exists f then IO.File.Delete f
                 let d = IO.Path.GetDirectoryName f
                 if IO.Directory.Exists d then IO.Directory.Delete(d, false)
@@ -1339,28 +1245,6 @@ module ProcessGroup =
             { new IDisposable with
                 member _.Dispose() = shebangFile |> Option.iter deleteShebang }
 
-        // The payload travels as a POSITIONAL argument (`$1`), not an environment
-        // variable: reserving any env name collided with a pipeline exporting it —
-        // Jenkins passes such a variable through to the script untouched, and so
-        // does this now.
-        // EVERY script materialises to the durable path and runs as durable-task
-        // runs it: the COPY is executed — a shebang script executes itself,
-        // everything else runs under `sh -xe <path>` — so `$0` is the copy's path
-        // on both engines, not `/bin/sh` here and `script.sh.copy` there. The
-        // path travels positionally.
-        // FG-174. `2>&1` IS WHY THE TRACE WAS ON STDOUT — not `sh`. This was recorded on
-        // the board as "Fogell's `sh -x` writes its trace to stdout", which named the
-        // symptom and made the fix sound like it changed shell invocation for every step
-        // and every receipt. It does not: `sh -x` writes to STDERR exactly as Jenkins'
-        // does, and the wrapper here MERGES the two streams.
-        //
-        // The merge exists so that interleaving is exact — one pipe cannot reorder
-        // against itself, and the console shows the trace and the output in the order
-        // the script produced them. That reason DOES NOT APPLY when stdout is captured:
-        // nothing of stdout reaches the console, so there is no interleaving left to
-        // preserve. Splitting the streams only there gives the Jenkins shape — the trace
-        // still prints, the program's own output does not — and leaves every other step
-        // byte-identical, which is what keeps the receipts valid.
         let mergeStderr = if request.SuppressStdoutEcho then "" else " 2>&1"
         let registeredPrelude =
             "fogell_anchor=0; "
@@ -1378,11 +1262,11 @@ module ProcessGroup =
         // These are $1..$4 of the outer waiter, and therefore command/$0/$1/$2
         // of the inner shell launched by setsid.
         psi.ArgumentList.Add "fogell-launcher"
-        psi.ArgumentList.Add(defaultArg (shebangFile |> Option.map (fun f -> f + ".copy")) request.Command)
+        psi.ArgumentList.Add(defaultArg shebangFile request.Command)
         psi.ArgumentList.Add(defaultArg containmentDirectory "")
         // Test-only controller seams. They are read before the child environment
         // is cleared and travel positionally, so a build cannot set them through
-        // withEnv/environment. Production leaves all of them empty.
+        // pipeline environment values. Production leaves all of them empty.
         psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_RELEASE_FILE")) "")
         psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_READY_FILE")) "")
         psi.ArgumentList.Add(defaultArg (Option.ofObj (Environment.GetEnvironmentVariable "FOGELL_TEST_PRE_SETSID_OBSERVED_FILE")) "")
@@ -1417,11 +1301,13 @@ module ProcessGroup =
         let outputLimitReached =
             Tasks.TaskCompletionSource<unit>(Tasks.TaskCreationOptions.RunContinuationsAsynchronously)
         let mutable outputFailure: exn option = None
+        let mutable wakeCallbackWaiters = fun () -> ()
         let reportOutputFailure error =
             lock outputFailureGate (fun () ->
                 if outputFailure.IsNone then
                     outputFailure <- Some error
                     outputLimitReached.TrySetResult(()) |> ignore)
+            wakeCallbackWaiters ()
 
         let reportOutputLimit () = reportOutputFailure (OutputLimitExceededException())
 
@@ -1439,6 +1325,8 @@ module ProcessGroup =
         let mutable queuedCallbackCharacters = 0
         let mutable queuedCallbackCount = 0
 
+        wakeCallbackWaiters <- fun () -> lock lineCallbackGate (fun () -> Monitor.PulseAll lineCallbackGate)
+
         proc.Exited.Add(fun _ -> processExited.TrySetResult(()) |> ignore)
 
         let enqueueAction characters action =
@@ -1446,38 +1334,58 @@ module ProcessGroup =
             | None -> ()
             | Some callback ->
                 lock lineCallbackGate (fun () ->
-                    if lineCallbacksOpen then
-                        if queuedCallbackCount >= CallbackLimitCount
-                           || characters > OutputLimitCharacters - queuedCallbackCharacters then
+                    let waitClock = Stopwatch.StartNew()
+                    // Let the pipe reader wait for bounded queue space. This also
+                    // applies backpressure to the child once the pipe fills. A
+                    // failed sink or cleanup closure wakes the waiter below. The
+                    // finite wait also releases a child blocked behind a sink
+                    // that never returns.
+                    while characters <= OutputLimitCharacters
+                          && lineCallbacksOpen
+                          && not (hasOutputFailure ())
+                          && (queuedCallbackCount >= CallbackLimitCount
+                              || characters > OutputLimitCharacters - queuedCallbackCharacters) do
+                        let remaining = CallbackBackpressureTimeoutMs - int waitClock.ElapsedMilliseconds
+
+                        if remaining <= 0 then
                             reportOutputLimit ()
                         else
-                            queuedCallbackCount <- queuedCallbackCount + 1
-                            queuedCallbackCharacters <- queuedCallbackCharacters + characters
-                            // The reader invokes this callback path serially. Running a
-                            // hostile user callback there would prevent an
-                            // already-written following line from reaching the buffer and
-                            // makes the pre-signal snapshot misclassify it. Keep delivery
-                            // serialized, but move it onto an asynchronous continuation so
-                            // reader ingestion and EOF can advance independently. This is
-                            // deliberately within the successful reservation branch: an
-                            // rejected callback must neither run nor release capacity it
-                            // never acquired.
-                            lineCallbackTail <-
-                                lineCallbackTail.ContinueWith(
-                                    Action<Tasks.Task>(fun previous ->
-                                        try
-                                            // Keep a failed output sink sticky. Awaiting only
-                                            // the final continuation is sufficient because
-                                            // every successor first propagates its antecedent.
-                                            previous.GetAwaiter().GetResult()
-                                            callback ()
-                                        finally
-                                            lock lineCallbackGate (fun () ->
-                                                queuedCallbackCount <- queuedCallbackCount - 1
-                                                queuedCallbackCharacters <- queuedCallbackCharacters - characters)),
-                                    CancellationToken.None,
-                                    Tasks.TaskContinuationOptions.None,
-                                    Tasks.TaskScheduler.Default))
+                            Monitor.Wait(lineCallbackGate, remaining) |> ignore
+
+                    if lineCallbacksOpen then
+                        if not (hasOutputFailure ()) then
+                            if characters > OutputLimitCharacters then
+                                reportOutputLimit ()
+                            else
+                                queuedCallbackCount <- queuedCallbackCount + 1
+                                queuedCallbackCharacters <- queuedCallbackCharacters + characters
+                                // The reader invokes this callback path serially. Running a
+                                // hostile user callback there would prevent an
+                                // already-written following line from reaching the buffer and
+                                // makes the pre-signal snapshot misclassify it. Keep delivery
+                                // serialized, but move it onto an asynchronous continuation so
+                                // reader ingestion and EOF can advance independently.
+                                lineCallbackTail <-
+                                    lineCallbackTail.ContinueWith(
+                                        Action<Tasks.Task>(fun previous ->
+                                            try
+                                                try
+                                                    // Keep a failed output sink sticky. Awaiting only
+                                                    // the final continuation is sufficient because
+                                                    // every successor first propagates its antecedent.
+                                                    previous.GetAwaiter().GetResult()
+                                                    callback ()
+                                                with error ->
+                                                    reportOutputFailure error
+                                                    reraise ()
+                                            finally
+                                                lock lineCallbackGate (fun () ->
+                                                    queuedCallbackCount <- queuedCallbackCount - 1
+                                                    queuedCallbackCharacters <- queuedCallbackCharacters - characters
+                                                    Monitor.PulseAll lineCallbackGate)),
+                                        CancellationToken.None,
+                                        Tasks.TaskContinuationOptions.None,
+                                        Tasks.TaskScheduler.Default))
 
         let enqueueLine (callback: (string -> unit) option) (line: string) =
             enqueueAction line.Length (callback |> Option.map (fun publish -> fun () -> publish line))
@@ -1519,6 +1427,7 @@ module ProcessGroup =
         let closeAndGetLineCallbackTail () =
             lock lineCallbackGate (fun () ->
                 lineCallbacksOpen <- false
+                Monitor.PulseAll lineCallbackGate
                 lineCallbackTail)
 
         let emit (sink: Text.StringBuilder) (line: string) =
@@ -1560,25 +1469,6 @@ module ProcessGroup =
             else
                 false
 
-        // CAPTURED STDOUT IS READ AS ONE STREAM, NOT REASSEMBLED FROM LINES.
-        //
-        // The first version of this filled the same StringBuilder through `AppendLine`,
-        // and MEASURED AGAINST JENKINS it was wrong: `printf value` emits five bytes and
-        // no terminator, but a line-based sink re-terminates every line, so the captured
-        // value came back as "value\n". `sh(script: 'printf value', returnStdout: true)`
-        // then differed from Jenkins in a way no amount of `.trim()` in the pipeline
-        // would reveal, and the `raw:[...]` assertion in `script-sh-returnstdout` is what
-        // caught it: Jenkins printed one line where Fogell printed two.
-        //
-        // A line reader CANNOT fix this — `OutputDataReceived` never says whether the
-        // final line carried a terminator, so the information is gone before the sink
-        // sees it. `ReadToEndAsync` still DECODES to a string; what it preserves is the
-        // terminator, not the raw bytes, and an earlier version of this comment said
-        // "as bytes" and overstated it (raised in review on PR #53). Capture mode therefore skips the line reader for stdout entirely,
-        // which costs nothing: nothing is echoing those lines anyway. stderr keeps its
-        // incremental line reader, so the xtrace still streams while this runs, and the two are read
-        // CONCURRENTLY — reading one to completion before draining the other is how a
-        // full pipe buffer deadlocks a process that writes to both.
         let handleStderrLine (line: string) =
             if line.StartsWith(pgidMarker, StringComparison.Ordinal) then
                 // the leader's own pid: the real group id. Never surfaced to the
@@ -1609,25 +1499,6 @@ module ProcessGroup =
         if proc.HasExited then
             processExited.TrySetResult(()) |> ignore
 
-        // FG-181. The capture accumulates INCREMENTALLY into a buffer this scope owns,
-        // rather than being handed to `ReadToEndAsync` and read out of the task's Result.
-        // The two differ only when the read does not finish, and that is exactly the case
-        // that was wrong: a descendant which escaped the process group holds the inherited
-        // write end open, `ReadToEndAsync` cannot complete, the bounded wait below expires,
-        // and the task's Result is unavailable — so the fallback substituted "" and threw
-        // away bytes that HAD ALREADY ARRIVED. MEASURED: `setsid sleep 10 & printf token`
-        // gave Jenkins `raw:[token]` and Fogell `raw:[]`, with BOTH ENGINES REPORTING
-        // SUCCESS, which is a wrong value under a green build. With the buffer the same
-        // case truncates instead of erasing, and `token` is there because it arrived long
-        // before the bound. Receipt `script-capture-escaped-descendant`, which was run
-        // against this code REVERTED and diverges on both the value and the workspace
-        // hash — a capture case that cannot fail proves nothing about capture.
-        //
-        // Started BEFORE the stderr reader and never awaited until the wait is over, so
-        // both pipes drain concurrently — see the capture note above.
-        //
-        // The buffer is locked on BOTH sides: this task may still be reading when the
-        // snapshot below is taken, precisely in the case the ticket is about.
         let captureBuffer = Text.StringBuilder()
         let mutable acceptingCapturedOutput = true
 
@@ -2298,11 +2169,6 @@ module ProcessGroup =
                 let completionClock, _, callbackReadersReachedEof = waitForReaderCompletion 300
                 Completed 125, t, completionClock, 300, callbackReadersReachedEof
             else
-                // Jenkins' interrupt narration, in its words and its order — measured
-                // on 2.568.1 — so the two logs COMPARE (FG-102) instead of each
-                // engine's version being suppressed. `Terminated` then arrives from
-                // the shell itself on both engines. The cause is the SNAPSHOT taken
-                // when the wait ended, never a fresh sample.
                 if waitEnd = WaitEnd.Expired then
                     publishGeneratedLineBeforeCleanup "Cancelling nested steps due to timeout"
 
@@ -2319,11 +2185,6 @@ module ProcessGroup =
                         | None -> terminateGroup g request.GraceMs)
                 let completionClock, _, callbackReadersReachedEof = waitForReaderCompletion 300
 
-                // On Jenkins the wrapper shell survives to print `Terminated` for its
-                // killed child; Fogell's SIGTERM reaches the WHOLE group, so nobody is
-                // usually left alive to say it — the engine says it, in the same
-                // position. UNLESS the script trapped the signal and said it itself:
-                // synthesising unconditionally doubled the line for a trapping shell.
                 let shellSaidIt =
                     let since (sink: Text.StringBuilder) (before: string) =
                         (lock sink (fun () -> sink.ToString())).Substring before.Length

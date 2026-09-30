@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup><Compile Include="SnapshotCommand.fs" /><Compile Include="Client.fs" /><Compile Include="Program.fs" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../../src/Fogell.Domain/Fogell.Domain.fsproj" /></ItemGroup>
+</Project>

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "stages": [{
+    "name": "verify",
+    "steps": [
+      {"echo": "Starting verification"},
+      {"run": "dotnet build -c Release", "timeout_seconds": 300},
+      {"run": "dotnet tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.Tests.dll", "timeout_seconds": 300}
+    ]
+  }]
+}

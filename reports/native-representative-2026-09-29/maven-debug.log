@@ -1,0 +1,2511 @@
+Apache Maven 3.9.16 (2bdd9fddda4b155ebf8000e807eb73fd829a51d5)
+Maven home: /home/srikanth/.m2/wrapper/dists/apache-maven-3.9.16-bin/4200fbc6/apache-maven-3.9.16
+Java version: 25.0.3, vendor: Eclipse Adoptium, runtime: /opt/temurin/jdk-25.0.3+9
+Default locale: en_US, platform encoding: UTF-8
+OS name: "linux", version: "7.0.0-30-generic", arch: "amd64", family: "unix"
+[DEBUG] Created new class realm maven.api
+[DEBUG] Importing foreign packages into class realm maven.api
+[DEBUG]   Imported: javax.annotation.* < plexus.core
+[DEBUG]   Imported: javax.annotation.security.* < plexus.core
+[DEBUG]   Imported: javax.inject.* < plexus.core
+[DEBUG]   Imported: org.apache.maven.* < plexus.core
+[DEBUG]   Imported: org.apache.maven.artifact < plexus.core
+[DEBUG]   Imported: org.apache.maven.classrealm < plexus.core
+[DEBUG]   Imported: org.apache.maven.cli < plexus.core
+[DEBUG]   Imported: org.apache.maven.configuration < plexus.core
+[DEBUG]   Imported: org.apache.maven.exception < plexus.core
+[DEBUG]   Imported: org.apache.maven.execution < plexus.core
+[DEBUG]   Imported: org.apache.maven.execution.scope < plexus.core
+[DEBUG]   Imported: org.apache.maven.graph < plexus.core
+[DEBUG]   Imported: org.apache.maven.lifecycle < plexus.core
+[DEBUG]   Imported: org.apache.maven.model < plexus.core
+[DEBUG]   Imported: org.apache.maven.monitor < plexus.core
+[DEBUG]   Imported: org.apache.maven.plugin < plexus.core
+[DEBUG]   Imported: org.apache.maven.profiles < plexus.core
+[DEBUG]   Imported: org.apache.maven.project < plexus.core
+[DEBUG]   Imported: org.apache.maven.reporting < plexus.core
+[DEBUG]   Imported: org.apache.maven.repository < plexus.core
+[DEBUG]   Imported: org.apache.maven.rtinfo < plexus.core
+[DEBUG]   Imported: org.apache.maven.settings < plexus.core
+[DEBUG]   Imported: org.apache.maven.toolchain < plexus.core
+[DEBUG]   Imported: org.apache.maven.usability < plexus.core
+[DEBUG]   Imported: org.apache.maven.wagon.* < plexus.core
+[DEBUG]   Imported: org.apache.maven.wagon.authentication < plexus.core
+[DEBUG]   Imported: org.apache.maven.wagon.authorization < plexus.core
+[DEBUG]   Imported: org.apache.maven.wagon.events < plexus.core
+[DEBUG]   Imported: org.apache.maven.wagon.observers < plexus.core
+[DEBUG]   Imported: org.apache.maven.wagon.proxy < plexus.core
+[DEBUG]   Imported: org.apache.maven.wagon.repository < plexus.core
+[DEBUG]   Imported: org.apache.maven.wagon.resource < plexus.core
+[DEBUG]   Imported: org.codehaus.classworlds < plexus.core
+[DEBUG]   Imported: org.codehaus.plexus.* < plexus.core
+[DEBUG]   Imported: org.codehaus.plexus.classworlds < plexus.core
+[DEBUG]   Imported: org.codehaus.plexus.component < plexus.core
+[DEBUG]   Imported: org.codehaus.plexus.configuration < plexus.core
+[DEBUG]   Imported: org.codehaus.plexus.container < plexus.core
+[DEBUG]   Imported: org.codehaus.plexus.context < plexus.core
+[DEBUG]   Imported: org.codehaus.plexus.lifecycle < plexus.core
+[DEBUG]   Imported: org.codehaus.plexus.logging < plexus.core
+[DEBUG]   Imported: org.codehaus.plexus.personality < plexus.core
+[DEBUG]   Imported: org.codehaus.plexus.util.xml.Xpp3Dom < plexus.core
+[DEBUG]   Imported: org.codehaus.plexus.util.xml.pull.XmlPullParser < plexus.core
+[DEBUG]   Imported: org.codehaus.plexus.util.xml.pull.XmlPullParserException < plexus.core
+[DEBUG]   Imported: org.codehaus.plexus.util.xml.pull.XmlSerializer < plexus.core
+[DEBUG]   Imported: org.eclipse.aether.* < plexus.core
+[DEBUG]   Imported: org.eclipse.aether.artifact < plexus.core
+[DEBUG]   Imported: org.eclipse.aether.collection < plexus.core
+[DEBUG]   Imported: org.eclipse.aether.deployment < plexus.core
+[DEBUG]   Imported: org.eclipse.aether.graph < plexus.core
+[DEBUG]   Imported: org.eclipse.aether.impl < plexus.core
+[DEBUG]   Imported: org.eclipse.aether.installation < plexus.core
+[DEBUG]   Imported: org.eclipse.aether.internal.impl < plexus.core
+[DEBUG]   Imported: org.eclipse.aether.metadata < plexus.core
+[DEBUG]   Imported: org.eclipse.aether.repository < plexus.core
+[DEBUG]   Imported: org.eclipse.aether.resolution < plexus.core
+[DEBUG]   Imported: org.eclipse.aether.spi < plexus.core
+[DEBUG]   Imported: org.eclipse.aether.transfer < plexus.core
+[DEBUG]   Imported: org.eclipse.aether.util < plexus.core
+[DEBUG]   Imported: org.eclipse.aether.version < plexus.core
+[DEBUG]   Imported: org.fusesource.jansi.* < plexus.core
+[DEBUG]   Imported: org.slf4j.* < plexus.core
+[DEBUG]   Imported: org.slf4j.event.* < plexus.core
+[DEBUG]   Imported: org.slf4j.helpers.* < plexus.core
+[DEBUG]   Imported: org.slf4j.spi.* < plexus.core
+[DEBUG] Populating class realm maven.api
+[DEBUG] Created adapter factory; available factories [file-lock, rwlock-local, semaphore-local, noop]; available name mappers [discriminating, file-gaecv, file-gav, file-hgaecv, file-hgav, file-static, gaecv, gav, static]
+[INFO] Error stacktraces are turned on.
+[DEBUG] Message scheme: color
+[DEBUG] Message styles: debug info warning error success failure strong mojo project
+[DEBUG] Reading global settings from /home/srikanth/.m2/wrapper/dists/apache-maven-3.9.16-bin/4200fbc6/apache-maven-3.9.16/conf/settings.xml
+[DEBUG] Reading user settings from /home/srikanth/.m2/settings.xml
+[DEBUG] Reading global toolchains from /home/srikanth/.m2/wrapper/dists/apache-maven-3.9.16-bin/4200fbc6/apache-maven-3.9.16/conf/toolchains.xml
+[DEBUG] Reading user toolchains from /home/srikanth/.m2/toolchains.xml
+[DEBUG] Using local repository at /tmp/fg306-maven.isLMNI/m2
+[DEBUG] Using manager EnhancedLocalRepositoryManager with priority 10.0 for /tmp/fg306-maven.isLMNI/m2
+[INFO] Scanning for projects...
+[DEBUG] Creating adapter using nameMapper 'gaecv' and factory 'rwlock-local'
+[DEBUG] Extension realms for project org.apache.maven:maven:pom:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging pom from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-parent:pom:49: (none)
+[DEBUG] Looking up lifecycle mappings for packaging pom from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache:apache:pom:39: (none)
+[DEBUG] Looking up lifecycle mappings for packaging pom from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-api:pom:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging pom from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-api-annotations:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-api-di:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-api-xml:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-api-model:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-api-plugin:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-api-settings:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-api-toolchain:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-api-metadata:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-api-core:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-api-spi:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-api-cli:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-impl-modules:pom:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging pom from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-support:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-impl:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-di:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-xml:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-jline:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-logging:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-core:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-cli:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-testing:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-compat-modules:pom:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging pom from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-plugin-api:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-builder-support:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-model:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-model-builder:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-settings:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-settings-builder:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-artifact:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-resolver-provider:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-repository-metadata:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-embedder:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-compat:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-toolchain-model:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:maven-toolchain-builder:jar:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging jar from ClassRealm[plexus.core, parent: null]
+[DEBUG] Extension realms for project org.apache.maven:apache-maven:pom:4.1.0-SNAPSHOT: (none)
+[DEBUG] Looking up lifecycle mappings for packaging pom from ClassRealm[plexus.core, parent: null]
+[DEBUG] === REACTOR BUILD PLAN ================================================
+[DEBUG] Project: org.apache.maven:maven-api-annotations:jar:4.1.0-SNAPSHOT
+[DEBUG] Tasks:   [test]
+[DEBUG] Style:   Regular
+[DEBUG] =======================================================================
+[INFO] 
+[INFO] ---------------< org.apache.maven:maven-api-annotations >---------------
+[INFO] Building Maven 4 API :: Meta annotations 4.1.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[DEBUG] Lifecycle clean -> [pre-clean, clean, post-clean]
+[DEBUG] Lifecycle default -> [validate, initialize, generate-sources, process-sources, generate-resources, process-resources, compile, process-classes, generate-test-sources, process-test-sources, generate-test-resources, process-test-resources, test-compile, process-test-classes, test, prepare-package, package, pre-integration-test, integration-test, post-integration-test, verify, install, deploy]
+[DEBUG] Lifecycle site -> [pre-site, site, post-site, site-deploy]
+[DEBUG] Lifecycle clean -> [pre-clean, clean, post-clean]
+[DEBUG] Lifecycle default -> [validate, initialize, generate-sources, process-sources, generate-resources, process-resources, compile, process-classes, generate-test-sources, process-test-sources, generate-test-resources, process-test-resources, test-compile, process-test-classes, test, prepare-package, package, pre-integration-test, integration-test, post-integration-test, verify, install, deploy]
+[DEBUG] Lifecycle site -> [pre-site, site, post-site, site-deploy]
+[DEBUG] Lifecycle clean -> [pre-clean, clean, post-clean]
+[DEBUG] Lifecycle default -> [validate, initialize, generate-sources, process-sources, generate-resources, process-resources, compile, process-classes, generate-test-sources, process-test-sources, generate-test-resources, process-test-resources, test-compile, process-test-classes, test, prepare-package, package, pre-integration-test, integration-test, post-integration-test, verify, install, deploy]
+[DEBUG] Lifecycle site -> [pre-site, site, post-site, site-deploy]
+[DEBUG] Lifecycle clean -> [pre-clean, clean, post-clean]
+[DEBUG] Lifecycle default -> [validate, initialize, generate-sources, process-sources, generate-resources, process-resources, compile, process-classes, generate-test-sources, process-test-sources, generate-test-resources, process-test-resources, test-compile, process-test-classes, test, prepare-package, package, pre-integration-test, integration-test, post-integration-test, verify, install, deploy]
+[DEBUG] Lifecycle site -> [pre-site, site, post-site, site-deploy]
+[DEBUG] Lifecycle clean -> [pre-clean, clean, post-clean]
+[DEBUG] Lifecycle default -> [validate, initialize, generate-sources, process-sources, generate-resources, process-resources, compile, process-classes, generate-test-sources, process-test-sources, generate-test-resources, process-test-resources, test-compile, process-test-classes, test, prepare-package, package, pre-integration-test, integration-test, post-integration-test, verify, install, deploy]
+[DEBUG] Lifecycle site -> [pre-site, site, post-site, site-deploy]
+[DEBUG] Lifecycle clean -> [pre-clean, clean, post-clean]
+[DEBUG] Lifecycle default -> [validate, initialize, generate-sources, process-sources, generate-resources, process-resources, compile, process-classes, generate-test-sources, process-test-sources, generate-test-resources, process-test-resources, test-compile, process-test-classes, test, prepare-package, package, pre-integration-test, integration-test, post-integration-test, verify, install, deploy]
+[DEBUG] Lifecycle site -> [pre-site, site, post-site, site-deploy]
+[DEBUG] Lifecycle clean -> [pre-clean, clean, post-clean]
+[DEBUG] Lifecycle default -> [validate, initialize, generate-sources, process-sources, generate-resources, process-resources, compile, process-classes, generate-test-sources, process-test-sources, generate-test-resources, process-test-resources, test-compile, process-test-classes, test, prepare-package, package, pre-integration-test, integration-test, post-integration-test, verify, install, deploy]
+[DEBUG] Lifecycle site -> [pre-site, site, post-site, site-deploy]
+[DEBUG] Lifecycle clean -> [pre-clean, clean, post-clean]
+[DEBUG] Lifecycle default -> [validate, initialize, generate-sources, process-sources, generate-resources, process-resources, compile, process-classes, generate-test-sources, process-test-sources, generate-test-resources, process-test-resources, test-compile, process-test-classes, test, prepare-package, package, pre-integration-test, integration-test, post-integration-test, verify, install, deploy]
+[DEBUG] Lifecycle site -> [pre-site, site, post-site, site-deploy]
+[DEBUG] Lifecycle clean -> [pre-clean, clean, post-clean]
+[DEBUG] Lifecycle default -> [validate, initialize, generate-sources, process-sources, generate-resources, process-resources, compile, process-classes, generate-test-sources, process-test-sources, generate-test-resources, process-test-resources, test-compile, process-test-classes, test, prepare-package, package, pre-integration-test, integration-test, post-integration-test, verify, install, deploy]
+[DEBUG] Lifecycle site -> [pre-site, site, post-site, site-deploy]
+[DEBUG] Lifecycle clean -> [pre-clean, clean, post-clean]
+[DEBUG] Lifecycle default -> [validate, initialize, generate-sources, process-sources, generate-resources, process-resources, compile, process-classes, generate-test-sources, process-test-sources, generate-test-resources, process-test-resources, test-compile, process-test-classes, test, prepare-package, package, pre-integration-test, integration-test, post-integration-test, verify, install, deploy]
+[DEBUG] Lifecycle site -> [pre-site, site, post-site, site-deploy]
+[DEBUG] === PROJECT BUILD PLAN ================================================
+[DEBUG] Project:       org.apache.maven:maven-api-annotations:4.1.0-SNAPSHOT
+[DEBUG] Dependencies (collect): [test]
+[DEBUG] Dependencies (resolve): [compile, test]
+[DEBUG] Repositories (dependencies): [central (https://repo.maven.apache.org/maven2, default, releases)]
+[DEBUG] Repositories (plugins)     : [central (https://repo.maven.apache.org/maven2, default, releases)]
+[DEBUG] -----------------------------------------------------------------------
+[DEBUG] Goal:          org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce (enforce-bytecode-version)
+[DEBUG] Style:         Regular
+[DEBUG] Configuration: <?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <commandLineRules>${rules}</commandLineRules>
+  <fail default-value="true">true</fail>
+  <failFast default-value="false">${enforcer.failFast}</failFast>
+  <failIfNoRules default-value="true">${enforcer.failIfNoRules}</failIfNoRules>
+  <ignoreCache default-value="false">${enforcer.ignoreCache}</ignoreCache>
+  <mojoExecution default-value="${mojoExecution}"/>
+  <project default-value="${project}"/>
+  <rules>
+    <requireJavaVersion>
+      <version>[17,)</version>
+    </requireJavaVersion>
+    <enforceBytecodeVersion>
+      <maxJdkVersion>17</maxJdkVersion>
+      <ignoredScopes>
+        <ignoredScope>test</ignoredScope>
+      </ignoredScopes>
+      <excludes>
+        <exclude>org.jline:jline-terminal-ffm</exclude>
+      </excludes>
+    </enforceBytecodeVersion>
+  </rules>
+  <rulesToExecute>${enforcer.rules}</rulesToExecute>
+  <rulesToSkip>${enforcer.skipRules}</rulesToSkip>
+  <session default-value="${session}"/>
+  <skip default-value="false">${enforcer.skip}</skip>
+</configuration>
+[DEBUG] -----------------------------------------------------------------------
+[DEBUG] Goal:          org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce (enforce-maven-version)
+[DEBUG] Style:         Regular
+[DEBUG] Configuration: <?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <commandLineRules>${rules}</commandLineRules>
+  <fail default-value="true">${enforcer.fail}</fail>
+  <failFast default-value="false">${enforcer.failFast}</failFast>
+  <failIfNoRules default-value="true">${enforcer.failIfNoRules}</failIfNoRules>
+  <ignoreCache default-value="false">${enforcer.ignoreCache}</ignoreCache>
+  <mojoExecution default-value="${mojoExecution}"/>
+  <project default-value="${project}"/>
+  <rules>
+    <requireMavenVersion>
+      <version>3.9</version>
+    </requireMavenVersion>
+  </rules>
+  <rulesToExecute>${enforcer.rules}</rulesToExecute>
+  <rulesToSkip>${enforcer.skipRules}</rulesToSkip>
+  <session default-value="${session}"/>
+  <skip default-value="false">${enforcer.skip}</skip>
+</configuration>
+[DEBUG] -----------------------------------------------------------------------
+[DEBUG] Goal:          org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce (enforce-java-version)
+[DEBUG] Style:         Regular
+[DEBUG] Configuration: <?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <commandLineRules>${rules}</commandLineRules>
+  <fail default-value="true">${enforcer.fail}</fail>
+  <failFast default-value="false">${enforcer.failFast}</failFast>
+  <failIfNoRules default-value="true">${enforcer.failIfNoRules}</failIfNoRules>
+  <ignoreCache default-value="false">${enforcer.ignoreCache}</ignoreCache>
+  <mojoExecution default-value="${mojoExecution}"/>
+  <project default-value="${project}"/>
+  <rules>
+    <requireJavaVersion>
+      <version>17</version>
+    </requireJavaVersion>
+  </rules>
+  <rulesToExecute>${enforcer.rules}</rulesToExecute>
+  <rulesToSkip>${enforcer.skipRules}</rulesToSkip>
+  <session default-value="${session}"/>
+  <skip default-value="false">${enforcer.skip}</skip>
+</configuration>
+[DEBUG] -----------------------------------------------------------------------
+[DEBUG] Goal:          org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce (ensure-no-guice-with-asm)
+[DEBUG] Style:         Regular
+[DEBUG] Configuration: <?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <commandLineRules>${rules}</commandLineRules>
+  <fail default-value="true">true</fail>
+  <failFast default-value="false">${enforcer.failFast}</failFast>
+  <failIfNoRules default-value="true">${enforcer.failIfNoRules}</failIfNoRules>
+  <ignoreCache default-value="false">${enforcer.ignoreCache}</ignoreCache>
+  <mojoExecution default-value="${mojoExecution}"/>
+  <project default-value="${project}"/>
+  <rules>
+    <bannedDependencies>
+      <excludes>
+        <exclude>com.google.inject:guice:*</exclude>
+      </excludes>
+      <includes>
+        <include>com.google.inject:guice:*:jar:*:classes</include>
+      </includes>
+      <message>use guice without asm shaded in.</message>
+    </bannedDependencies>
+  </rules>
+  <rulesToExecute>${enforcer.rules}</rulesToExecute>
+  <rulesToSkip>${enforcer.skipRules}</rulesToSkip>
+  <session default-value="${session}"/>
+  <skip default-value="false">${enforcer.skip}</skip>
+</configuration>
+[DEBUG] -----------------------------------------------------------------------
+[DEBUG] Goal:          org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce (ensure-no-sonatype-cipher-and-sec-dispatcher)
+[DEBUG] Style:         Regular
+[DEBUG] Configuration: <?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <commandLineRules>${rules}</commandLineRules>
+  <fail default-value="true">true</fail>
+  <failFast default-value="false">${enforcer.failFast}</failFast>
+  <failIfNoRules default-value="true">${enforcer.failIfNoRules}</failIfNoRules>
+  <ignoreCache default-value="false">${enforcer.ignoreCache}</ignoreCache>
+  <mojoExecution default-value="${mojoExecution}"/>
+  <project default-value="${project}"/>
+  <rules>
+    <bannedDependencies>
+      <excludes>
+        <exclude>org.sonatype.plexus:plexus-sec-dispatcher</exclude>
+        <exclude>org.sonatype.plexus:plexus-cipher</exclude>
+      </excludes>
+      <message>ensure no more org.sonatype.plexus:plexus-cipher and org.sonatype.plexus:plexus-sec-dispatcher.</message>
+    </bannedDependencies>
+  </rules>
+  <rulesToExecute>${enforcer.rules}</rulesToExecute>
+  <rulesToSkip>${enforcer.skipRules}</rulesToSkip>
+  <session default-value="${session}"/>
+  <skip default-value="false">${enforcer.skip}</skip>
+</configuration>
+[DEBUG] -----------------------------------------------------------------------
+[DEBUG] Goal:          org.apache.maven.plugins:maven-dependency-plugin:3.11.0:properties (prepare-for-mockito-agent)
+[DEBUG] Style:         Regular
+[DEBUG] Configuration: <?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <skip default-value="false">${mdep.skip}</skip>
+</configuration>
+[DEBUG] -----------------------------------------------------------------------
+[DEBUG] Goal:          org.apache.maven.plugins:maven-checkstyle-plugin:3.6.0:check (checkstyle-check)
+[DEBUG] Style:         Regular
+[DEBUG] Configuration: <?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <cacheFile default-value="${project.build.directory}/checkstyle-cachefile"/>
+  <checkstyleRulesHeader default-value="&lt;?xml version=&quot;1.0&quot;?&gt;&#10;&lt;!DOCTYPE module PUBLIC &quot;-//Checkstyle//DTD Checkstyle Configuration 1.3//EN&quot;&#10;        &quot;https://checkstyle.org/dtds/configuration_1_3.dtd&quot;&gt;&#10;"/>
+  <configLocation default-value="sun_checks.xml">config/maven_checks_nocodestyle.xml</configLocation>
+  <consoleOutput default-value="false">${checkstyle.consoleOutput}</consoleOutput>
+  <excludeGeneratedSources default-value="false">true</excludeGeneratedSources>
+  <excludes>${checkstyle.excludes}</excludes>
+  <failOnViolation default-value="true">${checkstyle.failOnViolation}</failOnViolation>
+  <failsOnError default-value="false"/>
+  <headerLocation default-value="LICENSE.txt">${checkstyle.header.file}</headerLocation>
+  <includeResources default-value="true">${checkstyle.includeResources}</includeResources>
+  <includeTestResources default-value="true">${checkstyle.includeTestResources}</includeTestResources>
+  <includeTestSourceDirectory default-value="false">true</includeTestSourceDirectory>
+  <includes default-value="**\/*.java">${checkstyle.includes}</includes>
+  <inputEncoding default-value="${project.build.sourceEncoding}">${encoding}</inputEncoding>
+  <logViolationCountToConsole default-value="true">${checkstyle.logViolationCount}</logViolationCountToConsole>
+  <logViolationsToConsole default-value="true">${checkstyle.console}</logViolationsToConsole>
+  <maxAllowedViolations default-value="0">${checkstyle.maxAllowedViolations}</maxAllowedViolations>
+  <omitIgnoredModules default-value="false"/>
+  <outputFile default-value="${project.build.directory}/checkstyle-result.xml">${checkstyle.output.file}</outputFile>
+  <outputFileFormat default-value="xml">${checkstyle.output.format}</outputFileFormat>
+  <plugin default-value="${plugin}"/>
+  <project default-value="${project}"/>
+  <propertiesLocation>${checkstyle.properties.location}</propertiesLocation>
+  <resourceExcludes>${checkstyle.resourceExcludes}</resourceExcludes>
+  <resourceIncludes default-value="**/*.properties">${checkstyle.resourceIncludes}</resourceIncludes>
+  <resources default-value="${project.resources}"/>
+  <rulesFiles default-value="${project.build.directory}/checkstyle-rules.xml">${checkstyle.output.rules.file}</rulesFiles>
+  <skip default-value="false">${checkstyle.skip}</skip>
+  <skipExec default-value="false">${checkstyle.skipExec}</skipExec>
+  <suppressionsFileExpression default-value="checkstyle.suppressions.file">${checkstyle.suppression.expression}</suppressionsFileExpression>
+  <suppressionsLocation>${checkstyle.suppressions.location}</suppressionsLocation>
+  <testResources default-value="${project.testResources}"/>
+  <violationIgnore>${checkstyle.violation.ignore}</violationIgnore>
+  <violationSeverity default-value="error">${checkstyle.violationSeverity}</violationSeverity>
+</configuration>
+[DEBUG] -----------------------------------------------------------------------
+[DEBUG] Goal:          com.diffplug.spotless:spotless-maven-plugin:3.7.0:apply (default)
+[DEBUG] Style:         Regular
+[DEBUG] Configuration: <?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <applySkip default-value="false">${spotless.apply.skip}</applySkip>
+  <baseDir default-value="${project.basedir}"/>
+  <buildDir default-value="${project.build.directory}"/>
+  <checkSkip default-value="false">${spotless.check.skip}</checkSkip>
+  <encoding default-value="UTF-8"/>
+  <filePatterns>${spotlessFiles}</filePatterns>
+  <goal default-value="${mojoExecution.goal}"/>
+  <java>
+    <palantirJavaFormat>
+      <version>2.93.0</version>
+    </palantirJavaFormat>
+    <removeUnusedImports/>
+    <importOrder>
+      <file>config/maven-eclipse-importorder.txt</file>
+    </importOrder>
+    <licenseHeader>
+      <file>config/maven-header-plain.txt</file>
+    </licenseHeader>
+  </java>
+  <lineEndings default-value="GIT_ATTRIBUTES_FAST_ALLSAME">PRESERVE</lineEndings>
+  <m2eEnableForIncrementalBuild default-value="false"/>
+  <pom>
+    <sortPom>
+      <expandEmptyElements>false</expandEmptyElements>
+      <spaceBeforeCloseEmptyElement>true</spaceBeforeCloseEmptyElement>
+      <quiet>true</quiet>
+    </sortPom>
+  </pom>
+  <project default-value="${project}"/>
+  <repositories default-value="${project.remotePluginRepositories}"/>
+  <repositorySystemSession default-value="${repositorySystemSession}"/>
+  <setLicenseHeaderYearsFromGitHistory>${spotlessSetLicenseHeaderYearsFromGitHistory}</setLicenseHeaderYearsFromGitHistory>
+  <skip default-value="false">${spotless.skip}</skip>
+  <spotlessIdeHook>${spotlessIdeHook}</spotlessIdeHook>
+  <spotlessIdeHookUseStdIn>${spotlessIdeHookUseStdIn}</spotlessIdeHookUseStdIn>
+  <spotlessIdeHookUseStdOut>${spotlessIdeHookUseStdOut}</spotlessIdeHookUseStdOut>
+  <upToDateChecking>
+    <enabled>true</enabled>
+  </upToDateChecking>
+</configuration>
+[DEBUG] -----------------------------------------------------------------------
+[DEBUG] Goal:          org.apache.maven.plugins:maven-remote-resources-plugin:3.3.0:process (process-resource-bundles)
+[DEBUG] Style:         Regular
+[DEBUG] Configuration: <?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <appendedResourcesDirectory default-value="${basedir}/src/main/appended-resources"/>
+  <attachToMain default-value="true">${attachToMain}</attachToMain>
+  <attachToTest default-value="true">${attachToTest}</attachToTest>
+  <encoding default-value="${project.build.sourceEncoding}">${encoding}</encoding>
+  <excludeArtifactIds default-value="">${excludeArtifactIds}</excludeArtifactIds>
+  <excludeGroupIds default-value="">${excludeGroupIds}</excludeGroupIds>
+  <excludeScope default-value="">${excludeScope}</excludeScope>
+  <excludeTransitive default-value="false">${excludeTransitive}</excludeTransitive>
+  <includeArtifactIds default-value="">${includeArtifactIds}</includeArtifactIds>
+  <includeGroupIds default-value="">${includeGroupIds}</includeGroupIds>
+  <includeProjectProperties default-value="false"/>
+  <includeScope default-value="runtime">${includeScope}</includeScope>
+  <mavenSession default-value="${session}"/>
+  <outputDirectory default-value="${project.build.directory}/maven-shared-archive-resources">${outputDirectory}</outputDirectory>
+  <outputTimestamp default-value="${project.build.outputTimestamp}"/>
+  <project default-value="${project}"/>
+  <resourceBundles>
+    <resourceBundle>org.apache.apache.resources:apache-jar-resource-bundle:1.8</resourceBundle>${resourceBundles}</resourceBundles>
+  <skip default-value="false">${remoteresources.skip}</skip>
+  <useDefaultFilterDelimiters default-value="true"/>
+  <useProjectFiles default-value="false"/>
+  <velocityFilterInMemoryThreshold default-value="5242880"/>
+</configuration>
+[DEBUG] -----------------------------------------------------------------------
+[DEBUG] Goal:          org.apache.maven.plugins:maven-resources-plugin:3.5.0:resources (default-resources)
+[DEBUG] Style:         Regular
+[DEBUG] Configuration: <?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <addDefaultExcludes default-value="true"/>
+  <buildFilters default-value="${project.build.filters}"/>
+  <encoding default-value="${project.build.sourceEncoding}"/>
+  <escapeWindowsPaths default-value="true"/>
+  <fileNameFiltering default-value="false"/>
+  <includeEmptyDirs default-value="false"/>
+  <outputDirectory default-value="${project.build.outputDirectory}"/>
+  <overwrite default-value="false"/>
+  <project default-value="${project}"/>
+  <resources default-value="${project.resources}"/>
+  <session default-value="${session}"/>
+  <skip default-value="false">${maven.resources.skip}</skip>
+  <supportMultiLineFiltering default-value="false"/>
+  <useBuildFilters default-value="true"/>
+  <useDefaultDelimiters default-value="true"/>
+</configuration>
+[DEBUG] -----------------------------------------------------------------------
+[DEBUG] Goal:          org.apache.rat:apache-rat-plugin:0.16.1:check (rat-check)
+[DEBUG] Style:         Regular
+[DEBUG] Configuration: <?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <addDefaultLicenseMatchers default-value="true">${rat.addDefaultLicenseMatchers}</addDefaultLicenseMatchers>
+  <addDefaultLicenses default-value="true">${rat.addDefaultLicenses}</addDefaultLicenses>
+  <addLicenseHeaders default-value="false">${rat.addLicenseHeaders}</addLicenseHeaders>
+  <approvedLicenseFile>${rat.approvedFile}</approvedLicenseFile>
+  <basedir default-value="${basedir}">${rat.basedir}</basedir>
+  <consoleOutput default-value="true">${rat.consoleOutput}</consoleOutput>
+  <copyrightMessage>${rat.copyrightMessage}</copyrightMessage>
+  <excludeSubProjects default-value="true">${rat.excludeSubprojects}</excludeSubProjects>
+  <excludes combine.children="append">
+    <exclude>.java-version</exclude>
+    <exclude>.repository/**</exclude>
+    <exclude>.maven/spy.log</exclude>
+    <exclude>dependency-reduced-pom.xml</exclude>
+    <exclude>.asf.yaml</exclude>
+    <exclude>Jenkinsfile</exclude>
+    <exclude>**/.gitattributes</exclude>
+    <exclude>src/main/resources/META-INF/services/**</exclude>
+    <exclude>src/test/resources*/**</exclude>
+    <exclude>src/test/projects/**</exclude>
+    <exclude>src/test/remote-repo/**</exclude>
+    <exclude>its/**</exclude>
+    <exclude>**/*.odg</exclude>
+    <exclude>**/*.svg</exclude>
+    <exclude>.asf.yaml</exclude>
+    <exclude>.mvn/**</exclude>
+    <exclude>.jbang/**</exclude>
+    <exclude>src/main/appended-resources/licenses/**</exclude>
+  </excludes>
+  <excludesFile>${rat.excludesFile}</excludesFile>
+  <excludesFileCharset default-value="${project.build.sourceEncoding}">${rat.excludesFileCharset}</excludesFileCharset>
+  <ignoreErrors default-value="false">${rat.ignoreErrors}</ignoreErrors>
+  <includesFile>${rat.includesFile}</includesFile>
+  <includesFileCharset default-value="${project.build.sourceEncoding}">${rat.includesFileCharset}</includesFileCharset>
+  <numUnapprovedLicenses default-value="0">${rat.numUnapprovedLicenses}</numUnapprovedLicenses>
+  <parseSCMIgnoresAsExcludes default-value="true">${rat.parseSCMIgnoresAsExcludes}</parseSCMIgnoresAsExcludes>
+  <project default-value="${project}"/>
+  <reportFile default-value="${project.build.directory}/rat.txt">${rat.outputFile}</reportFile>
+  <reportStyle default-value="plain">${rat.outputStyle}</reportStyle>
+  <scanHiddenDirectories default-value="false">${rat.scanHiddenDirectories}</scanHiddenDirectories>
+  <skip default-value="false">${rat.skip}</skip>
+  <useDefaultExcludes default-value="true">${rat.useDefaultExcludes}</useDefaultExcludes>
+  <useEclipseDefaultExcludes default-value="true">${rat.useEclipseDefaultExcludes}</useEclipseDefaultExcludes>
+  <useIdeaDefaultExcludes default-value="true">${rat.useIdeaDefaultExcludes}</useIdeaDefaultExcludes>
+  <useMavenDefaultExcludes default-value="true">${rat.useMavenDefaultExcludes}</useMavenDefaultExcludes>
+</configuration>
+[DEBUG] -----------------------------------------------------------------------
+[DEBUG] Goal:          org.apache.maven.plugins:maven-compiler-plugin:3.15.0:compile (default-compile)
+[DEBUG] Style:         Regular
+[DEBUG] Configuration: <?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <annotationProcessorPathsUseDepMgmt default-value="false"/>
+  <basedir default-value="${basedir}"/>
+  <buildDirectory default-value="${project.build.directory}"/>
+  <compilePath default-value="${project.compileClasspathElements}"/>
+  <compileSourceRoots default-value="${project.compileSourceRoots}"/>
+  <compilerId default-value="javac">${maven.compiler.compilerId}</compilerId>
+  <compilerReuseStrategy default-value="${reuseCreated}">${maven.compiler.compilerReuseStrategy}</compilerReuseStrategy>
+  <compilerVersion>${maven.compiler.compilerVersion}</compilerVersion>
+  <createMissingPackageInfoClass default-value="true">${maven.compiler.createMissingPackageInfoClass}</createMissingPackageInfoClass>
+  <debug default-value="true">${maven.compiler.debug}</debug>
+  <debugFileName default-value="javac"/>
+  <debuglevel>${maven.compiler.debuglevel}</debuglevel>
+  <enablePreview default-value="false">${maven.compiler.enablePreview}</enablePreview>
+  <encoding default-value="${project.build.sourceEncoding}">${encoding}</encoding>
+  <executable>${maven.compiler.executable}</executable>
+  <failOnError default-value="true">${maven.compiler.failOnError}</failOnError>
+  <failOnWarning default-value="false">${maven.compiler.failOnWarning}</failOnWarning>
+  <fileExtensions default-value="class,jar"/>
+  <forceJavacCompilerUse default-value="false">${maven.compiler.forceJavacCompilerUse}</forceJavacCompilerUse>
+  <forceLegacyJavacApi default-value="false">${maven.compiler.forceLegacyJavacApi}</forceLegacyJavacApi>
+  <fork default-value="false">${maven.compiler.fork}</fork>
+  <generatedSourcesDirectory default-value="${project.build.directory}/generated-sources/annotations"/>
+  <implicit>${maven.compiler.implicit}</implicit>
+  <maxmem>${maven.compiler.maxmem}</maxmem>
+  <meminitial>${maven.compiler.meminitial}</meminitial>
+  <moduleVersion default-value="${project.version}">${maven.compiler.moduleVersion}</moduleVersion>
+  <mojoExecution default-value="${mojoExecution}"/>
+  <optimize default-value="false">${maven.compiler.optimize}</optimize>
+  <outputDirectory default-value="${project.build.outputDirectory}">${maven.compiler.outputDirectory}</outputDirectory>
+  <outputTimestamp default-value="${project.build.outputTimestamp}"/>
+  <parameters default-value="false">${maven.compiler.parameters}</parameters>
+  <proc>full</proc>
+  <project default-value="${project}"/>
+  <projectArtifact default-value="${project.artifact}"/>
+  <release>${maven.compiler.release}</release>
+  <session default-value="${session}"/>
+  <showCompilationChanges default-value="false">${maven.compiler.showCompilationChanges}</showCompilationChanges>
+  <showDeprecation default-value="false">true</showDeprecation>
+  <showWarnings default-value="true">${maven.compiler.showWarnings}</showWarnings>
+  <skipMain>${maven.main.skip}</skipMain>
+  <skipMultiThreadWarning default-value="false">${maven.compiler.skipMultiThreadWarning}</skipMultiThreadWarning>
+  <source default-value="1.8">${maven.compiler.source}</source>
+  <staleMillis default-value="0">${lastModGranularityMs}</staleMillis>
+  <target default-value="1.8">${maven.compiler.target}</target>
+  <useIncrementalCompilation default-value="true">${maven.compiler.useIncrementalCompilation}</useIncrementalCompilation>
+  <useModuleVersion default-value="true">${maven.compiler.useModuleVersion}</useModuleVersion>
+  <verbose default-value="false">${maven.compiler.verbose}</verbose>
+</configuration>
+[DEBUG] -----------------------------------------------------------------------
+[DEBUG] Goal:          org.apache.maven.plugins:maven-resources-plugin:3.5.0:testResources (default-testResources)
+[DEBUG] Style:         Regular
+[DEBUG] Configuration: <?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <addDefaultExcludes default-value="true"/>
+  <buildFilters default-value="${project.build.filters}"/>
+  <encoding default-value="${project.build.sourceEncoding}"/>
+  <escapeWindowsPaths default-value="true"/>
+  <fileNameFiltering default-value="false"/>
+  <includeEmptyDirs default-value="false"/>
+  <outputDirectory default-value="${project.build.testOutputDirectory}"/>
+  <overwrite default-value="false"/>
+  <project default-value="${project}"/>
+  <resources default-value="${project.testResources}"/>
+  <session default-value="${session}"/>
+  <skip default-value="false">${maven.test.skip}</skip>
+  <supportMultiLineFiltering default-value="false"/>
+  <useBuildFilters default-value="true"/>
+  <useDefaultDelimiters default-value="true"/>
+</configuration>
+[DEBUG] -----------------------------------------------------------------------
+[DEBUG] Goal:          org.apache.maven.plugins:maven-compiler-plugin:3.15.0:testCompile (default-testCompile)
+[DEBUG] Style:         Regular
+[DEBUG] Configuration: <?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <annotationProcessorPathsUseDepMgmt default-value="false"/>
+  <basedir default-value="${basedir}"/>
+  <buildDirectory default-value="${project.build.directory}"/>
+  <compileSourceRoots default-value="${project.testCompileSourceRoots}"/>
+  <compilerId default-value="javac">${maven.compiler.compilerId}</compilerId>
+  <compilerReuseStrategy default-value="${reuseCreated}">${maven.compiler.compilerReuseStrategy}</compilerReuseStrategy>
+  <compilerVersion>${maven.compiler.compilerVersion}</compilerVersion>
+  <createMissingPackageInfoClass default-value="true">${maven.compiler.createMissingPackageInfoClass}</createMissingPackageInfoClass>
+  <debug default-value="true">${maven.compiler.debug}</debug>
+  <debugFileName default-value="javac-test"/>
+  <debuglevel>${maven.compiler.debuglevel}</debuglevel>
+  <enablePreview default-value="false">${maven.compiler.enablePreview}</enablePreview>
+  <encoding default-value="${project.build.sourceEncoding}">${encoding}</encoding>
+  <executable>${maven.compiler.executable}</executable>
+  <failOnError default-value="true">${maven.compiler.failOnError}</failOnError>
+  <failOnWarning default-value="false">${maven.compiler.failOnWarning}</failOnWarning>
+  <fileExtensions default-value="class,jar"/>
+  <forceJavacCompilerUse default-value="false">${maven.compiler.forceJavacCompilerUse}</forceJavacCompilerUse>
+  <forceLegacyJavacApi default-value="false">${maven.compiler.forceLegacyJavacApi}</forceLegacyJavacApi>
+  <fork default-value="false">${maven.compiler.fork}</fork>
+  <generatedTestSourcesDirectory default-value="${project.build.directory}/generated-test-sources/test-annotations"/>
+  <implicit>${maven.compiler.implicit}</implicit>
+  <maxmem>${maven.compiler.maxmem}</maxmem>
+  <meminitial>${maven.compiler.meminitial}</meminitial>
+  <mojoExecution default-value="${mojoExecution}"/>
+  <optimize default-value="false">${maven.compiler.optimize}</optimize>
+  <outputDirectory default-value="${project.build.testOutputDirectory}"/>
+  <outputTimestamp default-value="${project.build.outputTimestamp}"/>
+  <parameters default-value="false">${maven.compiler.parameters}</parameters>
+  <proc>full</proc>
+  <project default-value="${project}"/>
+  <release>${maven.compiler.release}</release>
+  <session default-value="${session}"/>
+  <showCompilationChanges default-value="false">${maven.compiler.showCompilationChanges}</showCompilationChanges>
+  <showDeprecation default-value="false">true</showDeprecation>
+  <showWarnings default-value="true">${maven.compiler.showWarnings}</showWarnings>
+  <skip>${maven.test.skip}</skip>
+  <skipMultiThreadWarning default-value="false">${maven.compiler.skipMultiThreadWarning}</skipMultiThreadWarning>
+  <source default-value="1.8">${maven.compiler.source}</source>
+  <staleMillis default-value="0">${lastModGranularityMs}</staleMillis>
+  <target default-value="1.8">${maven.compiler.target}</target>
+  <testPath default-value="${project.testClasspathElements}"/>
+  <testRelease>${maven.compiler.testRelease}</testRelease>
+  <testSource>${maven.compiler.testSource}</testSource>
+  <testTarget>${maven.compiler.testTarget}</testTarget>
+  <useIncrementalCompilation default-value="true">${maven.compiler.useIncrementalCompilation}</useIncrementalCompilation>
+  <useModulePath default-value="true"/>
+  <verbose default-value="false">${maven.compiler.verbose}</verbose>
+</configuration>
+[DEBUG] -----------------------------------------------------------------------
+[DEBUG] Goal:          org.apache.maven.plugins:maven-surefire-plugin:3.5.6:test (default-test)
+[DEBUG] Style:         Regular
+[DEBUG] Configuration: <?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <additionalClasspathDependencies>${maven.test.additionalClasspathDependencies}</additionalClasspathDependencies>
+  <additionalClasspathElements>${maven.test.additionalClasspath}</additionalClasspathElements>
+  <argLine>-Xmx256m @{jacocoArgLine} </argLine>
+  <basedir default-value="${basedir}"/>
+  <childDelegation default-value="false">${childDelegation}</childDelegation>
+  <classesDirectory default-value="${project.build.outputDirectory}"/>
+  <classpathDependencyExcludes>${maven.test.dependency.excludes}</classpathDependencyExcludes>
+  <debugForkedProcess>${maven.surefire.debug}</debugForkedProcess>
+  <dependenciesToScan>${dependenciesToScan}</dependenciesToScan>
+  <disableXmlReport>${disableXmlReport}</disableXmlReport>
+  <enableAssertions default-value="true">${enableAssertions}</enableAssertions>
+  <enableOutErrElements default-value="true">${enableOutErrElements}</enableOutErrElements>
+  <enableProcessChecker>${surefire.enableProcessChecker}</enableProcessChecker>
+  <enablePropertiesElement default-value="true">${enablePropertiesElement}</enablePropertiesElement>
+  <encoding default-value="${project.reporting.outputEncoding}">${surefire.encoding}</encoding>
+  <environmentVariables>
+    <JENKINS_MAVEN_AGENT_DISABLED>true</JENKINS_MAVEN_AGENT_DISABLED>
+  </environmentVariables>
+  <excludeJUnit5Engines>${surefire.excludeJUnit5Engines}</excludeJUnit5Engines>
+  <excludedEnvironmentVariables>${surefire.excludedEnvironmentVariables}</excludedEnvironmentVariables>
+  <excludedGroups>${excludedGroups}</excludedGroups>
+  <excludes>${surefire.excludes}</excludes>
+  <excludesFile>${surefire.excludesFile}</excludesFile>
+  <failIfNoSpecifiedTests default-value="true">${surefire.failIfNoSpecifiedTests}</failIfNoSpecifiedTests>
+  <failIfNoTests default-value="false">${failIfNoTests}</failIfNoTests>
+  <failOnFlakeCount default-value="0">${surefire.failOnFlakeCount}</failOnFlakeCount>
+  <forkCount default-value="1">${forkCount}</forkCount>
+  <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory">${surefire.forkNode}</forkNode>
+  <forkedProcessExitTimeoutInSeconds default-value="30">${surefire.exitTimeout}</forkedProcessExitTimeoutInSeconds>
+  <forkedProcessTimeoutInSeconds>${surefire.timeout}</forkedProcessTimeoutInSeconds>
+  <groups>${groups}</groups>
+  <includeJUnit5Engines>${surefire.includeJUnit5Engines}</includeJUnit5Engines>
+  <includes>${surefire.includes}</includes>
+  <includesFile>${surefire.includesFile}</includesFile>
+  <junitArtifactName default-value="junit:junit">${junitArtifactName}</junitArtifactName>
+  <jvm>${jvm}</jvm>
+  <objectFactory>${objectFactory}</objectFactory>
+  <parallel>${parallel}</parallel>
+  <parallelMavenExecution default-value="${session.parallel}"/>
+  <parallelOptimized default-value="true">${parallelOptimized}</parallelOptimized>
+  <parallelTestsTimeoutForcedInSeconds>${surefire.parallel.forcedTimeout}</parallelTestsTimeoutForcedInSeconds>
+  <parallelTestsTimeoutInSeconds>${surefire.parallel.timeout}</parallelTestsTimeoutInSeconds>
+  <perCoreThreadCount default-value="true">${perCoreThreadCount}</perCoreThreadCount>
+  <pluginArtifactMap>${plugin.artifactMap}</pluginArtifactMap>
+  <pluginDescriptor default-value="${plugin}"/>
+  <printSummary default-value="true">${surefire.printSummary}</printSummary>
+  <project default-value="${project}"/>
+  <projectArtifactMap>${project.artifactMap}</projectArtifactMap>
+  <projectBuildDirectory default-value="${project.build.directory}"/>
+  <promoteUserPropertiesToSystemProperties default-value="true"/>
+  <redirectTestOutputToFile default-value="false">${maven.test.redirectTestOutputToFile}</redirectTestOutputToFile>
+  <reportFormat default-value="brief">${surefire.reportFormat}</reportFormat>
+  <reportNameSuffix default-value="">${surefire.reportNameSuffix}</reportNameSuffix>
+  <reportTestTimestamp default-value="false">${reportTestTimestamp}</reportTestTimestamp>
+  <reportsDirectory default-value="${project.build.directory}/surefire-reports"/>
+  <rerunFailingTestsCount default-value="0">${surefire.rerunFailingTestsCount}</rerunFailingTestsCount>
+  <reuseForks default-value="true">${reuseForks}</reuseForks>
+  <runOrder default-value="filesystem">${surefire.runOrder}</runOrder>
+  <runOrderRandomSeed>${surefire.runOrder.random.seed}</runOrderRandomSeed>
+  <runOrderStatisticsFileChecksum>${surefire.runOrder.statisticsFile.checksum}</runOrderStatisticsFileChecksum>
+  <session default-value="${session}"/>
+  <shutdown default-value="exit">${surefire.shutdown}</shutdown>
+  <skip default-value="false">${maven.test.skip}</skip>
+  <skipAfterFailureCount default-value="0">${surefire.skipAfterFailureCount}</skipAfterFailureCount>
+  <skipExec>${maven.test.skip.exec}</skipExec>
+  <skipTests default-value="false">${skipTests}</skipTests>
+  <suiteXmlFiles>${surefire.suiteXmlFiles}</suiteXmlFiles>
+  <systemPropertiesFile>${surefire.systemPropertiesFile}</systemPropertiesFile>
+  <systemPropertyVariables combine.children="append">
+    <version.toolbox>0.14.1</version.toolbox>
+  </systemPropertyVariables>
+  <tempDir default-value="surefire">${tempDir}</tempDir>
+  <test>${test}</test>
+  <testClassesDirectory default-value="${project.build.testOutputDirectory}"/>
+  <testFailureIgnore default-value="false">${maven.test.failure.ignore}</testFailureIgnore>
+  <testNGArtifactName default-value="org.testng:testng">${testNGArtifactName}</testNGArtifactName>
+  <testSourceDirectory default-value="${project.build.testSourceDirectory}"/>
+  <threadCount>${threadCount}</threadCount>
+  <threadCountClasses default-value="0">${threadCountClasses}</threadCountClasses>
+  <threadCountMethods default-value="0">${threadCountMethods}</threadCountMethods>
+  <threadCountSuites default-value="0">${threadCountSuites}</threadCountSuites>
+  <trimStackTrace default-value="false">${trimStackTrace}</trimStackTrace>
+  <useFile default-value="true">${surefire.useFile}</useFile>
+  <useManifestOnlyJar default-value="true">${surefire.useManifestOnlyJar}</useManifestOnlyJar>
+  <useModulePath default-value="true">${surefire.useModulePath}</useModulePath>
+  <useSystemClassLoader default-value="true">${surefire.useSystemClassLoader}</useSystemClassLoader>
+  <useUnlimitedThreads default-value="false">${useUnlimitedThreads}</useUnlimitedThreads>
+  <workingDirectory>${basedir}</workingDirectory>
+</configuration>
+[DEBUG] =======================================================================
+[DEBUG] Dependency collection stats {ConflictMarker.analyzeTime=11780, ConflictMarker.markTime=26710, ConflictMarker.nodeCount=1, ConflictIdSorter.graphTime=5220, ConflictIdSorter.topsortTime=123442, ConflictIdSorter.conflictIdCount=0, ConflictIdSorter.conflictIdCycleCount=0, ConflictResolver.totalTime=423955, ConflictResolver.conflictItemCount=0, DfDependencyCollector.collectTime=51650, DfDependencyCollector.transformTime=1043103}
+[DEBUG] org.apache.maven:maven-api-annotations:jar:4.1.0-SNAPSHOT
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-bytecode-version) @ maven-api-annotations ---
+[DEBUG] Dependency collection stats {ConflictMarker.analyzeTime=358134, ConflictMarker.markTime=35601, ConflictMarker.nodeCount=20, ConflictIdSorter.graphTime=42130, ConflictIdSorter.topsortTime=11430, ConflictIdSorter.conflictIdCount=14, ConflictIdSorter.conflictIdCycleCount=0, ConflictResolver.totalTime=710939, ConflictResolver.conflictItemCount=19, DfDependencyCollector.collectTime=29771864, DfDependencyCollector.transformTime=1173974}
+[DEBUG] org.apache.maven.plugins:maven-enforcer-plugin:jar:3.6.3
+[DEBUG]    org.codehaus.mojo:extra-enforcer-rules:jar:1.12.0:runtime
+[DEBUG]       org.apache.maven.shared:maven-common-artifact-filters:jar:3.4.0:runtime
+[DEBUG]          org.slf4j:slf4j-api:jar:1.7.36:runtime (version managed from default)
+[DEBUG]       commons-codec:commons-codec:jar:1.22.0:compile (version managed from default)
+[DEBUG]    org.codehaus.plexus:plexus-utils:jar:4.0.3:compile
+[DEBUG]    org.codehaus.plexus:plexus-xml:jar:3.0.1:compile
+[DEBUG]    org.apache.maven.enforcer:enforcer-api:jar:3.6.3:compile
+[DEBUG]    org.apache.maven.enforcer:enforcer-rules:jar:3.6.3:compile
+[DEBUG]       org.apache.maven.resolver:maven-resolver-util:jar:1.9.27:compile (version managed from default)
+[DEBUG]          org.apache.maven.resolver:maven-resolver-api:jar:1.9.27:provided (scope managed from default) (version managed from default)
+[DEBUG]       org.apache.commons:commons-lang3:jar:3.20.0:compile (version managed from default)
+[DEBUG]       commons-io:commons-io:jar:2.22.0:compile (version managed from default)
+[DEBUG]       org.apache-extras.beanshell:bsh:jar:2.0b6:compile
+[DEBUG] Created new class realm plugin>org.apache.maven.plugins:maven-enforcer-plugin:3.6.3
+[DEBUG] Importing foreign packages into class realm plugin>org.apache.maven.plugins:maven-enforcer-plugin:3.6.3
+[DEBUG]   Imported:  < maven.api
+[DEBUG] Populating class realm plugin>org.apache.maven.plugins:maven-enforcer-plugin:3.6.3
+[DEBUG]   Included: org.apache.maven.plugins:maven-enforcer-plugin:jar:3.6.3
+[DEBUG]   Included: org.codehaus.mojo:extra-enforcer-rules:jar:1.12.0
+[DEBUG]   Included: org.apache.maven.shared:maven-common-artifact-filters:jar:3.4.0
+[DEBUG]   Included: commons-codec:commons-codec:jar:1.22.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-utils:jar:4.0.3
+[DEBUG]   Included: org.codehaus.plexus:plexus-xml:jar:3.0.1
+[DEBUG]   Included: org.apache.maven.enforcer:enforcer-api:jar:3.6.3
+[DEBUG]   Included: org.apache.maven.enforcer:enforcer-rules:jar:3.6.3
+[DEBUG]   Included: org.apache.commons:commons-lang3:jar:3.20.0
+[DEBUG]   Included: commons-io:commons-io:jar:2.22.0
+[DEBUG]   Included: org.apache-extras.beanshell:bsh:jar:2.0b6
+[DEBUG] Loading mojo org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce from plugin realm ClassRealm[plugin>org.apache.maven.plugins:maven-enforcer-plugin:3.6.3, parent: jdk.internal.loader.ClassLoaders$AppClassLoader@5bc2b487]
+[DEBUG] Configuring mojo execution 'org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce:enforce-bytecode-version' with basic configurator -->
+[DEBUG]   (s) commandLineRules = []
+[DEBUG]   (s) fail = true
+[DEBUG]   (s) failFast = false
+[DEBUG]   (s) failIfNoRules = true
+[DEBUG]   (f) ignoreCache = false
+[DEBUG]   (f) mojoExecution = org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce {execution: enforce-bytecode-version}
+[DEBUG]   (f) project = MavenProject: org.apache.maven:maven-api-annotations:4.1.0-SNAPSHOT @ /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/pom.xml
+[DEBUG]   (f) rules = <rules><requireJavaVersion><version>[17,)</version>
+</requireJavaVersion>
+<enforceBytecodeVersion><maxJdkVersion>17</maxJdkVersion>
+<ignoredScopes><ignoredScope>test</ignoredScope>
+</ignoredScopes>
+<excludes><exclude>org.jline:jline-terminal-ffm</exclude>
+</excludes>
+</enforceBytecodeVersion>
+</rules>
+
+[DEBUG]   (s) rulesToExecute = []
+[DEBUG]   (s) rulesToSkip = []
+[DEBUG]   (f) session = org.apache.maven.execution.MavenSession@26844abb
+[DEBUG]   (f) skip = false
+[DEBUG] -- end configuration --
+[DEBUG] Executing Rule 0: EnforcerRuleDesc[name=requireJavaVersion, rule=RequireJavaVersion[message=null, version=[17,), display=false], level=ERROR]
+[DEBUG] Check cache for class org.apache.maven.enforcer.rules.version.RequireJavaVersion with id 85554430
+[DEBUG] Add cache class org.apache.maven.enforcer.rules.version.RequireJavaVersion with id 85554430
+[DEBUG] Detected Java Version: '25.0.3'
+[DEBUG] Normalized Java Version: '25.0.3'
+[DEBUG] Parsed Version: Major: 25 Minor: 0 Incremental: 3 Build: 0 Qualifier: null
+[DEBUG] Detected JDK Version: 25.0.3 is allowed in the range [17,).
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[DEBUG] Finish Rule 0: org.apache.maven.enforcer.rules.version.RequireJavaVersion takes 4 ms
+[DEBUG] Executing Rule 1: EnforcerRuleDesc[name=enforceBytecodeVersion, rule=org.codehaus.mojo.extraenforcer.dependencies.EnforceBytecodeVersion@1292071f, level=ERROR]
+[DEBUG] Dependency collection stats {ConflictMarker.analyzeTime=6291, ConflictMarker.markTime=20550, ConflictMarker.nodeCount=1, ConflictIdSorter.graphTime=1550, ConflictIdSorter.topsortTime=2980, ConflictIdSorter.conflictIdCount=0, ConflictIdSorter.conflictIdCycleCount=0, ConflictResolver.totalTime=10610, ConflictResolver.conflictItemCount=0, DfDependencyCollector.collectTime=3070, DfDependencyCollector.transformTime=52761}
+[DEBUG] Bytecode version analysis took 0 ms
+[INFO] Rule 1: org.codehaus.mojo.extraenforcer.dependencies.EnforceBytecodeVersion passed
+[DEBUG] Finish Rule 1: org.codehaus.mojo.extraenforcer.dependencies.EnforceBytecodeVersion takes 2 ms
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-maven-version) @ maven-api-annotations ---
+[DEBUG] Loading mojo org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce from plugin realm ClassRealm[plugin>org.apache.maven.plugins:maven-enforcer-plugin:3.6.3, parent: jdk.internal.loader.ClassLoaders$AppClassLoader@5bc2b487]
+[DEBUG] Configuring mojo execution 'org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce:enforce-maven-version' with basic configurator -->
+[DEBUG]   (s) commandLineRules = []
+[DEBUG]   (s) fail = true
+[DEBUG]   (s) failFast = false
+[DEBUG]   (s) failIfNoRules = true
+[DEBUG]   (f) ignoreCache = false
+[DEBUG]   (f) mojoExecution = org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce {execution: enforce-maven-version}
+[DEBUG]   (f) project = MavenProject: org.apache.maven:maven-api-annotations:4.1.0-SNAPSHOT @ /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/pom.xml
+[DEBUG]   (f) rules = <rules><requireMavenVersion><version>3.9</version>
+</requireMavenVersion>
+</rules>
+
+[DEBUG]   (s) rulesToExecute = []
+[DEBUG]   (s) rulesToSkip = []
+[DEBUG]   (f) session = org.apache.maven.execution.MavenSession@26844abb
+[DEBUG]   (f) skip = false
+[DEBUG] -- end configuration --
+[DEBUG] Executing Rule 0: EnforcerRuleDesc[name=requireMavenVersion, rule=RequireMavenVersion[message=null, version=3.9], level=ERROR]
+[DEBUG] Check cache for class org.apache.maven.enforcer.rules.version.RequireMavenVersion with id 50494
+[DEBUG] Add cache class org.apache.maven.enforcer.rules.version.RequireMavenVersion with id 50494
+[DEBUG] Detected Maven Version: 3.9.16
+[DEBUG] Detected Maven Version: 3.9.16 is allowed in the range [3.9,).
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[DEBUG] Finish Rule 0: org.apache.maven.enforcer.rules.version.RequireMavenVersion takes 0 ms
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (enforce-java-version) @ maven-api-annotations ---
+[DEBUG] Loading mojo org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce from plugin realm ClassRealm[plugin>org.apache.maven.plugins:maven-enforcer-plugin:3.6.3, parent: jdk.internal.loader.ClassLoaders$AppClassLoader@5bc2b487]
+[DEBUG] Configuring mojo execution 'org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce:enforce-java-version' with basic configurator -->
+[DEBUG]   (s) commandLineRules = []
+[DEBUG]   (s) fail = true
+[DEBUG]   (s) failFast = false
+[DEBUG]   (s) failIfNoRules = true
+[DEBUG]   (f) ignoreCache = false
+[DEBUG]   (f) mojoExecution = org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce {execution: enforce-java-version}
+[DEBUG]   (f) project = MavenProject: org.apache.maven:maven-api-annotations:4.1.0-SNAPSHOT @ /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/pom.xml
+[DEBUG]   (f) rules = <rules><requireJavaVersion><version>17</version>
+</requireJavaVersion>
+</rules>
+
+[DEBUG]   (s) rulesToExecute = []
+[DEBUG]   (s) rulesToSkip = []
+[DEBUG]   (f) session = org.apache.maven.execution.MavenSession@26844abb
+[DEBUG]   (f) skip = false
+[DEBUG] -- end configuration --
+[DEBUG] Executing Rule 0: EnforcerRuleDesc[name=requireJavaVersion, rule=RequireJavaVersion[message=null, version=17, display=false], level=ERROR]
+[DEBUG] Check cache for class org.apache.maven.enforcer.rules.version.RequireJavaVersion with id 1574
+[DEBUG] Add cache class org.apache.maven.enforcer.rules.version.RequireJavaVersion with id 1574
+[DEBUG] Detected Java Version: '25.0.3'
+[DEBUG] Normalized Java Version: '25.0.3'
+[DEBUG] Parsed Version: Major: 25 Minor: 0 Incremental: 3 Build: 0 Qualifier: null
+[DEBUG] Detected JDK Version: 25.0.3 is allowed in the range [17,).
+[INFO] Rule 0: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+[DEBUG] Finish Rule 0: org.apache.maven.enforcer.rules.version.RequireJavaVersion takes 0 ms
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (ensure-no-guice-with-asm) @ maven-api-annotations ---
+[DEBUG] Loading mojo org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce from plugin realm ClassRealm[plugin>org.apache.maven.plugins:maven-enforcer-plugin:3.6.3, parent: jdk.internal.loader.ClassLoaders$AppClassLoader@5bc2b487]
+[DEBUG] Configuring mojo execution 'org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce:ensure-no-guice-with-asm' with basic configurator -->
+[DEBUG]   (s) commandLineRules = []
+[DEBUG]   (s) fail = true
+[DEBUG]   (s) failFast = false
+[DEBUG]   (s) failIfNoRules = true
+[DEBUG]   (f) ignoreCache = false
+[DEBUG]   (f) mojoExecution = org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce {execution: ensure-no-guice-with-asm}
+[DEBUG]   (f) project = MavenProject: org.apache.maven:maven-api-annotations:4.1.0-SNAPSHOT @ /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/pom.xml
+[DEBUG]   (f) rules = <rules><bannedDependencies><excludes><exclude>com.google.inject:guice:*</exclude>
+</excludes>
+<includes><include>com.google.inject:guice:*:jar:*:classes</include>
+</includes>
+<message>use guice without asm shaded in.</message>
+</bannedDependencies>
+</rules>
+
+[DEBUG]   (s) rulesToExecute = []
+[DEBUG]   (s) rulesToSkip = []
+[DEBUG]   (f) session = org.apache.maven.execution.MavenSession@26844abb
+[DEBUG]   (f) skip = false
+[DEBUG] -- end configuration --
+[DEBUG] Executing Rule 0: EnforcerRuleDesc[name=bannedDependencies, rule=BannedDependencies[message=use guice without asm shaded in., excludes=[com.google.inject:guice:*], includes=[com.google.inject:guice:*:jar:*:classes], searchTransitive=true], level=ERROR]
+[DEBUG] Dependency collection stats {ConflictMarker.analyzeTime=5150, ConflictMarker.markTime=21000, ConflictMarker.nodeCount=1, ConflictIdSorter.graphTime=960, ConflictIdSorter.topsortTime=1670, ConflictIdSorter.conflictIdCount=0, ConflictIdSorter.conflictIdCycleCount=0, ConflictResolver.totalTime=5880, ConflictResolver.conflictItemCount=0, DfDependencyCollector.collectTime=1430, DfDependencyCollector.transformTime=39310}
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[DEBUG] Finish Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies takes 4 ms
+[INFO] 
+[INFO] --- enforcer:3.6.3:enforce (ensure-no-sonatype-cipher-and-sec-dispatcher) @ maven-api-annotations ---
+[DEBUG] Loading mojo org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce from plugin realm ClassRealm[plugin>org.apache.maven.plugins:maven-enforcer-plugin:3.6.3, parent: jdk.internal.loader.ClassLoaders$AppClassLoader@5bc2b487]
+[DEBUG] Configuring mojo execution 'org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce:ensure-no-sonatype-cipher-and-sec-dispatcher' with basic configurator -->
+[DEBUG]   (s) commandLineRules = []
+[DEBUG]   (s) fail = true
+[DEBUG]   (s) failFast = false
+[DEBUG]   (s) failIfNoRules = true
+[DEBUG]   (f) ignoreCache = false
+[DEBUG]   (f) mojoExecution = org.apache.maven.plugins:maven-enforcer-plugin:3.6.3:enforce {execution: ensure-no-sonatype-cipher-and-sec-dispatcher}
+[DEBUG]   (f) project = MavenProject: org.apache.maven:maven-api-annotations:4.1.0-SNAPSHOT @ /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/pom.xml
+[DEBUG]   (f) rules = <rules><bannedDependencies><excludes><exclude>org.sonatype.plexus:plexus-sec-dispatcher</exclude>
+<exclude>org.sonatype.plexus:plexus-cipher</exclude>
+</excludes>
+<message>ensure no more org.sonatype.plexus:plexus-cipher and org.sonatype.plexus:plexus-sec-dispatcher.</message>
+</bannedDependencies>
+</rules>
+
+[DEBUG]   (s) rulesToExecute = []
+[DEBUG]   (s) rulesToSkip = []
+[DEBUG]   (f) session = org.apache.maven.execution.MavenSession@26844abb
+[DEBUG]   (f) skip = false
+[DEBUG] -- end configuration --
+[DEBUG] Executing Rule 0: EnforcerRuleDesc[name=bannedDependencies, rule=BannedDependencies[message=ensure no more org.sonatype.plexus:plexus-cipher and org.sonatype.plexus:plexus-sec-dispatcher., excludes=[org.sonatype.plexus:plexus-sec-dispatcher, org.sonatype.plexus:plexus-cipher], includes=null, searchTransitive=true], level=ERROR]
+[DEBUG] Dependency collection stats {ConflictMarker.analyzeTime=4490, ConflictMarker.markTime=20410, ConflictMarker.nodeCount=1, ConflictIdSorter.graphTime=890, ConflictIdSorter.topsortTime=1660, ConflictIdSorter.conflictIdCount=0, ConflictIdSorter.conflictIdCycleCount=0, ConflictResolver.totalTime=5050, ConflictResolver.conflictItemCount=0, DfDependencyCollector.collectTime=1320, DfDependencyCollector.transformTime=36441}
+[INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[DEBUG] Finish Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies takes 0 ms
+[INFO] 
+[INFO] --- dependency:3.11.0:properties (prepare-for-mockito-agent) @ maven-api-annotations ---
+[DEBUG] Using mirror maven-default-http-blocker (http://0.0.0.0/) for codehaus.snapshots (http://snapshots.repository.codehaus.org).
+[DEBUG] Using mirror maven-default-http-blocker (http://0.0.0.0/) for apache.snapshots (http://repository.apache.org/snapshots).
+[DEBUG] Using mirror maven-default-http-blocker (http://0.0.0.0/) for apache.snapshots (http://people.apache.org/repo/m2-snapshot-repository).
+[DEBUG] Dependency collection stats {ConflictMarker.analyzeTime=292584, ConflictMarker.markTime=147182, ConflictMarker.nodeCount=186, ConflictIdSorter.graphTime=100671, ConflictIdSorter.topsortTime=30660, ConflictIdSorter.conflictIdCount=57, ConflictIdSorter.conflictIdCycleCount=0, ConflictResolver.totalTime=1904024, ConflictResolver.conflictItemCount=145, DfDependencyCollector.collectTime=126104502, DfDependencyCollector.transformTime=2497651}
+[DEBUG] org.apache.maven.plugins:maven-dependency-plugin:jar:3.11.0
+[DEBUG]    eu.maveniverse.maven.domtrip:domtrip-maven:jar:1.5.1:compile
+[DEBUG]    eu.maveniverse.maven.domtrip:domtrip-core:jar:1.5.1:compile
+[DEBUG]    org.apache.maven.doxia:doxia-sink-api:jar:2.1.0:compile
+[DEBUG]    org.apache.maven.reporting:maven-reporting-api:jar:4.0.0:compile
+[DEBUG]    org.apache.maven.reporting:maven-reporting-impl:jar:4.0.0:compile
+[DEBUG]       org.apache.maven.doxia:doxia-site-model:jar:2.0.0:compile
+[DEBUG]       org.apache.maven.doxia:doxia-core:jar:2.0.0:compile
+[DEBUG]          org.apache.commons:commons-text:jar:1.12.0:compile
+[DEBUG]       org.apache.maven.doxia:doxia-integration-tools:jar:2.0.0:compile
+[DEBUG]          org.codehaus.plexus:plexus-interpolation:jar:1.27:compile
+[DEBUG]       org.apache.maven.doxia:doxia-site-renderer:jar:2.0.0:compile
+[DEBUG]          org.apache.maven.doxia:doxia-skin-model:jar:2.0.0:compile
+[DEBUG]          org.apache.maven.doxia:doxia-module-xhtml5:jar:2.0.0:compile
+[DEBUG]          org.codehaus.plexus:plexus-velocity:jar:2.2.0:compile
+[DEBUG]       org.apache.maven.doxia:doxia-module-apt:jar:2.0.0:runtime
+[DEBUG]       org.apache.maven.doxia:doxia-module-xdoc:jar:2.0.0:runtime
+[DEBUG]       org.apache.maven:maven-archiver:jar:3.6.2:compile
+[DEBUG]       org.apache.maven.resolver:maven-resolver-api:jar:1.4.1:compile
+[DEBUG]       org.eclipse.sisu:org.eclipse.sisu.plexus:jar:1.0.0:compile (version managed from default)
+[DEBUG]          org.eclipse.sisu:org.eclipse.sisu.inject:jar:1.0.0:compile (version managed from default)
+[DEBUG]          org.codehaus.plexus:plexus-classworlds:jar:2.9.0:compile
+[DEBUG]    org.codehaus.plexus:plexus-archiver:jar:4.11.0:compile
+[DEBUG]       javax.inject:javax.inject:jar:1:compile
+[DEBUG]       org.apache.commons:commons-compress:jar:1.28.0:compile
+[DEBUG]          commons-codec:commons-codec:jar:1.19.0:compile
+[DEBUG]       commons-io:commons-io:jar:2.21.0:compile
+[DEBUG]       org.tukaani:xz:jar:1.11:runtime
+[DEBUG]       com.github.luben:zstd-jni:jar:1.5.7-6:runtime
+[DEBUG]    org.apache.commons:commons-lang3:jar:3.20.0:compile
+[DEBUG]    org.codehaus.plexus:plexus-utils:jar:4.0.3:compile
+[DEBUG]    org.codehaus.plexus:plexus-xml:jar:3.0.1:compile
+[DEBUG]    org.codehaus.plexus:plexus-io:jar:3.6.0:compile
+[DEBUG]    org.codehaus.plexus:plexus-i18n:jar:1.1.0:compile
+[DEBUG]    org.apache.maven.shared:maven-dependency-analyzer:jar:1.17.1:compile
+[DEBUG]       org.ow2.asm:asm:jar:9.10:compile (version managed from default)
+[DEBUG]    org.apache.maven.shared:maven-dependency-tree:jar:3.3.0:compile
+[DEBUG]    org.apache.maven.shared:maven-common-artifact-filters:jar:3.4.0:compile
+[DEBUG]    org.apache.maven.shared:maven-artifact-transfer:jar:0.13.1:compile
+[DEBUG]       org.codehaus.plexus:plexus-component-annotations:jar:2.0.0:compile
+[DEBUG]    org.apache.maven.shared:maven-shared-utils:jar:3.4.2:compile
+[DEBUG]    org.apache.maven.resolver:maven-resolver-util:jar:1.9.25:compile
+[DEBUG]    org.sonatype.plexus:plexus-build-api:jar:0.0.7:compile
+[DEBUG]    org.slf4j:slf4j-api:jar:1.7.36:compile
+[DEBUG]    org.apache.velocity:velocity-engine-core:jar:2.4.1:compile
+[DEBUG]    org.apache.velocity.tools:velocity-tools-generic:jar:3.1:compile
+[DEBUG]       commons-beanutils:commons-beanutils:jar:1.9.4:compile
+[DEBUG]          commons-logging:commons-logging:jar:1.2:compile
+[DEBUG]          commons-collections:commons-collections:jar:3.2.2:compile
+[DEBUG]       org.apache.commons:commons-digester3:jar:3.2:compile
+[DEBUG]       com.github.cliftonlabs:json-simple:jar:3.0.2:compile
+[DEBUG] Created new class realm plugin>org.apache.maven.plugins:maven-dependency-plugin:3.11.0
+[DEBUG] Importing foreign packages into class realm plugin>org.apache.maven.plugins:maven-dependency-plugin:3.11.0
+[DEBUG]   Imported:  < maven.api
+[DEBUG] Populating class realm plugin>org.apache.maven.plugins:maven-dependency-plugin:3.11.0
+[DEBUG]   Included: org.apache.maven.plugins:maven-dependency-plugin:jar:3.11.0
+[DEBUG]   Included: eu.maveniverse.maven.domtrip:domtrip-maven:jar:1.5.1
+[DEBUG]   Included: eu.maveniverse.maven.domtrip:domtrip-core:jar:1.5.1
+[DEBUG]   Included: org.apache.maven.doxia:doxia-sink-api:jar:2.1.0
+[DEBUG]   Included: org.apache.maven.reporting:maven-reporting-api:jar:4.0.0
+[DEBUG]   Included: org.apache.maven.reporting:maven-reporting-impl:jar:4.0.0
+[DEBUG]   Included: org.apache.maven.doxia:doxia-site-model:jar:2.0.0
+[DEBUG]   Included: org.apache.maven.doxia:doxia-core:jar:2.0.0
+[DEBUG]   Included: org.apache.commons:commons-text:jar:1.12.0
+[DEBUG]   Included: org.apache.maven.doxia:doxia-integration-tools:jar:2.0.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-interpolation:jar:1.27
+[DEBUG]   Included: org.apache.maven.doxia:doxia-site-renderer:jar:2.0.0
+[DEBUG]   Included: org.apache.maven.doxia:doxia-skin-model:jar:2.0.0
+[DEBUG]   Included: org.apache.maven.doxia:doxia-module-xhtml5:jar:2.0.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-velocity:jar:2.2.0
+[DEBUG]   Included: org.apache.maven.doxia:doxia-module-apt:jar:2.0.0
+[DEBUG]   Included: org.apache.maven.doxia:doxia-module-xdoc:jar:2.0.0
+[DEBUG]   Included: org.apache.maven:maven-archiver:jar:3.6.2
+[DEBUG]   Included: org.eclipse.sisu:org.eclipse.sisu.inject:jar:1.0.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-archiver:jar:4.11.0
+[DEBUG]   Included: org.apache.commons:commons-compress:jar:1.28.0
+[DEBUG]   Included: commons-codec:commons-codec:jar:1.19.0
+[DEBUG]   Included: commons-io:commons-io:jar:2.21.0
+[DEBUG]   Included: org.tukaani:xz:jar:1.11
+[DEBUG]   Included: com.github.luben:zstd-jni:jar:1.5.7-6
+[DEBUG]   Included: org.apache.commons:commons-lang3:jar:3.20.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-utils:jar:4.0.3
+[DEBUG]   Included: org.codehaus.plexus:plexus-xml:jar:3.0.1
+[DEBUG]   Included: org.codehaus.plexus:plexus-io:jar:3.6.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-i18n:jar:1.1.0
+[DEBUG]   Included: org.apache.maven.shared:maven-dependency-analyzer:jar:1.17.1
+[DEBUG]   Included: org.ow2.asm:asm:jar:9.10
+[DEBUG]   Included: org.apache.maven.shared:maven-dependency-tree:jar:3.3.0
+[DEBUG]   Included: org.apache.maven.shared:maven-common-artifact-filters:jar:3.4.0
+[DEBUG]   Included: org.apache.maven.shared:maven-artifact-transfer:jar:0.13.1
+[DEBUG]   Included: org.codehaus.plexus:plexus-component-annotations:jar:2.0.0
+[DEBUG]   Included: org.apache.maven.shared:maven-shared-utils:jar:3.4.2
+[DEBUG]   Included: org.sonatype.plexus:plexus-build-api:jar:0.0.7
+[DEBUG]   Included: org.apache.velocity:velocity-engine-core:jar:2.4.1
+[DEBUG]   Included: org.apache.velocity.tools:velocity-tools-generic:jar:3.1
+[DEBUG]   Included: commons-beanutils:commons-beanutils:jar:1.9.4
+[DEBUG]   Included: commons-logging:commons-logging:jar:1.2
+[DEBUG]   Included: commons-collections:commons-collections:jar:3.2.2
+[DEBUG]   Included: org.apache.commons:commons-digester3:jar:3.2
+[DEBUG]   Included: com.github.cliftonlabs:json-simple:jar:3.0.2
+[DEBUG] Loading mojo org.apache.maven.plugins:maven-dependency-plugin:3.11.0:properties from plugin realm ClassRealm[plugin>org.apache.maven.plugins:maven-dependency-plugin:3.11.0, parent: jdk.internal.loader.ClassLoaders$AppClassLoader@5bc2b487]
+[DEBUG] Configuring mojo execution 'org.apache.maven.plugins:maven-dependency-plugin:3.11.0:properties:prepare-for-mockito-agent' with basic configurator -->
+[DEBUG]   (f) skip = false
+[DEBUG] -- end configuration --
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (checkstyle-check) @ maven-api-annotations ---
+[DEBUG] Dependency collection stats {ConflictMarker.analyzeTime=182652, ConflictMarker.markTime=86451, ConflictMarker.nodeCount=153, ConflictIdSorter.graphTime=84711, ConflictIdSorter.topsortTime=27161, ConflictIdSorter.conflictIdCount=60, ConflictIdSorter.conflictIdCycleCount=0, ConflictResolver.totalTime=886021, ConflictResolver.conflictItemCount=148, DfDependencyCollector.collectTime=19423994, DfDependencyCollector.transformTime=1290646}
+[DEBUG] org.apache.maven.plugins:maven-checkstyle-plugin:jar:3.6.0
+[DEBUG]    org.apache.maven.shared:maven-shared-resources:jar:6:runtime
+[DEBUG]    org.apache.maven.reporting:maven-reporting-api:jar:4.0.0:compile
+[DEBUG]    org.apache.maven.reporting:maven-reporting-impl:jar:4.0.0:compile
+[DEBUG]       org.apache.maven.shared:maven-shared-utils:jar:3.4.2:compile
+[DEBUG]       org.apache.maven.doxia:doxia-site-model:jar:2.0.0:compile
+[DEBUG]       org.apache.maven.doxia:doxia-site-renderer:jar:2.0.0:compile
+[DEBUG]          org.apache.maven.doxia:doxia-skin-model:jar:2.0.0:compile
+[DEBUG]          org.apache.maven.doxia:doxia-module-xhtml5:jar:2.0.0:compile
+[DEBUG]          org.codehaus.plexus:plexus-velocity:jar:2.2.0:compile
+[DEBUG]          org.apache.velocity:velocity-engine-core:jar:2.4:compile
+[DEBUG]          org.apache.velocity.tools:velocity-tools-generic:jar:3.1:compile
+[DEBUG]             org.apache.commons:commons-digester3:jar:3.2:compile
+[DEBUG]             com.github.cliftonlabs:json-simple:jar:3.0.2:compile
+[DEBUG]       org.apache.maven.doxia:doxia-module-apt:jar:2.0.0:runtime
+[DEBUG]       org.apache.maven.doxia:doxia-module-xdoc:jar:2.0.0:runtime
+[DEBUG]       org.apache.maven:maven-archiver:jar:3.6.2:compile
+[DEBUG]          org.codehaus.plexus:plexus-archiver:jar:4.9.2:compile
+[DEBUG]             org.codehaus.plexus:plexus-io:jar:3.4.2:compile
+[DEBUG]             org.apache.commons:commons-compress:jar:1.26.1:compile
+[DEBUG]             commons-codec:commons-codec:jar:1.16.1:compile
+[DEBUG]             org.iq80.snappy:snappy:jar:0.4:compile
+[DEBUG]             org.tukaani:xz:jar:1.9:runtime
+[DEBUG]             com.github.luben:zstd-jni:jar:1.5.5-11:runtime
+[DEBUG]       org.apache.maven.resolver:maven-resolver-api:jar:1.4.1:compile
+[DEBUG]       org.eclipse.sisu:org.eclipse.sisu.plexus:jar:0.9.0.M3:compile (version managed from default)
+[DEBUG]          org.eclipse.sisu:org.eclipse.sisu.inject:jar:0.9.0.M3:compile (version managed from default)
+[DEBUG]          org.codehaus.plexus:plexus-classworlds:jar:2.6.0:compile
+[DEBUG]    org.apache.maven.doxia:doxia-sink-api:jar:2.0.0:compile
+[DEBUG]    org.apache.maven.doxia:doxia-core:jar:2.0.0:compile
+[DEBUG]       javax.inject:javax.inject:jar:1:compile
+[DEBUG]       commons-io:commons-io:jar:2.17.0:compile
+[DEBUG]       org.apache.commons:commons-text:jar:1.12.0:compile
+[DEBUG]    org.apache.maven.doxia:doxia-integration-tools:jar:2.0.0:compile
+[DEBUG]       org.codehaus.plexus:plexus-interpolation:jar:1.27:compile
+[DEBUG]    org.codehaus.plexus:plexus-component-annotations:jar:2.2.0:compile
+[DEBUG]    org.codehaus.plexus:plexus-resources:jar:1.3.0:compile
+[DEBUG]    org.codehaus.plexus:plexus-utils:jar:4.0.1:compile
+[DEBUG]    org.codehaus.plexus:plexus-xml:jar:3.0.1:compile
+[DEBUG]    org.codehaus.plexus:plexus-i18n:jar:1.0-beta-10:compile
+[DEBUG]    org.slf4j:slf4j-api:jar:1.7.36:compile
+[DEBUG]    com.puppycrawl.tools:checkstyle:jar:9.3:compile
+[DEBUG]       info.picocli:picocli:jar:4.6.2:compile
+[DEBUG]       org.antlr:antlr4-runtime:jar:4.9.3:compile
+[DEBUG]       commons-beanutils:commons-beanutils:jar:1.9.4:compile
+[DEBUG]          commons-logging:commons-logging:jar:1.2:compile
+[DEBUG]          commons-collections:commons-collections:jar:3.2.2:compile
+[DEBUG]       com.google.guava:guava:jar:31.0.1-jre:compile
+[DEBUG]          com.google.guava:failureaccess:jar:1.0.1:compile
+[DEBUG]          com.google.guava:listenablefuture:jar:9999.0-empty-to-avoid-conflict-with-guava:compile
+[DEBUG]          com.google.code.findbugs:jsr305:jar:3.0.2:compile
+[DEBUG]          org.checkerframework:checker-qual:jar:3.12.0:compile
+[DEBUG]          com.google.errorprone:error_prone_annotations:jar:2.7.1:compile
+[DEBUG]          com.google.j2objc:j2objc-annotations:jar:1.3:compile
+[DEBUG]       org.reflections:reflections:jar:0.10.2:compile
+[DEBUG]          org.javassist:javassist:jar:3.28.0-GA:compile
+[DEBUG]       net.sf.saxon:Saxon-HE:jar:10.6:compile
+[DEBUG]    org.apache.commons:commons-lang3:jar:3.17.0:compile
+[DEBUG]    javax.xml.bind:jaxb-api:jar:2.3.1:compile
+[DEBUG]       javax.activation:javax.activation-api:jar:1.2.0:compile
+[DEBUG] Created new class realm plugin>org.apache.maven.plugins:maven-checkstyle-plugin:3.6.0
+[DEBUG] Importing foreign packages into class realm plugin>org.apache.maven.plugins:maven-checkstyle-plugin:3.6.0
+[DEBUG]   Imported:  < maven.api
+[DEBUG] Populating class realm plugin>org.apache.maven.plugins:maven-checkstyle-plugin:3.6.0
+[DEBUG]   Included: org.apache.maven.plugins:maven-checkstyle-plugin:jar:3.6.0
+[DEBUG]   Included: org.apache.maven.shared:maven-shared-resources:jar:6
+[DEBUG]   Included: org.apache.maven.reporting:maven-reporting-api:jar:4.0.0
+[DEBUG]   Included: org.apache.maven.reporting:maven-reporting-impl:jar:4.0.0
+[DEBUG]   Included: org.apache.maven.shared:maven-shared-utils:jar:3.4.2
+[DEBUG]   Included: org.apache.maven.doxia:doxia-site-model:jar:2.0.0
+[DEBUG]   Included: org.apache.maven.doxia:doxia-site-renderer:jar:2.0.0
+[DEBUG]   Included: org.apache.maven.doxia:doxia-skin-model:jar:2.0.0
+[DEBUG]   Included: org.apache.maven.doxia:doxia-module-xhtml5:jar:2.0.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-velocity:jar:2.2.0
+[DEBUG]   Included: org.apache.velocity:velocity-engine-core:jar:2.4
+[DEBUG]   Included: org.apache.velocity.tools:velocity-tools-generic:jar:3.1
+[DEBUG]   Included: org.apache.commons:commons-digester3:jar:3.2
+[DEBUG]   Included: com.github.cliftonlabs:json-simple:jar:3.0.2
+[DEBUG]   Included: org.apache.maven.doxia:doxia-module-apt:jar:2.0.0
+[DEBUG]   Included: org.apache.maven.doxia:doxia-module-xdoc:jar:2.0.0
+[DEBUG]   Included: org.apache.maven:maven-archiver:jar:3.6.2
+[DEBUG]   Included: org.codehaus.plexus:plexus-archiver:jar:4.9.2
+[DEBUG]   Included: org.codehaus.plexus:plexus-io:jar:3.4.2
+[DEBUG]   Included: org.apache.commons:commons-compress:jar:1.26.1
+[DEBUG]   Included: commons-codec:commons-codec:jar:1.16.1
+[DEBUG]   Included: org.iq80.snappy:snappy:jar:0.4
+[DEBUG]   Included: org.tukaani:xz:jar:1.9
+[DEBUG]   Included: com.github.luben:zstd-jni:jar:1.5.5-11
+[DEBUG]   Included: org.eclipse.sisu:org.eclipse.sisu.inject:jar:0.9.0.M3
+[DEBUG]   Included: org.apache.maven.doxia:doxia-sink-api:jar:2.0.0
+[DEBUG]   Included: org.apache.maven.doxia:doxia-core:jar:2.0.0
+[DEBUG]   Included: commons-io:commons-io:jar:2.17.0
+[DEBUG]   Included: org.apache.commons:commons-text:jar:1.12.0
+[DEBUG]   Included: org.apache.maven.doxia:doxia-integration-tools:jar:2.0.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-interpolation:jar:1.27
+[DEBUG]   Included: org.codehaus.plexus:plexus-component-annotations:jar:2.2.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-resources:jar:1.3.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-utils:jar:4.0.1
+[DEBUG]   Included: org.codehaus.plexus:plexus-xml:jar:3.0.1
+[DEBUG]   Included: org.codehaus.plexus:plexus-i18n:jar:1.0-beta-10
+[DEBUG]   Included: com.puppycrawl.tools:checkstyle:jar:9.3
+[DEBUG]   Included: info.picocli:picocli:jar:4.6.2
+[DEBUG]   Included: org.antlr:antlr4-runtime:jar:4.9.3
+[DEBUG]   Included: commons-beanutils:commons-beanutils:jar:1.9.4
+[DEBUG]   Included: commons-logging:commons-logging:jar:1.2
+[DEBUG]   Included: commons-collections:commons-collections:jar:3.2.2
+[DEBUG]   Included: com.google.guava:guava:jar:31.0.1-jre
+[DEBUG]   Included: com.google.guava:failureaccess:jar:1.0.1
+[DEBUG]   Included: com.google.guava:listenablefuture:jar:9999.0-empty-to-avoid-conflict-with-guava
+[DEBUG]   Included: com.google.code.findbugs:jsr305:jar:3.0.2
+[DEBUG]   Included: org.checkerframework:checker-qual:jar:3.12.0
+[DEBUG]   Included: com.google.errorprone:error_prone_annotations:jar:2.7.1
+[DEBUG]   Included: com.google.j2objc:j2objc-annotations:jar:1.3
+[DEBUG]   Included: org.reflections:reflections:jar:0.10.2
+[DEBUG]   Included: org.javassist:javassist:jar:3.28.0-GA
+[DEBUG]   Included: net.sf.saxon:Saxon-HE:jar:10.6
+[DEBUG]   Included: org.apache.commons:commons-lang3:jar:3.17.0
+[DEBUG]   Included: javax.xml.bind:jaxb-api:jar:2.3.1
+[DEBUG]   Included: javax.activation:javax.activation-api:jar:1.2.0
+[DEBUG] Loading mojo org.apache.maven.plugins:maven-checkstyle-plugin:3.6.0:check from plugin realm ClassRealm[plugin>org.apache.maven.plugins:maven-checkstyle-plugin:3.6.0, parent: jdk.internal.loader.ClassLoaders$AppClassLoader@5bc2b487]
+[DEBUG] Configuring mojo execution 'org.apache.maven.plugins:maven-checkstyle-plugin:3.6.0:check:checkstyle-check' with basic configurator -->
+[DEBUG]   (f) cacheFile = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/checkstyle-cachefile
+[DEBUG]   (f) checkstyleRulesHeader = <?xml version="1.0"?>
+<!DOCTYPE module PUBLIC "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+        "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+[DEBUG]   (f) configLocation = config/maven_checks_nocodestyle.xml
+[DEBUG]   (f) consoleOutput = false
+[DEBUG]   (f) excludeGeneratedSources = true
+[DEBUG]   (f) failOnViolation = true
+[DEBUG]   (f) failsOnError = false
+[DEBUG]   (f) headerLocation = LICENSE.txt
+[DEBUG]   (f) includeResources = true
+[DEBUG]   (f) includeTestResources = true
+[DEBUG]   (f) includeTestSourceDirectory = true
+[DEBUG]   (f) includes = **\/*.java
+[DEBUG]   (f) inputEncoding = UTF-8
+[DEBUG]   (f) logViolationCountToConsole = true
+[DEBUG]   (f) logViolationsToConsole = true
+[DEBUG]   (f) maxAllowedViolations = 0
+[DEBUG]   (f) omitIgnoredModules = false
+[DEBUG]   (f) outputFile = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/checkstyle-result.xml
+[DEBUG]   (f) outputFileFormat = xml
+[DEBUG]   (f) plugin = Component Descriptor: role: 'org.apache.maven.plugin.Mojo', implementation: 'org.apache.maven.plugins.checkstyle.CheckstyleViolationCheckMojo', role hint: 'org.apache.maven.plugins:maven-checkstyle-plugin:3.6.0:check'
+role: 'org.apache.maven.plugin.Mojo', implementation: 'org.apache.maven.plugins.checkstyle.CheckstyleReport', role hint: 'org.apache.maven.plugins:maven-checkstyle-plugin:3.6.0:checkstyle'
+role: 'org.apache.maven.plugin.Mojo', implementation: 'org.apache.maven.plugins.checkstyle.CheckstyleAggregateReport', role hint: 'org.apache.maven.plugins:maven-checkstyle-plugin:3.6.0:checkstyle-aggregate'
+role: 'org.apache.maven.plugin.Mojo', implementation: 'org.apache.maven.plugins.maven_checkstyle_plugin.HelpMojo', role hint: 'org.apache.maven.plugins:maven-checkstyle-plugin:3.6.0:help'
+---
+[DEBUG]   (f) project = MavenProject: org.apache.maven:maven-api-annotations:4.1.0-SNAPSHOT @ /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/pom.xml
+[DEBUG]   (f) resourceIncludes = **/*.properties
+[DEBUG]   (f) resources = [Resource {targetPath: null, filtering: false, FileSet {directory: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/resources, PatternSet [includes: {}, excludes: {}]}}]
+[DEBUG]   (f) rulesFiles = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/checkstyle-rules.xml
+[DEBUG]   (f) skip = false
+[DEBUG]   (f) skipExec = false
+[DEBUG]   (f) suppressionsFileExpression = checkstyle.suppressions.file
+[DEBUG]   (f) testResources = [Resource {targetPath: null, filtering: false, FileSet {directory: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/test/resources, PatternSet [includes: {}, excludes: {}]}}]
+[DEBUG]   (f) violationSeverity = error
+[DEBUG] -- end configuration --
+[DEBUG] executeCheckstyle start headerLocation : LICENSE.txt
+[DEBUG] JarResourceLoader : trying to load 'jar:file:/tmp/fg306-maven.isLMNI/m2/org/apache/maven/shared/maven-shared-resources/6/maven-shared-resources-6.jar'
+[DEBUG] Added 11 source files found in '/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java'.
+[DEBUG] The resources directory '/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/resources' does not exist or is not a directory.
+[DEBUG] The resources directory '/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/test/resources' does not exist or is not a directory.
+[DEBUG] Added 11 files to process.
+[DEBUG] request.getConfigLocation() config/maven_checks_nocodestyle.xml
+[DEBUG] The resource 'config/maven_checks_nocodestyle.xml' was not found with resourceLoader 'org.codehaus.plexus.resource.loader.FileResourceLoader'
+[DEBUG] The resource 'config/maven_checks_nocodestyle.xml' was not found with resourceLoader 'org.codehaus.plexus.resource.loader.JarResourceLoader'
+[DEBUG] The resource 'config/maven_checks_nocodestyle.xml' was found as 'jar:file:/tmp/fg306-maven.isLMNI/m2/org/apache/maven/shared/maven-shared-resources/6/maven-shared-resources-6.jar!/config/maven_checks_nocodestyle.xml'
+[DEBUG] headerLocation LICENSE.txt
+[DEBUG] The resource 'LICENSE.txt' was not found with resourceLoader org.codehaus.plexus.resource.loader.FileResourceLoader.
+[DEBUG] The resource 'LICENSE.txt' was not found with resourceLoader org.codehaus.plexus.resource.loader.JarResourceLoader.
+[DEBUG] URLResourceLoader: No valid URL 'LICENSE.txt'
+[DEBUG] URLResourceLoader: No valid URL 'LICENSE.txt'
+[DEBUG] The resource 'LICENSE.txt' was not found with resourceLoader org.codehaus.plexus.resource.loader.URLResourceLoader.
+[DEBUG] Unable to process header location: LICENSE.txt
+[DEBUG] Checkstyle will throw exception if ${checkstyle.header.file} is used
+[INFO] You have 0 Checkstyle violations.
+[INFO] 
+[INFO] --- spotless:3.7.0:apply (default) @ maven-api-annotations ---
+[DEBUG] Dependency collection stats {ConflictMarker.analyzeTime=82731, ConflictMarker.markTime=24800, ConflictMarker.nodeCount=49, ConflictIdSorter.graphTime=206253, ConflictIdSorter.topsortTime=15900, ConflictIdSorter.conflictIdCount=29, ConflictIdSorter.conflictIdCycleCount=0, ConflictResolver.totalTime=421505, ConflictResolver.conflictItemCount=44, DfDependencyCollector.collectTime=16041151, DfDependencyCollector.transformTime=772580}
+[DEBUG] com.diffplug.spotless:spotless-maven-plugin:jar:3.7.0
+[DEBUG]    org.apache.maven.shared:maven-shared-resources:jar:6:runtime
+[DEBUG]    com.diffplug.spotless:spotless-lib:jar:4.7.0:runtime
+[DEBUG]    com.diffplug.spotless:spotless-lib-extra:jar:4.7.0:runtime
+[DEBUG]       com.googlecode.concurrent-trees:concurrent-trees:jar:2.6.1:runtime
+[DEBUG]       dev.equo.ide:solstice:jar:1.8.2:runtime
+[DEBUG]          com.diffplug.durian:durian-swt.os:jar:4.3.0:runtime
+[DEBUG]          org.tukaani:xz:jar:1.9:runtime
+[DEBUG]          com.squareup.okhttp3:okhttp:jar:4.12.0:runtime
+[DEBUG]             com.squareup.okio:okio:jar:3.6.0:runtime
+[DEBUG]                com.squareup.okio:okio-jvm:jar:3.6.0:runtime
+[DEBUG]                   org.jetbrains.kotlin:kotlin-stdlib-common:jar:1.9.10:runtime
+[DEBUG]             org.jetbrains.kotlin:kotlin-stdlib-jdk8:jar:1.8.21:runtime
+[DEBUG]                org.jetbrains.kotlin:kotlin-stdlib:jar:1.8.21:runtime
+[DEBUG]                   org.jetbrains:annotations:jar:13.0:runtime
+[DEBUG]                org.jetbrains.kotlin:kotlin-stdlib-jdk7:jar:1.8.21:runtime
+[DEBUG]       org.eclipse.platform:org.eclipse.osgi:jar:3.24.200:runtime
+[DEBUG]    com.diffplug.durian:durian-core:jar:1.2.0:runtime
+[DEBUG]    com.diffplug.durian:durian-io:jar:1.2.0:runtime
+[DEBUG]    com.diffplug.durian:durian-collect:jar:1.2.0:runtime
+[DEBUG]    org.codehaus.plexus:plexus-resources:jar:1.3.1:runtime
+[DEBUG]       org.codehaus.plexus:plexus-xml:jar:3.0.1:runtime
+[DEBUG]       javax.inject:javax.inject:jar:1:runtime
+[DEBUG]       org.slf4j:slf4j-api:jar:1.7.36:runtime
+[DEBUG]    org.codehaus.plexus:plexus-utils:jar:4.0.3:runtime
+[DEBUG]    org.eclipse.jgit:org.eclipse.jgit:jar:7.7.0.202606012155-r:runtime
+[DEBUG]       com.googlecode.javaewah:JavaEWAH:jar:1.2.3:runtime
+[DEBUG]       commons-codec:commons-codec:jar:1.22.0:runtime
+[DEBUG]    org.sonatype.plexus:plexus-build-api:jar:0.0.7:runtime
+[DEBUG] Created new class realm plugin>com.diffplug.spotless:spotless-maven-plugin:3.7.0
+[DEBUG] Importing foreign packages into class realm plugin>com.diffplug.spotless:spotless-maven-plugin:3.7.0
+[DEBUG]   Imported:  < maven.api
+[DEBUG] Populating class realm plugin>com.diffplug.spotless:spotless-maven-plugin:3.7.0
+[DEBUG]   Included: com.diffplug.spotless:spotless-maven-plugin:jar:3.7.0
+[DEBUG]   Included: org.apache.maven.shared:maven-shared-resources:jar:6
+[DEBUG]   Included: com.diffplug.spotless:spotless-lib:jar:4.7.0
+[DEBUG]   Included: com.diffplug.spotless:spotless-lib-extra:jar:4.7.0
+[DEBUG]   Included: com.googlecode.concurrent-trees:concurrent-trees:jar:2.6.1
+[DEBUG]   Included: dev.equo.ide:solstice:jar:1.8.2
+[DEBUG]   Included: com.diffplug.durian:durian-swt.os:jar:4.3.0
+[DEBUG]   Included: org.tukaani:xz:jar:1.9
+[DEBUG]   Included: com.squareup.okhttp3:okhttp:jar:4.12.0
+[DEBUG]   Included: com.squareup.okio:okio:jar:3.6.0
+[DEBUG]   Included: com.squareup.okio:okio-jvm:jar:3.6.0
+[DEBUG]   Included: org.jetbrains.kotlin:kotlin-stdlib-common:jar:1.9.10
+[DEBUG]   Included: org.jetbrains.kotlin:kotlin-stdlib-jdk8:jar:1.8.21
+[DEBUG]   Included: org.jetbrains.kotlin:kotlin-stdlib:jar:1.8.21
+[DEBUG]   Included: org.jetbrains:annotations:jar:13.0
+[DEBUG]   Included: org.jetbrains.kotlin:kotlin-stdlib-jdk7:jar:1.8.21
+[DEBUG]   Included: org.eclipse.platform:org.eclipse.osgi:jar:3.24.200
+[DEBUG]   Included: com.diffplug.durian:durian-core:jar:1.2.0
+[DEBUG]   Included: com.diffplug.durian:durian-io:jar:1.2.0
+[DEBUG]   Included: com.diffplug.durian:durian-collect:jar:1.2.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-resources:jar:1.3.1
+[DEBUG]   Included: org.codehaus.plexus:plexus-xml:jar:3.0.1
+[DEBUG]   Included: org.codehaus.plexus:plexus-utils:jar:4.0.3
+[DEBUG]   Included: org.eclipse.jgit:org.eclipse.jgit:jar:7.7.0.202606012155-r
+[DEBUG]   Included: com.googlecode.javaewah:JavaEWAH:jar:1.2.3
+[DEBUG]   Included: commons-codec:commons-codec:jar:1.22.0
+[DEBUG]   Included: org.sonatype.plexus:plexus-build-api:jar:0.0.7
+[DEBUG] Loading mojo com.diffplug.spotless:spotless-maven-plugin:3.7.0:apply from plugin realm ClassRealm[plugin>com.diffplug.spotless:spotless-maven-plugin:3.7.0, parent: jdk.internal.loader.ClassLoaders$AppClassLoader@5bc2b487]
+[DEBUG] Configuring mojo execution 'com.diffplug.spotless:spotless-maven-plugin:3.7.0:apply:default' with basic configurator -->
+[DEBUG]   (f) applySkip = false
+[DEBUG]   (f) baseDir = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations
+[DEBUG]   (f) buildDir = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target
+[DEBUG]   (f) checkSkip = false
+[DEBUG]   (f) encoding = UTF-8
+[DEBUG]   (f) goal = apply
+[DEBUG]   (f) version = 2.93.0
+[DEBUG]   (s) palantirJavaFormat = com.diffplug.spotless.maven.java.PalantirJavaFormat@2a661215
+[DEBUG]   (s) removeUnusedImports = com.diffplug.spotless.maven.java.RemoveUnusedImports@79617c3d
+[DEBUG]   (f) file = config/maven-eclipse-importorder.txt
+[DEBUG]   (s) importOrder = com.diffplug.spotless.maven.java.ImportOrder@49cceb19
+[DEBUG]   (f) file = config/maven-header-plain.txt
+[DEBUG]   (s) licenseHeader = com.diffplug.spotless.maven.generic.LicenseHeader@197d5a87
+[DEBUG]   (f) java = com.diffplug.spotless.maven.java.Java@131d977f
+[DEBUG]   (f) lineEndings = PRESERVE
+[DEBUG]   (f) m2eEnableForIncrementalBuild = false
+[DEBUG]   (f) expandEmptyElements = false
+[DEBUG]   (f) spaceBeforeCloseEmptyElement = true
+[DEBUG]   (f) quiet = true
+[DEBUG]   (s) sortPom = com.diffplug.spotless.maven.pom.SortPom@647ff23e
+[DEBUG]   (f) pom = com.diffplug.spotless.maven.pom.Pom@6a04d2a4
+[DEBUG]   (f) project = MavenProject: org.apache.maven:maven-api-annotations:4.1.0-SNAPSHOT @ /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/pom.xml
+[DEBUG]   (f) repositories = [central (https://repo.maven.apache.org/maven2, default, releases)]
+[DEBUG]   (f) repositorySystemSession = org.eclipse.aether.DefaultRepositorySystemSession@20ed3303
+[DEBUG]   (f) skip = false
+[DEBUG]   (f) enabled = true
+[DEBUG]   (f) upToDateChecking = com.diffplug.spotless.maven.incremental.UpToDateChecking@61836cd9
+[DEBUG] -- end configuration --
+[DEBUG] The resource 'config/maven-eclipse-importorder.txt' was not found with resourceLoader 'org.codehaus.plexus.resource.loader.FileResourceLoader'
+[DEBUG] The resource 'config/maven-eclipse-importorder.txt' was not found with resourceLoader 'org.codehaus.plexus.resource.loader.JarResourceLoader'
+[DEBUG] The resource 'config/maven-eclipse-importorder.txt' was found as 'jar:file:/tmp/fg306-maven.isLMNI/m2/org/apache/maven/shared/maven-shared-resources/6/maven-shared-resources-6.jar!/config/maven-eclipse-importorder.txt'
+[DEBUG] Using mirror maven-default-http-blocker (http://0.0.0.0/) for codehaus-snapshots (http://nexus.codehaus.org/snapshots/).
+[DEBUG] Dependency collection stats {ConflictMarker.analyzeTime=52701, ConflictMarker.markTime=16930, ConflictMarker.nodeCount=33, ConflictIdSorter.graphTime=11790, ConflictIdSorter.topsortTime=11300, ConflictIdSorter.conflictIdCount=18, ConflictIdSorter.conflictIdCycleCount=0, ConflictResolver.totalTime=423906, ConflictResolver.conflictItemCount=27, DfDependencyCollector.collectTime=27427954, DfDependencyCollector.transformTime=532187}
+[DEBUG] Resolved artifact: com.palantir.javaformat:palantir-java-format:jar:2.93.0 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.palantir.javaformat:palantir-java-format-spi:jar:2.93.0 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.fasterxml.jackson.core:jackson-annotations:jar:2.21 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.fasterxml.jackson.datatype:jackson-datatype-guava:jar:2.21.4 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.google.guava:guava:jar:33.6.0-jre < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.google.guava:failureaccess:jar:1.0.3 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.google.guava:listenablefuture:jar:9999.0-empty-to-avoid-conflict-with-guava < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: org.jspecify:jspecify:jar:1.0.0 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.google.errorprone:error_prone_annotations:jar:2.47.0 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.google.j2objc:j2objc-annotations:jar:3.1 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: org.functionaljava:functionaljava:jar:5.0 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.fasterxml.jackson.core:jackson-core:jar:2.21.4 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.fasterxml.jackson.core:jackson-databind:jar:2.21.4 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.fasterxml.jackson.datatype:jackson-datatype-jdk8:jar:2.21.4 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.fasterxml.jackson.module:jackson-module-parameter-names:jar:2.21.4 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.google.code.findbugs:jsr305:jar:3.0.2 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Dependency collection stats {ConflictMarker.analyzeTime=18770, ConflictMarker.markTime=16141, ConflictMarker.nodeCount=9, ConflictIdSorter.graphTime=5780, ConflictIdSorter.topsortTime=8000, ConflictIdSorter.conflictIdCount=8, ConflictIdSorter.conflictIdCycleCount=0, ConflictResolver.totalTime=114431, ConflictResolver.conflictItemCount=8, DfDependencyCollector.collectTime=4619868, DfDependencyCollector.transformTime=177162}
+[DEBUG] Resolved artifact: com.google.googlejavaformat:google-java-format:jar:1.28.0 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.google.guava:guava:jar:32.1.3-jre < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.google.guava:failureaccess:jar:1.0.1 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.google.guava:listenablefuture:jar:9999.0-empty-to-avoid-conflict-with-guava < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.google.code.findbugs:jsr305:jar:3.0.2 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: org.checkerframework:checker-qual:jar:3.37.0 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.google.errorprone:error_prone_annotations:jar:2.21.1 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: com.google.j2objc:j2objc-annotations:jar:2.8 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] The resource 'config/maven-header-plain.txt' was not found with resourceLoader 'org.codehaus.plexus.resource.loader.FileResourceLoader'
+[DEBUG] The resource 'config/maven-header-plain.txt' was not found with resourceLoader 'org.codehaus.plexus.resource.loader.JarResourceLoader'
+[DEBUG] The resource 'config/maven-header-plain.txt' was found as 'jar:file:/tmp/fg306-maven.isLMNI/m2/org/apache/maven/shared/maven-shared-resources/6/maven-shared-resources-6.jar!/config/maven-header-plain.txt'
+[DEBUG] Dependency collection stats {ConflictMarker.analyzeTime=11600, ConflictMarker.markTime=11110, ConflictMarker.nodeCount=3, ConflictIdSorter.graphTime=6050, ConflictIdSorter.topsortTime=5610, ConflictIdSorter.conflictIdCount=2, ConflictIdSorter.conflictIdCycleCount=0, ConflictResolver.totalTime=47771, ConflictResolver.conflictItemCount=2, DfDependencyCollector.collectTime=1313997, DfDependencyCollector.transformTime=92441}
+[DEBUG] Resolved artifact: com.github.ekryd.sortpom:sortpom-sorter:jar:4.0.0 < central (https://repo.maven.apache.org/maven2, default, releases)
+[DEBUG] Resolved artifact: org.dom4j:dom4j:jar:2.1.4 < central (https://repo.maven.apache.org/maven2, default, releases)
+[INFO] Index file does not exist. Fallback to an empty index
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::staticFieldBase has been called by com.diffplug.spotless.java.ModuleHelper (file:/tmp/fg306-maven.isLMNI/m2/com/diffplug/spotless/spotless-lib/4.7.0/spotless-lib-4.7.0.jar)
+WARNING: Please consider reporting this to the maintainers of class com.diffplug.spotless.java.ModuleHelper
+WARNING: sun.misc.Unsafe::staticFieldBase will be removed in a future release
+[DEBUG] Allocating an additional FeatureClassLoader for key=com.diffplug.spotless.JarState@268f0ff3 Cache.size was 0
+[DEBUG] Allocating an additional FeatureClassLoader for key=com.diffplug.spotless.JarState@2ed84be9 Cache.size was 1
+[INFO] Spotless.Java is keeping 11 files clean - 0 were changed to be clean, 11 were already clean, 0 were skipped because caching determined they were already clean
+[DEBUG] Allocating an additional FeatureClassLoader for key=com.diffplug.spotless.JarState@a0bdbe2 Cache.size was 2
+[INFO] Spotless.Pom is keeping 1 files clean - 0 were changed to be clean, 1 were already clean, 0 were skipped because caching determined they were already clean
+[INFO] 
+[INFO] --- remote-resources:3.3.0:process (process-resource-bundles) @ maven-api-annotations ---
+[DEBUG] Dependency collection stats {ConflictMarker.analyzeTime=55051, ConflictMarker.markTime=18380, ConflictMarker.nodeCount=44, ConflictIdSorter.graphTime=14151, ConflictIdSorter.topsortTime=12800, ConflictIdSorter.conflictIdCount=23, ConflictIdSorter.conflictIdCycleCount=0, ConflictResolver.totalTime=179882, ConflictResolver.conflictItemCount=44, DfDependencyCollector.collectTime=12269934, DfDependencyCollector.transformTime=299824}
+[DEBUG] org.apache.maven.plugins:maven-remote-resources-plugin:jar:3.3.0
+[DEBUG]    org.apache.maven.resolver:maven-resolver-util:jar:1.4.1:compile
+[DEBUG]       org.apache.maven.resolver:maven-resolver-api:jar:1.4.1:compile
+[DEBUG]    org.apache.maven:maven-archiver:jar:3.6.3:compile
+[DEBUG]       org.codehaus.plexus:plexus-archiver:jar:4.10.0:compile
+[DEBUG]          org.codehaus.plexus:plexus-io:jar:3.5.0:compile
+[DEBUG]          org.apache.commons:commons-compress:jar:1.26.2:compile
+[DEBUG]             commons-codec:commons-codec:jar:1.17.0:compile
+[DEBUG]          io.airlift:aircompressor:jar:0.27:compile
+[DEBUG]          org.tukaani:xz:jar:1.9:runtime
+[DEBUG]          com.github.luben:zstd-jni:jar:1.5.6-3:runtime
+[DEBUG]       org.codehaus.plexus:plexus-interpolation:jar:1.27:compile
+[DEBUG]    org.apache.maven.shared:maven-filtering:jar:3.4.0:compile
+[DEBUG]       javax.inject:javax.inject:jar:1:compile
+[DEBUG]       org.slf4j:slf4j-api:jar:1.7.36:compile
+[DEBUG]       org.sonatype.plexus:plexus-build-api:jar:0.0.7:compile
+[DEBUG]       commons-io:commons-io:jar:2.16.1:compile
+[DEBUG]       org.apache.commons:commons-lang3:jar:3.17.0:compile (version managed from default)
+[DEBUG]    org.apache.maven.shared:maven-common-artifact-filters:jar:3.4.0:compile
+[DEBUG]    org.codehaus.plexus:plexus-resources:jar:1.3.0:compile
+[DEBUG]    org.codehaus.plexus:plexus-utils:jar:4.0.1:compile
+[DEBUG]    org.codehaus.plexus:plexus-xml:jar:3.0.1:compile
+[DEBUG]    org.apache.velocity:velocity-engine-core:jar:2.4.1:compile
+[DEBUG] Created new class realm plugin>org.apache.maven.plugins:maven-remote-resources-plugin:3.3.0
+[DEBUG] Importing foreign packages into class realm plugin>org.apache.maven.plugins:maven-remote-resources-plugin:3.3.0
+[DEBUG]   Imported:  < maven.api
+[DEBUG] Populating class realm plugin>org.apache.maven.plugins:maven-remote-resources-plugin:3.3.0
+[DEBUG]   Included: org.apache.maven.plugins:maven-remote-resources-plugin:jar:3.3.0
+[DEBUG]   Included: org.apache.maven:maven-archiver:jar:3.6.3
+[DEBUG]   Included: org.codehaus.plexus:plexus-archiver:jar:4.10.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-io:jar:3.5.0
+[DEBUG]   Included: org.apache.commons:commons-compress:jar:1.26.2
+[DEBUG]   Included: commons-codec:commons-codec:jar:1.17.0
+[DEBUG]   Included: io.airlift:aircompressor:jar:0.27
+[DEBUG]   Included: org.tukaani:xz:jar:1.9
+[DEBUG]   Included: com.github.luben:zstd-jni:jar:1.5.6-3
+[DEBUG]   Included: org.codehaus.plexus:plexus-interpolation:jar:1.27
+[DEBUG]   Included: org.apache.maven.shared:maven-filtering:jar:3.4.0
+[DEBUG]   Included: org.sonatype.plexus:plexus-build-api:jar:0.0.7
+[DEBUG]   Included: commons-io:commons-io:jar:2.16.1
+[DEBUG]   Included: org.apache.commons:commons-lang3:jar:3.17.0
+[DEBUG]   Included: org.apache.maven.shared:maven-common-artifact-filters:jar:3.4.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-resources:jar:1.3.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-utils:jar:4.0.1
+[DEBUG]   Included: org.codehaus.plexus:plexus-xml:jar:3.0.1
+[DEBUG]   Included: org.apache.velocity:velocity-engine-core:jar:2.4.1
+[DEBUG] Loading mojo org.apache.maven.plugins:maven-remote-resources-plugin:3.3.0:process from plugin realm ClassRealm[plugin>org.apache.maven.plugins:maven-remote-resources-plugin:3.3.0, parent: jdk.internal.loader.ClassLoaders$AppClassLoader@5bc2b487]
+[DEBUG] Configuring mojo execution 'org.apache.maven.plugins:maven-remote-resources-plugin:3.3.0:process:process-resource-bundles' with basic configurator -->
+[DEBUG]   (f) appendedResourcesDirectory = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/appended-resources
+[DEBUG]   (f) attachToMain = true
+[DEBUG]   (f) attachToTest = true
+[DEBUG]   (f) encoding = UTF-8
+[DEBUG]   (f) excludeTransitive = false
+[DEBUG]   (f) includeProjectProperties = false
+[DEBUG]   (f) includeScope = runtime
+[DEBUG]   (f) mavenSession = org.apache.maven.execution.MavenSession@26844abb
+[DEBUG]   (f) outputDirectory = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/maven-shared-archive-resources
+[DEBUG]   (f) outputTimestamp = 2025-06-24T20:18:00Z
+[DEBUG]   (f) project = MavenProject: org.apache.maven:maven-api-annotations:4.1.0-SNAPSHOT @ /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/pom.xml
+[DEBUG]   (f) resourceBundles = [org.apache.apache.resources:apache-jar-resource-bundle:1.8]
+[DEBUG]   (f) skip = false
+[DEBUG]   (f) useDefaultFilterDelimiters = true
+[DEBUG]   (f) useProjectFiles = false
+[DEBUG]   (f) velocityFilterInMemoryThreshold = 5242880
+[DEBUG] -- end configuration --
+[INFO] Preparing remote bundle org.apache.apache.resources:apache-jar-resource-bundle:1.8
+[DEBUG] Supplemental data models won't be loaded. No models specified.
+[DEBUG] Initializing Velocity, Calling init()...
+[DEBUG] Starting Apache Velocity 2.4.1
+[DEBUG] Default Properties resource: org/apache/velocity/runtime/defaults/velocity.properties
+[DEBUG] ResourceLoader instantiated: org.apache.velocity.runtime.resource.loader.ClasspathResourceLoader
+[DEBUG] initialized (class org.apache.velocity.runtime.resource.ResourceCacheImpl) with class java.util.Collections$SynchronizedMap cache map.
+[DEBUG] Loaded System Directive: org.apache.velocity.runtime.directive.Stop
+[DEBUG] Loaded System Directive: org.apache.velocity.runtime.directive.Define
+[DEBUG] Loaded System Directive: org.apache.velocity.runtime.directive.Break
+[DEBUG] Loaded System Directive: org.apache.velocity.runtime.directive.Evaluate
+[DEBUG] Loaded System Directive: org.apache.velocity.runtime.directive.Macro
+[DEBUG] Loaded System Directive: org.apache.velocity.runtime.directive.Parse
+[DEBUG] Loaded System Directive: org.apache.velocity.runtime.directive.Include
+[DEBUG] Loaded System Directive: org.apache.velocity.runtime.directive.Foreach
+[DEBUG] Created 20 parsers.
+[DEBUG] "velocimacro.library.path" is not set. Trying default library: velocimacros.vtl
+[DEBUG] Could not load resource 'velocimacros.vtl' from ResourceLoader org.apache.velocity.runtime.resource.loader.ClasspathResourceLoader
+[DEBUG] Default library velocimacros.vtl not found. Trying old default library: VM_global_library.vm
+[DEBUG] Could not load resource 'VM_global_library.vm' from ResourceLoader org.apache.velocity.runtime.resource.loader.ClasspathResourceLoader
+[DEBUG] Old default library VM_global_library.vm not found.
+[DEBUG] allowInline = true: VMs can be defined inline in templates
+[DEBUG] allowInlineToOverride = false: VMs defined inline may NOT replace previous VM definitions
+[DEBUG] allowInlineLocal = false: VMs defined inline will be global in scope if allowed.
+[DEBUG] autoload off: VM system will not automatically reload global library macros
+[DEBUG] processResourceBundle on bundle#1 jar:file:/tmp/fg306-maven.isLMNI/m2/org/apache/apache/resources/apache-jar-resource-bundle/1.8/apache-jar-resource-bundle-1.8.jar!/META-INF/maven/remote-resources.xml
+[DEBUG] bundle#1 resource#1 META-INF/DEPENDENCIES.vm
+[DEBUG] bundle#1 resource#2 META-INF/LICENSE.vm
+[DEBUG] bundle#1 resource#3 META-INF/NOTICE.vm
+[INFO] Copying 3 resources from 1 bundle.
+[DEBUG] ResourceManager: found META-INF/DEPENDENCIES.vm with loader org.apache.velocity.runtime.resource.loader.ClasspathResourceLoader
+[DEBUG] PROJECTS: []
+[DEBUG] ResourceManager: found META-INF/LICENSE.vm with loader org.apache.velocity.runtime.resource.loader.ClasspathResourceLoader
+[DEBUG] ResourceManager: found META-INF/NOTICE.vm with loader org.apache.velocity.runtime.resource.loader.ClasspathResourceLoader
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ maven-api-annotations ---
+[DEBUG] Dependency collection stats {ConflictMarker.analyzeTime=33440, ConflictMarker.markTime=11100, ConflictMarker.nodeCount=12, ConflictIdSorter.graphTime=6461, ConflictIdSorter.topsortTime=8890, ConflictIdSorter.conflictIdCount=9, ConflictIdSorter.conflictIdCycleCount=0, ConflictResolver.totalTime=74491, ConflictResolver.conflictItemCount=12, DfDependencyCollector.collectTime=6928797, DfDependencyCollector.transformTime=148162}
+[DEBUG] org.apache.maven.plugins:maven-resources-plugin:jar:3.5.0
+[DEBUG]    org.apache.maven.shared:maven-filtering:jar:3.5.0:compile
+[DEBUG]       org.slf4j:slf4j-api:jar:1.7.36:compile
+[DEBUG]       org.codehaus.plexus:plexus-build-api:jar:1.2.0:compile
+[DEBUG]          javax.inject:javax.inject:jar:1:compile
+[DEBUG]          org.sonatype.plexus:plexus-build-api:jar:0.0.7:compile
+[DEBUG]          org.eclipse.sisu:org.eclipse.sisu.plexus:jar:0.9.0.M4:compile (version managed from default)
+[DEBUG]       org.codehaus.plexus:plexus-interpolation:jar:1.29:compile
+[DEBUG]    org.codehaus.plexus:plexus-utils:jar:3.6.0:compile
+[DEBUG] Created new class realm plugin>org.apache.maven.plugins:maven-resources-plugin:3.5.0
+[DEBUG] Importing foreign packages into class realm plugin>org.apache.maven.plugins:maven-resources-plugin:3.5.0
+[DEBUG]   Imported:  < maven.api
+[DEBUG] Populating class realm plugin>org.apache.maven.plugins:maven-resources-plugin:3.5.0
+[DEBUG]   Included: org.apache.maven.plugins:maven-resources-plugin:jar:3.5.0
+[DEBUG]   Included: org.apache.maven.shared:maven-filtering:jar:3.5.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-build-api:jar:1.2.0
+[DEBUG]   Included: org.sonatype.plexus:plexus-build-api:jar:0.0.7
+[DEBUG]   Included: org.codehaus.plexus:plexus-interpolation:jar:1.29
+[DEBUG]   Included: org.codehaus.plexus:plexus-utils:jar:3.6.0
+[DEBUG] Loading mojo org.apache.maven.plugins:maven-resources-plugin:3.5.0:resources from plugin realm ClassRealm[plugin>org.apache.maven.plugins:maven-resources-plugin:3.5.0, parent: jdk.internal.loader.ClassLoaders$AppClassLoader@5bc2b487]
+[DEBUG] Configuring mojo execution 'org.apache.maven.plugins:maven-resources-plugin:3.5.0:resources:default-resources' with basic configurator -->
+[DEBUG]   (f) addDefaultExcludes = true
+[DEBUG]   (f) buildFilters = []
+[DEBUG]   (f) encoding = UTF-8
+[DEBUG]   (f) escapeWindowsPaths = true
+[DEBUG]   (f) fileNameFiltering = false
+[DEBUG]   (s) includeEmptyDirs = false
+[DEBUG]   (s) outputDirectory = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/classes
+[DEBUG]   (s) overwrite = false
+[DEBUG]   (f) project = MavenProject: org.apache.maven:maven-api-annotations:4.1.0-SNAPSHOT @ /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/pom.xml
+[DEBUG]   (s) resources = [Resource {targetPath: null, filtering: false, FileSet {directory: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/resources, PatternSet [includes: {}, excludes: {}]}}, Resource {targetPath: null, filtering: false, FileSet {directory: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/maven-shared-archive-resources, PatternSet [includes: {}, excludes: {}]}}]
+[DEBUG]   (f) session = org.apache.maven.execution.MavenSession@26844abb
+[DEBUG]   (f) skip = false
+[DEBUG]   (f) supportMultiLineFiltering = false
+[DEBUG]   (f) useBuildFilters = true
+[DEBUG]   (s) useDefaultDelimiters = true
+[DEBUG] -- end configuration --
+[DEBUG] properties used:
+[DEBUG] argLine.mockito: 
+[DEBUG] argLine.xmx: -Xmx256m
+[DEBUG] asmVersion: 9.10.1
+[DEBUG] assembly.tarLongFileMode: posix
+[DEBUG] byteBuddyVersion: 1.18.13
+[DEBUG] checkstyle.includeTestSourceDirectory: true
+[DEBUG] classWorldsVersion: 2.12.1
+[DEBUG] classworlds.conf: /home/srikanth/.m2/wrapper/dists/apache-maven-3.9.16-bin/4200fbc6/apache-maven-3.9.16/bin/m2.conf
+[DEBUG] commonsCliVersion: 1.11.0
+[DEBUG] distMgmtReleasesId: apache.releases.https
+[DEBUG] distMgmtReleasesName: Apache Release Distribution Repository
+[DEBUG] distMgmtReleasesUrl: https://repository.apache.org/service/local/staging/deploy/maven2
+[DEBUG] distMgmtSnapshotsId: apache.snapshots.https
+[DEBUG] distMgmtSnapshotsName: Apache Development Snapshot Repository
+[DEBUG] distMgmtSnapshotsUrl: https://repository.apache.org/content/repositories/snapshots
+[DEBUG] distributionId: apache-maven
+[DEBUG] distributionName: Apache Maven
+[DEBUG] distributionShortName: Maven
+[DEBUG] domtripVersion: 1.6.0
+[DEBUG] env.BUILD_NUMBER: 5
+[DEBUG] env.HOME: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/_agent_home/39180b0f0ca7381729dd61b4f6861974f641bd8bd8824d51f074dce76f5d8941
+[DEBUG] env.MAVEN_CMD_LINE_ARGS:  -o -X -Dmaven.repo.local=/tmp/fg306-maven.isLMNI/m2 -pl api/maven-api-annotations test
+[DEBUG] env.MAVEN_PROJECTBASEDIR: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9
+[DEBUG] env.OLDPWD: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9
+[DEBUG] env.PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+[DEBUG] env.PWD: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9
+[DEBUG] env.SHLVL: 1
+[DEBUG] env.TMPDIR: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/_agent_home/39180b0f0ca7381729dd61b4f6861974f641bd8bd8824d51f074dce76f5d8941/tmp
+[DEBUG] env.WORKSPACE: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9
+[DEBUG] env._: /usr/bin/time
+[DEBUG] file.encoding: UTF-8
+[DEBUG] file.separator: /
+[DEBUG] gpg.useagent: true
+[DEBUG] guavaVersion: 33.7.1-jre
+[DEBUG] guavafailureaccessVersion: 1.0.1
+[DEBUG] guiceVersion: 5.1.0
+[DEBUG] invoker.rerunFailingTestsCount: 1
+[DEBUG] invoker.streamLogsOnFailures: true
+[DEBUG] jacocoArgLine: 
+[DEBUG] jakartaInjectApiVersion: 2.0.1
+[DEBUG] java.class.path: /home/srikanth/.m2/wrapper/dists/apache-maven-3.9.16-bin/4200fbc6/apache-maven-3.9.16/boot/plexus-classworlds-2.11.0.jar
+[DEBUG] java.class.version: 69.0
+[DEBUG] java.home: /opt/temurin/jdk-25.0.3+9
+[DEBUG] java.io.tmpdir: /tmp
+[DEBUG] java.library.path: /usr/java/packages/lib:/usr/lib64:/lib64:/lib:/usr/lib
+[DEBUG] java.runtime.name: OpenJDK Runtime Environment
+[DEBUG] java.runtime.version: 25.0.3+9-LTS
+[DEBUG] java.specification.name: Java Platform API Specification
+[DEBUG] java.specification.vendor: Oracle Corporation
+[DEBUG] java.specification.version: 25
+[DEBUG] java.vendor: Eclipse Adoptium
+[DEBUG] java.vendor.url: https://adoptium.net/
+[DEBUG] java.vendor.url.bug: https://github.com/adoptium/adoptium-support/issues
+[DEBUG] java.vendor.version: Temurin-25.0.3+9
+[DEBUG] java.version: 25.0.3
+[DEBUG] java.version.date: 2026-04-21
+[DEBUG] java.vm.compressedOopsMode: Zero based
+[DEBUG] java.vm.info: mixed mode, sharing
+[DEBUG] java.vm.name: OpenJDK 64-Bit Server VM
+[DEBUG] java.vm.specification.name: Java Virtual Machine Specification
+[DEBUG] java.vm.specification.vendor: Oracle Corporation
+[DEBUG] java.vm.specification.version: 25
+[DEBUG] java.vm.vendor: Eclipse Adoptium
+[DEBUG] java.vm.version: 25.0.3+9-LTS
+[DEBUG] javaVersion: 17
+[DEBUG] javaxAnnotationApiVersion: 1.3.2
+[DEBUG] jdk.debug: release
+[DEBUG] jlineVersion: 4.4.2
+[DEBUG] jmhVersion: 1.37
+[DEBUG] junitVersion: 6.1.3
+[DEBUG] jxpathVersion: 1.4.0
+[DEBUG] library.jansi.path: /home/srikanth/.m2/wrapper/dists/apache-maven-3.9.16-bin/4200fbc6/apache-maven-3.9.16/lib/jansi-native
+[DEBUG] line.separator: 
+
+[DEBUG] logbackClassicVersion: 1.6.3
+[DEBUG] maven.baseline: 3.9.8
+[DEBUG] maven.build.timestamp: 2026-09-29T17:26:15Z
+[DEBUG] maven.build.version: Apache Maven 3.9.16 (2bdd9fddda4b155ebf8000e807eb73fd829a51d5)
+[DEBUG] maven.compiler.proc: full
+[DEBUG] maven.compiler.release: 17
+[DEBUG] maven.compiler.showDeprecation: true
+[DEBUG] maven.compiler.source: 17
+[DEBUG] maven.compiler.target: 17
+[DEBUG] maven.conf: /home/srikanth/.m2/wrapper/dists/apache-maven-3.9.16-bin/4200fbc6/apache-maven-3.9.16/conf
+[DEBUG] maven.home: /home/srikanth/.m2/wrapper/dists/apache-maven-3.9.16-bin/4200fbc6/apache-maven-3.9.16
+[DEBUG] maven.multiModuleProjectDirectory: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9
+[DEBUG] maven.repo.local: /tmp/fg306-maven.isLMNI/m2
+[DEBUG] maven.site.cache: /home/srikanth/maven-sites
+[DEBUG] maven.site.path: ref/4-LATEST
+[DEBUG] maven.site.path.suffix: LATEST
+[DEBUG] maven.test.redirectTestOutputToFile: true
+[DEBUG] maven.version: 3.9.16
+[DEBUG] minimalJavaBuildVersion: 17
+[DEBUG] minimalMavenBuildVersion: 3.9
+[DEBUG] mockitoVersion: 5.23.0
+[DEBUG] native.encoding: ANSI_X3.4-1968
+[DEBUG] organization.logo: https://www.apache.org/images/asf_logo_wide_2016.png
+[DEBUG] os.arch: amd64
+[DEBUG] os.name: Linux
+[DEBUG] os.version: 7.0.0-30-generic
+[DEBUG] path.separator: :
+[DEBUG] plexusInteractivityVersion: 1.6.0
+[DEBUG] plexusInterpolationVersion: 1.30.0
+[DEBUG] plexusTestingVersion: 2.2.0
+[DEBUG] plexusXmlVersion: 4.2.0
+[DEBUG] project.baseUri: file:/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/
+[DEBUG] project.build.outputTimestamp: 2025-06-24T20:18:00Z
+[DEBUG] project.build.sourceEncoding: UTF-8
+[DEBUG] project.reporting.outputEncoding: UTF-8
+[DEBUG] releaseParallelPut: false
+[DEBUG] resolverVersion: 2.0.22
+[DEBUG] resourceBundleArtifact: apache-jar-resource-bundle
+[DEBUG] securityDispatcherVersion: 4.2.0
+[DEBUG] sisuVersion: 1.1.0
+[DEBUG] slf4jVersion: 2.0.19
+[DEBUG] sourceReleaseAssemblyDescriptor: source-release
+[DEBUG] spotless.action: apply
+[DEBUG] stax2ApiVersion: 4.3.0
+[DEBUG] stderr.encoding: ANSI_X3.4-1968
+[DEBUG] stdin.encoding: ANSI_X3.4-1968
+[DEBUG] stdout.encoding: ANSI_X3.4-1968
+[DEBUG] sun.arch.data.model: 64
+[DEBUG] sun.boot.library.path: /opt/temurin/jdk-25.0.3+9/lib
+[DEBUG] sun.cpu.endian: little
+[DEBUG] sun.io.unicode.encoding: UnicodeLittle
+[DEBUG] sun.java.command: org.codehaus.plexus.classworlds.launcher.Launcher -o -X -Dmaven.repo.local=/tmp/fg306-maven.isLMNI/m2 -pl api/maven-api-annotations test
+[DEBUG] sun.java.launcher: SUN_STANDARD
+[DEBUG] sun.jnu.encoding: ANSI_X3.4-1968
+[DEBUG] sun.management.compiler: HotSpot 64-Bit Tiered Compilers
+[DEBUG] surefire.version: 3.5.6
+[DEBUG] toolboxVersion: 0.14.1
+[DEBUG] user.country: US
+[DEBUG] user.dir: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9
+[DEBUG] user.home: /home/srikanth
+[DEBUG] user.language: en
+[DEBUG] user.name: srikanth
+[DEBUG] version.apache-rat-plugin: 0.16.1
+[DEBUG] version.apache-resource-bundles: 1.8
+[DEBUG] version.checksum-maven-plugin: 1.11
+[DEBUG] version.maven-antrun-plugin: 3.2.0
+[DEBUG] version.maven-assembly-plugin: 3.8.0
+[DEBUG] version.maven-checkstyle-plugin: 3.6.0
+[DEBUG] version.maven-clean-plugin: 3.5.0
+[DEBUG] version.maven-compiler-plugin: 3.15.0
+[DEBUG] version.maven-dependency-plugin: 3.11.0
+[DEBUG] version.maven-deploy-plugin: 3.1.4
+[DEBUG] version.maven-ear-plugin: 3.4.0
+[DEBUG] version.maven-enforcer-plugin: 3.6.3
+[DEBUG] version.maven-fluido-skin: 2.1.0
+[DEBUG] version.maven-gpg-plugin: 3.2.8
+[DEBUG] version.maven-help-plugin: 3.5.1
+[DEBUG] version.maven-install-plugin: 3.1.4
+[DEBUG] version.maven-invoker-plugin: 3.10.1
+[DEBUG] version.maven-jar-plugin: 3.5.0
+[DEBUG] version.maven-javadoc-plugin: 3.12.0
+[DEBUG] version.maven-plugin-tools: 3.15.2
+[DEBUG] version.maven-project-info-reports-plugin: 3.9.0
+[DEBUG] version.maven-release-plugin: 3.3.1
+[DEBUG] version.maven-remote-resources-plugin: 3.3.0
+[DEBUG] version.maven-resources-plugin: 3.5.0
+[DEBUG] version.maven-scm-plugin: 2.2.1
+[DEBUG] version.maven-scm-publish-plugin: 3.3.0
+[DEBUG] version.maven-shade-plugin: 3.6.2
+[DEBUG] version.maven-shared-resources: 6
+[DEBUG] version.maven-site-plugin: 3.22.0
+[DEBUG] version.maven-source-plugin: 3.4.0
+[DEBUG] version.maven-surefire: 3.5.6
+[DEBUG] version.maven-war-plugin: 3.5.1
+[DEBUG] version.palantirJavaFormat: 2.93.0
+[DEBUG] version.plexus-utils: 4.0.3
+[DEBUG] version.plexus-xml: 3.0.1
+[DEBUG] version.sisu-maven-plugin: 1.0.1
+[DEBUG] version.spotless-maven-plugin: 3.7.0
+[DEBUG] version.tooling.atr: 1.0.0-alpha-1
+[DEBUG] versions.junit5: 5.14.4
+[DEBUG] wagonVersion: 3.5.3
+[DEBUG] woodstoxVersion: 7.2.2
+[DEBUG] xmlunitVersion: 2.13.0
+[DEBUG] Using 'UTF-8' encoding to copy filtered resources.
+[DEBUG] Using 'UTF-8' encoding to copy filtered properties files.
+[DEBUG] resource with targetPath null
+directory /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/resources
+excludes []
+includes []
+[INFO] skip non existing resourceDirectory /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/resources
+[DEBUG] resource with targetPath null
+directory /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/maven-shared-archive-resources
+excludes []
+includes []
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/classes
+[DEBUG] Copying file META-INF/DEPENDENCIES
+[DEBUG] file DEPENDENCIES has a filtered file extension
+[DEBUG] Using 'UTF-8' encoding to copy filtered resource 'DEPENDENCIES'.
+[DEBUG] copy /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/maven-shared-archive-resources/META-INF/DEPENDENCIES to /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/classes/META-INF/DEPENDENCIES
+[DEBUG] Copying file META-INF/LICENSE
+[DEBUG] file LICENSE has a filtered file extension
+[DEBUG] Using 'UTF-8' encoding to copy filtered resource 'LICENSE'.
+[DEBUG] copy /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/maven-shared-archive-resources/META-INF/LICENSE to /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/classes/META-INF/LICENSE
+[DEBUG] Copying file META-INF/NOTICE
+[DEBUG] file NOTICE has a filtered file extension
+[DEBUG] Using 'UTF-8' encoding to copy filtered resource 'NOTICE'.
+[DEBUG] copy /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/maven-shared-archive-resources/META-INF/NOTICE to /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/classes/META-INF/NOTICE
+[DEBUG] no user filter components
+[INFO] 
+[INFO] --- apache-rat:0.16.1:check (rat-check) @ maven-api-annotations ---
+[DEBUG] Dependency collection stats {ConflictMarker.analyzeTime=52321, ConflictMarker.markTime=37110, ConflictMarker.nodeCount=153, ConflictIdSorter.graphTime=20010, ConflictIdSorter.topsortTime=38501, ConflictIdSorter.conflictIdCount=50, ConflictIdSorter.conflictIdCycleCount=0, ConflictResolver.totalTime=379995, ConflictResolver.conflictItemCount=97, DfDependencyCollector.collectTime=36829852, DfDependencyCollector.transformTime=561297}
+[DEBUG] org.apache.rat:apache-rat-plugin:jar:0.16.1
+[DEBUG]    org.apache.commons:commons-lang3:jar:3.20.0:runtime
+[DEBUG]    org.apache.rat:apache-rat-core:jar:0.16.1:compile
+[DEBUG]       org.apache.commons:commons-collections4:jar:4.4:compile (version managed from default)
+[DEBUG]       commons-io:commons-io:jar:2.15.1:compile (version managed from default)
+[DEBUG]       org.apache.commons:commons-compress:jar:1.25.0:compile (version managed from default)
+[DEBUG]       commons-cli:commons-cli:jar:1.6.0:compile (version managed from default)
+[DEBUG]       commons-beanutils:commons-beanutils:jar:1.9.4:compile (version managed from default)
+[DEBUG]          commons-logging:commons-logging:jar:1.2:compile
+[DEBUG]    org.apache.maven.doxia:doxia-core:jar:1.12.0:compile
+[DEBUG]       org.apache.maven.doxia:doxia-logging-api:jar:1.12.0:compile
+[DEBUG]       org.codehaus.plexus:plexus-component-annotations:jar:2.1.0:compile
+[DEBUG]       org.apache.commons:commons-text:jar:1.3:compile
+[DEBUG]       org.apache.httpcomponents:httpclient:jar:4.5.13:compile
+[DEBUG]          commons-codec:commons-codec:jar:1.11:compile
+[DEBUG]       org.apache.httpcomponents:httpcore:jar:4.4.14:compile
+[DEBUG]    org.apache.maven.doxia:doxia-decoration-model:jar:1.11.1:compile
+[DEBUG]    org.apache.maven.doxia:doxia-module-xhtml:jar:1.12.0:compile
+[DEBUG]    org.apache.maven.doxia:doxia-sink-api:jar:1.12.0:compile
+[DEBUG]    org.apache.maven.doxia:doxia-integration-tools:jar:1.11.1:compile
+[DEBUG]       org.apache.maven:maven-artifact:jar:2.2.1:compile
+[DEBUG]       org.apache.maven:maven-model:jar:2.2.1:compile
+[DEBUG]       org.apache.maven:maven-plugin-api:jar:2.2.1:compile
+[DEBUG]       org.codehaus.plexus:plexus-i18n:jar:1.0-beta-10:compile
+[DEBUG]       org.codehaus.plexus:plexus-interpolation:jar:1.26:compile
+[DEBUG]    org.apache.maven.doxia:doxia-site-renderer:jar:1.11.1:compile
+[DEBUG]       org.apache.maven.doxia:doxia-skin-model:jar:1.11.1:compile
+[DEBUG]       org.apache.maven.doxia:doxia-module-xhtml5:jar:1.11.1:compile
+[DEBUG]       org.codehaus.plexus:plexus-velocity:jar:1.2:compile
+[DEBUG]       org.apache.velocity:velocity:jar:1.7:compile
+[DEBUG]          commons-lang:commons-lang:jar:2.4:compile
+[DEBUG]       org.apache.velocity:velocity-tools:jar:2.0:compile
+[DEBUG]          commons-digester:commons-digester:jar:1.8:compile
+[DEBUG]          commons-chain:commons-chain:jar:1.1:compile
+[DEBUG]          dom4j:dom4j:jar:1.1:compile
+[DEBUG]          oro:oro:jar:2.0.8:compile
+[DEBUG]       commons-collections:commons-collections:jar:3.2.2:compile
+[DEBUG]    org.apache.maven.reporting:maven-reporting-api:jar:3.1.1:compile
+[DEBUG]    org.apache.maven.shared:maven-shared-utils:jar:3.4.2:compile
+[DEBUG]       org.slf4j:slf4j-api:jar:1.7.36:compile
+[DEBUG]    org.codehaus.plexus:plexus-utils:jar:3.5.1:compile
+[DEBUG]    nl.basjes.gitignore:gitignore-reader:jar:1.3.1:compile
+[DEBUG] Created new class realm plugin>org.apache.rat:apache-rat-plugin:0.16.1
+[DEBUG] Importing foreign packages into class realm plugin>org.apache.rat:apache-rat-plugin:0.16.1
+[DEBUG]   Imported:  < maven.api
+[DEBUG] Populating class realm plugin>org.apache.rat:apache-rat-plugin:0.16.1
+[DEBUG]   Included: org.apache.rat:apache-rat-plugin:jar:0.16.1
+[DEBUG]   Included: org.apache.commons:commons-lang3:jar:3.20.0
+[DEBUG]   Included: org.apache.rat:apache-rat-core:jar:0.16.1
+[DEBUG]   Included: org.apache.commons:commons-collections4:jar:4.4
+[DEBUG]   Included: commons-io:commons-io:jar:2.15.1
+[DEBUG]   Included: org.apache.commons:commons-compress:jar:1.25.0
+[DEBUG]   Included: commons-cli:commons-cli:jar:1.6.0
+[DEBUG]   Included: commons-beanutils:commons-beanutils:jar:1.9.4
+[DEBUG]   Included: commons-logging:commons-logging:jar:1.2
+[DEBUG]   Included: org.apache.maven.doxia:doxia-core:jar:1.12.0
+[DEBUG]   Included: org.apache.maven.doxia:doxia-logging-api:jar:1.12.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-component-annotations:jar:2.1.0
+[DEBUG]   Included: org.apache.commons:commons-text:jar:1.3
+[DEBUG]   Included: org.apache.httpcomponents:httpclient:jar:4.5.13
+[DEBUG]   Included: commons-codec:commons-codec:jar:1.11
+[DEBUG]   Included: org.apache.httpcomponents:httpcore:jar:4.4.14
+[DEBUG]   Included: org.apache.maven.doxia:doxia-decoration-model:jar:1.11.1
+[DEBUG]   Included: org.apache.maven.doxia:doxia-module-xhtml:jar:1.12.0
+[DEBUG]   Included: org.apache.maven.doxia:doxia-sink-api:jar:1.12.0
+[DEBUG]   Included: org.apache.maven.doxia:doxia-integration-tools:jar:1.11.1
+[DEBUG]   Included: org.codehaus.plexus:plexus-i18n:jar:1.0-beta-10
+[DEBUG]   Included: org.codehaus.plexus:plexus-interpolation:jar:1.26
+[DEBUG]   Included: org.apache.maven.doxia:doxia-site-renderer:jar:1.11.1
+[DEBUG]   Included: org.apache.maven.doxia:doxia-skin-model:jar:1.11.1
+[DEBUG]   Included: org.apache.maven.doxia:doxia-module-xhtml5:jar:1.11.1
+[DEBUG]   Included: org.codehaus.plexus:plexus-velocity:jar:1.2
+[DEBUG]   Included: org.apache.velocity:velocity:jar:1.7
+[DEBUG]   Included: commons-lang:commons-lang:jar:2.4
+[DEBUG]   Included: org.apache.velocity:velocity-tools:jar:2.0
+[DEBUG]   Included: commons-digester:commons-digester:jar:1.8
+[DEBUG]   Included: commons-chain:commons-chain:jar:1.1
+[DEBUG]   Included: dom4j:dom4j:jar:1.1
+[DEBUG]   Included: oro:oro:jar:2.0.8
+[DEBUG]   Included: commons-collections:commons-collections:jar:3.2.2
+[DEBUG]   Included: org.apache.maven.reporting:maven-reporting-api:jar:3.1.1
+[DEBUG]   Included: org.apache.maven.shared:maven-shared-utils:jar:3.4.2
+[DEBUG]   Included: org.codehaus.plexus:plexus-utils:jar:3.5.1
+[DEBUG]   Included: nl.basjes.gitignore:gitignore-reader:jar:1.3.1
+[DEBUG] Loading mojo org.apache.rat:apache-rat-plugin:0.16.1:check from plugin realm ClassRealm[plugin>org.apache.rat:apache-rat-plugin:0.16.1, parent: jdk.internal.loader.ClassLoaders$AppClassLoader@5bc2b487]
+[DEBUG] Configuring mojo execution 'org.apache.rat:apache-rat-plugin:0.16.1:check:rat-check' with basic configurator -->
+[DEBUG]   (f) addDefaultLicenseMatchers = true
+[DEBUG]   (f) addDefaultLicenses = true
+[DEBUG]   (f) addLicenseHeaders = false
+[DEBUG]   (f) basedir = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations
+[DEBUG]   (f) consoleOutput = true
+[DEBUG]   (f) excludeSubProjects = true
+[DEBUG]   (f) excludes = [.java-version, .repository/**, .maven/spy.log, dependency-reduced-pom.xml, .asf.yaml, Jenkinsfile, **/.gitattributes, src/main/resources/META-INF/services/**, src/test/resources*/**, src/test/projects/**, src/test/remote-repo/**, its/**, **/*.odg, **/*.svg, .asf.yaml, .mvn/**, .jbang/**, src/main/appended-resources/licenses/**]
+[DEBUG]   (f) excludesFileCharset = UTF-8
+[DEBUG]   (f) ignoreErrors = false
+[DEBUG]   (f) includesFileCharset = UTF-8
+[DEBUG]   (f) numUnapprovedLicenses = 0
+[DEBUG]   (f) parseSCMIgnoresAsExcludes = true
+[DEBUG]   (f) project = MavenProject: org.apache.maven:maven-api-annotations:4.1.0-SNAPSHOT @ /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/pom.xml
+[DEBUG]   (f) reportFile = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/rat.txt
+[DEBUG]   (f) reportStyle = plain
+[DEBUG]   (f) scanHiddenDirectories = false
+[DEBUG]   (f) skip = false
+[DEBUG]   (f) useDefaultExcludes = true
+[DEBUG]   (f) useEclipseDefaultExcludes = true
+[DEBUG]   (f) useIdeaDefaultExcludes = true
+[DEBUG]   (f) useMavenDefaultExcludes = true
+[DEBUG] -- end configuration --
+[DEBUG] Adding plexus default exclusions...
+[DEBUG] Adding SCM default exclusions...
+[DEBUG] Adding exclusions often needed by Maven projects...
+[DEBUG] Adding exclusions often needed by projects developed in Eclipse...
+[DEBUG] Adding exclusions often needed by projects developed in IDEA...
+[DEBUG] Will parse SCM ignores for exclusions...
+[DEBUG] Recursively loading .gitignore files in /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations
+[DEBUG] Finished adding exclusions from SCM ignore files.
+[DEBUG] Finished creating list of implicit excludes.
+[DEBUG] 63 implicit excludes.
+[DEBUG] Implicit exclude: **/%*%
+[DEBUG] Implicit exclude: **/.git/**
+[DEBUG] Implicit exclude: **/SCCS
+[DEBUG] Implicit exclude: **/BitKeeper
+[DEBUG] Implicit exclude: **/ChangeSet/**
+[DEBUG] Implicit exclude: **/.bzr
+[DEBUG] Implicit exclude: **/.hg/**
+[DEBUG] Implicit exclude: **/.arch-ids/**
+[DEBUG] Implicit exclude: **/.bzrignore
+[DEBUG] Implicit exclude: **/.git
+[DEBUG] Implicit exclude: **/SCCS/**
+[DEBUG] Implicit exclude: **/_darcs
+[DEBUG] Implicit exclude: **/.hg
+[DEBUG] Implicit exclude: **/.metadata
+[DEBUG] Implicit exclude: */.hg/*
+[DEBUG] Implicit exclude: **/BitKeeper/**
+[DEBUG] Implicit exclude: */.git/*
+[DEBUG] Implicit exclude: **/.#*
+[DEBUG] Implicit exclude: **/vssver.scc
+[DEBUG] Implicit exclude: **/.bzr/**
+[DEBUG] Implicit exclude: **/.darcsrepo
+[DEBUG] Implicit exclude: **/._*
+[DEBUG] Implicit exclude: **/#*#
+[DEBUG] Implicit exclude: */.svn/*
+[DEBUG] Implicit exclude: */.bzr/*
+[DEBUG] Implicit exclude: **/*~
+[DEBUG] Implicit exclude: **/CVS
+[DEBUG] Implicit exclude: **/RCS
+[DEBUG] Implicit exclude: */CVS/*
+[DEBUG] Implicit exclude: **/RCS/**
+[DEBUG] Implicit exclude: **/.svn/**
+[DEBUG] Implicit exclude: **/.arch-ids
+[DEBUG] Implicit exclude: **/project.pj
+[DEBUG] Implicit exclude: **/.hgignore
+[DEBUG] Implicit exclude: **/-darcs-backup*
+[DEBUG] Implicit exclude: **/.darcs-temp-mail
+[DEBUG] Implicit exclude: **/.metadata/**
+[DEBUG] Implicit exclude: **/.svn
+[DEBUG] Implicit exclude: **/.gitignore
+[DEBUG] Implicit exclude: **/.MySCMServerInfo
+[DEBUG] Implicit exclude: **/ChangeSet
+[DEBUG] Implicit exclude: **/_darcs/**
+[DEBUG] Implicit exclude: **/CVS/**
+[DEBUG] Implicit exclude: **/.darcsrepo/**
+[DEBUG] Implicit exclude: **/.DS_Store
+[DEBUG] Implicit exclude: **/.cvsignore
+[DEBUG] Implicit exclude: **/MANIFEST.MF
+[DEBUG] Implicit exclude: target/**/*
+[DEBUG] Implicit exclude: .repository
+[DEBUG] Implicit exclude: pom.xml.releaseBackup
+[DEBUG] Implicit exclude: build.log
+[DEBUG] Implicit exclude: .mvn/**/*
+[DEBUG] Implicit exclude: cobertura.ser
+[DEBUG] Implicit exclude: release.properties
+[DEBUG] Implicit exclude: .classpath
+[DEBUG] Implicit exclude: .factorypath
+[DEBUG] Implicit exclude: .settings/**/*
+[DEBUG] Implicit exclude: .checkstyle
+[DEBUG] Implicit exclude: .project
+[DEBUG] Implicit exclude: *.ipr
+[DEBUG] Implicit exclude: *.iml
+[DEBUG] Implicit exclude: *.iws
+[DEBUG] Implicit exclude: .idea/**/*
+[DEBUG] 18 explicit excludes.
+[DEBUG] Exclude: .java-version
+[DEBUG] Exclude: .repository/**
+[DEBUG] Exclude: .maven/spy.log
+[DEBUG] Exclude: dependency-reduced-pom.xml
+[DEBUG] Exclude: .asf.yaml
+[DEBUG] Exclude: Jenkinsfile
+[DEBUG] Exclude: **/.gitattributes
+[DEBUG] Exclude: src/main/resources/META-INF/services/**
+[DEBUG] Exclude: src/test/resources*/**
+[DEBUG] Exclude: src/test/projects/**
+[DEBUG] Exclude: src/test/remote-repo/**
+[DEBUG] Exclude: its/**
+[DEBUG] Exclude: **/*.odg
+[DEBUG] Exclude: **/*.svg
+[DEBUG] Exclude: .asf.yaml
+[DEBUG] Exclude: .mvn/**
+[DEBUG] Exclude: .jbang/**
+[DEBUG] Exclude: src/main/appended-resources/licenses/**
+[DEBUG] Excluded 13 resources:
+[DEBUG]  - excluded target/checkstyle-checker.xml
+[DEBUG]  - excluded target/maven-shared-archive-resources/META-INF/DEPENDENCIES
+[DEBUG]  - excluded target/maven-shared-archive-resources/META-INF/LICENSE
+[DEBUG]  - excluded target/maven-shared-archive-resources/META-INF/NOTICE
+[DEBUG]  - excluded target/checkstyle-cachefile
+[DEBUG]  - excluded target/checkstyle-result.xml
+[DEBUG]  - excluded target/.plxarc
+[DEBUG]  - excluded target/spotless-index
+[DEBUG]  - excluded target/spotless-resource-hTmW+8Lla/9LvqBOthB+GBDUD4HTBKSd6GrNcjUNKk4=.txt
+[DEBUG]  - excluded target/spotless-resource-nm0akHi0k/WSNG2O2sKkcywZMfYhKX/AKGFZ4XeNiKc=.txt
+[DEBUG]  - excluded target/classes/META-INF/DEPENDENCIES
+[DEBUG]  - excluded target/classes/META-INF/LICENSE
+[DEBUG]  - excluded target/classes/META-INF/NOTICE
+[DEBUG] 13 resources included
+[DEBUG]  - included pom.xml
+[DEBUG]  - included src/main/java/org/apache/maven/api/annotations/NotThreadSafe.java
+[DEBUG]  - included src/main/java/org/apache/maven/api/annotations/Experimental.java
+[DEBUG]  - included src/main/java/org/apache/maven/api/annotations/Config.java
+[DEBUG]  - included src/main/java/org/apache/maven/api/annotations/ThreadSafe.java
+[DEBUG]  - included src/main/java/org/apache/maven/api/annotations/Nullable.java
+[DEBUG]  - included src/main/java/org/apache/maven/api/annotations/Generated.java
+[DEBUG]  - included src/main/java/org/apache/maven/api/annotations/Immutable.java
+[DEBUG]  - included src/main/java/org/apache/maven/api/annotations/package-info.java
+[DEBUG]  - included src/main/java/org/apache/maven/api/annotations/Nonnull.java
+[DEBUG]  - included src/main/java/org/apache/maven/api/annotations/Consumer.java
+[DEBUG]  - included src/main/java/org/apache/maven/api/annotations/Provider.java
+[DEBUG]  - included src/site/site.xml
+[DEBUG] The following 15 licenses are activated:
+[DEBUG] * AL:Apache License Version 2.0
+[DEBUG] * ASL:Applied Apache License Version 2.0
+[DEBUG] * BSD-3:BSD 3 clause
+[DEBUG] * CDDL1:COMMON DEVELOPMENT AND DISTRIBUTION LICENSE Version 1.0
+[DEBUG] * DOJO:DOJO License
+[DEBUG] * GEN:Generated Files
+[DEBUG] * GPL1:GNU General Public License, version 1
+[DEBUG] * GPL2:GNU General Public License, version 2
+[DEBUG] * GPL3:GNU General Public License, version 3
+[DEBUG] * ILLUMOS:ILLUMOS CDDL1 Derived license
+[DEBUG] * MIT:The MIT License
+[DEBUG] * OASIS:OASIS Open License
+[DEBUG] * TMF:The Telemanagement Forum License
+[DEBUG] * W3C:W3C Software Copyright
+[DEBUG] * W3CD:W3C Document Copyright
+[DEBUG] Licenses in Test
+[DEBUG] AL:Apache License Version 2.0
+[DEBUG] ASL:Applied Apache License Version 2.0
+[DEBUG] BSD-3:BSD 3 clause
+[DEBUG] CDDL1:COMMON DEVELOPMENT AND DISTRIBUTION LICENSE Version 1.0
+[DEBUG] DOJO:DOJO License
+[DEBUG] GEN:Generated Files
+[DEBUG] GPL1:GNU General Public License, version 1
+[DEBUG] GPL2:GNU General Public License, version 2
+[DEBUG] GPL3:GNU General Public License, version 3
+[DEBUG] ILLUMOS:ILLUMOS CDDL1 Derived license
+[DEBUG] MIT:The MIT License
+[DEBUG] OASIS:OASIS Open License
+[DEBUG] TMF:The Telemanagement Forum License
+[DEBUG] W3C:W3C Software Copyright
+[DEBUG] W3CD:W3C Document Copyright
+[DEBUG] Processing: File:/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/pom.xml
+[DEBUG] Processing: File:/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/NotThreadSafe.java
+[DEBUG] Processing: File:/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Experimental.java
+[DEBUG] Processing: File:/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Config.java
+[DEBUG] Processing: File:/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/ThreadSafe.java
+[DEBUG] Processing: File:/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Nullable.java
+[DEBUG] Processing: File:/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Generated.java
+[DEBUG] Processing: File:/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Immutable.java
+[DEBUG] Processing: File:/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/package-info.java
+[DEBUG] Processing: File:/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Nonnull.java
+[DEBUG] Processing: File:/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Consumer.java
+[DEBUG] Processing: File:/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Provider.java
+[DEBUG] Processing: File:/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/site/site.xml
+[INFO] Rat check: Summary over all files. Unapproved: 0, unknown: 0, generated: 0, approved: 13 licenses.
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ maven-api-annotations ---
+[DEBUG] Dependency collection stats {ConflictMarker.analyzeTime=39591, ConflictMarker.markTime=14670, ConflictMarker.nodeCount=23, ConflictIdSorter.graphTime=8130, ConflictIdSorter.topsortTime=12110, ConflictIdSorter.conflictIdCount=14, ConflictIdSorter.conflictIdCycleCount=0, ConflictResolver.totalTime=239893, ConflictResolver.conflictItemCount=23, DfDependencyCollector.collectTime=6802325, DfDependencyCollector.transformTime=340424}
+[DEBUG] org.apache.maven.plugins:maven-compiler-plugin:jar:3.15.0
+[DEBUG]    org.ow2.asm:asm:jar:9.9.1:compile
+[DEBUG]    org.apache.maven.shared:maven-shared-utils:jar:3.4.2:compile
+[DEBUG]       org.slf4j:slf4j-api:jar:1.7.36:compile
+[DEBUG]       commons-io:commons-io:jar:2.11.0:compile
+[DEBUG]    org.apache.maven.shared:maven-shared-incremental:jar:1.1:compile
+[DEBUG]    org.codehaus.plexus:plexus-java:jar:1.5.2:compile
+[DEBUG]       com.thoughtworks.qdox:qdox:jar:2.2.0:compile
+[DEBUG]    org.codehaus.plexus:plexus-compiler-api:jar:2.16.2:compile
+[DEBUG]    org.codehaus.plexus:plexus-compiler-manager:jar:2.16.2:compile
+[DEBUG]       javax.inject:javax.inject:jar:1:compile
+[DEBUG]       org.codehaus.plexus:plexus-xml:jar:3.0.1:compile (version managed from default)
+[DEBUG]    org.codehaus.plexus:plexus-compiler-javac:jar:2.16.2:runtime
+[DEBUG]    org.codehaus.plexus:plexus-utils:jar:4.0.2:compile
+[DEBUG] Created new class realm plugin>org.apache.maven.plugins:maven-compiler-plugin:3.15.0
+[DEBUG] Importing foreign packages into class realm plugin>org.apache.maven.plugins:maven-compiler-plugin:3.15.0
+[DEBUG]   Imported:  < maven.api
+[DEBUG] Populating class realm plugin>org.apache.maven.plugins:maven-compiler-plugin:3.15.0
+[DEBUG]   Included: org.apache.maven.plugins:maven-compiler-plugin:jar:3.15.0
+[DEBUG]   Included: org.ow2.asm:asm:jar:9.9.1
+[DEBUG]   Included: org.apache.maven.shared:maven-shared-utils:jar:3.4.2
+[DEBUG]   Included: commons-io:commons-io:jar:2.11.0
+[DEBUG]   Included: org.apache.maven.shared:maven-shared-incremental:jar:1.1
+[DEBUG]   Included: org.codehaus.plexus:plexus-java:jar:1.5.2
+[DEBUG]   Included: com.thoughtworks.qdox:qdox:jar:2.2.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-compiler-api:jar:2.16.2
+[DEBUG]   Included: org.codehaus.plexus:plexus-compiler-manager:jar:2.16.2
+[DEBUG]   Included: org.codehaus.plexus:plexus-xml:jar:3.0.1
+[DEBUG]   Included: org.codehaus.plexus:plexus-compiler-javac:jar:2.16.2
+[DEBUG]   Included: org.codehaus.plexus:plexus-utils:jar:4.0.2
+[DEBUG] Loading mojo org.apache.maven.plugins:maven-compiler-plugin:3.15.0:compile from plugin realm ClassRealm[plugin>org.apache.maven.plugins:maven-compiler-plugin:3.15.0, parent: jdk.internal.loader.ClassLoaders$AppClassLoader@5bc2b487]
+[DEBUG] Configuring mojo execution 'org.apache.maven.plugins:maven-compiler-plugin:3.15.0:compile:default-compile' with basic configurator -->
+[DEBUG]   (f) annotationProcessorPathsUseDepMgmt = false
+[DEBUG]   (f) basedir = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations
+[DEBUG]   (f) buildDirectory = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target
+[DEBUG]   (f) compilePath = [/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/classes]
+[DEBUG]   (f) compileSourceRoots = [/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java]
+[DEBUG]   (f) compilerId = javac
+[DEBUG]   (f) createMissingPackageInfoClass = true
+[DEBUG]   (f) debug = true
+[DEBUG]   (f) debugFileName = javac
+[DEBUG]   (f) enablePreview = false
+[DEBUG]   (f) encoding = UTF-8
+[DEBUG]   (f) failOnError = true
+[DEBUG]   (f) failOnWarning = false
+[DEBUG]   (f) fileExtensions = [jar, class]
+[DEBUG]   (f) forceJavacCompilerUse = false
+[DEBUG]   (f) forceLegacyJavacApi = false
+[DEBUG]   (f) fork = false
+[DEBUG]   (f) generatedSourcesDirectory = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/generated-sources/annotations
+[DEBUG]   (f) moduleVersion = 4.1.0-SNAPSHOT
+[DEBUG]   (f) mojoExecution = org.apache.maven.plugins:maven-compiler-plugin:3.15.0:compile {execution: default-compile}
+[DEBUG]   (f) optimize = false
+[DEBUG]   (f) outputDirectory = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/classes
+[DEBUG]   (f) outputTimestamp = 2025-06-24T20:18:00Z
+[DEBUG]   (f) parameters = false
+[DEBUG]   (f) proc = full
+[DEBUG]   (f) project = MavenProject: org.apache.maven:maven-api-annotations:4.1.0-SNAPSHOT @ /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/pom.xml
+[DEBUG]   (f) projectArtifact = org.apache.maven:maven-api-annotations:jar:4.1.0-SNAPSHOT
+[DEBUG]   (s) release = 17
+[DEBUG]   (f) session = org.apache.maven.execution.MavenSession@26844abb
+[DEBUG]   (f) showCompilationChanges = false
+[DEBUG]   (f) showDeprecation = true
+[DEBUG]   (f) showWarnings = true
+[DEBUG]   (f) skipMultiThreadWarning = false
+[DEBUG]   (f) source = 17
+[DEBUG]   (f) staleMillis = 0
+[DEBUG]   (s) target = 17
+[DEBUG]   (f) useIncrementalCompilation = true
+[DEBUG]   (f) useModuleVersion = true
+[DEBUG]   (f) verbose = false
+[DEBUG] -- end configuration --
+[DEBUG] Using compiler 'javac'.
+[DEBUG] CompilerReuseStrategy: reuseCreated
+[DEBUG] useIncrementalCompilation enabled
+[INFO] 	Stale source detected: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/ThreadSafe.java
+[INFO] 	Stale source detected: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Provider.java
+[INFO] 	Stale source detected: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Experimental.java
+[INFO] 	Stale source detected: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Nullable.java
+[INFO] 	Stale source detected: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Immutable.java
+[INFO] 	Stale source detected: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/NotThreadSafe.java
+[INFO] 	Stale source detected: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Config.java
+[INFO] 	Stale source detected: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/package-info.java
+[INFO] 	Stale source detected: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Consumer.java
+[INFO] 	Stale source detected: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Generated.java
+[INFO] 	Stale source detected: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Nonnull.java
+[INFO] 	Input tree files (+): /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Config.java
+[INFO] 	Input tree files (+): /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Consumer.java
+[INFO] 	Input tree files (+): /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Experimental.java
+[INFO] 	Input tree files (+): /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Generated.java
+[INFO] 	Input tree files (+): /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Immutable.java
+[INFO] 	Input tree files (+): /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Nonnull.java
+[INFO] 	Input tree files (+): /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/NotThreadSafe.java
+[INFO] 	Input tree files (+): /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Nullable.java
+[INFO] 	Input tree files (+): /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/Provider.java
+[INFO] 	Input tree files (+): /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/ThreadSafe.java
+[INFO] 	Input tree files (+): /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java/org/apache/maven/api/annotations/package-info.java
+[INFO] Recompiling the module because of changed source code.
+[DEBUG] Classpath:
+[DEBUG]  /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/classes
+[DEBUG] Source roots:
+[DEBUG]  /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java
+[DEBUG] Command line options:
+[DEBUG] -d /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/classes -classpath /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/classes: -sourcepath /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java: -s /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/generated-sources/annotations -proc:full -g -deprecation --release 17 -encoding UTF-8 -XDuseUnsharedTable=true
+[DEBUG] incrementalBuildHelper#beforeRebuildExecution
+[INFO] Compiling 11 source files with javac [debug deprecation release 17] to target/classes
+[DEBUG] incrementalBuildHelper#afterRebuildExecution
+[DEBUG] Adding /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/generated-sources/annotations to the project compile source roots but NOT the actual compile source roots:
+  /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/main/java
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ maven-api-annotations ---
+[DEBUG] Loading mojo org.apache.maven.plugins:maven-resources-plugin:3.5.0:testResources from plugin realm ClassRealm[plugin>org.apache.maven.plugins:maven-resources-plugin:3.5.0, parent: jdk.internal.loader.ClassLoaders$AppClassLoader@5bc2b487]
+[DEBUG] Configuring mojo execution 'org.apache.maven.plugins:maven-resources-plugin:3.5.0:testResources:default-testResources' with basic configurator -->
+[DEBUG]   (f) addDefaultExcludes = true
+[DEBUG]   (f) buildFilters = []
+[DEBUG]   (f) encoding = UTF-8
+[DEBUG]   (f) escapeWindowsPaths = true
+[DEBUG]   (f) fileNameFiltering = false
+[DEBUG]   (s) includeEmptyDirs = false
+[DEBUG]   (s) outputDirectory = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/test-classes
+[DEBUG]   (s) overwrite = false
+[DEBUG]   (f) project = MavenProject: org.apache.maven:maven-api-annotations:4.1.0-SNAPSHOT @ /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/pom.xml
+[DEBUG]   (s) resources = [Resource {targetPath: null, filtering: false, FileSet {directory: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/test/resources, PatternSet [includes: {}, excludes: {}]}}, Resource {targetPath: null, filtering: false, FileSet {directory: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/maven-shared-archive-resources, PatternSet [includes: {}, excludes: {}]}}]
+[DEBUG]   (f) session = org.apache.maven.execution.MavenSession@26844abb
+[DEBUG]   (f) skip = false
+[DEBUG]   (f) supportMultiLineFiltering = false
+[DEBUG]   (f) useBuildFilters = true
+[DEBUG]   (s) useDefaultDelimiters = true
+[DEBUG] -- end configuration --
+[DEBUG] properties used:
+[DEBUG] argLine.mockito: 
+[DEBUG] argLine.xmx: -Xmx256m
+[DEBUG] asmVersion: 9.10.1
+[DEBUG] assembly.tarLongFileMode: posix
+[DEBUG] byteBuddyVersion: 1.18.13
+[DEBUG] checkstyle.includeTestSourceDirectory: true
+[DEBUG] classWorldsVersion: 2.12.1
+[DEBUG] classworlds.conf: /home/srikanth/.m2/wrapper/dists/apache-maven-3.9.16-bin/4200fbc6/apache-maven-3.9.16/bin/m2.conf
+[DEBUG] commonsCliVersion: 1.11.0
+[DEBUG] distMgmtReleasesId: apache.releases.https
+[DEBUG] distMgmtReleasesName: Apache Release Distribution Repository
+[DEBUG] distMgmtReleasesUrl: https://repository.apache.org/service/local/staging/deploy/maven2
+[DEBUG] distMgmtSnapshotsId: apache.snapshots.https
+[DEBUG] distMgmtSnapshotsName: Apache Development Snapshot Repository
+[DEBUG] distMgmtSnapshotsUrl: https://repository.apache.org/content/repositories/snapshots
+[DEBUG] distributionId: apache-maven
+[DEBUG] distributionName: Apache Maven
+[DEBUG] distributionShortName: Maven
+[DEBUG] domtripVersion: 1.6.0
+[DEBUG] env.BUILD_NUMBER: 5
+[DEBUG] env.HOME: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/_agent_home/39180b0f0ca7381729dd61b4f6861974f641bd8bd8824d51f074dce76f5d8941
+[DEBUG] env.MAVEN_CMD_LINE_ARGS:  -o -X -Dmaven.repo.local=/tmp/fg306-maven.isLMNI/m2 -pl api/maven-api-annotations test
+[DEBUG] env.MAVEN_PROJECTBASEDIR: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9
+[DEBUG] env.OLDPWD: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9
+[DEBUG] env.PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+[DEBUG] env.PWD: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9
+[DEBUG] env.SHLVL: 1
+[DEBUG] env.TMPDIR: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/_agent_home/39180b0f0ca7381729dd61b4f6861974f641bd8bd8824d51f074dce76f5d8941/tmp
+[DEBUG] env.WORKSPACE: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9
+[DEBUG] env._: /usr/bin/time
+[DEBUG] file.encoding: UTF-8
+[DEBUG] file.separator: /
+[DEBUG] gpg.useagent: true
+[DEBUG] guavaVersion: 33.7.1-jre
+[DEBUG] guavafailureaccessVersion: 1.0.1
+[DEBUG] guiceVersion: 5.1.0
+[DEBUG] invoker.rerunFailingTestsCount: 1
+[DEBUG] invoker.streamLogsOnFailures: true
+[DEBUG] jacocoArgLine: 
+[DEBUG] jakartaInjectApiVersion: 2.0.1
+[DEBUG] java.class.path: /home/srikanth/.m2/wrapper/dists/apache-maven-3.9.16-bin/4200fbc6/apache-maven-3.9.16/boot/plexus-classworlds-2.11.0.jar
+[DEBUG] java.class.version: 69.0
+[DEBUG] java.home: /opt/temurin/jdk-25.0.3+9
+[DEBUG] java.io.tmpdir: /tmp
+[DEBUG] java.library.path: /usr/java/packages/lib:/usr/lib64:/lib64:/lib:/usr/lib
+[DEBUG] java.runtime.name: OpenJDK Runtime Environment
+[DEBUG] java.runtime.version: 25.0.3+9-LTS
+[DEBUG] java.specification.name: Java Platform API Specification
+[DEBUG] java.specification.vendor: Oracle Corporation
+[DEBUG] java.specification.version: 25
+[DEBUG] java.vendor: Eclipse Adoptium
+[DEBUG] java.vendor.url: https://adoptium.net/
+[DEBUG] java.vendor.url.bug: https://github.com/adoptium/adoptium-support/issues
+[DEBUG] java.vendor.version: Temurin-25.0.3+9
+[DEBUG] java.version: 25.0.3
+[DEBUG] java.version.date: 2026-04-21
+[DEBUG] java.vm.compressedOopsMode: Zero based
+[DEBUG] java.vm.info: mixed mode, sharing
+[DEBUG] java.vm.name: OpenJDK 64-Bit Server VM
+[DEBUG] java.vm.specification.name: Java Virtual Machine Specification
+[DEBUG] java.vm.specification.vendor: Oracle Corporation
+[DEBUG] java.vm.specification.version: 25
+[DEBUG] java.vm.vendor: Eclipse Adoptium
+[DEBUG] java.vm.version: 25.0.3+9-LTS
+[DEBUG] javaVersion: 17
+[DEBUG] javaxAnnotationApiVersion: 1.3.2
+[DEBUG] jdk.debug: release
+[DEBUG] jlineVersion: 4.4.2
+[DEBUG] jmhVersion: 1.37
+[DEBUG] junitVersion: 6.1.3
+[DEBUG] jxpathVersion: 1.4.0
+[DEBUG] library.jansi.path: /home/srikanth/.m2/wrapper/dists/apache-maven-3.9.16-bin/4200fbc6/apache-maven-3.9.16/lib/jansi-native
+[DEBUG] line.separator: 
+
+[DEBUG] logbackClassicVersion: 1.6.3
+[DEBUG] maven.baseline: 3.9.8
+[DEBUG] maven.build.timestamp: 2026-09-29T17:26:15Z
+[DEBUG] maven.build.version: Apache Maven 3.9.16 (2bdd9fddda4b155ebf8000e807eb73fd829a51d5)
+[DEBUG] maven.compiler.proc: full
+[DEBUG] maven.compiler.release: 17
+[DEBUG] maven.compiler.showDeprecation: true
+[DEBUG] maven.compiler.source: 17
+[DEBUG] maven.compiler.target: 17
+[DEBUG] maven.conf: /home/srikanth/.m2/wrapper/dists/apache-maven-3.9.16-bin/4200fbc6/apache-maven-3.9.16/conf
+[DEBUG] maven.home: /home/srikanth/.m2/wrapper/dists/apache-maven-3.9.16-bin/4200fbc6/apache-maven-3.9.16
+[DEBUG] maven.multiModuleProjectDirectory: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9
+[DEBUG] maven.repo.local: /tmp/fg306-maven.isLMNI/m2
+[DEBUG] maven.site.cache: /home/srikanth/maven-sites
+[DEBUG] maven.site.path: ref/4-LATEST
+[DEBUG] maven.site.path.suffix: LATEST
+[DEBUG] maven.test.redirectTestOutputToFile: true
+[DEBUG] maven.version: 3.9.16
+[DEBUG] minimalJavaBuildVersion: 17
+[DEBUG] minimalMavenBuildVersion: 3.9
+[DEBUG] mockitoVersion: 5.23.0
+[DEBUG] native.encoding: ANSI_X3.4-1968
+[DEBUG] organization.logo: https://www.apache.org/images/asf_logo_wide_2016.png
+[DEBUG] os.arch: amd64
+[DEBUG] os.name: Linux
+[DEBUG] os.version: 7.0.0-30-generic
+[DEBUG] path.separator: :
+[DEBUG] plexusInteractivityVersion: 1.6.0
+[DEBUG] plexusInterpolationVersion: 1.30.0
+[DEBUG] plexusTestingVersion: 2.2.0
+[DEBUG] plexusXmlVersion: 4.2.0
+[DEBUG] project.baseUri: file:/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/
+[DEBUG] project.build.outputTimestamp: 2025-06-24T20:18:00Z
+[DEBUG] project.build.sourceEncoding: UTF-8
+[DEBUG] project.reporting.outputEncoding: UTF-8
+[DEBUG] releaseParallelPut: false
+[DEBUG] resolverVersion: 2.0.22
+[DEBUG] resourceBundleArtifact: apache-jar-resource-bundle
+[DEBUG] securityDispatcherVersion: 4.2.0
+[DEBUG] sisuVersion: 1.1.0
+[DEBUG] slf4jVersion: 2.0.19
+[DEBUG] sourceReleaseAssemblyDescriptor: source-release
+[DEBUG] spotless.action: apply
+[DEBUG] stax2ApiVersion: 4.3.0
+[DEBUG] stderr.encoding: ANSI_X3.4-1968
+[DEBUG] stdin.encoding: ANSI_X3.4-1968
+[DEBUG] stdout.encoding: ANSI_X3.4-1968
+[DEBUG] sun.arch.data.model: 64
+[DEBUG] sun.boot.library.path: /opt/temurin/jdk-25.0.3+9/lib
+[DEBUG] sun.cpu.endian: little
+[DEBUG] sun.io.unicode.encoding: UnicodeLittle
+[DEBUG] sun.java.command: org.codehaus.plexus.classworlds.launcher.Launcher -o -X -Dmaven.repo.local=/tmp/fg306-maven.isLMNI/m2 -pl api/maven-api-annotations test
+[DEBUG] sun.java.launcher: SUN_STANDARD
+[DEBUG] sun.jnu.encoding: ANSI_X3.4-1968
+[DEBUG] sun.management.compiler: HotSpot 64-Bit Tiered Compilers
+[DEBUG] surefire.version: 3.5.6
+[DEBUG] toolboxVersion: 0.14.1
+[DEBUG] user.country: US
+[DEBUG] user.dir: /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9
+[DEBUG] user.home: /home/srikanth
+[DEBUG] user.language: en
+[DEBUG] user.name: srikanth
+[DEBUG] version.apache-rat-plugin: 0.16.1
+[DEBUG] version.apache-resource-bundles: 1.8
+[DEBUG] version.checksum-maven-plugin: 1.11
+[DEBUG] version.maven-antrun-plugin: 3.2.0
+[DEBUG] version.maven-assembly-plugin: 3.8.0
+[DEBUG] version.maven-checkstyle-plugin: 3.6.0
+[DEBUG] version.maven-clean-plugin: 3.5.0
+[DEBUG] version.maven-compiler-plugin: 3.15.0
+[DEBUG] version.maven-dependency-plugin: 3.11.0
+[DEBUG] version.maven-deploy-plugin: 3.1.4
+[DEBUG] version.maven-ear-plugin: 3.4.0
+[DEBUG] version.maven-enforcer-plugin: 3.6.3
+[DEBUG] version.maven-fluido-skin: 2.1.0
+[DEBUG] version.maven-gpg-plugin: 3.2.8
+[DEBUG] version.maven-help-plugin: 3.5.1
+[DEBUG] version.maven-install-plugin: 3.1.4
+[DEBUG] version.maven-invoker-plugin: 3.10.1
+[DEBUG] version.maven-jar-plugin: 3.5.0
+[DEBUG] version.maven-javadoc-plugin: 3.12.0
+[DEBUG] version.maven-plugin-tools: 3.15.2
+[DEBUG] version.maven-project-info-reports-plugin: 3.9.0
+[DEBUG] version.maven-release-plugin: 3.3.1
+[DEBUG] version.maven-remote-resources-plugin: 3.3.0
+[DEBUG] version.maven-resources-plugin: 3.5.0
+[DEBUG] version.maven-scm-plugin: 2.2.1
+[DEBUG] version.maven-scm-publish-plugin: 3.3.0
+[DEBUG] version.maven-shade-plugin: 3.6.2
+[DEBUG] version.maven-shared-resources: 6
+[DEBUG] version.maven-site-plugin: 3.22.0
+[DEBUG] version.maven-source-plugin: 3.4.0
+[DEBUG] version.maven-surefire: 3.5.6
+[DEBUG] version.maven-war-plugin: 3.5.1
+[DEBUG] version.palantirJavaFormat: 2.93.0
+[DEBUG] version.plexus-utils: 4.0.3
+[DEBUG] version.plexus-xml: 3.0.1
+[DEBUG] version.sisu-maven-plugin: 1.0.1
+[DEBUG] version.spotless-maven-plugin: 3.7.0
+[DEBUG] version.tooling.atr: 1.0.0-alpha-1
+[DEBUG] versions.junit5: 5.14.4
+[DEBUG] wagonVersion: 3.5.3
+[DEBUG] woodstoxVersion: 7.2.2
+[DEBUG] xmlunitVersion: 2.13.0
+[DEBUG] Using 'UTF-8' encoding to copy filtered resources.
+[DEBUG] Using 'UTF-8' encoding to copy filtered properties files.
+[DEBUG] resource with targetPath null
+directory /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/test/resources
+excludes []
+includes []
+[INFO] skip non existing resourceDirectory /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/test/resources
+[DEBUG] resource with targetPath null
+directory /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/maven-shared-archive-resources
+excludes []
+includes []
+[INFO] Copying 3 resources from target/maven-shared-archive-resources to target/test-classes
+[DEBUG] Copying file META-INF/DEPENDENCIES
+[DEBUG] file DEPENDENCIES has a filtered file extension
+[DEBUG] Using 'UTF-8' encoding to copy filtered resource 'DEPENDENCIES'.
+[DEBUG] copy /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/maven-shared-archive-resources/META-INF/DEPENDENCIES to /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/test-classes/META-INF/DEPENDENCIES
+[DEBUG] Copying file META-INF/LICENSE
+[DEBUG] file LICENSE has a filtered file extension
+[DEBUG] Using 'UTF-8' encoding to copy filtered resource 'LICENSE'.
+[DEBUG] copy /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/maven-shared-archive-resources/META-INF/LICENSE to /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/test-classes/META-INF/LICENSE
+[DEBUG] Copying file META-INF/NOTICE
+[DEBUG] file NOTICE has a filtered file extension
+[DEBUG] Using 'UTF-8' encoding to copy filtered resource 'NOTICE'.
+[DEBUG] copy /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/maven-shared-archive-resources/META-INF/NOTICE to /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/test-classes/META-INF/NOTICE
+[DEBUG] no user filter components
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ maven-api-annotations ---
+[DEBUG] Loading mojo org.apache.maven.plugins:maven-compiler-plugin:3.15.0:testCompile from plugin realm ClassRealm[plugin>org.apache.maven.plugins:maven-compiler-plugin:3.15.0, parent: jdk.internal.loader.ClassLoaders$AppClassLoader@5bc2b487]
+[DEBUG] Configuring mojo execution 'org.apache.maven.plugins:maven-compiler-plugin:3.15.0:testCompile:default-testCompile' with basic configurator -->
+[DEBUG]   (f) annotationProcessorPathsUseDepMgmt = false
+[DEBUG]   (f) basedir = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations
+[DEBUG]   (f) buildDirectory = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target
+[DEBUG]   (f) compileSourceRoots = [/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/test/java]
+[DEBUG]   (f) compilerId = javac
+[DEBUG]   (f) createMissingPackageInfoClass = true
+[DEBUG]   (f) debug = true
+[DEBUG]   (f) debugFileName = javac-test
+[DEBUG]   (f) enablePreview = false
+[DEBUG]   (f) encoding = UTF-8
+[DEBUG]   (f) failOnError = true
+[DEBUG]   (f) failOnWarning = false
+[DEBUG]   (f) fileExtensions = [jar, class]
+[DEBUG]   (f) forceJavacCompilerUse = false
+[DEBUG]   (f) forceLegacyJavacApi = false
+[DEBUG]   (f) fork = false
+[DEBUG]   (f) generatedTestSourcesDirectory = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/generated-test-sources/test-annotations
+[DEBUG]   (f) mojoExecution = org.apache.maven.plugins:maven-compiler-plugin:3.15.0:testCompile {execution: default-testCompile}
+[DEBUG]   (f) optimize = false
+[DEBUG]   (f) outputDirectory = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/test-classes
+[DEBUG]   (f) outputTimestamp = 2025-06-24T20:18:00Z
+[DEBUG]   (f) parameters = false
+[DEBUG]   (f) proc = full
+[DEBUG]   (f) project = MavenProject: org.apache.maven:maven-api-annotations:4.1.0-SNAPSHOT @ /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/pom.xml
+[DEBUG]   (s) release = 17
+[DEBUG]   (f) session = org.apache.maven.execution.MavenSession@26844abb
+[DEBUG]   (f) showCompilationChanges = false
+[DEBUG]   (f) showDeprecation = true
+[DEBUG]   (f) showWarnings = true
+[DEBUG]   (f) skipMultiThreadWarning = false
+[DEBUG]   (f) source = 17
+[DEBUG]   (f) staleMillis = 0
+[DEBUG]   (s) target = 17
+[DEBUG]   (f) testPath = [/tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/test-classes, /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/classes]
+[DEBUG]   (f) useIncrementalCompilation = true
+[DEBUG]   (f) useModulePath = true
+[DEBUG]   (f) verbose = false
+[DEBUG] -- end configuration --
+[DEBUG] Using compiler 'javac'.
+[INFO] No sources to compile
+[DEBUG] Adding /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/generated-test-sources/test-annotations to the project test-compile source roots but NOT the actual test-compile source roots:
+  /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/test/java
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ maven-api-annotations ---
+[DEBUG] Dependency collection stats {ConflictMarker.analyzeTime=13730, ConflictMarker.markTime=11950, ConflictMarker.nodeCount=25, ConflictIdSorter.graphTime=8520, ConflictIdSorter.topsortTime=10101, ConflictIdSorter.conflictIdCount=15, ConflictIdSorter.conflictIdCycleCount=0, ConflictResolver.totalTime=211912, ConflictResolver.conflictItemCount=25, DfDependencyCollector.collectTime=6746105, DfDependencyCollector.transformTime=267063}
+[DEBUG] org.apache.maven.plugins:maven-surefire-plugin:jar:3.5.6
+[DEBUG]    org.apache.maven.surefire:surefire-api:jar:3.5.6:compile
+[DEBUG]       org.apache.maven.surefire:surefire-logger-api:jar:3.5.6:compile
+[DEBUG]       org.apache.maven.surefire:surefire-shared-utils:jar:3.5.6:compile (version managed from default)
+[DEBUG]    org.apache.maven.surefire:surefire-extensions-api:jar:3.5.6:compile
+[DEBUG]    org.apache.maven.surefire:maven-surefire-common:jar:3.5.6:compile
+[DEBUG]       org.apache.maven.surefire:surefire-booter:jar:3.5.6:compile
+[DEBUG]          org.apache.maven.surefire:surefire-extensions-spi:jar:3.5.6:compile
+[DEBUG]       org.apache.maven.resolver:maven-resolver-util:jar:1.4.1:compile
+[DEBUG]          org.apache.maven.resolver:maven-resolver-api:jar:1.4.1:compile
+[DEBUG]       org.apache.maven.shared:maven-common-artifact-filters:jar:3.4.0:compile (version managed from default)
+[DEBUG]          org.slf4j:slf4j-api:jar:1.7.36:compile (version managed from default)
+[DEBUG]       org.codehaus.plexus:plexus-java:jar:1.5.2:compile (version managed from default)
+[DEBUG]          org.ow2.asm:asm:jar:9.9.1:compile
+[DEBUG]          com.thoughtworks.qdox:qdox:jar:2.2.0:compile
+[DEBUG] Created new class realm plugin>org.apache.maven.plugins:maven-surefire-plugin:3.5.6
+[DEBUG] Importing foreign packages into class realm plugin>org.apache.maven.plugins:maven-surefire-plugin:3.5.6
+[DEBUG]   Imported:  < maven.api
+[DEBUG] Populating class realm plugin>org.apache.maven.plugins:maven-surefire-plugin:3.5.6
+[DEBUG]   Included: org.apache.maven.plugins:maven-surefire-plugin:jar:3.5.6
+[DEBUG]   Included: org.apache.maven.surefire:surefire-api:jar:3.5.6
+[DEBUG]   Included: org.apache.maven.surefire:surefire-logger-api:jar:3.5.6
+[DEBUG]   Included: org.apache.maven.surefire:surefire-shared-utils:jar:3.5.6
+[DEBUG]   Included: org.apache.maven.surefire:surefire-extensions-api:jar:3.5.6
+[DEBUG]   Included: org.apache.maven.surefire:maven-surefire-common:jar:3.5.6
+[DEBUG]   Included: org.apache.maven.surefire:surefire-booter:jar:3.5.6
+[DEBUG]   Included: org.apache.maven.surefire:surefire-extensions-spi:jar:3.5.6
+[DEBUG]   Included: org.apache.maven.shared:maven-common-artifact-filters:jar:3.4.0
+[DEBUG]   Included: org.codehaus.plexus:plexus-java:jar:1.5.2
+[DEBUG]   Included: org.ow2.asm:asm:jar:9.9.1
+[DEBUG]   Included: com.thoughtworks.qdox:qdox:jar:2.2.0
+[DEBUG] Loading mojo org.apache.maven.plugins:maven-surefire-plugin:3.5.6:test from plugin realm ClassRealm[plugin>org.apache.maven.plugins:maven-surefire-plugin:3.5.6, parent: jdk.internal.loader.ClassLoaders$AppClassLoader@5bc2b487]
+[DEBUG] Configuring mojo execution 'org.apache.maven.plugins:maven-surefire-plugin:3.5.6:test:default-test' with basic configurator -->
+[DEBUG]   (f) additionalClasspathDependencies = []
+[DEBUG]   (s) additionalClasspathElements = []
+[DEBUG]   (s) argLine = -Xmx256m @{jacocoArgLine} 
+[DEBUG]   (s) basedir = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations
+[DEBUG]   (s) childDelegation = false
+[DEBUG]   (f) classesDirectory = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/classes
+[DEBUG]   (s) classpathDependencyExcludes = []
+[DEBUG]   (s) dependenciesToScan = []
+[DEBUG]   (s) enableAssertions = true
+[DEBUG]   (s) enableOutErrElements = true
+[DEBUG]   (s) enablePropertiesElement = true
+[DEBUG]   (s) encoding = UTF-8
+[DEBUG]   (s) environmentVariables = {JENKINS_MAVEN_AGENT_DISABLED=true}
+[DEBUG]   (s) excludeJUnit5Engines = []
+[DEBUG]   (f) excludedEnvironmentVariables = []
+[DEBUG]   (s) excludes = []
+[DEBUG]   (s) failIfNoSpecifiedTests = true
+[DEBUG]   (s) failIfNoTests = false
+[DEBUG]   (s) failOnFlakeCount = 0
+[DEBUG]   (f) forkCount = 1
+[DEBUG]   (f) forkNode = org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory@19544627
+[DEBUG]   (s) forkedProcessExitTimeoutInSeconds = 30
+[DEBUG]   (s) includeJUnit5Engines = []
+[DEBUG]   (s) includes = []
+[DEBUG]   (s) junitArtifactName = junit:junit
+[DEBUG]   (f) parallelMavenExecution = false
+[DEBUG]   (s) parallelOptimized = true
+[DEBUG]   (s) perCoreThreadCount = true
+[DEBUG]   (s) pluginArtifactMap = {org.apache.maven.plugins:maven-surefire-plugin=org.apache.maven.plugins:maven-surefire-plugin:maven-plugin:3.5.6:, org.apache.maven.surefire:surefire-api=org.apache.maven.surefire:surefire-api:jar:3.5.6:compile, org.apache.maven.surefire:surefire-logger-api=org.apache.maven.surefire:surefire-logger-api:jar:3.5.6:compile, org.apache.maven.surefire:surefire-shared-utils=org.apache.maven.surefire:surefire-shared-utils:jar:3.5.6:compile, org.apache.maven.surefire:surefire-extensions-api=org.apache.maven.surefire:surefire-extensions-api:jar:3.5.6:compile, org.apache.maven.surefire:maven-surefire-common=org.apache.maven.surefire:maven-surefire-common:jar:3.5.6:compile, org.apache.maven.surefire:surefire-booter=org.apache.maven.surefire:surefire-booter:jar:3.5.6:compile, org.apache.maven.surefire:surefire-extensions-spi=org.apache.maven.surefire:surefire-extensions-spi:jar:3.5.6:compile, org.apache.maven.resolver:maven-resolver-util=org.apache.maven.resolver:maven-resolver-util:jar:1.4.1:compile, org.apache.maven.resolver:maven-resolver-api=org.apache.maven.resolver:maven-resolver-api:jar:1.4.1:compile, org.apache.maven.shared:maven-common-artifact-filters=org.apache.maven.shared:maven-common-artifact-filters:jar:3.4.0:compile, org.slf4j:slf4j-api=org.slf4j:slf4j-api:jar:1.7.36:compile, org.codehaus.plexus:plexus-java=org.codehaus.plexus:plexus-java:jar:1.5.2:compile, org.ow2.asm:asm=org.ow2.asm:asm:jar:9.9.1:compile, com.thoughtworks.qdox:qdox=com.thoughtworks.qdox:qdox:jar:2.2.0:compile}
+[DEBUG]   (f) pluginDescriptor = Component Descriptor: role: 'org.apache.maven.plugin.Mojo', implementation: 'org.apache.maven.plugins.maven_surefire_plugin.HelpMojo', role hint: 'org.apache.maven.plugins:maven-surefire-plugin:3.5.6:help'
+role: 'org.apache.maven.plugin.Mojo', implementation: 'org.apache.maven.plugin.surefire.SurefireMojo', role hint: 'org.apache.maven.plugins:maven-surefire-plugin:3.5.6:test'
+---
+[DEBUG]   (s) printSummary = true
+[DEBUG]   (s) project = MavenProject: org.apache.maven:maven-api-annotations:4.1.0-SNAPSHOT @ /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/pom.xml
+[DEBUG]   (s) projectArtifactMap = {}
+[DEBUG]   (s) projectBuildDirectory = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target
+[DEBUG]   (f) promoteUserPropertiesToSystemProperties = true
+[DEBUG]   (s) redirectTestOutputToFile = true
+[DEBUG]   (s) reportFormat = brief
+[DEBUG]   (f) reportTestTimestamp = false
+[DEBUG]   (s) reportsDirectory = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/surefire-reports
+[DEBUG]   (f) rerunFailingTestsCount = 0
+[DEBUG]   (f) reuseForks = true
+[DEBUG]   (s) runOrder = filesystem
+[DEBUG]   (s) session = org.apache.maven.execution.MavenSession@26844abb
+[DEBUG]   (f) shutdown = exit
+[DEBUG]   (s) skip = false
+[DEBUG]   (f) skipAfterFailureCount = 0
+[DEBUG]   (s) skipTests = false
+[DEBUG]   (s) suiteXmlFiles = []
+[DEBUG]   (s) systemPropertyVariables = {version.toolbox=0.14.1}
+[DEBUG]   (s) tempDir = surefire
+[DEBUG]   (s) testClassesDirectory = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/target/test-classes
+[DEBUG]   (s) testFailureIgnore = false
+[DEBUG]   (s) testNGArtifactName = org.testng:testng
+[DEBUG]   (s) testSourceDirectory = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations/src/test/java
+[DEBUG]   (s) threadCountClasses = 0
+[DEBUG]   (s) threadCountMethods = 0
+[DEBUG]   (s) threadCountSuites = 0
+[DEBUG]   (s) trimStackTrace = false
+[DEBUG]   (s) useFile = true
+[DEBUG]   (s) useManifestOnlyJar = true
+[DEBUG]   (f) useModulePath = true
+[DEBUG]   (s) useSystemClassLoader = true
+[DEBUG]   (s) useUnlimitedThreads = false
+[DEBUG]   (s) workingDirectory = /tmp/fogell-native-proof-4l7jfeaa/state/workspaces/280e0fb4122f49e3886f78e1affacfe9/9657ee061214430e821367c65f9a89e9/api/maven-api-annotations
+[DEBUG] -- end configuration --
+[DEBUG] Using JVM: /opt/temurin/jdk-25.0.3+9/bin/java with Java version 25.0
+[DEBUG] Resolved included and excluded patterns: **/Test*.java, **/*Test.java, **/*Tests.java, **/*TestCase.java, !**/*$*
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  1.750 s
+[INFO] Finished at: 2026-09-29T12:26:15-05:00
+[INFO] ------------------------------------------------------------------------
+[DEBUG] Shutting down adapter factory; available factories [file-lock, rwlock-local, semaphore-local, noop]; available name mappers [discriminating, file-gaecv, file-gav, file-hgaecv, file-hgav, file-static, gaecv, gav, static]
+[DEBUG] Shutting down 'file-lock' factory
+[DEBUG] Shutting down 'rwlock-local' factory
+[DEBUG] Shutting down 'semaphore-local' factory
+[DEBUG] Shutting down 'noop' factory
+	Command being timed: "/home/srikanth/.m2/wrapper/dists/apache-maven-3.9.16-bin/4200fbc6/apache-maven-3.9.16/bin/mvn -o -X -Dmaven.repo.local=/tmp/fg306-maven.isLMNI/m2 -pl api/maven-api-annotations test"
+	User time (seconds): 11.31
+	System time (seconds): 0.45
+	Percent of CPU this job got: 526%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:02.23
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 503200
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 2
+	Minor (reclaiming a frame) page faults: 183828
+	Voluntary context switches: 123069
+	Involuntary context switches: 1498
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 480
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

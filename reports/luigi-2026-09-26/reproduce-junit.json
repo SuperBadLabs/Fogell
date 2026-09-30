@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "stages": [
+    {
+      "name": "verify",
+      "steps": [
+        {
+          "run": "printf '<testsuite><testcase name=\"bad\" classname=\"tests\"><failure message=\"broken\"/></testcase></testsuite>' > report.xml"
+        },
+        {
+          "test_report": "report.xml"
+        },
+        {
+          "echo": "after-report"
+        },
+        {
+          "archive": "report.xml",
+          "always": true
+        }
+      ]
+    }
+  ]
+}

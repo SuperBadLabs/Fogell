@@ -2,13 +2,6 @@ namespace Fogell.Journal
 
 open Fogell.Domain
 
-/// ADR 0003. One durable record per observable transition.
-///
-/// The unit of durability is the STEP, not the stage. Forge resumes at a stage
-/// boundary and re-executes the interrupted stage — at-least-once, which is
-/// harmless for a test stage and a double deploy for a deploy stage. Jenkins
-/// resumes mid-step from a serialized continuation and is strictly better here.
-/// This is the record set that closes that gap.
 type Record =
     /// A step is ABOUT to run. Written and made durable BEFORE execution, so a
     /// crash between the write and the effect is recoverable — we know the step
@@ -17,10 +10,6 @@ type Record =
     /// A step finished with a known outcome. Only this record makes a step safe
     /// to skip on resume.
     | StepFinished of stage: string * stepIndex: int * status: BuildStatus
-    /// A stage-local warning produced by a step. It is deliberately separate
-    /// from StepFinished: Jenkins can leave the build SUCCESS while a WarningAction
-    /// makes the enclosing stage UNSTABLE. Written before StepFinished so a
-    /// durably skippable step can never lose the stage consequence on resume.
     | StepStageWarning of stage: string * stepIndex: int * status: BuildStatus
     /// A stage boundary — the point at which the journal is fsynced (group
     /// commit). Everything before it is durable.
@@ -46,20 +35,6 @@ type Record =
     /// controller-side state (artifacts, stashes, SCM records — all under the
     /// root) differs. A resume pointed elsewhere refuses by name.
     | WorkspaceIdentity of root: string * job: string
-    /// FG-046b. A human's answer to an `input` prompt, recorded the moment it
-    /// arrives and INDEPENDENTLY of the step's own outcome. That independence is
-    /// the whole point: an approval is a human act, expensive and unrepeatable,
-    /// and a crash between the answer and the step finishing must not ask for it
-    /// twice. MEASURED on Jenkins 2.568.1: a pending input survives a controller
-    /// restart with the SAME action id, so an approval addressed before the
-    /// restart still lands after it. UNPROVEN BY RECEIPT — the differential
-    /// harness has no approver on the Jenkins side, so this is probe-measured
-    /// (ADR 0005) and lane-asserted (scripts/run-approval-lane.sh).
-    ///
-    /// `occurrence` counts the prompts under one durability key, from 1. The key
-    /// is the TOP-LEVEL step, so two prompts inside one `timeout` share it —
-    /// without the ordinal, the first human's answer was cached and handed
-    /// straight to the second gate, which nobody had reviewed.
     | InputDecision of
         stage: string *
         stepIndex: int *

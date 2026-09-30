@@ -1,6 +1,7 @@
 namespace Fogell.Controller.Api
 
 open System
+open System.Text.Json
 open System.IO
 open System.Runtime.InteropServices
 open System.Text
@@ -324,12 +325,6 @@ module Router =
                     return Ok(bytes.ToArray())
         }
 
-    /// POST …/builds — submit a Jenkinsfile.
-    ///
-    /// The body is the pipeline source. It is PARSED before admission, so a
-    /// malformed pipeline is rejected with its error code and source position
-    /// rather than becoming a queued build that fails later for reasons the
-    /// submitter cannot see.
     let private submit (state: ApiState) (ctx: HttpContext) =
         task {
             if not (authorized state ctx) then
@@ -355,13 +350,17 @@ module Router =
                         | Some key when Encoding.UTF8.GetByteCount key > 256 ->
                             return! fail ctx 400 "idempotency_key_too_long" "Idempotency-Key must be at most 256 bytes" None
                         | Some key ->
-                            let! body = readBoundedBody ctx state.MaxPipelineBytes
+                            let snapshotSubmission =
+                                not (isNull ctx.Request.ContentType)
+                                && (ctx.Request.ContentType.Split(';').[0]).Equals(SourceSnapshot.MediaType, StringComparison.OrdinalIgnoreCase)
+                            let limit = if snapshotSubmission then SourceSnapshot.MaxEnvelopeBytes else state.MaxPipelineBytes
+                            let! body = readBoundedBody ctx limit
 
                             match body with
                             | Error _ ->
                                 return!
                                     fail ctx 413 "pipeline_too_large"
-                                        $"pipeline source must be at most {state.MaxPipelineBytes} bytes" None
+                                        $"submission must be at most {limit} bytes" None
                             | Ok sourceBytes ->
                                 let probe: AdmissionProbe =
                                     { OrganizationId = OrganizationId org
@@ -388,6 +387,7 @@ module Router =
                                 // A miss creates nothing and takes no authority: AdmitBuild remains
                                 // the race arbiter after fresh-source preflight.
                                 match state.Store.TryReplayAdmission probe with
+                                | Result.Error "evidence_expired" -> return! fail ctx 410 "evidence_expired" "build evidence has expired" None
                                 | Result.Error e when
                                     e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
                                     ->
@@ -400,12 +400,19 @@ module Router =
                                 | Result.Ok None ->
                                     let sourceResult =
                                         try
-                                            Ok(UTF8Encoding(false, true).GetString sourceBytes)
+                                            if snapshotSubmission then
+                                                match SourceSnapshot.decode sourceBytes with
+                                                | Ok(Some snapshot) ->
+                                                    if Convert.FromBase64String(snapshot.PipelineBase64).Length > state.MaxPipelineBytes then
+                                                        Error "snapshot pipeline exceeds configured pipeline limit"
+                                                    else Ok(UTF8Encoding(false, true).GetString(Convert.FromBase64String snapshot.PipelineBase64))
+                                                | _ -> Error "invalid source snapshot"
+                                            else Ok(UTF8Encoding(false, true).GetString sourceBytes)
                                         with :? DecoderFallbackException ->
                                             Error "pipeline source must be valid UTF-8"
 
                                     match sourceResult with
-                                    | Error message -> return! fail ctx 400 "invalid_utf8" message None
+                                    | Error message -> return! fail ctx 400 (if snapshotSubmission then "invalid_source_snapshot" else "invalid_utf8") message None
                                     | Ok source ->
                                         match Fogell.Pipeline.Parser.Parser.parse source with
                                         | Result.Error e ->
@@ -428,25 +435,17 @@ module Router =
                                                   RequiredTrustPool = probe.RequiredTrustPool
                                                   RequiredCapabilities = probe.RequiredCapabilities }
 
-                                            // Parse success is deliberately broader than execution
-                                            // capability. Only a fresh key must satisfy the same
-                                            // fail-closed persisted preflight as Run.Host before
-                                            // binding a build number or idempotency key.
-                                            match Fogell.Differential.FogellSide.preflightControllerExecution source with
-                                            | Result.Error why ->
+                                            match state.Store.AdmitBuild input with
+                                            | Result.Error "evidence_expired" -> return! fail ctx 410 "evidence_expired" "build evidence has expired" None
+                                            | Result.Error e when
+                                                e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
+                                                ->
+                                                return! fail ctx 409 "idempotency_conflict" e None
+                                            | Result.Error _ ->
                                                 return!
-                                                    fail ctx 422 "execution_unsupported" why None
-                                            | Result.Ok _ ->
-                                                match state.Store.AdmitBuild input with
-                                                | Result.Error e when
-                                                    e.StartsWith("idempotency key is already bound", StringComparison.Ordinal)
-                                                    ->
-                                                    return! fail ctx 409 "idempotency_conflict" e None
-                                                | Result.Error _ ->
-                                                    return!
-                                                        fail ctx 503 "admission_unavailable"
-                                                            "build admission is temporarily unavailable" None
-                                                | Result.Ok admission -> return! respond admission
+                                                    fail ctx 503 "admission_unavailable"
+                                                        "build admission is temporarily unavailable" None
+                                            | Result.Ok admission -> return! respond admission
         }
         :> Threading.Tasks.Task
 
@@ -474,6 +473,29 @@ module Router =
         }
         :> Threading.Tasks.Task
 
+    /// Explicit reproduction endpoint: never included in ordinary feedback.
+    let private sourceSnapshot (state: ApiState) (ctx: HttpContext) =
+        task {
+            if not (authorized state ctx) then
+                return! fail ctx 401 "unauthorized" "a valid bearer token is required" None
+            else
+                match guid (string ctx.Request.RouteValues["organizationId"]),
+                      guid (string ctx.Request.RouteValues["projectId"]),
+                      guid (string ctx.Request.RouteValues["buildId"]) with
+                | Some org, Some project, Some build ->
+                    match state.Store.ReadSourceDefinitionState(OrganizationId org, ProjectId project, BuildId build) with
+                    | Error _ -> return! fail ctx 410 "evidence_expired" "build evidence has expired" None
+                    | Ok None -> return! fail ctx 404 "not_found" "no such source snapshot" None
+                    | Ok(Some bytes) ->
+                        match SourceSnapshot.decode bytes with
+                        | Ok(Some _) ->
+                            ctx.Response.ContentType <- SourceSnapshot.MediaType
+                            ctx.Response.ContentLength <- Nullable(int64 bytes.Length)
+                            do! ctx.Response.Body.WriteAsync(bytes, ctx.RequestAborted)
+                        | _ -> return! fail ctx 404 "source_snapshot_unavailable" "build has no explicit source snapshot" None
+                | _ -> return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
+        } :> Threading.Tasks.Task
+
     /// GET …/logs?from=N — progressive read (FG-064).
     let private logs (state: ApiState) (ctx: HttpContext) =
         task {
@@ -499,7 +521,7 @@ module Router =
                     | Error _ -> return! fail ctx 400 "invalid_log_cursor" "from must be a non-negative integer" None
                     | Ok from ->
                         match
-                            state.Store.ReadLogPage(
+                            state.Store.ReadLogEvidence(
                                 OrganizationId org,
                                 ProjectId project,
                                 BuildId build,
@@ -507,7 +529,9 @@ module Router =
                                 state.MaxLogChunks)
                         with
                         | None -> return! fail ctx 404 "not_found" "no such build" None
-                        | Some chunks ->
+                        | Some(true, _) ->
+                            return! fail ctx 410 "evidence_expired" "build evidence was selected by retention" None
+                        | Some(false, chunks) ->
                             let next =
                                 match chunks with
                                 | [] -> from
@@ -520,6 +544,68 @@ module Router =
                                   Chunks = chunks |> List.map (fun (s, b) -> { Sequence = s; Body = b }) }
 
                             return! json ctx 200 payload
+        }
+        :> Threading.Tasks.Task
+
+    /// GET …/feedback?from=N — bounded evidence and status from one snapshot.
+    let private feedback (state: ApiState) (ctx: HttpContext) =
+        task {
+            if not (authorized state ctx) then
+                return! fail ctx 401 "unauthorized" "a valid bearer token is required" None
+            else
+                match guid (string ctx.Request.RouteValues["organizationId"]),
+                      guid (string ctx.Request.RouteValues["projectId"]),
+                      guid (string ctx.Request.RouteValues["buildId"]) with
+                | None, _, _ | _, None, _ | _, _, None ->
+                    return! fail ctx 400 "malformed_identifier" "identifiers must be UUIDs" None
+                | Some org, Some project, Some build ->
+                    let from =
+                        match ctx.Request.Query.TryGetValue "from" with
+                        | false, _ -> Some 0
+                        | true, values when values.Count = 1 ->
+                            match Int32.TryParse values.[0] with
+                            | true, value when value >= 0 -> Some value
+                            | _ -> None
+                        | _ -> None
+                    match from with
+                    | None -> return! fail ctx 400 "invalid_log_cursor" "from must be a non-negative integer" None
+                    | Some from ->
+                        match state.Store.ReadFeedback(OrganizationId org, ProjectId project, BuildId build, from, state.MaxLogChunks) with
+                        | None -> return! fail ctx 404 "not_found" "no such build" None
+                        | Some snapshot when snapshot.EvidenceExpired ->
+                            return! fail ctx 410 "evidence_expired" "build evidence was selected by retention" None
+                        | Some snapshot when snapshot.Chunks |> List.exists (fun c -> c.Sequence = Int32.MaxValue) ->
+                            return! fail ctx 503 "invalid_log_sequence" "build log sequence cannot be represented by a continuation cursor" None
+                        | Some snapshot ->
+                            let terminal =
+                                match BuildStatus.ofWireString snapshot.Status with
+                                | Some value -> Some(BuildStatus.isTerminal value)
+                                | None ->
+                                    match snapshot.Status with
+                                    | "succeeded" | "failed" -> Some true
+                                    | "queued" | "running" | "reconciliation_required" -> Some false
+                                    | _ -> None
+                            match terminal with
+                            | None -> return! fail ctx 503 "invalid_build_status" "build has an unrecognized status" None
+                            | Some terminal ->
+                                let payload: FeedbackResponse =
+                                    { SchemaVersion = 1
+                                      BuildId = string build
+                                      SourceIdentity = snapshot.SourceIdentity
+                                      Status = snapshot.Status
+                                      CancellationRequested = snapshot.CancellationRequested
+                                      IsTerminal = terminal
+                                      FromSequence = from
+                                      NextSequence = snapshot.Chunks |> List.tryLast |> Option.map (fun c -> c.Sequence + 1) |> Option.defaultValue from
+                                      HasMore = snapshot.HasMore
+                                      Truncated = snapshot.Chunks |> List.exists (fun c -> c.Truncated)
+                                      Chunks = snapshot.Chunks |> List.map (fun c ->
+                                          { Sequence = c.Sequence; Body = c.Body; Truncated = c.Truncated
+                                            DiagnosticId = c.DiagnosticId
+                                            Diagnostic = c.Diagnostic |> Option.map (fun value ->
+                                                use document = JsonDocument.Parse value
+                                                document.RootElement.Clone()) }) }
+                                return! json ctx 200 payload
         }
         :> Threading.Tasks.Task
 
@@ -549,6 +635,8 @@ module Router =
                             AttemptId attempt)
                     with
                     | None -> return! fail ctx 404 "not_found" "no such build or attempt" None
+                    | Some "evidence_expired" ->
+                        return! fail ctx 410 "evidence_expired" "build evidence was selected by retention" None
                     | Some attemptState when attemptState <> "terminal" ->
                         return!
                             fail ctx 409 "artifact_not_ready"
@@ -580,25 +668,37 @@ module Router =
                                 | Error _ -> ArtifactUnavailable
                             | value -> value
 
-                        match opened with
-                        | InvalidArtifactPath ->
+                        // The following database recheck can throw during an
+                        // outage. Own the descriptor before crossing that boundary.
+                        use openedResource =
+                            match opened with
+                            | ArtifactOpened stream -> stream :> IDisposable
+                            | _ -> null
+                        // Selection can race the filesystem open or legacy
+                        // adoption. Recheck after either operation so absent
+                        // bytes never masquerade as an empty retained history.
+                        let expired =
+                            state.Store.ArtifactAttemptState(OrganizationId org, ProjectId project, BuildId build, AttemptId attempt) = Some "evidence_expired"
+                        match opened, expired with
+                        | _, true ->
+                            return! fail ctx 410 "evidence_expired" "build evidence was selected by retention" None
+                        | InvalidArtifactPath, false ->
                             return!
                                 fail ctx 400 "invalid_artifact_path"
                                     "artifact path must contain only nonempty relative segments" None
-                        | ArtifactNotFound ->
+                        | ArtifactNotFound, false ->
                             return! fail ctx 404 "artifact_not_found" "no such artifact" None
-                        | ArtifactSnapshotNotFound ->
+                        | ArtifactSnapshotNotFound, false ->
                             return! fail ctx 404 "artifact_not_found" "no such artifact" None
-                        | ArtifactPlatformUnsupported ->
+                        | ArtifactPlatformUnsupported, false ->
                             return!
                                 fail ctx 501 "artifact_platform_unsupported"
                                     "artifact retrieval requires Linux descriptor semantics" None
-                        | ArtifactUnavailable ->
+                        | ArtifactUnavailable, false ->
                             return!
                                 fail ctx 503 "artifact_unavailable"
                                     "artifact storage is temporarily unavailable" None
-                        | ArtifactOpened stream ->
-                            use stream = stream
+                        | ArtifactOpened stream, false ->
                             ctx.Response.StatusCode <- 200
                             ctx.Response.ContentType <- "application/octet-stream"
                             ctx.Response.ContentLength <- Nullable stream.Length
@@ -736,6 +836,8 @@ module Router =
         endpoints.MapPost($"{orgPath}/projects/{{projectId}}/builds", RequestDelegate(submit state)) |> ignore
         endpoints.MapGet($"{orgPath}/projects/{{projectId}}/builds/{{buildId}}", RequestDelegate(status state)) |> ignore
         endpoints.MapGet($"{orgPath}/projects/{{projectId}}/builds/{{buildId}}/logs", RequestDelegate(logs state)) |> ignore
+        endpoints.MapGet($"{orgPath}/projects/{{projectId}}/builds/{{buildId}}/source", RequestDelegate(sourceSnapshot state)) |> ignore
+        endpoints.MapGet($"{orgPath}/projects/{{projectId}}/builds/{{buildId}}/feedback", RequestDelegate(feedback state)) |> ignore
         endpoints.MapGet(
             $"{orgPath}/projects/{{projectId}}/builds/{{buildId}}/attempts/{{attemptId}}/artifacts/{{**artifactPath}}",
             RequestDelegate(artifact state))

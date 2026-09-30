@@ -1,122 +1,74 @@
 # Fogell
 
-Reliable, self-hosted CI in F#, with an explicit Jenkins migration path.
+Self-hosted CI in F# for human and AI development feedback loops.
 
-Fogell prioritizes predictable execution, bounded resource use, and recoverable
-operations. Full Jenkins compatibility is not a release goal. The
-[product direction and release gates](docs/PRODUCT_DIRECTION.md) govern new work;
-the [pipeline contract](docs/architecture/PIPELINE_CONTRACT.md) separates required
-behavior from what the current implementation has proven.
+Fogell runs versioned native JSON pipelines on a trusted Linux worker. The
+controller provides authenticated, idempotent submission, bounded progressive
+feedback, structured failure diagnostics, source snapshots, artifacts and
+cancellation. PostgreSQL owns execution authority; uncertain execution requires
+reconciliation instead of automatic replay.
 
-The current authoring input remains Jenkinsfile syntax. A planned versioned
-migration profile will define its supported subset; current proven parity,
-parse admission, and rejection evidence is recorded in the
-[compatibility evidence](docs/COMPATIBILITY-SCORECARD.md). There is no new native
-syntax or general Jenkinsfile translator in this change.
+## A pipeline
 
-Current deployment is a pre-release, single-node Linux controller. Supported
-workloads and isolation assumptions are bounded by the
-[current-tree threat model](docs/THREAT_MODEL.md).
+Save as `pipeline.json`:
 
-Named for Superbad's Fogell — the real identity behind the McLovin fake ID.
-
-## Implementation
-
-The measured 74.3% lowering tax (Groovy AST → static IR) is an artifact of
-splitting the front end from the engine, not a property of Jenkins
-compatibility. An engine that interprets the pipeline AST directly never pays
-it. See `docs/adr/0002-interpret-not-lower.md`.
-
-## Non-negotiable boundaries
-
-- Acceptance is not compatibility. Every compatibility claim requires
-  differential evidence against a pinned real Jenkins.
-- Unsupported behavior fails closed with a named error code.
-- No scalar compatibility percentage is ever published.
-- Durability is per-step and exactly-once, or it is stated as neither.
-- Security claims and deployment assumptions are bounded by the
-  [current-tree threat model](docs/THREAT_MODEL.md); an accepted ADR is not proof
-  that every required control is implemented.
-
-## Run it
-
-`Fogell.Controller.Host` is a runnable, single-node Linux controller. On HeMan,
-the fastest end-to-end proof builds the exact checkout, provisions an isolated
-database and least-privilege runtime role, submits a Jenkinsfile over HTTP,
-observes progressive logs, and waits for durable terminal success:
-
-```bash
-dotnet restore --locked-mode
-dotnet build -c Release --no-restore
-FOGELL_PG_CONTAINER=fogell-fg060a \
-FOGELL_PG_PORT=55445 \
-FOGELL_BUILD_CONFIGURATION=Release \
-./scripts/prove-runnable-controller.sh
+```json
+{
+  "version": 1,
+  "stages": [
+    {
+      "name": "verify",
+      "steps": [
+        {"run": "dotnet build -c Release", "timeout_seconds": 300},
+        {"run": "dotnet tests/Fogell.Domain.Tests/bin/Release/net10.0/Fogell.Domain.Tests.dll", "timeout_seconds": 300}
+      ]
+    }
+  ]
+}
 ```
 
-The final line begins `FG-224 PROOF PASS`. For a persistent controller and the
-authenticated submit/status/log workflow, follow the
-[controller host runbook](docs/runbooks/controller-host.md).
+See the [pipeline contract](docs/PIPELINES.md),
+[feedback client](docs/runbooks/feedback-client.md), and
+[controller operations](docs/runbooks/controller-host.md).
 
-## Engineering bastion
+## Build and test
 
-**HeMan is Fogell's engineering bastion.** The canonical working checkout is
-`$HOME/projects/fogell`. Investigation, editing, local model-assisted
-review, build and test work happen there. HeMan owns the mounted corpus and
-reaches the pinned Jenkins oracle on Luigi, so it is the only environment that
-can run the whole pre-publication proof.
+Install the SDK pinned in `global.json`, Linux `setsid`, and PostgreSQL 16
+(or Podman to provision a disposable test instance):
 
-**GitHub is the publication boundary.** It holds protected history, final review,
-required checks and merge state. It is not the normal edit-test loop, and a green
-GitHub check is not a substitute for the HeMan gate: the hosted runner has neither
-the corpus nor the pinned Jenkins oracle.
+```bash
+./scripts/pg-test-db.sh fogell-development-tests
+# Set FOGELL_TEST_DATABASE_URL to the disposable database URL printed above.
+./scripts/build-and-test.sh
+```
 
-The working loop is therefore:
+The gate restores locked dependencies, builds the solution, runs every test
+project, and exercises native pipeline execution and journal recovery. Database
+suites must actually run; an unavailable database cannot produce a passing gate.
+CI additionally exercises a real controller and worker against disposable state.
 
-1. branch, inspect and edit on HeMan;
-2. use HeMan's local Qwen agent as an additional review input where useful;
-3. build, test and generate corpus/differential evidence from HeMan;
-4. run the full local gate and inspect the final diff on HeMan;
-5. publish the already-proven commit to GitHub;
-6. obtain final-head review and verify coverage using the
-   [board's authoritative review procedure](docs/EXECUTION_BOARD.md#execution-cycle-and-definition-of-done),
-   including its explicit reviewer selection and evidence fallback; and
-7. use GitHub only for final review metadata, required checks and merge.
+## Boundaries
+
+The supported deployment is one mutually trusted execution domain on a dedicated
+Linux host/VM, with one local worker. The API bearer is global operator authority.
+Shell commands share the service OS identity; external resource and network
+controls are required. See the [threat model](docs/THREAT_MODEL.md).
+
+This authoring release is a breaking change: existing non-JSON definitions must
+be converted and deliberately resubmitted with new idempotency keys. Drain the
+old controller before upgrading, keep paired database/state backups, and use
+clean release directories. Historical campaigns for earlier runtimes do not
+qualify this native runtime. See [upgrade and recovery](docs/runbooks/recovery.md).
 
 ## Layout
 
-    docs/adr/           numbered decisions, each citing measured evidence
-    docs/architecture/  contracts
-    docs/THREAT_MODEL.md current controls, residuals, and hard non-claims
-    docs/related-work/  sibling-project dossiers (McLoving), informational only
-    src/                F# projects
-    tests/              unit + differential
-    corpus/             pinned Jenkinsfile corpus reference (hashes only)
-    evidence/           sealed measurement receipts
-    scripts/            harnesses
+- `src/Fogell.Pipeline.Parser`: bounded native JSON admission.
+- `src/Fogell.Runtime`: native stage/step orchestration.
+- `src/Fogell.Execution`: process containment, output protection and publishing.
+- `src/Fogell.Controller.*`: HTTP API and local worker supervision.
+- `src/Fogell.Store`, `src/Fogell.Journal`: durable authority and execution records.
+- `tools/`: client, run host, retention and restore activation.
+- `tests/`, `scripts/`: behavioral tests and operational checks.
 
-## Measured speed — three-engine face-off
-
-One run on mario, 2026-08-29: the same trivial per-stage pipeline at sizes 50
-and 100, five serial heats per engine per size, against a local McLoving
-controller+agent pair and a local Jenkins controller. Marginal cost per stage
-uses the delta method (50 → 100), so per-build fixed overhead cancels.
-
-| engine | marginal cost, median | within-run ratio vs Jenkins |
-|---|---|---|
-| Fogell | 14.3 ms/stage | 27.7× faster |
-| McLoving | 226.5 ms/stage | 1.7× faster |
-| Jenkins | 394.8 ms/stage | — |
-
-The within-run ratio is the only portable claim: Jenkins absolutes moved 38%
-within a session for identical work. Sizes stop at 100: probing found Jenkins
-cannot compile 400 steps in one stage (255-argument limit) or 250 stages
-(64 KB method limit), and McLoving's agent takes one step per stage. Steps are trivial, so this measures per-stage
-engine machinery, not workload throughput. This is an operator measurement
-with engine builds unpinned, not sealed differential evidence; raw data and
-limits: [bench/faceoff/2026-08-29-mario/](bench/faceoff/2026-08-29-mario/PROVENANCE.md).
-
-## Inherited measurements
-
-See `docs/architecture/BASELINE.md` — every number was measured on luigi
-against Jenkins 2.568.1 and a hash-pinned 228-file corpus.
+[Product roadmap](docs/PRODUCT_DIRECTION.md) and
+[release board](docs/RELEASE_BOARD.md). Licensed under Apache 2.0.

@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup><Compile Include="Filesystem.fs" /><Compile Include="Retention.fs" /><Compile Include="Program.fs" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../../src/Fogell.Store/Fogell.Store.fsproj" /></ItemGroup>
+</Project>

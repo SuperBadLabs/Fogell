@@ -33,13 +33,7 @@ module JournalRepair =
 
 /// When the journal is forced to disk.
 type FsyncPolicy =
-    /// One fsync per step. Safest, and the measured floor is ~7.7 ms per step on
-    /// a SATA SSD — already ~7x better than Jenkins at equal guarantees, because
-    /// Jenkins spends ~6.9 fsyncs per step.
     | EveryStep
-    /// One fsync per stage boundary. Measured target ~0.40 ms/step amortised,
-    /// ~134x Jenkins. A crash loses at most the current stage's step records,
-    /// which resume treats as "may have started".
     | EveryStage
     /// No fsync. For tests only; never a production setting.
     | Never

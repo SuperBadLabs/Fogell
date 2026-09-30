@@ -28,8 +28,5 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>Fogell.Controller.Api.Tests</_Parameter1>
     </AssemblyAttribute>
-    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
-      <_Parameter1>Fogell.Differential.Tests</_Parameter1>
-    </AssemblyAttribute>
   </ItemGroup>
 </Project>

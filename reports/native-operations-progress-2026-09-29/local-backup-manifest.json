@@ -1,0 +1,21 @@
+{
+  "created_at": "2026-09-29T17:57:07.476837+00:00",
+  "files": {
+    "database.custom": {
+      "sha256": "1d51fed5d9ad42150556aafa4b99ba70e120f2550eae2481379c9df59d78eea5",
+      "size": 563252
+    },
+    "state.tar": {
+      "sha256": "448b863f94c2a33d0325aa8b79e358cdc530f7daf29b54669e2878f94f94e7b4",
+      "size": 10240
+    }
+  },
+  "format": 1,
+  "paired": true,
+  "release_id": "local-rehearsal",
+  "schema_version": "0017",
+  "state_entries": 1,
+  "state_inventory_sha256": "444b2bf43e8ce528ff12ded7de1e537335ce97b89438cc7967cc3aeaa2aabacd",
+  "status": "complete",
+  "writers_quiesced": true
+}

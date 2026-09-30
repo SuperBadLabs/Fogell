@@ -2,10 +2,7 @@ namespace Fogell.Admission
 
 open Fogell.Ir
 
-/// Every rejection is a named code. The charter forbids "unsupported" without
-/// a name, because a migration report needs a machine-readable reason and a
-/// human-readable position. Codes are stable API: renaming one is a breaking
-/// change to anyone consuming the ledger.
+/// Stable machine-readable native admission errors with source locations.
 type ErrorCode =
     // --- admission limits (FG-004) ---
     | SourceTooLarge
@@ -15,7 +12,6 @@ type ErrorCode =
     | TooManyCollectionItems
     // --- structural ---
     | EmptySource
-    | NoPipelineBlock
     | NoStages
     | ExpectedStage
     | ExpectedSteps
@@ -35,7 +31,6 @@ module ErrorCode =
         | ScalarTooLong -> "scalar_too_long"
         | TooManyCollectionItems -> "too_many_collection_items"
         | EmptySource -> "empty_source"
-        | NoPipelineBlock -> "no_pipeline_block"
         | NoStages -> "no_stages"
         | ExpectedStage -> "expected_stage"
         | ExpectedSteps -> "expected_steps"
@@ -44,14 +39,9 @@ module ErrorCode =
         | MalformedSyntax -> "malformed_syntax"
         | UnsupportedConstruct -> "unsupported_construct"
 
-    /// True when the input is bad, false when Fogell simply does not support it.
-    /// The distinction matters for the compatibility tiers in ADR 0001: a
-    /// malformed file is tier-3 forever; an unsupported construct is a backlog
-    /// item.
     let isInputDefect =
         function
         | EmptySource
-        | NoPipelineBlock
         | NoStages
         | ExpectedStage
         | ExpectedSteps
@@ -166,43 +156,3 @@ module AdmissionError =
         { Code = code
           Message = message
           Position = { Line = line; Column = column } }
-
-/// FG-248. The escape grammar of a QUOTED Groovy string literal, shared by the
-/// Declarative lexer and the scripted parser so the two cannot drift (FG-122
-/// spent a branch deleting a second copy of the letter map). MEASURED on
-/// Jenkins 2.568.1, one transient job per (form, spelling), 2026-09-04: after a
-/// backslash the four quoted forms accept exactly `b f n t r \ ' " $`, a
-/// unicode escape (one or more `u`, four hex digits), an octal escape, and a
-/// physical line ending (the continuation, handled before this module is read);
-/// every other spelling — `/ s a e v x q z 8 9`, a space, `{`, `(`, `%`, and
-/// `u` without four hex digits — fails compilation (`unexpected char: '\'`).
-/// Receipts `script-letter-escapes`, `compile-refusal-invalid-letter`,
-/// `compile-refusal-invalid-nine` and `compile-refusal-invalid-slash` seal the
-/// letters and three of the refusals on both parsers.
-/// Slashy and dollar-slashy strings are outside this module: they keep every
-/// backslash sequence literally except the delimiter escape and unicode.
-module GroovyEscapes =
-
-    let simpleLetters = set [ 'b'; 'f'; 'n'; 't'; 'r'; '\\'; '\''; '"'; '$' ]
-
-    let simpleEscape (c: char) =
-        match c with
-        | 'n' -> '\n'
-        | 't' -> '\t'
-        | 'r' -> '\r'
-        | 'b' -> '\b'
-        // '\f', not '\012': in F# that trigraph is DECIMAL, so it reads as
-        // octal 12 to anyone carrying Java's escapes in their head — which is
-        // everyone touching this function. Raised by Copilot on PR #36.
-        | 'f' -> '\f'
-        | c -> c
-
-    /// The refusal wording for a spelling outside the grammar. `\8` and `\9`
-    /// keep FG-126a's sentence, which its receipt and tests pin.
-    let invalidMessage (c: char) =
-        match c with
-        | '8'
-        | '9' -> $"invalid Groovy escape `\\{c}`: `{c}` is not an octal digit"
-        | 'u' -> "invalid Groovy escape `\\u`: a unicode escape needs four hex digits after one or more `u`"
-        | c ->
-            $"invalid Groovy escape `\\{c}`: quoted Groovy strings accept only `\\b \\f \\n \\t \\r \\\\ \\' \\\" \\$`, unicode and octal escapes"

@@ -86,9 +86,6 @@ module ArtifactSnapshots =
         with ex ->
             Error ex.Message
 
-    /// Compatibility entry point for library and older test callers which do
-    /// not have controller configuration. Production callers use
-    /// finalizeWithLimits so cleanup observes the startup-validated policy.
     let finalize stateRoot organizationId buildId attemptId =
         finalizeWithLimits ArtifactLimits.Defaults stateRoot organizationId buildId attemptId
 
@@ -102,6 +99,5 @@ module ArtifactSnapshots =
             finalizeWithLimits limits stateRoot organizationId buildId parent
             |> Result.map ignore
 
-    /// Compatibility entry point for callers without parsed controller policy.
     let prepareRetry stateRoot organizationId buildId parentAttemptId =
         prepareRetryWithLimits ArtifactLimits.Defaults stateRoot organizationId buildId parentAttemptId

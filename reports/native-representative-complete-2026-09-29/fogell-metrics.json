@@ -1,0 +1,15 @@
+{
+  "artifact_sha256": "6995a4dd5b44e2ed4f5bf17f3ee2f03bec7b0a40014cecd5b9f8ec2aa761ea04",
+  "artifact_status": 200,
+  "attempt_id": "46f3402d-ce4a-4814-aaf5-913cedbbdaf2",
+  "build_id": "f7dda0db-3be2-4edd-ac20-e335cc7ebae2",
+  "candidate_commit": "1d2973c0819c5f84b452767f21b5f80d8cd2c269",
+  "elapsed_seconds": 109.01,
+  "feedback_bytes": 25326,
+  "feedback_pages": 2,
+  "feedback_records": 120,
+  "source_file_count": 209,
+  "source_snapshot_sha256": "6e43b69752b500868a5d7d8fac3f969fa6810ef48e0809a94d975b6114e5cfb8",
+  "state_bytes": 115644090,
+  "status": "success"
+}

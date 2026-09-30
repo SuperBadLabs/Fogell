@@ -1,0 +1,361 @@
+{
+  "source_sha256": "99934f812cad0538f3010bbf3a6d2a7d9bb109f8600cfa100f5cc7ea6fc7452b",
+  "suite_runs": [
+    {
+      "log": "gate.log",
+      "projects": [
+        {
+          "project": "tests/Fogell.Runtime.Tests/Fogell.Runtime.Tests.fsproj",
+          "total": 8,
+          "passed": 8,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Client.Tests/Fogell.Client.Tests.fsproj",
+          "total": 27,
+          "passed": 27,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Retention.Tests/Fogell.Retention.Tests.fsproj",
+          "total": 23,
+          "passed": 23,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj",
+          "total": 116,
+          "passed": 116,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj",
+          "total": 41,
+          "passed": 41,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj",
+          "total": 194,
+          "passed": 194,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Journal.Tests/Fogell.Journal.Tests.fsproj",
+          "total": 31,
+          "passed": 31,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj",
+          "total": 113,
+          "passed": 113,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj",
+          "total": 15,
+          "passed": 15,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        }
+      ],
+      "total": 568,
+      "passed": 568
+    },
+    {
+      "log": "suite-repeat-2.log",
+      "projects": [
+        {
+          "project": "tests/Fogell.Runtime.Tests/Fogell.Runtime.Tests.fsproj",
+          "total": 8,
+          "passed": 8,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Client.Tests/Fogell.Client.Tests.fsproj",
+          "total": 27,
+          "passed": 27,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Retention.Tests/Fogell.Retention.Tests.fsproj",
+          "total": 23,
+          "passed": 23,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj",
+          "total": 116,
+          "passed": 116,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj",
+          "total": 41,
+          "passed": 41,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj",
+          "total": 194,
+          "passed": 194,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Journal.Tests/Fogell.Journal.Tests.fsproj",
+          "total": 31,
+          "passed": 31,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj",
+          "total": 113,
+          "passed": 113,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj",
+          "total": 15,
+          "passed": 15,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        }
+      ],
+      "total": 568,
+      "passed": 568
+    },
+    {
+      "log": "suite-repeat-3.log",
+      "projects": [
+        {
+          "project": "tests/Fogell.Runtime.Tests/Fogell.Runtime.Tests.fsproj",
+          "total": 8,
+          "passed": 8,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Client.Tests/Fogell.Client.Tests.fsproj",
+          "total": 27,
+          "passed": 27,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Retention.Tests/Fogell.Retention.Tests.fsproj",
+          "total": 23,
+          "passed": 23,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Controller.Api.Tests/Fogell.Controller.Api.Tests.fsproj",
+          "total": 116,
+          "passed": 116,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Domain.Tests/Fogell.Domain.Tests.fsproj",
+          "total": 41,
+          "passed": 41,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Execution.Tests/Fogell.Execution.Tests.fsproj",
+          "total": 194,
+          "passed": 194,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Journal.Tests/Fogell.Journal.Tests.fsproj",
+          "total": 31,
+          "passed": 31,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Store.Tests/Fogell.Store.Tests.fsproj",
+          "total": 113,
+          "passed": 113,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        },
+        {
+          "project": "tests/Fogell.Pipeline.Parser.Tests/Fogell.Pipeline.Parser.Tests.fsproj",
+          "total": 15,
+          "passed": 15,
+          "ignored": 0,
+          "failed": 0,
+          "errored": 0
+        }
+      ],
+      "total": 568,
+      "passed": 568
+    }
+  ],
+  "automated_test_executions": 1704,
+  "matrix": {
+    "total": 115,
+    "passed": 112,
+    "failures": [
+      {
+        "name": "test-report-fail",
+        "passed": false,
+        "error": "exit 2, expected 1",
+        "seconds": 0.459
+      },
+      {
+        "name": "test-report-malformed",
+        "passed": false,
+        "error": "missing 'cleanup-after-malformed-report'",
+        "seconds": 0.413
+      },
+      {
+        "name": "admission-env-newline",
+        "passed": false,
+        "error": "exit 0, expected 2",
+        "seconds": 0.233
+      }
+    ]
+  },
+  "feedback_loops": {
+    "count": 50,
+    "median_seconds": 1.6263,
+    "p95_seconds": 1.7477,
+    "minimum_seconds": 1.4586,
+    "maximum_seconds": 1.9574
+  },
+  "raw_command_results": [
+    {
+      "check": "runner-matrix",
+      "exit_code": 1,
+      "seconds": 20
+    },
+    {
+      "check": "gate",
+      "exit_code": 0,
+      "seconds": 256
+    },
+    {
+      "check": "controller-soak",
+      "exit_code": 1,
+      "seconds": 99
+    },
+    {
+      "check": "junit-integration",
+      "exit_code": 1,
+      "seconds": 11
+    },
+    {
+      "check": "runner-matrix-final",
+      "exit_code": 1,
+      "seconds": 21
+    },
+    {
+      "check": "suite-repeat-2",
+      "exit_code": 0,
+      "seconds": 160
+    },
+    {
+      "check": "controller-followup",
+      "exit_code": 1,
+      "seconds": 20
+    },
+    {
+      "check": "controller-burst",
+      "exit_code": 1,
+      "seconds": 20
+    },
+    {
+      "check": "controller-quiet",
+      "exit_code": 0,
+      "seconds": 30
+    },
+    {
+      "check": "suite-repeat-3",
+      "exit_code": 0,
+      "seconds": 185
+    },
+    {
+      "check": "backup-restore",
+      "exit_code": 0,
+      "seconds": 20
+    },
+    {
+      "check": "backup-corrupt",
+      "exit_code": 1,
+      "seconds": 17
+    },
+    {
+      "check": "migration-rollback",
+      "exit_code": 0,
+      "seconds": 46
+    },
+    {
+      "check": "migration-corrupt-archive",
+      "exit_code": 1,
+      "seconds": 29
+    },
+    {
+      "check": "migration-corrupt-data",
+      "exit_code": 1,
+      "seconds": 38
+    },
+    {
+      "check": "migration-skip-forward",
+      "exit_code": 1,
+      "seconds": 44
+    },
+    {
+      "check": "migration-drop-fk",
+      "exit_code": 1,
+      "seconds": 23
+    }
+  ]
+}

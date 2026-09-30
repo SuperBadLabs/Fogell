@@ -49,16 +49,17 @@ let private request root script =
         | Result.Ok p -> p
         | Result.Error e -> failwith e.Describe
 
-    { Name = "sh"
+    { OnDiagnostic = None
+      Name = "run"
       Script = Some script
       Workspace = ws
       Environment = []
       TimeoutMs = None
       CaptureStdout = false
-      JUnitSkipMarkingBuildUnstable = false
-      JUnitAllowEmptyResults = false
-      JUnitSkipOldReportsSince = None
-      JUnitSkipMarkingStageUnstable = false
+      ReportSkipBuildWarning = false
+      ReportAllowEmpty = false
+      ReportNotBefore = None
+      ReportSkipStageWarning = false
       Interrupt = None
       InterruptBeatsDeadline = None
       WorkspaceRoot = None
@@ -436,18 +437,12 @@ let shellExecution =
           }
 
           test "a shebang script runs as ITS interpreter, untraced" {
-              // durable-task executes a shebang script directly, injecting no -xe:
-              // a bash script runs under bash, and no `+` trace appears.
               let r = Executor.runStep (request (tempRoot ()) "#!/bin/bash\necho ran-as:$0")
               Expect.stringContains r.Stdout "ran-as:" "the script executed"
               Expect.isFalse (r.Stdout.Contains "+ echo") "no injected trace"
           }
 
-          test "stderr merges into the ordered stream, exactly as Jenkins' console does" {
-              // FG-102: the shell runs `2>&1`, because the xtrace lives on stderr and
-              // two async pipe readers deliver cross-stream events in racy order —
-              // output lines overtook their own `+` trace. One pipe is kernel-ordered,
-              // and Jenkins' console is the same merged stream.
+          test "stderr merges into the ordered output stream" {
               let r = Executor.runStep (request (tempRoot ()) "echo oops >&2")
               Expect.stringContains r.Stdout "oops" "stderr content arrives in the ordered stream"
           }
@@ -485,15 +480,15 @@ let shellExecution =
               let r =
                   Executor.runStep
                       { request (tempRoot ()) "" with
-                          Name = "kubernetesDeploy"
+                          Name = "unknown_action"
                           Script = None }
 
               Expect.equal r.Status Failure "fails closed"
 
               match r.Diagnostic with
               | Some d ->
-                  Expect.stringContains d "kubernetesDeploy" "names the step"
-                  Expect.stringContains d "fails closed" "says why"
+                  Expect.stringContains d "unknown_action" "names the step"
+                  Expect.stringContains d "invalid native step" "says why"
               | None -> failtest "must carry a diagnostic"
           } ]
 
@@ -1611,8 +1606,6 @@ let containment =
           }
 
           test "a timeout sends a trappable SIGTERM before killing" {
-              // The script traps TERM and reports it, proving the interrupt is
-              // the contract Jenkins offers (JB-FAIL-003) rather than SIGKILL.
               let root = tempRoot ()
               let marker = Path.Combine(root, "trapped.txt")
 
@@ -1651,10 +1644,7 @@ let containment =
               | None -> failtest "termination detail expected"
           }
 
-          test "BEAT JENKINS: a backgrounded child is reaped after SUCCESS" {
-              // Measured on Jenkins (JB-FAIL-004): a nohup'ed child survives both
-              // success and abort, and JENKINS_NODE_COOKIE=dontKillMe is moot
-              // because nothing is killed. Fogell reaps the group.
+          test "a backgrounded child is reaped after SUCCESS" {
               let root = tempRoot ()
               let req = request root ""
               let pidFile = Path.Combine(req.Workspace, "daemon.pid")
@@ -1699,7 +1689,7 @@ let containment =
                   | None -> failtest "successful group reaping must report its termination"
           }
 
-          test "BEAT JENKINS: a backgrounded child is reaped after a TIMEOUT too" {
+          test "a backgrounded child is reaped after a TIMEOUT too" {
               let root = tempRoot ()
               let req = request root ""
               let pidFile = Path.Combine(req.Workspace, "daemon.pid")
@@ -1879,7 +1869,7 @@ let eventDrivenWaits =
           test "a production containment anchor is reaped before callback EOF is required" {
               let root = tempRoot ()
               let registry = Path.Combine(root, "registry")
-              let durableRoot = root + "@tmp"
+              let durableRoot = root + ".fogell-tmp"
               let previousRegistry = Environment.GetEnvironmentVariable "FOGELL_PROCESS_GROUP_REGISTRY"
               let streamed = Collections.Concurrent.ConcurrentQueue<string>()
               Directory.CreateDirectory registry |> ignore
@@ -2195,242 +2185,6 @@ let eventDrivenWaits =
           } ]
 
 /// FG-044b(c). Raw nested-call keys are identifiers, not suffix searches.
-let credentialKeyBoundaries =
-    let prefixes =
-        [ "ASCII letter", "X"
-          "ASCII digit", "7"
-          "Arabic-Indic decimal digit", "\u0667"
-          "Roman letter number", "\u2167"
-          "underscore connector", "_"
-          "dollar currency", "$"
-          "Unicode letter", "λ"
-          "nonspacing mark", "\u0301"
-          "spacing combining mark", "\u093E"
-          "connector punctuation", "\u203F"
-          "Unicode currency", "€"
-          "zero-width non-joiner", "\u200C"
-          "zero-width joiner", "\u200D" ]
-
-    let hostile prefix =
-        [ "string credentialsId", "string", $"string({prefix}credentialsId: 'text-id', variable: 'TOKEN')"
-          "string variable", "string", $"string(credentialsId: 'text-id', {prefix}variable: 'TOKEN')"
-          "file credentialsId", "file", $"file({prefix}credentialsId: 'file-id', variable: 'CERT')"
-          "file variable", "file", $"file(credentialsId: 'file-id', {prefix}variable: 'CERT')"
-          "userpass credentialsId",
-          "usernamePassword",
-          $"usernamePassword({prefix}credentialsId: 'user-id', usernameVariable: 'USER', passwordVariable: 'PASS')"
-          "userpass usernameVariable",
-          "usernamePassword",
-          $"usernamePassword(credentialsId: 'user-id', {prefix}usernameVariable: 'USER', passwordVariable: 'PASS')"
-          "userpass passwordVariable",
-          "usernamePassword",
-          $"usernamePassword(credentialsId: 'user-id', usernameVariable: 'USER', {prefix}passwordVariable: 'PASS')" ]
-
-    testList
-        "FG-044b(c) credential keys require a complete identifier token"
-        [ test "every required key rejects every hostile identifier-part prefix" {
-              for prefixLabel, prefix in prefixes do
-                  for keyLabel, kind, source in hostile prefix do
-                      for quoteLabel, quotedSource in
-                          [ "single quoted", source
-                            "double quoted", source.Replace("'", "\"") ] do
-                          let requests = Credentials.parseRequests quotedSource
-
-                          match requests with
-                          | [ BindUnmodelled(actualKind, actualSource) ] ->
-                              Expect.equal
-                                  actualKind
-                                  kind
-                                  $"{prefixLabel} / {keyLabel} / {quoteLabel}: binding kind remains observable"
-
-                              Expect.isNonEmpty
-                                  actualSource
-                                  $"{prefixLabel} / {keyLabel} / {quoteLabel}: rejected source remains observable"
-                          | other ->
-                              failtestf "%s / %s / %s parsed as supported: %A" prefixLabel keyLabel quoteLabel other
-
-                          Expect.isEmpty
-                              (Credentials.idsOf requests)
-                              $"{prefixLabel} / {keyLabel} / {quoteLabel}: an unmodelled request invents no credential id"
-          }
-
-          test "exact case-sensitive keys preserve all three supported bindings" {
-              let source =
-                  "string ( credentialsId : 'text-id', variable : \"TOKEN\" ), "
-                  + "file(credentialsId:\"file-id\", variable:'CERT'), "
-                  + "usernamePassword(credentialsId: 'user-id', usernameVariable: \"USER\", passwordVariable: 'PASS')"
-
-              let requests = Credentials.parseRequests source
-
-              Expect.equal
-                  requests
-                  [ BindText("text-id", "TOKEN")
-                    BindFile("file-id", "CERT")
-                    BindUserPass("user-id", "USER", "PASS") ]
-                  "single/double quotes and whitespace remain valid"
-
-              Expect.equal
-                  (Credentials.idsOf requests)
-                  [ "text-id"; "file-id"; "user-id" ]
-                  "idsOf returns exactly the modeled ids"
-          }
-
-          test "credential trivia uses Groovy's exact ASCII whitespace set" {
-              let groovyWhitespace c =
-                  c = ' ' || c = '\t' || c = '\r' || c = '\n' || c = '\u000C'
-
-              for trivia in [ " "; "\t"; "\r"; "\n"; "\u000C"; " \t\r\n\u000C" ] do
-                  let source =
-                      $"{trivia}string{trivia}({trivia}credentialsId{trivia}:{trivia}'text-id'{trivia},{trivia}variable{trivia}:{trivia}'TOKEN'{trivia}){trivia}"
-
-                  Expect.equal
-                      (Credentials.parseRequests source)
-                      [ BindText("text-id", "TOKEN") ]
-                      "every Groovy WS code point remains valid between structural tokens"
-
-              let unicodeSurplus =
-                  [ for code in 0 .. 0xFFFF do
-                        let c = char code
-
-                        if Char.IsWhiteSpace c && not (groovyWhitespace c) then
-                            yield c ]
-
-              Expect.contains unicodeSurplus '\u00A0' "the exhaustive surplus includes NBSP"
-
-              for invalid in unicodeSurplus do
-                  let token = string invalid
-
-                  for position, source in
-                      [ "leading", token + "string(credentialsId: 'text-id', variable: 'TOKEN')"
-                        "kind/call", "string" + token + "(credentialsId: 'text-id', variable: 'TOKEN')"
-                        "argument/key", "string(" + token + "credentialsId: 'text-id', variable: 'TOKEN')"
-                        "key/colon", "string(credentialsId" + token + ": 'text-id', variable: 'TOKEN')"
-                        "colon/value", "string(credentialsId:" + token + "'text-id', variable: 'TOKEN')"
-                        "value/comma", "string(credentialsId: 'text-id'" + token + ", variable: 'TOKEN')"
-                        "call/trailing", "string(credentialsId: 'text-id', variable: 'TOKEN')" + token ] do
-                      let requests = Credentials.parseRequests source
-
-                      Expect.isTrue
-                          (requests |> List.forall (function BindUnmodelled _ -> true | _ -> false))
-                          $"U+{int invalid:X4}/{position}: non-Groovy trivia fails the complete request closed"
-
-                      Expect.isEmpty
-                          (Credentials.idsOf requests)
-                          $"U+{int invalid:X4}/{position}: invalid trivia cannot expose credential authority"
-          }
-
-          test "key spelling remains case-sensitive" {
-              for source in
-                  [ "string(CredentialsId: 'text-id', variable: 'TOKEN')"
-                    "file(credentialsId: 'file-id', Variable: 'CERT')"
-                    "usernamePassword(credentialsId: 'user-id', UsernameVariable: 'USER', passwordVariable: 'PASS')" ] do
-                  let requests = Credentials.parseRequests source
-
-                  match requests with
-                  | [ BindUnmodelled _ ] -> ()
-                  | other -> failtestf "wrong-case key parsed as supported: %A" other
-
-                  Expect.isEmpty (Credentials.idsOf requests) "wrong-case keys invent no ids"
-          }
-
-          test "non-identifier prefixes are not discarded to reveal a supported suffix" {
-              for label, prefix in
-                  [ "other number", "\u00B2"
-                    "enclosing mark", "\u20DD" ] do
-                  let single = $"string({prefix}credentialsId: 'text-id', variable: 'TOKEN')"
-
-                  for quoteLabel, source in
-                      [ "single quoted", single
-                        "double quoted", single.Replace("'", "\"") ] do
-                      let requests = Credentials.parseRequests source
-
-                      Expect.isTrue
-                          (requests |> List.forall (function BindUnmodelled _ -> true | _ -> false))
-                          $"{label}/{quoteLabel}: invalid leading syntax fails the complete call closed"
-
-                      Expect.isEmpty
-                          (Credentials.idsOf requests)
-                          $"{label}/{quoteLabel}: no supported suffix becomes a credential id"
-          }
-
-          test "quoted commented and whole-item decoys never materialize requests" {
-              let decoys =
-                  [ "string(note: \"credentialsId: 'decoy'\", variable: 'TOKEN')"
-                    "string(note: 'credentialsId: \"decoy\"', variable: 'TOKEN')"
-                    "string(/* credentialsId: 'decoy', */ variable: 'TOKEN')"
-                    "string(// credentialsId: 'decoy'\n variable: 'TOKEN')"
-                    "[\"string(credentialsId: 'decoy', variable: 'TOKEN')\"]"
-                    "[/* string(credentialsId: 'decoy', variable: 'TOKEN') */ bogus()]" ]
-
-              for source in decoys do
-                  let requests = Credentials.parseRequests source
-                  Expect.isNonEmpty requests $"decoy source is an explicit refusal: {source}"
-                  Expect.isTrue
-                      (requests |> List.forall (function BindUnmodelled _ -> true | _ -> false))
-                      $"decoy source cannot materialize a supported binding: {source}"
-          }
-
-          test "malformed segments and trailing source fail the complete request closed" {
-              let valid = "string(credentialsId: 'text-id', variable: 'TOKEN')"
-
-              for source in
-                  [ valid + ", ignored"
-                    valid + ","
-                    valid + " trailing"
-                    "[" + valid + ",,file(credentialsId: 'file-id', variable: 'CERT')]"
-                    "string(credentialsId: 'text-id', variable: 'TOKEN', junk: helper('x'))"
-                    "string(credentialsId: 'text-id', variable: 'TOKEN', junk: [1, 2])"
-                    "string(credentialsId: 'text-id', variable: 'TOKEN', junk: { -> 1 })"
-                    "string(credentialsId: 'text-id', variable: 'TOKEN', junk: 'literal')" ] do
-                  let requests = Credentials.parseRequests source
-                  Expect.isNonEmpty requests $"malformed source is an explicit refusal: {source}"
-                  Expect.isTrue
-                      (requests |> List.exists (function BindUnmodelled _ -> true | _ -> false))
-                      $"the complete request retains a refusal beside any valid sibling: {source}"
-          }
-
-          test "unknown literal keys retain Jenkins warning metadata" {
-              let requests =
-                  Credentials.parseRequests
-                      "string(credentialsId: 'text-id', notvariable: 'TOKEN', another: 'x')"
-
-              match requests with
-              | [ request ] ->
-                  Expect.equal
-                      (Credentials.unknownParameterWarning request)
-                      (Some(
-                          "org.jenkinsci.plugins.credentialsbinding.impl.StringBinding",
-                          [ "notvariable"; "another" ]))
-                      "class and unknown keys retain source order"
-              | other -> failtestf "unknown-key call was not one explicit refusal: %A" other
-          }
-
-          test "duplicate keys and unsupported quoted forms fail closed" {
-              for source in
-                  [ "string(credentialsId: 'first', credentialsId: 'second', variable: 'TOKEN')"
-                    "string(credentialsId: 'text-id', variable: 'FIRST', variable: 'SECOND')"
-                    "string(credentialsId: \"$ID\", variable: 'TOKEN')"
-                    "string(credentialsId: \"${ID}\", variable: 'TOKEN')"
-                    "string(credentialsId: 'text-id', variable: \"TOKEN_${SUFFIX}\")"
-                    "string(credentialsId: \"\\u0024{ID}\", variable: 'TOKEN')"
-                    "string(credentialsId: 'fogell\\u002dtoken', variable: 'TOKEN')"
-                    "string(credentialsId: \"fogell\\u002dtoken\", variable: 'TOKEN')"
-                    "string(credentialsId: '''text-id''', variable: 'TOKEN')"
-                    "string(credentialsId: \"\"\"text,id)\"\"\", variable: 'TOKEN')"
-                    "string(note: '''file(credentialsId: 'decoy', variable: 'CERT'),''', credentialsId: 'text-id', variable: 'TOKEN')"
-                    "string(credentialsId: 'live\ntext,)', variable: 'TOKEN')"
-                    "string(credentialsId: \"live\rtext,)\", variable: 'TOKEN')"
-                    "string(credentialsId: 'text-id', variable: 'TOKEN\r\nNEXT')" ] do
-                  let requests = Credentials.parseRequests source
-                  Expect.isNonEmpty requests $"unsupported source is an explicit refusal: {source}"
-                  Expect.isTrue
-                      (requests |> List.forall (function BindUnmodelled _ -> true | _ -> false))
-                      $"unsupported source cannot materialize a credential: {source}"
-          } ]
-
-/// FG-044b(d). Jenkins stash uses Ant's default excludes unless the exact
-/// useDefaultExcludes flag is false. Keep this at the Stash boundary so every
-/// caller shares the same selection rule and a walker-only fix cannot pass.
 let stashDefaultExcludes =
     testList
         "FG-044b(d) stash Ant default excludes"
@@ -2560,10 +2314,6 @@ let stashDefaultExcludes =
                       "a default-excluded file was never copied into controller storage"
           } ]
 
-/// FG-228. Fogell deliberately takes a stricter policy than the pinned Jenkins
-/// link behavior: every selected symbolic-link path refuses before controller
-/// bytes are replaced. These tests hold save, descriptor and restore boundaries
-/// beneath the public walker.
 let stashSymlinkContainment =
     let write (path: string) (value: string) =
         Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
@@ -3380,29 +3130,10 @@ let descriptorPolicyArchitecture =
     else
         ptestList "FG-238 descriptor policy per architecture" tests
 
-/// FG-070/071. The properties that make secret handling better than Jenkins',
-/// each asserted against a real subprocess.
 let secrets =
     testList
         "FG-070/071 secret delivery and leak detection"
-        [ test "the value IS bound, as Jenkins binds it — and a file companion too" {
-              // CLAIM CORRECTED, twice, and this test is the record of it.
-              //
-              // Originally: "the value is NOT in the child's environment", on the
-              // measurement that a secret in `environ` is readable from
-              // /proc/<pid>/environ by any same-UID process.
-              //
-              // First correction (Codex, PR #11): the 0600 file does not defeat that
-              // attacker either — it reads `TOKEN_FILE` from environ and opens the file,
-              // which it owns.
-              //
-              // Second correction (FG-044 measurement): Jenkins' `withCredentials` binds
-              // the VALUE — `env | grep -c '^TOKEN='` is 1, `${#TOKEN}` is the secret's
-              // length — and every real pipeline reads `$TOKEN`. Binding only a path
-              // breaks lift-and-shift for all 23 corpus files that use credentials, and
-              // lift-and-shift is the product. So Fogell binds the value for parity AND
-              // offers the file companion, and what actually protects the value is
-              // masking on every output path (FG-071), not absence from the environment.
+        [ test "the value and its file companion are both bound" {
               let root = tempRoot ()
               let req = request root ""
               let binding = Secrets.bind req.Workspace "TOKEN" "SUPERSECRET123"
@@ -3416,7 +3147,7 @@ let secrets =
                           Secrets = [ binding ] }
 
               Expect.equal r.Status BuildStatus.Success "ran"
-              Expect.stringContains r.Stdout "TOKEN=" "the value variable is bound, as Jenkins binds it"
+              Expect.stringContains r.Stdout "TOKEN=" "the value variable is bound"
               Expect.stringContains r.Stdout "TOKEN_FILE=" "and the file companion is bound too"
 
               // REVIEW FIX (Copilot, PR #15): this test prints the child's whole
@@ -3545,7 +3276,7 @@ let secrets =
               Expect.stringStarts (Path.GetFileName binding.FilePath) ".secret-" "the leaf uses the opaque prefix"
               Expect.isFalse
                   ((Path.GetFileName binding.FilePath).Contains "hostile")
-                  "the Jenkinsfile-controlled variable is absent from the leaf"
+                  "the pipeline.json-controlled variable is absent from the leaf"
 
               Secrets.revoke [ binding ]
           }
@@ -3675,7 +3406,7 @@ let secrets =
               // destructive: `save` deletes its target recursively before recreating it,
               // so `stash name: '../../x'` would have removed whatever that resolved to,
               // and `unstash` would copy arbitrary controller files into the workspace.
-              // The name comes from a Jenkinsfile, which is untrusted third-party code.
+              // The name comes from a pipeline.json, which is untrusted third-party code.
               let root = tempRoot ()
               let store = StashStore.under (Path.Combine(root, "stashes"))
               let ws = match Workspace.createFresh root (key ()) with
@@ -3712,8 +3443,6 @@ let secrets =
           }
 
           test "the hardened path-only form is still available for a caller that wants it" {
-              // The original FG-070 behaviour has not been deleted, only demoted from
-              // the default: a caller that accepts the incompatibility can still have it.
               let root = tempRoot ()
               let req = request root ""
               let binding = Secrets.bind req.Workspace "TOKEN" "SUPERSECRET123"
@@ -3848,7 +3577,7 @@ let secrets =
               Secrets.revoke [ binding ]
           }
 
-          test "masking covers the same forms Jenkins covers" {
+          test "masking covers registered secret forms" {
               let root = tempRoot ()
               let ws = match Workspace.createFresh root (key ()) with
                        | Result.Ok p -> p
@@ -3862,11 +3591,7 @@ let secrets =
               Secrets.revoke [ b ]
           }
 
-          test "BEAT JENKINS: a transformation that defeats masking is REPORTED" {
-              // Jenkins leaks on rev/hex/substring silently, with the build green.
-              // Fogell does not mask those either — masking every encoding is
-              // impossible — but it detects them and names the encoding, which is
-              // the difference between a known gap and a silent one.
+          test "a transformation that defeats masking is REPORTED" {
               let root = tempRoot ()
               let ws = match Workspace.createFresh root (key ()) with
                        | Result.Ok p -> p
@@ -3904,12 +3629,10 @@ let secrets =
               Expect.isFalse (File.Exists b.FilePath) "removed"
           } ]
 
-/// FG-033. Jenkins takes ~10 minutes to notice a dead step process and then says
-/// `exit code -1`. Fogell owns the process.
 let deadProcessDetection =
     testList
         "FG-033 external termination"
-        [ test "BEAT JENKINS: an externally killed step is detected in seconds and names the signal" {
+        [ test "an externally killed step is detected in seconds and names the signal" {
               let root = tempRoot ()
               let req = request root ""
               let pidFile = Path.Combine(req.Workspace, "child.pid")
@@ -4043,16 +3766,16 @@ let externalInterrupt =
 
               let r =
                   Executor.runStep
-                      { Name = "junit"
+                      { Name = "test_report"
                         Script = None
                         Workspace = ws
                         Environment = []
                         TimeoutMs = None
                         CaptureStdout = false
-                        JUnitSkipMarkingBuildUnstable = false
-                        JUnitAllowEmptyResults = false
-                        JUnitSkipOldReportsSince = None
-                        JUnitSkipMarkingStageUnstable = false
+                        ReportSkipBuildWarning = false
+                        ReportAllowEmpty = false
+                        ReportNotBefore = None
+                        ReportSkipStageWarning = false
                         Interrupt = None
                         InterruptBeatsDeadline = None
                         WorkspaceRoot = None
@@ -4066,8 +3789,9 @@ let externalInterrupt =
                         OnRedactedOutput = None
                         OnRedactedAdmission = None
                         CreateRedactedAdmission = None
+                        OnDiagnostic = None
                         ReserveCapturedOutput = None
-                        Named = [ "testResults", "report.xml" ]
+                        Named = [ "pattern", "report.xml" ]
                         Artifacts = None
                         BuildKey = "k" }
 
@@ -4084,15 +3808,15 @@ let externalInterrupt =
               // send the user off debugging a glob that was fine.
               let noMatch =
                   Executor.runStep
-                      { Name = "junit"
+                      { Name = "test_report"
                         Script = None
                         Workspace = ws
                         Environment = []
                         CaptureStdout = false
-                        JUnitSkipMarkingBuildUnstable = false
-                        JUnitAllowEmptyResults = false
-                        JUnitSkipOldReportsSince = None
-                        JUnitSkipMarkingStageUnstable = false
+                        ReportSkipBuildWarning = false
+                        ReportAllowEmpty = false
+                        ReportNotBefore = None
+                        ReportSkipStageWarning = false
                         TimeoutMs = None
                         Interrupt = None
                         InterruptBeatsDeadline = None
@@ -4107,8 +3831,9 @@ let externalInterrupt =
                         OnRedactedOutput = None
                         OnRedactedAdmission = None
                         CreateRedactedAdmission = None
+                        OnDiagnostic = None
                         ReserveCapturedOutput = None
-                        Named = [ "testResults", "nothing-matches-*.xml" ]
+                        Named = [ "pattern", "nothing-matches-*.xml" ]
                         Artifacts = None
                         BuildKey = "k" }
 
@@ -4132,9 +3857,9 @@ let externalInterrupt =
               let junit pattern =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          Named = [ "testResults", pattern ] }
+                          Named = [ "pattern", pattern ] }
 
               File.WriteAllText(
                   Path.Combine(baseRequest.Workspace, "duration.xml"),
@@ -4220,11 +3945,11 @@ let externalInterrupt =
               let junit skipBuild skipStage =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          Named = [ "testResults", "report.xml" ]
-                          JUnitSkipMarkingBuildUnstable = skipBuild
-                          JUnitSkipMarkingStageUnstable = skipStage }
+                          Named = [ "pattern", "report.xml" ]
+                          ReportSkipBuildWarning = skipBuild
+                          ReportSkipStageWarning = skipStage }
 
               // Keep the original build-only control names: comments elsewhere
               // cite these concepts, and the stale-reference audit treats a
@@ -4252,9 +3977,9 @@ let externalInterrupt =
               let junit pattern =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          Named = [ "testResults", pattern ] }
+                          Named = [ "pattern", pattern ] }
 
               File.WriteAllText(
                   Path.Combine(baseRequest.Workspace, "children.xml"),
@@ -4328,10 +4053,10 @@ let externalInterrupt =
               let junit pattern allowEmpty =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          JUnitAllowEmptyResults = allowEmpty
-                          Named = [ "testResults", pattern ] }
+                          ReportAllowEmpty = allowEmpty
+                          Named = [ "pattern", pattern ] }
 
               File.WriteAllText(
                   Path.Combine(baseRequest.Workspace, "namespace-default.xml"),
@@ -4379,10 +4104,10 @@ let externalInterrupt =
               let junit pattern =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          JUnitAllowEmptyResults = false
-                          Named = [ "testResults", pattern ] }
+                          ReportAllowEmpty = false
+                          Named = [ "pattern", pattern ] }
 
               File.WriteAllText(
                   Path.Combine(baseRequest.Workspace, "attribute-prefixed.xml"),
@@ -4412,7 +4137,7 @@ let externalInterrupt =
               Expect.equal declarationDecoy.Status Failure "a namespace declaration cannot supply the owner name"
               Expect.equal
                   declarationDecoy.Diagnostic
-                  (Some "Cannot invoke \"String.lastIndexOf(int)\" because \"this.className\" is null")
+                  (Some "Test report case is missing its identity")
                   "the xmlns:name decoy stays on the missing-identity path"
               Expect.isNone declarationDecoy.TestTotals "the terminal identity failure publishes no partial counts"
           }
@@ -4426,10 +4151,10 @@ let externalInterrupt =
               let junit pattern allowEmpty =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          JUnitAllowEmptyResults = allowEmpty
-                          Named = [ "testResults", pattern ] }
+                          ReportAllowEmpty = allowEmpty
+                          Named = [ "pattern", pattern ] }
 
               File.WriteAllText(
                   Path.Combine(reports, "Result.XML"),
@@ -4449,7 +4174,7 @@ let externalInterrupt =
               Expect.isNone missed.TestTotals "a terminal case-only miss publishes no counts"
 
               let allowedMiss = junit "reports/result.xml" true
-              Expect.equal allowedMiss.Status Success "allowEmptyResults permits the case-only miss"
+              Expect.equal allowedMiss.Status Success "allow_empty permits the case-only miss"
               Expect.equal allowedMiss.TestTotals (Some(0, 0, 0)) "the permitted miss returns the zero summary"
               Expect.equal allowedMiss.TestDuration (Some 0.0f) "the permitted miss returns zero duration"
 
@@ -4532,10 +4257,10 @@ let externalInterrupt =
               let junit pattern allowEmpty =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          JUnitAllowEmptyResults = allowEmpty
-                          Named = [ "testResults", pattern ] }
+                          ReportAllowEmpty = allowEmpty
+                          Named = [ "pattern", pattern ] }
 
               let broad = junit "**/*" false
               Expect.equal broad.Status Success "all 28 excluded witnesses remain inert"
@@ -4552,7 +4277,7 @@ let externalInterrupt =
               Expect.isNone explicitMiss.TestTotals "the terminal excluded-only invocation publishes no counts"
 
               let allowedMiss = junit explicit true
-              Expect.equal allowedMiss.Status Success "allowEmptyResults permits an excluded-only selection"
+              Expect.equal allowedMiss.Status Success "allow_empty permits an excluded-only selection"
               Expect.equal allowedMiss.TestTotals (Some(0, 0, 0)) "the permitted excluded-only selection returns zero counts"
               Expect.equal allowedMiss.TestDuration (Some 0.0f) "the permitted excluded-only selection returns zero duration"
 
@@ -4578,17 +4303,17 @@ let externalInterrupt =
                   $"<testsuite name=\"{name}\"><testcase name=\"fail\"><failure/></testcase></testsuite>"
 
               writeReport "reports/result.xml" (passing "literal" "1.25")
-              writeReport "module/service-target/surefire-reports/TEST-result.xml" (passing "corpus" "2.5")
+              writeReport "module/service-target/surefire-reports/TEST-result.xml" (passing "report" "2.5")
               writeReport "module/service-target/surefire-reports/test-decoy.xml" (failing "case-decoy")
               writeReport "module/.svn/service-target/surefire-reports/TEST-hidden.xml" (failing "excluded")
 
               let junit pattern allowEmpty =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          JUnitAllowEmptyResults = allowEmpty
-                          Named = [ "testResults", pattern ] }
+                          ReportAllowEmpty = allowEmpty
+                          Named = [ "pattern", pattern ] }
 
               let literal = junit "reports//result.xml" false
               Expect.equal literal.Status Success "a doubled internal separator selects the literal report"
@@ -4599,15 +4324,15 @@ let externalInterrupt =
               Expect.equal many.TestTotals literal.TestTotals "three or more adjacent separators collapse identically"
               Expect.equal many.TestDuration literal.TestDuration "separator-run width does not change duration"
 
-              let corpusPattern = "**//*target/surefire-reports/TEST-*.xml"
-              let corpus = junit corpusPattern false
-              Expect.equal corpus.Status Success "the exact admitted-corpus spelling selects the nested report"
-              Expect.equal corpus.TestTotals (Some(1, 0, 0)) "case and default-exclude controls stay inert"
-              Expect.equal corpus.TestDuration (Some 2.5f) "only the selected visible report contributes duration"
+              let reportPattern = "**//*target/surefire-reports/TEST-*.xml"
+              let reportResult = junit reportPattern false
+              Expect.equal reportResult.Status Success "the nested report pattern selects the nested report"
+              Expect.equal reportResult.TestTotals (Some(1, 0, 0)) "case and default-exclude controls stay inert"
+              Expect.equal reportResult.TestDuration (Some 2.5f) "only the selected visible report contributes duration"
 
               let widerRuns = junit "**////*target//surefire-reports///TEST-*.xml" false
-              Expect.equal widerRuns.TestTotals corpus.TestTotals "multiple internal runs tokenize like single separators"
-              Expect.equal widerRuns.TestDuration corpus.TestDuration "multiple internal runs preserve the same summary"
+              Expect.equal widerRuns.TestTotals reportResult.TestTotals "multiple internal runs tokenize like single separators"
+              Expect.equal widerRuns.TestDuration reportResult.TestDuration "multiple internal runs preserve the same summary"
 
               let caseMiss = junit "reports//Result.xml" false
               Expect.equal caseMiss.Status Failure "separator normalization does not weaken case sensitivity"
@@ -4617,7 +4342,7 @@ let externalInterrupt =
                   "a case-only miss retains the existing no-report diagnostic"
 
               let allowedCaseMiss = junit "reports//Result.xml" true
-              Expect.equal allowedCaseMiss.Status Success "allowEmptyResults still permits the normalized case miss"
+              Expect.equal allowedCaseMiss.Status Success "allow_empty still permits the normalized case miss"
               Expect.equal allowedCaseMiss.TestTotals (Some(0, 0, 0)) "the permitted miss returns zero counts"
 
               let rooted = junit "//reports/result.xml" true
@@ -4652,10 +4377,10 @@ let externalInterrupt =
               let junit pattern allowEmpty =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          JUnitAllowEmptyResults = allowEmpty
-                          Named = [ "testResults", pattern ] }
+                          ReportAllowEmpty = allowEmpty
+                          Named = [ "pattern", pattern ] }
 
               let assertRecursive label observed =
                   Expect.equal observed.Status Unstable $"{label} selects the failing nested report"
@@ -4692,7 +4417,7 @@ let externalInterrupt =
                   "a shorthand case miss retains the no-report diagnostic"
 
               let allowedMiss = junit "Reports/" true
-              Expect.equal allowedMiss.Status Success "allowEmptyResults permits the shorthand case miss"
+              Expect.equal allowedMiss.Status Success "allow_empty permits the shorthand case miss"
               Expect.equal allowedMiss.TestTotals (Some(0, 0, 0)) "the permitted case miss returns zero counts"
 
               for boundaryPattern in [ "/"; "//"; ""; "./reports/" ] do
@@ -4752,10 +4477,10 @@ let externalInterrupt =
               let junit pattern allowEmpty =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          Named = [ "testResults", pattern ]
-                          JUnitAllowEmptyResults = allowEmpty }
+                          Named = [ "pattern", pattern ]
+                          ReportAllowEmpty = allowEmpty }
 
               for label, pattern, duration in
                   [ "file", "reports/file-link.xml", 1.0f
@@ -4774,7 +4499,7 @@ let externalInterrupt =
                   "a dangling literal link takes the existing no-report path"
 
               let brokenLiteralAllowed = junit "reports/broken.xml" true
-              Expect.equal brokenLiteralAllowed.Status Success "allowEmptyResults permits the literal dangling miss"
+              Expect.equal brokenLiteralAllowed.Status Success "allow_empty permits the literal dangling miss"
               Expect.equal brokenLiteralAllowed.TestTotals (Some(0, 0, 0)) "the permitted miss returns typed zero"
 
               let brokenWildcard = junit "reports/broken*.xml" false
@@ -4786,11 +4511,11 @@ let externalInterrupt =
               Expect.equal
                   brokenWildcardAllowed.Status
                   Unstable
-                  "allowEmptyResults does not suppress a selected dangling wildcard entry"
+                  "allow_empty does not suppress a selected dangling wildcard entry"
               Expect.equal
                   brokenWildcardAllowed.TestTotals
                   (Some(1, 1, 0))
-                  "allowEmptyResults changes only the no-match path"
+                  "allow_empty changes only the no-match path"
 
               let brokenDirectory = junit "reports/broken-dir/**/*.xml" true
               Expect.equal brokenDirectory.Status Success "a dangling directory link has no descendants"
@@ -4804,19 +4529,19 @@ let externalInterrupt =
               let brokenWithTimestampFilter =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          Named = [ "testResults", "reports/broken*.xml" ]
-                          JUnitSkipOldReportsSince = Some(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) }
+                          Named = [ "pattern", "reports/broken*.xml" ]
+                          ReportNotBefore = Some(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) }
 
               Expect.equal
                   brokenWithTimestampFilter.Status
                   Failure
-                  "skipOldReports inspects the final target before zero-length synthesis"
+                  "not_before inspects the final target before zero-length synthesis"
               Expect.stringContains
                   brokenWithTimestampFilter.Diagnostic.Value
                   "FileNotFoundException"
-                  "a dangling target fails the timestamp lookup like Jenkins"
+                  "a dangling target fails the timestamp lookup with an explicit failure"
 
               let emptyTarget = Path.Combine(external, "empty.data")
               File.WriteAllBytes(emptyTarget, Array.empty)
@@ -4837,13 +4562,13 @@ let externalInterrupt =
               let oldLink =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          Named = [ "testResults", "reports/old-link.xml" ]
-                          JUnitSkipOldReportsSince = Some buildStart
-                          JUnitAllowEmptyResults = true }
+                          Named = [ "pattern", "reports/old-link.xml" ]
+                          ReportNotBefore = Some buildStart
+                          ReportAllowEmpty = true }
 
-              Expect.equal oldLink.Status Success "skipOldReports reads the final target timestamp"
+              Expect.equal oldLink.Status Success "not_before reads the final target timestamp"
               Expect.equal oldLink.TestTotals (Some(0, 0, 0)) "an old symlink target is filtered"
 
               let loops = Path.Combine(baseRequest.Workspace, "loops")
@@ -4882,9 +4607,9 @@ let externalInterrupt =
                   let observed =
                       Executor.runStep
                           { baseRequest with
-                              Name = "junit"
+                              Name = "test_report"
                               Script = None
-                              Named = [ "testResults", "reports/*.xml" ] }
+                              Named = [ "pattern", "reports/*.xml" ] }
 
                   Expect.equal observed.Status Success "the narrow include succeeds"
                   Expect.equal observed.TestTotals (Some(1, 0, 0)) "only the selected report contributes"
@@ -4943,10 +4668,10 @@ let externalInterrupt =
               let junit pattern =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          Named = [ "testResults", pattern ]
-                          JUnitAllowEmptyResults = true }
+                          Named = [ "pattern", pattern ]
+                          ReportAllowEmpty = true }
 
               try
                   File.SetUnixFileMode(denied, UnixFileMode.None)
@@ -4984,10 +4709,10 @@ let externalInterrupt =
                   let observed =
                       Executor.runStep
                           { baseRequest with
-                              Name = "junit"
+                              Name = "test_report"
                               Script = None
-                              Named = [ "testResults", "reports/external/**/*.xml" ]
-                              JUnitAllowEmptyResults = true }
+                              Named = [ "pattern", "reports/external/**/*.xml" ]
+                              ReportAllowEmpty = true }
 
                   Expect.equal observed.Status Failure "directory-link authority failure is not allow-empty success"
                   Expect.isNone observed.TestTotals "directory-link authority failure publishes no counts"
@@ -5079,7 +4804,7 @@ let externalInterrupt =
               Expect.isGreaterThanOrEqual polls.Value 8 "the deterministic retarget seam ran after selection"
           }
 
-          test "junit skipOldReports filters before report construction at the pinned build-time boundary" {
+          test "junit not_before filters before report construction at the pinned build-time boundary" {
               let root = tempRoot ()
               let baseRequest = request root ""
               let buildStart = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
@@ -5110,11 +4835,11 @@ let externalInterrupt =
               let junit pattern since allowEmpty =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          Named = [ "testResults", pattern ]
-                          JUnitSkipOldReportsSince = since
-                          JUnitAllowEmptyResults = allowEmpty }
+                          Named = [ "pattern", pattern ]
+                          ReportNotBefore = since
+                          ReportAllowEmpty = allowEmpty }
 
               let unfiltered = junit "reports/*.xml" None false
               Expect.equal unfiltered.Status Unstable "the omitted/false path performs no mtime filtering"
@@ -5134,7 +4859,7 @@ let externalInterrupt =
                   "all-old remains distinct from a no-match"
 
               let allowedAllOld = junit "reports/old-*.xml" (Some buildStart) true
-              Expect.equal allowedAllOld.Status Success "allowEmptyResults permits the all-old aggregate"
+              Expect.equal allowedAllOld.Status Success "allow_empty permits the all-old aggregate"
               Expect.equal allowedAllOld.TestTotals (Some(0, 0, 0)) "the allowed all-old summary stays typed zero"
               Expect.equal allowedAllOld.TestDuration (Some 0.0f) "the allowed all-old duration stays Float zero"
 
@@ -5169,15 +4894,15 @@ let externalInterrupt =
                   Expect.stringContains
                       message
                       "FileNotFoundException"
-                      "skipOldReports fails a selected report that vanishes before metadata inspection"
-              | other -> failtestf "vanished skipOldReports input returned %A" other
+                      "not_before fails a selected report that vanishes before metadata inspection"
+              | other -> failtestf "vanished not_before input returned %A" other
           }
 
           test "junit recognizes every reached owner and requires a resolvable testcase identity" {
               let root = tempRoot ()
               let baseRequest = request root ""
               let emitted = ResizeArray<string>()
-              let missingIdentity = "Cannot invoke \"String.lastIndexOf(int)\" because \"this.className\" is null"
+              let missingIdentity = "Test report case is missing its identity"
 
               let junitWithOutput pattern allowEmpty =
                   emitted.Clear()
@@ -5185,10 +4910,10 @@ let externalInterrupt =
                   let observed =
                       Executor.runStep
                           { baseRequest with
-                              Name = "junit"
+                              Name = "test_report"
                               Script = None
-                              Named = [ "testResults", pattern ]
-                              JUnitAllowEmptyResults = allowEmpty
+                              Named = [ "pattern", pattern ]
+                              ReportAllowEmpty = allowEmpty
                               OnLine = Some emitted.Add }
 
                   observed, List.ofSeq emitted
@@ -5272,11 +4997,11 @@ let externalInterrupt =
                   Expect.equal observed.Status Failure $"{label}: an unresolved class identity poisons the aggregate"
                   Expect.isNone observed.TestTotals $"{label}: terminal unreadability publishes no partial counts"
                   Expect.isNone observed.StageWarning $"{label}: unreadability is not a test-failure warning"
-                  Expect.equal observed.Diagnostic (Some missingIdentity) $"{label}: the raw Jenkins reason remains durable"
+                  Expect.equal observed.Diagnostic (Some missingIdentity) $"{label}: the structured report reason remains durable"
                   Expect.equal
                       output
                       [ "Recording test results"; missingIdentity ]
-                      $"{label}: the exact Jenkins null-className line follows the recording notice"
+                      $"{label}: the missing test identity diagnostic follows the recording notice"
 
               File.WriteAllText(
                   Path.Combine(baseRequest.Workspace, "same-xml-invalid-first.xml"),
@@ -5296,7 +5021,7 @@ let externalInterrupt =
                   Expect.equal
                       output
                       [ "Recording test results"; missingIdentity ]
-                      $"{label}: both XML orders emit the exact Jenkins null-className line"
+                      $"{label}: both XML orders emit the missing test identity diagnostic"
           }
 
           test "junit distinguishes a missing testcase name from an empty one and preserves parser order" {
@@ -5304,7 +5029,7 @@ let externalInterrupt =
               let baseRequest = request root ""
               let emitted = ResizeArray<string>()
               let missingTestName = JUnitDiagnostics.MissingTestNameMessage
-              let missingIdentity = "Cannot invoke \"String.lastIndexOf(int)\" because \"this.className\" is null"
+              let missingIdentity = "Test report case is missing its identity"
 
               let junit pattern allowEmpty =
                   emitted.Clear()
@@ -5312,10 +5037,10 @@ let externalInterrupt =
                   let observed =
                       Executor.runStep
                           { baseRequest with
-                              Name = "junit"
+                              Name = "test_report"
                               Script = None
-                              Named = [ "testResults", pattern ]
-                              JUnitAllowEmptyResults = allowEmpty
+                              Named = [ "pattern", pattern ]
+                              ReportAllowEmpty = allowEmpty
                               OnLine = Some emitted.Add }
 
                   observed, List.ofSeq emitted
@@ -5351,9 +5076,9 @@ let externalInterrupt =
               let missing, missingOutput = junit "missing-name-terminal.xml" true
               let missingReportPath = Path.Combine(baseRequest.Workspace, "missing-name-terminal.xml")
               Expect.equal missing.Status Failure "a missing name without a class fallback is terminal"
-              Expect.isNone missing.TestTotals "allowEmptyResults cannot turn a missing name into zero totals"
+              Expect.isNone missing.TestTotals "allow_empty cannot turn a missing name into zero totals"
               Expect.isNone missing.StageWarning "the parser fault is not a test warning"
-              Expect.equal missing.Diagnostic (Some missingTestName) "the exact oracle diagnostic is durable"
+              Expect.equal missing.Diagnostic (Some missingTestName) "the named report diagnostic is durable"
               Expect.equal
                   missingOutput
                   [ "Recording test results"
@@ -5383,7 +5108,7 @@ let externalInterrupt =
                       else
                           [ "Recording test results"; expected ]
 
-                  Expect.equal output expectedOutput $"{label}: only the Jenkins-visible winning fault is emitted"
+                  Expect.equal output expectedOutput $"{label}: only the selected report fault is emitted"
 
               assertFatal
                   "suite-document-order-missing-first"
@@ -5476,7 +5201,7 @@ let externalInterrupt =
                   "the first immediate read failure remains exact"
           }
 
-          test "junit fails one aggregate with no recognized result unless typed allowEmptyResults permits it" {
+          test "junit fails one aggregate with no recognized result unless typed allow_empty permits it" {
               let root = tempRoot ()
               let baseRequest = request root ""
               let emitted = ResizeArray<string>()
@@ -5487,10 +5212,10 @@ let externalInterrupt =
                   let observed =
                       Executor.runStep
                           { baseRequest with
-                              Name = "junit"
+                              Name = "test_report"
                               Script = None
-                              Named = [ "testResults", pattern ]
-                              JUnitAllowEmptyResults = allowEmpty
+                              Named = [ "pattern", pattern ]
+                              ReportAllowEmpty = allowEmpty
                               OnLine = Some emitted.Add }
 
                   observed, List.ofSeq emitted
@@ -5521,18 +5246,18 @@ let externalInterrupt =
               let suppressed =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          Named = [ "testResults", "zero-*.xml" ]
-                          JUnitSkipMarkingBuildUnstable = true
-                          JUnitSkipMarkingStageUnstable = true }
+                          Named = [ "pattern", "zero-*.xml" ]
+                          ReportSkipBuildWarning = true
+                          ReportSkipStageWarning = true }
 
               Expect.equal suppressed.Status Failure "instability flags cannot suppress a terminal empty aggregate"
               Expect.isNone suppressed.TestTotals "suppression cannot manufacture an empty summary"
               Expect.isNone suppressed.StageWarning "the terminal failure never decorates the stage"
 
               let allowed, allowedOutput = junit "zero-*.xml" true
-              Expect.equal allowed.Status Success "allowEmptyResults makes the empty aggregate nonterminal"
+              Expect.equal allowed.Status Success "allow_empty makes the empty aggregate nonterminal"
               Expect.equal allowed.TestTotals (Some(0, 0, 0)) "the permitted call returns an exact zero summary"
               Expect.equal allowed.TestDuration (Some 0.0f) "the permitted empty aggregate returns zero Float duration"
               Expect.isNone allowed.StageWarning "a permitted empty result has no stage warning"
@@ -5554,7 +5279,7 @@ let externalInterrupt =
                   "the terminal no-report notice is emitted exactly"
 
               let allowedMissing, allowedMissingOutput = junit "nothing-matches-*.xml" true
-              Expect.equal allowedMissing.Status Success "allowEmptyResults also permits a missing glob"
+              Expect.equal allowedMissing.Status Success "allow_empty also permits a missing glob"
               Expect.equal allowedMissing.TestTotals (Some(0, 0, 0)) "the permitted missing glob returns the zero summary"
               Expect.equal allowedMissing.TestDuration (Some 0.0f) "the permitted missing glob returns zero Float duration"
               Expect.equal
@@ -5573,10 +5298,10 @@ let externalInterrupt =
               let interrupted =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          Named = [ "testResults", "zero-attributes.xml" ]
-                          JUnitAllowEmptyResults = true
+                          Named = [ "pattern", "zero-attributes.xml" ]
+                          ReportAllowEmpty = true
                           DeadlineExpired = Some abortAfterScan }
 
               Expect.equal polls.Value 3 "the interrupt fired only at the final aggregate poll"
@@ -5593,11 +5318,11 @@ let externalInterrupt =
               let junit pattern skipBuild skipStage deadlineExpired =
                   Executor.runStep
                       { baseRequest with
-                          Name = "junit"
+                          Name = "test_report"
                           Script = None
-                          Named = [ "testResults", pattern ]
-                          JUnitSkipMarkingBuildUnstable = skipBuild
-                          JUnitSkipMarkingStageUnstable = skipStage
+                          Named = [ "pattern", pattern ]
+                          ReportSkipBuildWarning = skipBuild
+                          ReportSkipStageWarning = skipStage
                           DeadlineExpired = deadlineExpired }
 
               File.WriteAllText(report, "not xml")
@@ -5732,54 +5457,6 @@ let externalInterrupt =
           } ]
 
 
-
-let printlnExecution =
-    testList
-        "FG-258 Groovy println execution"
-        [ test "one value and zero values publish the measured lines" {
-              let valueLines = System.Collections.Generic.List<string>()
-              let valueRoot = tempRoot ()
-
-              let valueResult =
-                  Executor.runStep
-                      { request valueRoot "Build number: 1" with
-                          Name = "println"
-                          OnLine = Some valueLines.Add }
-
-              Expect.equal valueResult.Status Success "one positional value succeeds"
-              Expect.equal valueResult.Stdout "Build number: 1\n" "one newline is appended"
-              Expect.equal (valueLines |> Seq.toList) [ "Build number: 1" ] "one output record is streamed"
-
-              let blankLines = System.Collections.Generic.List<string>()
-              let blankRoot = tempRoot ()
-
-              let blankResult =
-                  Executor.runStep
-                      { request blankRoot "unused" with
-                          Name = "println"
-                          Script = None
-                          OnLine = Some blankLines.Add }
-
-              Expect.equal blankResult.Status Success "zero-argument println succeeds"
-              Expect.equal blankResult.Stdout "\n" "zero-argument println writes one blank line"
-              Expect.equal (blankLines |> Seq.toList) [ "" ] "the blank record is still published"
-
-              let secret = "println-secret-value"
-              let maskedLines = System.Collections.Generic.List<string>()
-              let maskedRoot = tempRoot ()
-              let binding = Secrets.bind maskedRoot "PRINT_TOKEN" secret
-
-              let maskedResult =
-                  Executor.runStep
-                      { request maskedRoot secret with
-                          Name = "println"
-                          Secrets = [ binding ]
-                          OnLine = Some maskedLines.Add }
-
-              Expect.equal maskedResult.Status Success "masked println succeeds"
-              Expect.equal maskedResult.Stdout "****\n" "the buffered output is masked"
-              Expect.equal (maskedLines |> Seq.toList) [ "****" ] "the streamed output is masked"
-          } ]
 
 let maskingOnOutputPath =
     testList
@@ -5948,7 +5625,7 @@ let maskingOnOutputPath =
               Expect.sequenceEqual lines [ "one"; "two"; "three"; ""; "four" ] "framing matches StreamReader.ReadLine"
           }
 
-          test "bounded capture preserves an 8 MiB unterminated returnStdout value" {
+          test "bounded capture preserves an 8 MiB unterminated captured stdout value" {
               let size = 8 * 1024 * 1024
 
               let result =
@@ -5957,8 +5634,8 @@ let maskingOnOutputPath =
                           SuppressStdoutEcho = true }
 
               Expect.equal result.Outcome (Completed 0) "the bounded control succeeds"
-              Expect.equal result.Stdout.Length size "returnStdout retains the complete below-limit record"
-              Expect.isTrue (result.Stdout |> Seq.forall ((=) 'x')) "returnStdout retains the original characters"
+              Expect.equal result.Stdout.Length size "captured stdout retains the complete below-limit record"
+              Expect.isTrue (result.Stdout |> Seq.forall ((=) 'x')) "captured stdout retains the original characters"
               Expect.isTrue result.StdoutReachedEof "the exact captured value reached EOF"
           }
 
@@ -5971,7 +5648,7 @@ let maskingOnOutputPath =
                           { RunRequest.create ($"head -c {size} /dev/zero | tr '\\0' x", tempRoot ()) with
                               SuppressStdoutEcho = true }
                       |> ignore)
-                  "an oversized returnStdout record cannot become a successful truncated value"
+                  "an oversized captured stdout record cannot become a successful truncated value"
           }
 
           test "output overflow wakes a step with no deadline or interrupt before its next effect" {
@@ -5993,7 +5670,7 @@ let maskingOnOutputPath =
               Expect.isFalse (File.Exists effect) "the command after the rejected output did not run"
           }
 
-          test "a newline-free stderr record over the bound fails explicitly with returnStdout enabled" {
+          test "a newline-free stderr record over the bound fails explicitly with captured stdout enabled" {
               let size = ProcessGroup.OutputLimitCharacters + 1
 
               Expect.throwsT<OutputLimitExceededException>
@@ -6019,39 +5696,93 @@ let maskingOnOutputPath =
                   "the existing sink suffix is included in the same CRLF bound"
           }
 
-          test "a stalled output callback cannot grow an unbounded publication queue" {
+          test "a burst waits for bounded callback space and drains in order" {
               let mutable delivered = 0
+              let received = Collections.Concurrent.ConcurrentQueue<string>()
               use firstCallbackStarted = new Threading.ManualResetEventSlim(false)
               use releaseCallbacks = new Threading.ManualResetEventSlim(false)
+              let lineCount = ProcessGroup.CallbackLimitCount + 256
 
               let running =
                   Threading.Tasks.Task.Run(fun () ->
                       ProcessGroup.run
-                          { RunRequest.create ("set +x; i=0; while [ $i -lt 1100 ]; do printf 'line\\n'; i=$((i+1)); done", tempRoot ()) with
+                          { RunRequest.create ($"#!/bin/sh\ni=0; while [ $i -lt {lineCount} ]; do printf 'line-%%04d\\n' $i; i=$((i+1)); done", tempRoot ()) with
                               OnLine =
-                                  Some(fun _ ->
+                                  Some(fun line ->
                                       let position = Threading.Interlocked.Increment(&delivered)
 
                                       if position = 1 then
                                           firstCallbackStarted.Set()
-                                          releaseCallbacks.Wait()) }
-                      |> ignore)
+                                          releaseCallbacks.Wait()
+
+                                      received.Enqueue line) })
 
               try
                   Expect.isTrue (firstCallbackStarted.Wait 3_000) "the first callback blocks before the backlog is filled"
-                  Expect.throwsT<OutputLimitExceededException>
-                      (fun () -> running.GetAwaiter().GetResult())
-                      "the bounded callback backlog fails the run instead of retaining every pending line"
+                  Threading.Thread.Sleep 150
+                  Expect.isFalse running.IsCompleted "the bounded backlog holds the producer while callback delivery is blocked"
               finally
                   releaseCallbacks.Set()
 
-              Expect.isTrue
-                  (Threading.SpinWait.SpinUntil((fun () -> Threading.Volatile.Read(&delivered) = ProcessGroup.CallbackLimitCount), 5_000))
-                  "all reserved callbacks drain after the gate is released"
-              Expect.equal
-                  (Threading.Volatile.Read(&delivered))
-                  ProcessGroup.CallbackLimitCount
-                  "the rejected callback and every later record were never scheduled"
+              let result = running.GetAwaiter().GetResult()
+              Expect.equal result.Outcome (Completed 0) "the producer completes after callback space opens"
+              Expect.equal (Threading.Volatile.Read(&delivered)) lineCount "every callback drains once"
+              Expect.sequenceEqual
+                  (received.ToArray())
+                  [| for i in 0 .. lineCount - 1 -> sprintf "line-%04d" i |]
+                  "bounded delivery preserves every line in order"
+          }
+
+          test "the default traced 350-marker workload retains every marker" {
+              let command = "i=0; while [ $i -lt 350 ]; do printf 'page-marker-%s\\n' \"$i\"; i=$((i+1)); done"
+
+              for attempt in 1 .. 3 do
+                  let received = Collections.Concurrent.ConcurrentQueue<string>()
+
+                  let result =
+                      ProcessGroup.run
+                          { RunRequest.create (command, tempRoot ()) with
+                              OnLine = Some received.Enqueue }
+
+                  Expect.equal result.Outcome (Completed 0) $"traced run {attempt} succeeds"
+
+                  let markers =
+                      received.ToArray()
+                      |> Array.filter (fun line -> line.StartsWith("page-marker-", StringComparison.Ordinal))
+
+                  Expect.sequenceEqual
+                      markers
+                      [| for i in 0 .. 349 -> $"page-marker-{i}" |]
+                      $"traced run {attempt} publishes each marker once in order"
+          }
+
+          test "a permanently stalled output sink releases process cleanup" {
+              use callbackStarted = new Threading.ManualResetEventSlim(false)
+              use releaseCallback = new Threading.ManualResetEventSlim(false)
+              let lineCount = 20_000
+              let clock = Stopwatch.StartNew()
+
+              let running =
+                  Threading.Tasks.Task.Run(fun () ->
+                      ProcessGroup.run
+                          { RunRequest.create ($"#!/bin/sh\ni=0; while [ $i -lt {lineCount} ]; do printf 'line\\n'; i=$((i+1)); done", tempRoot ()) with
+                              OnLine =
+                                  Some(fun _ ->
+                                      callbackStarted.Set()
+                                      releaseCallback.Wait()) }
+                      |> ignore)
+
+              try
+                  Expect.isTrue (callbackStarted.Wait 3_000) "the output sink is stalled"
+                  Expect.throwsT<OutputLimitExceededException>
+                      (fun () -> running.GetAwaiter().GetResult())
+                      "backpressure eventually fails closed and reaps the blocked producer"
+                  Expect.isLessThan
+                      clock.ElapsedMilliseconds
+                      (int64 ProcessGroup.CallbackBackpressureTimeoutMs + 3_000L)
+                      "the stalled sink cannot hold cleanup indefinitely"
+              finally
+                  releaseCallback.Set()
           }
 
           test "bounded capture retains CRLF exactly while stderr keeps line framing" {
@@ -6061,7 +5792,7 @@ let maskingOnOutputPath =
                           SuppressStdoutEcho = true }
 
               Expect.equal result.Outcome (Completed 0) "the CRLF control succeeds"
-              Expect.equal result.Stdout "out\r\n" "returnStdout retains its physical terminator"
+              Expect.equal result.Stdout "out\r\n" "captured stdout retains its physical terminator"
               Expect.stringContains result.Stderr "err\n" "stderr retains its established line callback representation"
               Expect.isFalse (result.Stderr.Contains "err\r\n") "stderr framing normalizes its CRLF terminator"
           }
@@ -6653,6 +6384,58 @@ let maskingOnOutputPath =
               Expect.stringContains r.Stdout "plain-output" "unchanged"
           } ]
 
+let private diagnosticEvidence =
+    testList "FG-266 diagnostics"
+        [ test "JUnit names planted failure and masks before bounding fields" {
+              let root = tempRoot ()
+              try
+                  let req = request root ""
+                  let secret = String.replicate 3000 "S"
+                  let binding = Secrets.bind root "TOKEN" secret
+                  try
+                      File.WriteAllText(Path.Combine(req.Workspace, "results.xml"),
+                          "<testsuite name='Example'><testcase classname='Tests' name='planted_failure' file='test.fs' line='23'><failure message='" + secret + "'>assert expected 2 got 1</failure></testcase></testsuite>")
+                      let streamed = ResizeArray<ExecutionDiagnostic>()
+                      let gate = obj ()
+                      let onDiagnostic d =
+                          Expect.isTrue (System.Threading.Monitor.IsEntered gate) "masking and publication share the credential registration lock"
+                          streamed.Add d
+                      let result = Executor.runStep { req with Name = "test_report"; Script = None; Named = [ "pattern", "results.xml" ]; Secrets = [ binding ]; MaskingSecretsLock = Some gate; OnDiagnostic = Some onDiagnostic }
+                      Expect.equal streamed.Count 1 "direct callback receives the failed case"
+                      Expect.stringContains streamed.[0].Message "****" "direct callback is masked before clipping"
+                      Expect.isFalse ((ExecutionDiagnostic.serialize streamed.[0]).Contains "SSSS") "direct callback cannot leak a secret prefix"
+                      Expect.equal result.Status Unstable "workload test failure remains unstable"
+                      Expect.equal result.Diagnostics.Length 1 "one failed test"
+                      let d = result.Diagnostics.Head
+                      Expect.equal d.TestName "planted_failure" "typed identity"
+                      Expect.equal d.TestClass "Tests" "typed class"
+                      Expect.throwsT<IOException>
+                          (fun () -> Executor.runStep { req with Name = "test_report"; Script = None; Named = [ "pattern", "results.xml" ]; OnDiagnostic = Some(fun _ -> raise (IOException "event transport failed")) } |> ignore)
+                          "diagnostic transport failure escapes the report parser rather than becoming a workload parse error"
+                      Expect.equal d.SourcePath "test.fs" "reported source only"
+                      Expect.equal d.SourceLine (Nullable 23L) "reported source line"
+                      Expect.stringContains d.Message "****" "secret masked before field clipping"
+                      Expect.isFalse (d.Message.Contains "SSSS") "no secret prefix leaks"
+                      let huge = { d with Message = String.replicate 4000 "😀"; ArtifactRefs = Array.create 20 "artifact" }
+                      let bounded = ExecutionDiagnostic.sanitize id huge
+                      Expect.isTrue bounded.Truncated "truncation explicit"
+                      Expect.isLessThan (Text.Encoding.UTF8.GetByteCount(ExecutionDiagnostic.serialize bounded)) 16384 "bounded encoded frame"
+                  finally Secrets.revoke [ binding ]
+              finally Directory.Delete(root, true)
+          }
+          test "JUnit failed-case collection is bounded with explicit omission" {
+              let root = tempRoot ()
+              try
+                  let req = request root ""
+                  File.WriteAllText(Path.Combine(req.Workspace, "results.xml"),
+                      "<testsuite name='Tests'>" + String.concat "" [ for i in 1..80 -> $"<testcase name='case{i}'><failure>failed</failure></testcase>" ] + "</testsuite>")
+                  let result = Executor.runStep { req with Name = "test_report"; Script = None; Named = [ "pattern", "results.xml" ] }
+                  Expect.equal result.TestTotals (Some(80,80,0)) "summary remains complete"
+                  Expect.equal result.Diagnostics.Length 65 "64 named cases and an explicit omission diagnostic"
+                  Expect.isTrue (List.last result.Diagnostics).Truncated "omission visible"
+              finally Directory.Delete(root, true)
+          } ]
+
 [<EntryPoint>]
 let main argv =
     match argv with
@@ -6700,18 +6483,17 @@ let main argv =
             (testSequenced
                 (testList
                     "Fogell.Execution"
-                    [ CaptureOutputBudgetTests.captureOutputBudget
+                    [ diagnosticEvidence
+                      CaptureOutputBudgetTests.captureOutputBudget
                       ArtifactPublishingTests.artifactPublishing
                       workspaceHygiene
                       shellExecution
                       environmentIsolation
                       containment
                       eventDrivenWaits
-                      credentialKeyBoundaries
                       stashDefaultExcludes
                       stashSymlinkContainment
                       descriptorPolicyArchitecture
-                      printlnExecution
                       secrets
                       deadProcessDetection
                       externalInterrupt

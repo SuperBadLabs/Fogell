@@ -28,14 +28,6 @@
           "Microsoft.Extensions.DependencyModel": "10.0.0"
         }
       },
-      "FParsec": {
-        "type": "Transitive",
-        "resolved": "1.1.1",
-        "contentHash": "Wdjf/gCNLEwd+0nUCDh9jAIIcKGwfhRramySTnTcVVgNC6i4Vp5aJklUJJfvFkEZMYNZEDGcI8pCa36/TmwmSg==",
-        "dependencies": {
-          "FSharp.Core": "4.3.4"
-        }
-      },
       "Microsoft.AspNetCore.TestHost": {
         "type": "Transitive",
         "resolved": "10.0.0",
@@ -67,7 +59,7 @@
         "type": "Project",
         "dependencies": {
           "FSharp.Core": "[10.1.301, )",
-          "Fogell.Differential": "[1.0.0, )",
+          "Fogell.Execution": "[1.0.0, )",
           "Fogell.Pipeline.Parser": "[1.0.0, )",
           "Fogell.Store": "[1.0.0, )"
         }
@@ -82,16 +74,6 @@
           "Fogell.Store": "[1.0.0, )"
         }
       },
-      "fogell.differential": {
-        "type": "Project",
-        "dependencies": {
-          "FSharp.Core": "[10.1.301, )",
-          "Fogell.Execution": "[1.0.0, )",
-          "Fogell.Groovy.Interpreter": "[1.0.0, )",
-          "Fogell.Groovy.Parser": "[1.0.0, )",
-          "Fogell.Pipeline.Parser": "[1.0.0, )"
-        }
-      },
       "fogell.domain": {
         "type": "Project",
         "dependencies": {
@@ -104,30 +86,6 @@
           "FSharp.Core": "[10.1.301, )",
           "Fogell.Admission": "[1.0.0, )",
           "Fogell.Domain": "[1.0.0, )"
-        }
-      },
-      "fogell.groovy": {
-        "type": "Project",
-        "dependencies": {
-          "FSharp.Core": "[10.1.301, )",
-          "Fogell.Ir": "[1.0.0, )"
-        }
-      },
-      "fogell.groovy.interpreter": {
-        "type": "Project",
-        "dependencies": {
-          "FSharp.Core": "[10.1.301, )",
-          "Fogell.Admission": "[1.0.0, )",
-          "Fogell.Groovy": "[1.0.0, )"
-        }
-      },
-      "fogell.groovy.parser": {
-        "type": "Project",
-        "dependencies": {
-          "FParsec": "[1.1.1, )",
-          "FSharp.Core": "[10.1.301, )",
-          "Fogell.Admission": "[1.0.0, )",
-          "Fogell.Groovy": "[1.0.0, )"
         }
       },
       "fogell.ir": {
@@ -147,10 +105,8 @@
       "fogell.pipeline.parser": {
         "type": "Project",
         "dependencies": {
-          "FParsec": "[1.1.1, )",
           "FSharp.Core": "[10.1.301, )",
           "Fogell.Admission": "[1.0.0, )",
-          "Fogell.Groovy.Parser": "[1.0.0, )",
           "Fogell.Ir": "[1.0.0, )"
         }
       },

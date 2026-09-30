@@ -4,13 +4,6 @@ open System
 open System.IO
 open Fogell.Admission
 
-/// FG-030. Each attempt gets one fresh, normalized workspace beneath a
-/// canonical root.
-///
-/// The rejection list is not hypothetical: a Jenkinsfile is untrusted input, and
-/// `dir('../../etc')` or a symlinked path is how a step escapes its workspace.
-/// ADR 0008 requires absolute paths, traversal and symlink components to be
-/// refused rather than normalized away.
 module Workspace =
 
     type Error =
@@ -89,11 +82,6 @@ module Workspace =
                 |> Array.toList
                 |> check canonicalRoot
 
-    /// Materialize an already-resolved logical cwd immediately before an effect
-    /// which Jenkins proves creates it (durable task or SCM launch). Re-resolving
-    /// from the attempt root at the launch boundary narrows the check/create race
-    /// after `dir` established its logical FilePath. Callers must not
-    /// use this for context-only or read-only steps: absence is observable state.
     let materializeUnder (root: string) (target: string) : Result<unit, Error> =
         let canonicalRoot = Path.GetFullPath root
         let canonicalTarget = Path.GetFullPath target
