@@ -1,0 +1,2019 @@
+{
+  "host": "luigi",
+  "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.39",
+  "cpu_count": 56,
+  "maven_version": "\u001b[1mApache Maven 3.8.7\u001b[m",
+  "java_version": "javac 25.0.4.1",
+  "dotnet_version": "10.0.112",
+  "ocaml_version": "4.14.1",
+  "rust_version": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "ocaml_executable_sha256": "38a469e063e1fe06249b8316b08ff44af9f3a16fc7ef6f53fd6f4e1d0d7bd07d",
+  "rust_executable_sha256": "316dbcb12bd1fbf99064153043c391819eecbf968b0062a52cda4f6814e6af2b",
+  "fsharp_managed_dll_sha256": "e45770adbc72004ca5a829e28d47f463f6cdf7c2f5a1aeb1727199289890734e",
+  "fsharp_aot_executable_sha256": "2b7610e309ea830f37220ca826f00c4a10000b5d2f3953f9ece0b918e206e136",
+  "scope": "serial, offline warm-cache clean package; same three main and three test sources, one resource, ten JUnit 4 tests; balanced rotating order",
+  "runs": [
+    {
+      "tool": "maven",
+      "iteration": 0,
+      "warmup": true,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.76,
+      "monotonic_wall_seconds": 3.7632,
+      "user_cpu_seconds": 13.94,
+      "system_cpu_seconds": 1.39,
+      "max_rss_kib": 335836,
+      "load_before": [
+        0.43994140625,
+        0.29296875,
+        0.453125
+      ],
+      "load_after": [
+        0.56494140625,
+        0.32177734375,
+        0.4619140625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/warmup-maven.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/warmup-maven.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 0,
+      "warmup": true,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.23,
+      "monotonic_wall_seconds": 2.2332,
+      "user_cpu_seconds": 5.68,
+      "system_cpu_seconds": 0.58,
+      "max_rss_kib": 116480,
+      "load_before": [
+        0.56494140625,
+        0.32177734375,
+        0.4619140625
+      ],
+      "load_after": [
+        0.68017578125,
+        0.35009765625,
+        0.47021484375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/warmup-ocaml.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/warmup-ocaml.time"
+    },
+    {
+      "tool": "rust",
+      "iteration": 0,
+      "warmup": true,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/rust-maven-poc/mini_mvn_rust",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.26,
+      "monotonic_wall_seconds": 2.2713,
+      "user_cpu_seconds": 5.78,
+      "system_cpu_seconds": 0.64,
+      "max_rss_kib": 116032,
+      "load_before": [
+        0.68017578125,
+        0.35009765625,
+        0.47021484375
+      ],
+      "load_after": [
+        0.68017578125,
+        0.35009765625,
+        0.47021484375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/warmup-rust.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/warmup-rust.time"
+    },
+    {
+      "tool": "fsharp-managed",
+      "iteration": 0,
+      "warmup": true,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/managed/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.26,
+      "monotonic_wall_seconds": 2.2634,
+      "user_cpu_seconds": 5.9,
+      "system_cpu_seconds": 0.71,
+      "max_rss_kib": 116480,
+      "load_before": [
+        0.68017578125,
+        0.35009765625,
+        0.47021484375
+      ],
+      "load_after": [
+        0.68017578125,
+        0.35009765625,
+        0.47021484375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/warmup-fsharp-managed.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/warmup-fsharp-managed.time"
+    },
+    {
+      "tool": "fsharp-aot",
+      "iteration": 0,
+      "warmup": true,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/aot/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.09,
+      "monotonic_wall_seconds": 2.0979,
+      "user_cpu_seconds": 5.6,
+      "system_cpu_seconds": 0.61,
+      "max_rss_kib": 118272,
+      "load_before": [
+        0.68017578125,
+        0.35009765625,
+        0.47021484375
+      ],
+      "load_after": [
+        1.1064453125,
+        0.4443359375,
+        0.5
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/warmup-fsharp-aot.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/warmup-fsharp-aot.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 1,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.55,
+      "monotonic_wall_seconds": 3.5564,
+      "user_cpu_seconds": 13.13,
+      "system_cpu_seconds": 1.11,
+      "max_rss_kib": 331712,
+      "load_before": [
+        1.1064453125,
+        0.4443359375,
+        0.5
+      ],
+      "load_after": [
+        1.57861328125,
+        0.55322265625,
+        0.53515625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/01-maven.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/01-maven.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 1,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.18,
+      "monotonic_wall_seconds": 2.1867,
+      "user_cpu_seconds": 5.53,
+      "system_cpu_seconds": 0.62,
+      "max_rss_kib": 118272,
+      "load_before": [
+        1.57861328125,
+        0.55322265625,
+        0.53515625
+      ],
+      "load_after": [
+        1.57861328125,
+        0.55322265625,
+        0.53515625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/01-ocaml.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/01-ocaml.time"
+    },
+    {
+      "tool": "rust",
+      "iteration": 1,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/rust-maven-poc/mini_mvn_rust",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.26,
+      "monotonic_wall_seconds": 2.2689,
+      "user_cpu_seconds": 5.93,
+      "system_cpu_seconds": 0.69,
+      "max_rss_kib": 114240,
+      "load_before": [
+        1.57861328125,
+        0.55322265625,
+        0.53515625
+      ],
+      "load_after": [
+        1.57861328125,
+        0.55322265625,
+        0.53515625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/01-rust.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/01-rust.time"
+    },
+    {
+      "tool": "fsharp-managed",
+      "iteration": 1,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/managed/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.25,
+      "monotonic_wall_seconds": 2.2578,
+      "user_cpu_seconds": 5.89,
+      "system_cpu_seconds": 0.66,
+      "max_rss_kib": 115584,
+      "load_before": [
+        1.57861328125,
+        0.55322265625,
+        0.53515625
+      ],
+      "load_after": [
+        1.77294921875,
+        0.61083984375,
+        0.55419921875
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/01-fsharp-managed.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/01-fsharp-managed.time"
+    },
+    {
+      "tool": "fsharp-aot",
+      "iteration": 1,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/aot/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.29,
+      "monotonic_wall_seconds": 2.3001,
+      "user_cpu_seconds": 5.86,
+      "system_cpu_seconds": 0.71,
+      "max_rss_kib": 116032,
+      "load_before": [
+        1.77294921875,
+        0.61083984375,
+        0.55419921875
+      ],
+      "load_after": [
+        1.77294921875,
+        0.61083984375,
+        0.55419921875
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/01-fsharp-aot.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/01-fsharp-aot.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 2,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.27,
+      "monotonic_wall_seconds": 2.2799,
+      "user_cpu_seconds": 5.8,
+      "system_cpu_seconds": 0.66,
+      "max_rss_kib": 117824,
+      "load_before": [
+        1.77294921875,
+        0.61083984375,
+        0.55419921875
+      ],
+      "load_after": [
+        2.11181640625,
+        0.70068359375,
+        0.58349609375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/02-ocaml.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/02-ocaml.time"
+    },
+    {
+      "tool": "rust",
+      "iteration": 2,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/rust-maven-poc/mini_mvn_rust",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.22,
+      "monotonic_wall_seconds": 2.2323,
+      "user_cpu_seconds": 5.73,
+      "system_cpu_seconds": 0.63,
+      "max_rss_kib": 117376,
+      "load_before": [
+        2.11181640625,
+        0.70068359375,
+        0.58349609375
+      ],
+      "load_after": [
+        2.11181640625,
+        0.70068359375,
+        0.58349609375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/02-rust.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/02-rust.time"
+    },
+    {
+      "tool": "fsharp-managed",
+      "iteration": 2,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/managed/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.32,
+      "monotonic_wall_seconds": 2.3295,
+      "user_cpu_seconds": 6.01,
+      "system_cpu_seconds": 0.71,
+      "max_rss_kib": 116928,
+      "load_before": [
+        2.11181640625,
+        0.70068359375,
+        0.58349609375
+      ],
+      "load_after": [
+        2.0224609375,
+        0.7060546875,
+        0.5859375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/02-fsharp-managed.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/02-fsharp-managed.time"
+    },
+    {
+      "tool": "fsharp-aot",
+      "iteration": 2,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/aot/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.26,
+      "monotonic_wall_seconds": 2.263,
+      "user_cpu_seconds": 5.78,
+      "system_cpu_seconds": 0.65,
+      "max_rss_kib": 116928,
+      "load_before": [
+        2.0224609375,
+        0.7060546875,
+        0.5859375
+      ],
+      "load_after": [
+        2.0224609375,
+        0.7060546875,
+        0.5859375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/02-fsharp-aot.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/02-fsharp-aot.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 2,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.6,
+      "monotonic_wall_seconds": 3.6051,
+      "user_cpu_seconds": 12.86,
+      "system_cpu_seconds": 1.15,
+      "max_rss_kib": 318520,
+      "load_before": [
+        2.0224609375,
+        0.7060546875,
+        0.5859375
+      ],
+      "load_after": [
+        2.58154296875,
+        0.84375,
+        0.63134765625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/02-maven.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/02-maven.time"
+    },
+    {
+      "tool": "rust",
+      "iteration": 3,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/rust-maven-poc/mini_mvn_rust",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.23,
+      "monotonic_wall_seconds": 2.237,
+      "user_cpu_seconds": 5.67,
+      "system_cpu_seconds": 0.64,
+      "max_rss_kib": 117376,
+      "load_before": [
+        2.58154296875,
+        0.84375,
+        0.63134765625
+      ],
+      "load_after": [
+        2.58154296875,
+        0.84375,
+        0.63134765625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/03-rust.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/03-rust.time"
+    },
+    {
+      "tool": "fsharp-managed",
+      "iteration": 3,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/managed/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.43,
+      "monotonic_wall_seconds": 2.4362,
+      "user_cpu_seconds": 6.1,
+      "system_cpu_seconds": 0.74,
+      "max_rss_kib": 116480,
+      "load_before": [
+        2.58154296875,
+        0.84375,
+        0.63134765625
+      ],
+      "load_after": [
+        3.015625,
+        0.962890625,
+        0.67138671875
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/03-fsharp-managed.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/03-fsharp-managed.time"
+    },
+    {
+      "tool": "fsharp-aot",
+      "iteration": 3,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/aot/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.19,
+      "monotonic_wall_seconds": 2.201,
+      "user_cpu_seconds": 5.77,
+      "system_cpu_seconds": 0.68,
+      "max_rss_kib": 116032,
+      "load_before": [
+        3.015625,
+        0.962890625,
+        0.67138671875
+      ],
+      "load_after": [
+        3.015625,
+        0.962890625,
+        0.67138671875
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/03-fsharp-aot.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/03-fsharp-aot.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 3,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.92,
+      "monotonic_wall_seconds": 3.928,
+      "user_cpu_seconds": 14.07,
+      "system_cpu_seconds": 1.21,
+      "max_rss_kib": 334168,
+      "load_before": [
+        3.015625,
+        0.962890625,
+        0.67138671875
+      ],
+      "load_after": [
+        3.01416015625,
+        0.9970703125,
+        0.68408203125
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/03-maven.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/03-maven.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 3,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.33,
+      "monotonic_wall_seconds": 2.3423,
+      "user_cpu_seconds": 5.9,
+      "system_cpu_seconds": 0.64,
+      "max_rss_kib": 117376,
+      "load_before": [
+        3.01416015625,
+        0.9970703125,
+        0.68408203125
+      ],
+      "load_after": [
+        3.25341796875,
+        1.08056640625,
+        0.712890625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/03-ocaml.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/03-ocaml.time"
+    },
+    {
+      "tool": "fsharp-managed",
+      "iteration": 4,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/managed/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.31,
+      "monotonic_wall_seconds": 2.3158,
+      "user_cpu_seconds": 5.97,
+      "system_cpu_seconds": 0.71,
+      "max_rss_kib": 116480,
+      "load_before": [
+        3.25341796875,
+        1.08056640625,
+        0.712890625
+      ],
+      "load_after": [
+        3.25341796875,
+        1.08056640625,
+        0.712890625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/04-fsharp-managed.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/04-fsharp-managed.time"
+    },
+    {
+      "tool": "fsharp-aot",
+      "iteration": 4,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/aot/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.17,
+      "monotonic_wall_seconds": 2.1792,
+      "user_cpu_seconds": 5.7,
+      "system_cpu_seconds": 0.7,
+      "max_rss_kib": 117824,
+      "load_before": [
+        3.25341796875,
+        1.08056640625,
+        0.712890625
+      ],
+      "load_after": [
+        3.25341796875,
+        1.08056640625,
+        0.712890625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/04-fsharp-aot.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/04-fsharp-aot.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 4,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.89,
+      "monotonic_wall_seconds": 3.8995,
+      "user_cpu_seconds": 13.43,
+      "system_cpu_seconds": 1.2,
+      "max_rss_kib": 308016,
+      "load_before": [
+        3.25341796875,
+        1.08056640625,
+        0.712890625
+      ],
+      "load_after": [
+        3.3134765625,
+        1.12939453125,
+        0.73095703125
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/04-maven.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/04-maven.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 4,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.15,
+      "monotonic_wall_seconds": 2.1601,
+      "user_cpu_seconds": 5.68,
+      "system_cpu_seconds": 0.58,
+      "max_rss_kib": 115136,
+      "load_before": [
+        3.3134765625,
+        1.12939453125,
+        0.73095703125
+      ],
+      "load_after": [
+        3.2080078125,
+        1.14404296875,
+        0.73779296875
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/04-ocaml.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/04-ocaml.time"
+    },
+    {
+      "tool": "rust",
+      "iteration": 4,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/rust-maven-poc/mini_mvn_rust",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.29,
+      "monotonic_wall_seconds": 2.3018,
+      "user_cpu_seconds": 5.79,
+      "system_cpu_seconds": 0.62,
+      "max_rss_kib": 115136,
+      "load_before": [
+        3.2080078125,
+        1.14404296875,
+        0.73779296875
+      ],
+      "load_after": [
+        3.2080078125,
+        1.14404296875,
+        0.73779296875
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/04-rust.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/04-rust.time"
+    },
+    {
+      "tool": "fsharp-aot",
+      "iteration": 5,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/aot/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.24,
+      "monotonic_wall_seconds": 2.2514,
+      "user_cpu_seconds": 5.7,
+      "system_cpu_seconds": 0.62,
+      "max_rss_kib": 116928,
+      "load_before": [
+        3.2080078125,
+        1.14404296875,
+        0.73779296875
+      ],
+      "load_after": [
+        3.11083984375,
+        1.15869140625,
+        0.74462890625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/05-fsharp-aot.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/05-fsharp-aot.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 5,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.82,
+      "monotonic_wall_seconds": 3.8297,
+      "user_cpu_seconds": 13.46,
+      "system_cpu_seconds": 1.29,
+      "max_rss_kib": 332476,
+      "load_before": [
+        3.11083984375,
+        1.15869140625,
+        0.74462890625
+      ],
+      "load_after": [
+        3.11083984375,
+        1.15869140625,
+        0.74462890625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/05-maven.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/05-maven.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 5,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.27,
+      "monotonic_wall_seconds": 2.2784,
+      "user_cpu_seconds": 5.75,
+      "system_cpu_seconds": 0.6,
+      "max_rss_kib": 115136,
+      "load_before": [
+        3.11083984375,
+        1.15869140625,
+        0.74462890625
+      ],
+      "load_after": [
+        2.94140625,
+        1.15576171875,
+        0.74609375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/05-ocaml.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/05-ocaml.time"
+    },
+    {
+      "tool": "rust",
+      "iteration": 5,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/rust-maven-poc/mini_mvn_rust",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.16,
+      "monotonic_wall_seconds": 2.1696,
+      "user_cpu_seconds": 5.78,
+      "system_cpu_seconds": 0.67,
+      "max_rss_kib": 116480,
+      "load_before": [
+        2.94140625,
+        1.15576171875,
+        0.74609375
+      ],
+      "load_after": [
+        2.94140625,
+        1.15576171875,
+        0.74609375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/05-rust.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/05-rust.time"
+    },
+    {
+      "tool": "fsharp-managed",
+      "iteration": 5,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/managed/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.33,
+      "monotonic_wall_seconds": 2.3364,
+      "user_cpu_seconds": 6.02,
+      "system_cpu_seconds": 0.69,
+      "max_rss_kib": 117376,
+      "load_before": [
+        2.94140625,
+        1.15576171875,
+        0.74609375
+      ],
+      "load_after": [
+        3.2666015625,
+        1.2529296875,
+        0.77978515625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/05-fsharp-managed.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/05-fsharp-managed.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 6,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 4.02,
+      "monotonic_wall_seconds": 4.03,
+      "user_cpu_seconds": 14.12,
+      "system_cpu_seconds": 1.26,
+      "max_rss_kib": 327448,
+      "load_before": [
+        3.2666015625,
+        1.2529296875,
+        0.77978515625
+      ],
+      "load_after": [
+        3.0849609375,
+        1.24853515625,
+        0.78125
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/06-maven.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/06-maven.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 6,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.18,
+      "monotonic_wall_seconds": 2.1904,
+      "user_cpu_seconds": 5.67,
+      "system_cpu_seconds": 0.57,
+      "max_rss_kib": 116032,
+      "load_before": [
+        3.0849609375,
+        1.24853515625,
+        0.78125
+      ],
+      "load_after": [
+        3.0849609375,
+        1.24853515625,
+        0.78125
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/06-ocaml.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/06-ocaml.time"
+    },
+    {
+      "tool": "rust",
+      "iteration": 6,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/rust-maven-poc/mini_mvn_rust",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.33,
+      "monotonic_wall_seconds": 2.3372,
+      "user_cpu_seconds": 5.85,
+      "system_cpu_seconds": 0.68,
+      "max_rss_kib": 116480,
+      "load_before": [
+        3.0849609375,
+        1.24853515625,
+        0.78125
+      ],
+      "load_after": [
+        3.0849609375,
+        1.24853515625,
+        0.78125
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/06-rust.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/06-rust.time"
+    },
+    {
+      "tool": "fsharp-managed",
+      "iteration": 6,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/managed/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.31,
+      "monotonic_wall_seconds": 2.3144,
+      "user_cpu_seconds": 5.92,
+      "system_cpu_seconds": 0.66,
+      "max_rss_kib": 116480,
+      "load_before": [
+        3.0849609375,
+        1.24853515625,
+        0.78125
+      ],
+      "load_after": [
+        2.998046875,
+        1.26123046875,
+        0.7880859375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/06-fsharp-managed.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/06-fsharp-managed.time"
+    },
+    {
+      "tool": "fsharp-aot",
+      "iteration": 6,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/aot/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.3,
+      "monotonic_wall_seconds": 2.3033,
+      "user_cpu_seconds": 5.88,
+      "system_cpu_seconds": 0.64,
+      "max_rss_kib": 115584,
+      "load_before": [
+        2.998046875,
+        1.26123046875,
+        0.7880859375
+      ],
+      "load_after": [
+        2.998046875,
+        1.26123046875,
+        0.7880859375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/06-fsharp-aot.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/06-fsharp-aot.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 7,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.32,
+      "monotonic_wall_seconds": 2.3303,
+      "user_cpu_seconds": 5.78,
+      "system_cpu_seconds": 0.62,
+      "max_rss_kib": 115584,
+      "load_before": [
+        2.998046875,
+        1.26123046875,
+        0.7880859375
+      ],
+      "load_after": [
+        3.31884765625,
+        1.35693359375,
+        0.82177734375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/07-ocaml.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/07-ocaml.time"
+    },
+    {
+      "tool": "rust",
+      "iteration": 7,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/rust-maven-poc/mini_mvn_rust",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.19,
+      "monotonic_wall_seconds": 2.1979,
+      "user_cpu_seconds": 5.78,
+      "system_cpu_seconds": 0.65,
+      "max_rss_kib": 117376,
+      "load_before": [
+        3.31884765625,
+        1.35693359375,
+        0.82177734375
+      ],
+      "load_after": [
+        3.31884765625,
+        1.35693359375,
+        0.82177734375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/07-rust.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/07-rust.time"
+    },
+    {
+      "tool": "fsharp-managed",
+      "iteration": 7,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/managed/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.26,
+      "monotonic_wall_seconds": 2.268,
+      "user_cpu_seconds": 5.89,
+      "system_cpu_seconds": 0.62,
+      "max_rss_kib": 117376,
+      "load_before": [
+        3.31884765625,
+        1.35693359375,
+        0.82177734375
+      ],
+      "load_after": [
+        3.53369140625,
+        1.43408203125,
+        0.849609375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/07-fsharp-managed.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/07-fsharp-managed.time"
+    },
+    {
+      "tool": "fsharp-aot",
+      "iteration": 7,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/aot/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.22,
+      "monotonic_wall_seconds": 2.2242,
+      "user_cpu_seconds": 5.61,
+      "system_cpu_seconds": 0.63,
+      "max_rss_kib": 116032,
+      "load_before": [
+        3.53369140625,
+        1.43408203125,
+        0.849609375
+      ],
+      "load_after": [
+        3.53369140625,
+        1.43408203125,
+        0.849609375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/07-fsharp-aot.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/07-fsharp-aot.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 7,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.71,
+      "monotonic_wall_seconds": 3.7212,
+      "user_cpu_seconds": 13.48,
+      "system_cpu_seconds": 1.16,
+      "max_rss_kib": 319732,
+      "load_before": [
+        3.53369140625,
+        1.43408203125,
+        0.849609375
+      ],
+      "load_after": [
+        3.7314453125,
+        1.51025390625,
+        0.87744140625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/07-maven.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/07-maven.time"
+    },
+    {
+      "tool": "rust",
+      "iteration": 8,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/rust-maven-poc/mini_mvn_rust",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.24,
+      "monotonic_wall_seconds": 2.2469,
+      "user_cpu_seconds": 5.64,
+      "system_cpu_seconds": 0.57,
+      "max_rss_kib": 114240,
+      "load_before": [
+        3.7314453125,
+        1.51025390625,
+        0.87744140625
+      ],
+      "load_after": [
+        3.7314453125,
+        1.51025390625,
+        0.87744140625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/08-rust.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/08-rust.time"
+    },
+    {
+      "tool": "fsharp-managed",
+      "iteration": 8,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/managed/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.36,
+      "monotonic_wall_seconds": 2.3716,
+      "user_cpu_seconds": 5.97,
+      "system_cpu_seconds": 0.73,
+      "max_rss_kib": 116480,
+      "load_before": [
+        3.7314453125,
+        1.51025390625,
+        0.87744140625
+      ],
+      "load_after": [
+        3.75341796875,
+        1.5517578125,
+        0.89453125
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/08-fsharp-managed.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/08-fsharp-managed.time"
+    },
+    {
+      "tool": "fsharp-aot",
+      "iteration": 8,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/aot/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.22,
+      "monotonic_wall_seconds": 2.2311,
+      "user_cpu_seconds": 5.76,
+      "system_cpu_seconds": 0.72,
+      "max_rss_kib": 116032,
+      "load_before": [
+        3.75341796875,
+        1.5517578125,
+        0.89453125
+      ],
+      "load_after": [
+        3.75341796875,
+        1.5517578125,
+        0.89453125
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/08-fsharp-aot.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/08-fsharp-aot.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 8,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.8,
+      "monotonic_wall_seconds": 3.8102,
+      "user_cpu_seconds": 13.83,
+      "system_cpu_seconds": 1.24,
+      "max_rss_kib": 328624,
+      "load_before": [
+        3.75341796875,
+        1.5517578125,
+        0.89453125
+      ],
+      "load_after": [
+        3.93359375,
+        1.6259765625,
+        0.92236328125
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/08-maven.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/08-maven.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 8,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.13,
+      "monotonic_wall_seconds": 2.1398,
+      "user_cpu_seconds": 5.61,
+      "system_cpu_seconds": 0.58,
+      "max_rss_kib": 115584,
+      "load_before": [
+        3.93359375,
+        1.6259765625,
+        0.92236328125
+      ],
+      "load_after": [
+        3.93359375,
+        1.6259765625,
+        0.92236328125
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/08-ocaml.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/08-ocaml.time"
+    },
+    {
+      "tool": "fsharp-managed",
+      "iteration": 9,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/managed/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.31,
+      "monotonic_wall_seconds": 2.3204,
+      "user_cpu_seconds": 5.9,
+      "system_cpu_seconds": 0.7,
+      "max_rss_kib": 116032,
+      "load_before": [
+        3.93359375,
+        1.6259765625,
+        0.92236328125
+      ],
+      "load_after": [
+        3.8583984375,
+        1.64892578125,
+        0.93359375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/09-fsharp-managed.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/09-fsharp-managed.time"
+    },
+    {
+      "tool": "fsharp-aot",
+      "iteration": 9,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/aot/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.16,
+      "monotonic_wall_seconds": 2.1673,
+      "user_cpu_seconds": 5.6,
+      "system_cpu_seconds": 0.61,
+      "max_rss_kib": 115584,
+      "load_before": [
+        3.8583984375,
+        1.64892578125,
+        0.93359375
+      ],
+      "load_after": [
+        3.8583984375,
+        1.64892578125,
+        0.93359375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/09-fsharp-aot.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/09-fsharp-aot.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 9,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.63,
+      "monotonic_wall_seconds": 3.6338,
+      "user_cpu_seconds": 14.15,
+      "system_cpu_seconds": 1.35,
+      "max_rss_kib": 342188,
+      "load_before": [
+        3.8583984375,
+        1.64892578125,
+        0.93359375
+      ],
+      "load_after": [
+        3.8701171875,
+        1.68798828125,
+        0.9501953125
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/09-maven.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/09-maven.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 9,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.3,
+      "monotonic_wall_seconds": 2.3114,
+      "user_cpu_seconds": 5.92,
+      "system_cpu_seconds": 0.67,
+      "max_rss_kib": 117376,
+      "load_before": [
+        3.8701171875,
+        1.68798828125,
+        0.9501953125
+      ],
+      "load_after": [
+        3.72021484375,
+        1.693359375,
+        0.9560546875
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/09-ocaml.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/09-ocaml.time"
+    },
+    {
+      "tool": "rust",
+      "iteration": 9,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/rust-maven-poc/mini_mvn_rust",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.14,
+      "monotonic_wall_seconds": 2.1438,
+      "user_cpu_seconds": 5.64,
+      "system_cpu_seconds": 0.58,
+      "max_rss_kib": 114688,
+      "load_before": [
+        3.72021484375,
+        1.693359375,
+        0.9560546875
+      ],
+      "load_after": [
+        3.72021484375,
+        1.693359375,
+        0.9560546875
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/09-rust.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/09-rust.time"
+    },
+    {
+      "tool": "fsharp-aot",
+      "iteration": 10,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/aot/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.22,
+      "monotonic_wall_seconds": 2.23,
+      "user_cpu_seconds": 5.84,
+      "system_cpu_seconds": 0.62,
+      "max_rss_kib": 116032,
+      "load_before": [
+        3.72021484375,
+        1.693359375,
+        0.9560546875
+      ],
+      "load_after": [
+        3.72021484375,
+        1.693359375,
+        0.9560546875
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/10-fsharp-aot.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/10-fsharp-aot.time"
+    },
+    {
+      "tool": "maven",
+      "iteration": 10,
+      "warmup": false,
+      "command": [
+        "mvn",
+        "-o",
+        "-B",
+        "-ntp",
+        "-q",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 3.64,
+      "monotonic_wall_seconds": 3.6476,
+      "user_cpu_seconds": 13.26,
+      "system_cpu_seconds": 1.18,
+      "max_rss_kib": 331572,
+      "load_before": [
+        3.72021484375,
+        1.693359375,
+        0.9560546875
+      ],
+      "load_after": [
+        3.58203125,
+        1.69873046875,
+        0.9619140625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/10-maven.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/10-maven.time"
+    },
+    {
+      "tool": "ocaml",
+      "iteration": 10,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/mini_mvn",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.28,
+      "monotonic_wall_seconds": 2.2834,
+      "user_cpu_seconds": 5.93,
+      "system_cpu_seconds": 0.67,
+      "max_rss_kib": 115136,
+      "load_before": [
+        3.58203125,
+        1.69873046875,
+        0.9619140625
+      ],
+      "load_after": [
+        3.85595703125,
+        1.787109375,
+        0.99462890625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/10-ocaml.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/10-ocaml.time"
+    },
+    {
+      "tool": "rust",
+      "iteration": 10,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/rust-maven-poc/mini_mvn_rust",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.31,
+      "monotonic_wall_seconds": 2.313,
+      "user_cpu_seconds": 5.94,
+      "system_cpu_seconds": 0.66,
+      "max_rss_kib": 116928,
+      "load_before": [
+        3.85595703125,
+        1.787109375,
+        0.99462890625
+      ],
+      "load_after": [
+        3.85595703125,
+        1.787109375,
+        0.99462890625
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/10-rust.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/10-rust.time"
+    },
+    {
+      "tool": "fsharp-managed",
+      "iteration": 10,
+      "warmup": false,
+      "command": [
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/publish/managed/FSharpMavenPoc",
+        "--project",
+        "/home/srikanth/fogell-native-build-comparison-2026-09-30/ocaml-maven-poc/fixture",
+        "clean",
+        "package"
+      ],
+      "wall_seconds": 2.39,
+      "monotonic_wall_seconds": 2.3986,
+      "user_cpu_seconds": 5.9,
+      "system_cpu_seconds": 0.61,
+      "max_rss_kib": 116928,
+      "load_before": [
+        3.85595703125,
+        1.787109375,
+        0.99462890625
+      ],
+      "load_after": [
+        3.787109375,
+        1.8076171875,
+        1.005859375
+      ],
+      "test_count": 10,
+      "jar_payload_sha256": {
+        "dev/fogell/fixture/Arithmetic.class": "94cc5972c077ef05a0140c3502a94ab7b3faf6b3862aaba36b3eaee377ff25da",
+        "dev/fogell/fixture/Series.class": "bc7a15a0a5e9fbed03d8344ac460723aa78642258e163a733e855c4466db238a",
+        "dev/fogell/fixture/Text.class": "ab35c7cd12969bef9de219838e15e58cef04602ede3047dfd8ddbf76770f6a3d",
+        "dev/fogell/fixture/message.txt": "afd58884cff3bb68f3ca7be8be9fc51343e92f940cc868942103ce671c27750c"
+      },
+      "log": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/10-fsharp-managed.log",
+      "time_file": "/home/srikanth/fogell-native-build-comparison-2026-09-30/fsharp-maven-poc/benchmark-results/10-fsharp-managed.time"
+    }
+  ]
+}
